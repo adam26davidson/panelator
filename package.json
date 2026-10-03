@@ -1,0 +1,12 @@
+{
+  "name": "panelator",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}
