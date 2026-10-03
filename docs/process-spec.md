@@ -17,7 +17,7 @@ because they have different owners and change at different speeds.
 | A. Product | The LED system itself | [product-spec.md](product-spec.md) |
 | B. Repo internals | Structure, conventions, docs and specs layout, enforcement tooling | Tooling settled; docs/specs shape open (9) |
 | C. Feature lifecycle | What happens end to end when a change is requested | Stages and gates settled; mechanics open (9) |
-| D. Agent runtime | Harness, where agents run, triggers, model tiering, cost | Host and trigger model settled; harness open (9) |
+| D. Agent runtime | Harness, where agents run, triggers, model tiering, cost | Host, trigger model and harnesses settled (6.6); rest open (9) |
 | E. Measurement | How we know the process works | Candidate metrics listed; final set open (9) |
 | F. Research | The investigation that closes the open items | Planned (9) |
 
@@ -180,15 +180,26 @@ review; cheaper for implementation and fixes). Cost-capped fallback retry on
 rate limits only. Per-run usage records. The idea of brief templates per role.
 Everything else awaits the research run.
 
-### 6.6 Harness selection criteria
+### 6.6 Harnesses
 
-Open source; runs headless in CI on our own runner; model-agnostic, with a
-wide variety of models pluggable; skills or an equivalent extension mechanism;
-cost controls and usage reporting; coexists with interactive Claude Code use.
-Model-agnostic and headless are the hard requirements. Candidates: pi, Claude
-Code headless with the Agent SDK, Codex CLI, OpenCode. Evaluation must include
-running one real task through each on this repo, using Anthropic and OpenAI
-models (existing subscriptions), not reading feature lists.
+Decided in
+[decisions/0001-harness-per-model-vendor.md](decisions/0001-harness-per-model-vendor.md):
+Claude models run in Claude Code headless, because the Anthropic subscription
+is only usable there; OpenAI models, and any model from another vendor added
+later, run in pi. Claude models carry most of the work; OpenAI models take
+smaller steps and act as fallback when Claude quota runs out.
+
+Model-agnosticism is a requirement of the dispatcher, not of a single harness:
+each stage is its own headless session in the harness its model belongs to,
+started through one adapter per harness, and stages hand off through files,
+issues and pull requests. Headless on our own runner stays a hard requirement
+of both harnesses. The dispatcher, not the harness, decides success from the
+event stream and enforces run bounds, and unattended pi workers run inside a
+container because pi has no permission system.
+
+The earlier criteria (open source, one model-agnostic harness, a hands-on
+comparison of pi, Claude Code, Codex CLI and OpenCode) are superseded by that
+decision; the comparison was not run.
 
 ## 7. Measurement (piece E)
 
@@ -270,7 +281,7 @@ flowchart TD
   (AGENTS.md-style files) is kept current, ADR format.
 - C: mechanics of each stage; label protocol; brief templates; fix-loop limits;
   how the grilling bot posts to issues.
-- D: harness; agent definition format; how findings are queued; Telegram bot
+- D: agent definition format; how findings are queued; Telegram bot
   implementation; token efficiency techniques; addressing the laptop failure
   modes.
 - E: final metric set and thresholds for the autonomy ladder.
