@@ -104,6 +104,11 @@ describe("automationChangeGate (AC-12)", () => {
     expect(automationChangeGate(issue(), s, ME, "validated")).toMatchObject({ ok: false, action: "ignore" });
     expect(automationChangeGate(issue({ labelEvents: [ev("validated", ME, "labeled", "1")] }), s, ME, "validated")).toEqual({ ok: true });
   });
+  it("treats a spec listing .github/ workflows as an automation change", () => {
+    const s = parseSpec(fx("good-backend.md").replace("- `schemas/thing.json`", "- `.github/workflows/ci.yml`"));
+    expect(automationChangeGate(issue(), s, ME, "validated")).toMatchObject({ ok: false, action: "ignore" });
+    expect(automationChangeGate(issue({ labelEvents: [ev("validated", ME, "labeled", "1")] }), s, ME, "validated")).toEqual({ ok: true });
+  });
 });
 
 describe("readyGate (AC-9)", () => {

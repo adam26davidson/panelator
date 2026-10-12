@@ -52,6 +52,17 @@ describe("result schemas", () => {
     if (!r.ok) expect(r.errors.join("\n")).toMatch(/criterion/);
   });
 
+  it("includes the error params in the error string", () => {
+    const r = validate("plan-result", {
+      verdict: "ready",
+      domain: "backend",
+      tasks: [{ id: "T1", description: "add module", files: ["a.ts"] }],
+      nope: 1,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join("\n")).toContain('"additionalProperty":"nope"');
+  });
+
   it("rejects a fix result with a short sha", () => {
     expect(validate("fix-result", { head_sha: "abc", addressed: [0] }).ok).toBe(false);
   });

@@ -3,7 +3,7 @@ import type { IssueData } from "../types.ts";
 import { latestLabelActor } from "./authority.ts";
 import { ignore, pass, type GateResult } from "./types.ts";
 
-const AUTOMATION_PREFIXES = ["tools/scheduler/", "agents/"];
+const AUTOMATION_PREFIXES = ["tools/scheduler/", "agents/", ".github/"];
 
 export function touchesAutomation(spec: ParsedSpec): boolean {
   return spec.listedPaths.some((p) => {

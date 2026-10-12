@@ -38,7 +38,7 @@ export type Action =
   | { type: "run_stage"; stage: AgentStageName; attempt: number; fixInput?: string; profile?: "security" }
   | { type: "verify" }
   | { type: "merge" }
-  | { type: "label"; add: string[]; remove: string[] }
+  | { type: "label"; add: string[]; remove: string[]; target?: "pr" }
   | { type: "comment"; text: string }
   | { type: "notify"; gate: string; label: string; text: string }
   | { type: "release"; reason: string; savePatch: boolean }

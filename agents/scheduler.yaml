@@ -13,8 +13,6 @@ retry_cost_limit_usd: 1.0
 notify_rate_limit_hours: 4
 state_dir: ~/.local/state/panelator-scheduler
 labels:
-  validated: validated
-  claim: in-progress
   priority: priority
   feature_classes: [class:product]
   debt_classes: [class:bug, class:tooling, class:dependency]

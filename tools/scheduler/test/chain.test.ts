@@ -98,10 +98,15 @@ describe("chain: review (AC-11, AC-13)", () => {
     expect(r.actions.find((a) => a.type === "run_stage")).toBeUndefined();
   });
   it("a security finding blocks merge even after a later approval", () => {
-    const r1 = transition(at("review"), { type: "stage_ok", stage: "review", result: changes, security: true });
+    const r1 = transition(at("review", { pr: { number: 3, head_sha: "b".repeat(40) } }), { type: "stage_ok", stage: "review", result: changes, security: true });
     expect(r1.state.stage).toBe("needs-human");
     expect(r1.state.securityFinding).toBe(true);
-    expect(r1.actions).toContainEqual({ type: "label", add: ["security-review", "needs-human"], remove: ["in-progress"] });
+    const labelActions = r1.actions.filter((a) => a.type === "label");
+    expect(labelActions).toEqual([
+      { type: "label", add: ["security-review", "needs-human"], remove: ["in-progress"] },
+      { type: "label", add: ["security-review"], remove: [], target: "pr" },
+    ]);
+    expect(r1.actions.indexOf(labelActions[1])).toBe(r1.actions.indexOf(labelActions[0]) + 1);
     const r2 = transition({ ...r1.state, stage: "review" }, { type: "stage_ok", stage: "review", result: approve, security: true });
     expect(r2.state.stage).toBe("needs-human");
     expect(r2.actions.find((a) => a.type === "merge")).toBeUndefined();
@@ -109,6 +114,19 @@ describe("chain: review (AC-11, AC-13)", () => {
   it("a failed sensitive review retries once with the security profile (AC-11)", () => {
     const r = transition(at("review", { sensitive: true }), { type: "stage_failed", stage: "review", reason: "timeout" });
     expect(r.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 2, profile: "security" }]);
+  });
+  it("judges a changes verdict on a sensitive chain as a security finding even when the event says security: false (AC-11)", () => {
+    const r = transition(at("review", { sensitive: true }), { type: "stage_ok", stage: "review", result: changes, security: false });
+    expect(r.state.stage).toBe("needs-human");
+    expect(r.state.securityFinding).toBe(true);
+  });
+  it("a second review failure goes to needs-human with one notify and no further run", () => {
+    const r = transition(at("review", { attempt: 2 }), { type: "stage_failed", stage: "review", reason: "timeout" });
+    expect(r.state.stage).toBe("needs-human");
+    const notifies = r.actions.filter((a) => a.type === "notify");
+    expect(notifies).toHaveLength(1);
+    expect(notifies[0]).toMatchObject({ gate: "review" });
+    expect(r.actions.find((a) => a.type === "run_stage")).toBeUndefined();
   });
   it("escalate goes to needs-human", () => {
     const r = transition(at("review"), { type: "stage_ok", stage: "review", result: { ...approve, verdict: "escalate" }, security: false });
@@ -130,6 +148,9 @@ describe("chain: merge, rebase, liveness, postpone", () => {
     expect(r.state.stage).toBe("released");
     expect(r.actions).toContainEqual({ type: "release", reason: "liveness expired", savePatch: true });
     expect(r.actions.filter((a) => a.type === "comment")).toHaveLength(1);
+    const notifies = r.actions.filter((a) => a.type === "notify");
+    expect(notifies).toHaveLength(1);
+    expect(notifies[0]).toMatchObject({ gate: "liveness", label: "" });
   });
   it("postponed strong-tier stage waits with the claim held and resumes the same stage (AC-25)", () => {
     const r1 = transition(at("review"), { type: "stage_failed", stage: "review", reason: "429", postpone: true });

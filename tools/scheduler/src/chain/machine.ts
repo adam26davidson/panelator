@@ -47,11 +47,13 @@ function toFix(state: ChainState, fixInput: string, patch: Partial<ChainState> =
 
 export function transition(state: ChainState, event: ChainEvent): Step {
   if (event.type === "liveness_expired") {
+    const text = "Claim released: no run in flight and no activity for the liveness window. Uncommitted work was saved as a patch in the scheduler state directory.";
     return {
       state: { ...state, stage: "released" },
       actions: [
-        { type: "comment", text: "Claim released: no run in flight and no activity for the liveness window. Uncommitted work was saved as a patch in the scheduler state directory." },
+        { type: "comment", text },
         { type: "label", add: [], remove: [CLAIM_LABEL] },
+        { type: "notify", gate: "liveness", label: "", text },
         { type: "release", reason: "liveness expired", savePatch: true },
       ],
     };
@@ -135,9 +137,11 @@ export function transition(state: ChainState, event: ChainEvent): Step {
     case "review":
       if (event.type === "stage_ok" && event.stage === "review") {
         const r = event.result;
-        const securityHit = event.security && r.findings_on_pr.length > 0;
+        const securityHit = (state.sensitive || event.security) && r.findings_on_pr.length > 0;
         if (securityHit) {
-          return needsHuman({ ...state, securityFinding: true }, "sensitive-path", `security review returned ${r.findings_on_pr.length} finding(s)`, [SECURITY_REVIEW_LABEL]);
+          const step = needsHuman({ ...state, securityFinding: true }, "sensitive-path", `security review returned ${r.findings_on_pr.length} finding(s)`, [SECURITY_REVIEW_LABEL]);
+          if (state.pr) step.actions.splice(1, 0, { type: "label", add: [SECURITY_REVIEW_LABEL], remove: [], target: "pr" });
+          return step;
         }
         if (r.verdict === "escalate") return needsHuman(state, "review", "review escalated to the maintainer");
         if (r.verdict === "approve") {

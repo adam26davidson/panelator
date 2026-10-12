@@ -7,7 +7,7 @@ import type { IssueData } from "../src/types.ts";
 
 const BOT = "panelator-pipeline[bot]";
 const ME = "adam26davidson";
-const labels = { validated: "validated", claim: "in-progress", priority: "priority", feature_classes: ["class:product"], debt_classes: ["class:bug", "class:tooling", "class:dependency"] };
+const labels = { priority: "priority", feature_classes: ["class:product"], debt_classes: ["class:bug", "class:tooling", "class:dependency"] };
 const good = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
 
 function issue(n: number, over: Partial<IssueData> = {}): IssueData {
@@ -51,6 +51,12 @@ describe("selectEligible", () => {
     expect(r.decisions.filter((d) => d.issue === 4)).toEqual([]);
     expect(r.decisions.filter((d) => d.issue === 5)).toEqual([]);
     expect(r.decisions.filter((d) => d.issue === 6)).toEqual([]);
+  });
+  it("skips an issue labelled security-review like blocked: neither eligible nor decided (AC-11)", () => {
+    const sec = issue(7, { labels: ["validated", "class:product", "security-review"] });
+    const r = selectEligible([sec], ctx);
+    expect(r.eligible).toEqual([]);
+    expect(r.decisions).toEqual([]);
   });
   it("stops at the first failing gate per issue", () => {
     const r = selectEligible([issue(9, { author: "stranger", labels: [] })], ctx);

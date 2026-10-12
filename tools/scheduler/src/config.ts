@@ -15,8 +15,6 @@ export interface Config {
   notify_rate_limit_hours: number;
   state_dir: string;
   labels: {
-    validated: string;
-    claim: string;
     priority: string;
     feature_classes: string[];
     debt_classes: string[];
@@ -65,8 +63,6 @@ export function loadConfig(path: string): Config {
     notify_rate_limit_hours: num("notify_rate_limit_hours", 4),
     state_dir: expandHome(String(raw.state_dir ?? "~/.local/state/panelator-scheduler")),
     labels: {
-      validated: String(labels.validated ?? "validated"),
-      claim: String(labels.claim ?? "in-progress"),
       priority: String(labels.priority ?? "priority"),
       feature_classes: (labels.feature_classes as string[]) ?? ["class:product"],
       debt_classes: (labels.debt_classes as string[]) ?? ["class:bug", "class:tooling", "class:dependency"],

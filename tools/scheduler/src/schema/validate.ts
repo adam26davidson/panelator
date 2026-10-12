@@ -40,6 +40,6 @@ export function validate(name: SchemaName, data: unknown): Validation {
   const fn = ajv.getSchema(`${name}.json`);
   if (!fn) throw new Error(`unknown schema: ${name}`);
   if (fn(data)) return { ok: true };
-  const errors = (fn.errors ?? []).map((e) => `${e.instancePath || "/"} ${e.message ?? ""}`.trim());
+  const errors = (fn.errors ?? []).map((e) => `${e.instancePath || "/"} ${e.message ?? ""}${Object.keys(e.params ?? {}).length ? " " + JSON.stringify(e.params) : ""}`.trim());
   return { ok: false, errors };
 }
