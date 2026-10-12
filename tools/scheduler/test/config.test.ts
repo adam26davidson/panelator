@@ -12,6 +12,7 @@ describe("loadConfig", () => {
     expect(c.poll_interval_s).toBe(45);
     expect(c.liveness_hours).toBe(2);
     expect(c.state_dir.startsWith("/")).toBe(true);
+    expect(c.required_checks).toEqual(["test"]);
   });
   it("rejects slots below 1", () => {
     const dir = mkdtempSync(join(tmpdir(), "cfg-"));

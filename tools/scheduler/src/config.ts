@@ -13,6 +13,8 @@ export interface Config {
   liveness_hours: number;
   retry_cost_limit_usd: number;
   notify_rate_limit_hours: number;
+  /** check-run names the verify stage waits on; [] means every check run on the head SHA */
+  required_checks: string[];
   state_dir: string;
   labels: {
     priority: string;
@@ -61,6 +63,7 @@ export function loadConfig(path: string): Config {
     liveness_hours: num("liveness_hours", 2),
     retry_cost_limit_usd: num("retry_cost_limit_usd", 1),
     notify_rate_limit_hours: num("notify_rate_limit_hours", 4),
+    required_checks: Array.isArray(raw.required_checks) ? (raw.required_checks as string[]) : [],
     state_dir: expandHome(String(raw.state_dir ?? "~/.local/state/panelator-scheduler")),
     labels: {
       priority: String(labels.priority ?? "priority"),
