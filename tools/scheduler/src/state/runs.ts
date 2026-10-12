@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { validate } from "../schema/validate.ts";
 import type { AgentStageName, Harness } from "../types.ts";
@@ -41,8 +41,14 @@ export async function writeUsageRecord(p: StatePaths, rec: UsageRecord): Promise
   if (!v.ok) throw new Error(`invalid usage record: ${v.errors.join("; ")}`);
   await mkdir(runDir(p, rec.run_id), { recursive: true });
   const text = JSON.stringify(rec, null, 2);
-  await writeFile(join(p.usage, `${rec.run_id}.json`), text);
-  await writeFile(join(runDir(p, rec.run_id), "usage.json"), text);
+  await writeAtomic(join(p.usage, `${rec.run_id}.json`), text);
+  await writeAtomic(join(runDir(p, rec.run_id), "usage.json"), text);
+}
+
+async function writeAtomic(path: string, text: string): Promise<void> {
+  const tmp = path + ".tmp";
+  await writeFile(tmp, text);
+  await rename(tmp, path);
 }
 
 export async function readUsageRecord(p: StatePaths, runId: string): Promise<UsageRecord | null> {
@@ -60,8 +66,14 @@ export async function pruneUsage(p: StatePaths, now: Date, retentionDays = 180):
   let removed = 0;
   for (const n of await readdir(p.usage)) {
     if (!n.endsWith(".json")) continue;
-    const rec = JSON.parse(await readFile(join(p.usage, n), "utf8")) as UsageRecord;
-    if (new Date(rec.ended_at).getTime() < cutoff) {
+    let ended: number;
+    try {
+      ended = new Date((JSON.parse(await readFile(join(p.usage, n), "utf8")) as UsageRecord).ended_at).getTime();
+    } catch {
+      continue; // unreadable file: skip it rather than block retention
+    }
+    if (Number.isNaN(ended)) continue;
+    if (ended < cutoff) {
       await unlink(join(p.usage, n));
       removed++;
     }

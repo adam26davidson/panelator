@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -68,6 +68,14 @@ describe("runs and usage", () => {
     await writeUsageRecord(p, rec);
     await writeUsageRecord(p, { ...rec, run_id: "7-plan-2-20261012T000000", ended_at: "2026-01-01T00:00:00Z" });
     expect(await pruneUsage(p, new Date("2026-10-12T00:00:00Z"))).toBe(1);
+  });
+  it("skips unreadable usage files when pruning", async () => {
+    const p = fresh();
+    await ensureStateDirs(p);
+    await writeUsageRecord(p, rec);
+    writeFileSync(join(p.usage, "garbage.json"), "not json");
+    expect(await pruneUsage(p, new Date("2030-01-01T00:00:00Z"))).toBe(1);
+    expect(existsSync(join(p.usage, "garbage.json"))).toBe(true);
   });
 });
 
