@@ -31,6 +31,14 @@ describe("piAdapter.buildCommand (AC-19)", () => {
   });
 });
 
+describe("piAdapter.isTurnEnd", () => {
+  it("recognises turn_end records only", () => {
+    expect(piAdapter.isTurnEnd?.({ type: "turn_end" })).toBe(true);
+    expect(piAdapter.isTurnEnd?.({ type: "message_end" })).toBe(false);
+    expect(piAdapter.isTurnEnd?.(null)).toBe(false);
+  });
+});
+
 describe("piAdapter.judge (AC-20)", () => {
   it("ok on a clean stream", async () => {
     expect(piAdapter.judge(await fx("pi-success.jsonl"), 0, false)).toMatchObject({ outcome: "ok", finalText: "pong" });

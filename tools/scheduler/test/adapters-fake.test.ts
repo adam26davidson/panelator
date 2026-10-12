@@ -12,6 +12,12 @@ describe("fakeAdapter", () => {
     expect(a.judge([], 1, false).outcome).toBe("failed");
     expect(a.judge([], 0, true).outcome).toBe("timeout");
   });
+  it("counts turns only when turnEndType is set", () => {
+    expect(a.isTurnEnd).toBeUndefined();
+    const t = fakeAdapter({ events: [], scriptPath: "/s.ts", turnEndType: "turn_end" });
+    expect(t.isTurnEnd?.({ type: "turn_end" })).toBe(true);
+    expect(t.isTurnEnd?.({ type: "other" })).toBe(false);
+  });
   it("adapterFor returns claude, pi, or the supplied fake", () => {
     expect(adapterFor("claude").harness).toBe("claude");
     expect(adapterFor("pi").harness).toBe("pi");

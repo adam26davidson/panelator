@@ -7,7 +7,11 @@ export interface FakeOptions {
   scriptPath: string;
   sleepMs?: number;
   eventsFile?: string;
+  /** When set, records of this type count as turn ends (lets runner tests exercise max_turns). */
+  turnEndType?: string;
 }
+
+const rec = (e: unknown): Record<string, unknown> => (typeof e === "object" && e !== null ? (e as Record<string, unknown>) : {});
 
 /** Replays a recorded stream through a throwaway script and writes a canned result (spec section 13). */
 export function fakeAdapter(opts: FakeOptions): Adapter & { opts: FakeOptions } {
@@ -29,5 +33,6 @@ export function fakeAdapter(opts: FakeOptions): Adapter & { opts: FakeOptions } 
     usage() {
       return { cost_usd: null, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0 };
     },
+    ...(opts.turnEndType !== undefined ? { isTurnEnd: (e: unknown) => rec(e).type === opts.turnEndType } : {}),
   };
 }

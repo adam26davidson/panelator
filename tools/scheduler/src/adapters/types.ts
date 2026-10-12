@@ -43,6 +43,8 @@ export interface Adapter {
   buildCommand(run: StageRun): Command;
   judge(events: unknown[], exitCode: number | null, timedOut: boolean): Judgement;
   usage(events: unknown[]): Usage;
+  /** True for a record that ends one agent turn; the runner counts these against bounds.max_turns. */
+  isTurnEnd?(event: unknown): boolean;
 }
 
 export type { RunOutcome };

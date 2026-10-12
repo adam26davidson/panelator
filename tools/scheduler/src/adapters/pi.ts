@@ -69,4 +69,4 @@ function usage(events: unknown[]): Usage {
   return u;
 }
 
-export const piAdapter: Adapter = { harness: "pi", buildCommand, judge, usage };
+export const piAdapter: Adapter = { harness: "pi", buildCommand, judge, usage, isTurnEnd: (e) => rec(e).type === "turn_end" };

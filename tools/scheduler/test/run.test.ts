@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -15,12 +15,14 @@ const planDef: StageDefinition = {
 };
 const goodPlan = { verdict: "ready", domain: "backend", tasks: [{ id: "T1", description: "d", files: ["a.ts"] }], findings: [{ what: "w", where: "x", evidence: "e", noticed_how: "n" }, { what: "bad" }] };
 
-function setup(opts: { result?: unknown; exitCode?: number; sleepMs?: number; timeoutMin?: number } = {}) {
+const validFinding = { what: "w", where: "x", evidence: "e", noticed_how: "n" };
+
+function setup(opts: { result?: unknown; exitCode?: number; sleepMs?: number; timeoutMin?: number; stream?: string; turnEndType?: string } = {}) {
   const root = mkdtempSync(join(tmpdir(), "run-"));
   const paths = statePaths(root);
   const eventsFile = join(root, "fixture-events.jsonl");
-  writeFileSync(eventsFile, readFileSync(join(import.meta.dirname, "fixtures", "streams", "claude-success.jsonl")));
-  const adapter = fakeAdapter({ events: [], result: opts.result, exitCode: opts.exitCode, scriptPath: script, sleepMs: opts.sleepMs, eventsFile });
+  writeFileSync(eventsFile, readFileSync(join(import.meta.dirname, "fixtures", "streams", opts.stream ?? "claude-success.jsonl")));
+  const adapter = fakeAdapter({ events: [], result: opts.result, exitCode: opts.exitCode, scriptPath: script, sleepMs: opts.sleepMs, eventsFile, turnEndType: opts.turnEndType });
   const worktree = join(root, "wt");
   mkdirSync(worktree); // the stage's cwd must exist
   const ctx: RunnerContext = { paths, adapter, systemdScope: false, binDir: join(root, "bin"), now: () => new Date("2026-10-12T00:00:00Z"), sessionId: () => "sess-1" };
@@ -76,4 +78,52 @@ describe("runStage", () => {
     expect(out.result).toBeNull();
     expect(out.usage.outcome).toBe("timeout");
   }, 20_000);
+  it("queues findings from a result that parses but fails the output schema (AC-28)", async () => {
+    const { paths, ctx, req } = setup({ result: { verdict: "ready", findings: [validFinding] } });
+    await ensureStateDirs(paths);
+    const out = await runStage(ctx, req);
+    expect(out.outcome).toBe("failed");
+    expect(out.reason).toBe("result: invalid");
+    expect(out.findings.queued).toBe(1);
+  });
+  it("records a spawn failure as failed and still writes the usage record (AC-24)", async () => {
+    const { paths, ctx, req } = setup({ result: goodPlan });
+    await ensureStateDirs(paths);
+    const base = ctx.adapter;
+    ctx.adapter = { ...base, buildCommand: () => ({ argv: ["/nonexistent-panelator-bin"], env: {} }) };
+    const out = await runStage(ctx, req);
+    expect(out.outcome).toBe("failed");
+    expect(out.reason).toMatch(/^spawn:/);
+    expect(out.result).toBeNull();
+    expect(existsSync(join(paths.runs, out.runId, "usage.json"))).toBe(true);
+  });
+  it("stops the run at max_turns and records bounds, ignoring any result (AC-23)", async () => {
+    const { paths, ctx, req } = setup({ result: goodPlan, sleepMs: 2000, stream: "pi-tool-calls.jsonl", turnEndType: "turn_end" });
+    await ensureStateDirs(paths);
+    req.def = { ...req.def, bounds: { ...req.def.bounds, max_turns: 1 } };
+    const out = await runStage(ctx, req);
+    expect(out.outcome).toBe("bounds");
+    expect(out.reason).toBe("max_turns");
+    expect(out.result).toBeNull();
+    const lines = readFileSync(out.eventsPath, "utf8").trim().split("\n");
+    expect(JSON.parse(lines[lines.length - 1])).toEqual({ type: "scheduler_bounds", reason: "max_turns" });
+  }, 20_000);
+  it("reports a malformed partial tail and keeps it on its own line", async () => {
+    const { paths, ctx, req } = setup({ stream: "claude-partial-tail.jsonl" });
+    await ensureStateDirs(paths);
+    const out = await runStage(ctx, req);
+    expect(out.outcome).toBe("failed");
+    expect(out.malformed).toHaveLength(1);
+    const lines = readFileSync(out.eventsPath, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(3);
+    expect(lines[2]).toBe(out.malformed[0]);
+  });
+  it("rejects a harness override that disagrees with the adapter before writing anything", async () => {
+    const { paths, ctx, req } = setup({ result: goodPlan });
+    await ensureStateDirs(paths);
+    ctx.adapter = { ...ctx.adapter, harness: "claude" };
+    req.harness = "pi";
+    await expect(runStage(ctx, req)).rejects.toThrow(/harness mismatch/);
+    expect(readdirSync(paths.runs)).toEqual([]);
+  });
 });
