@@ -1,6 +1,6 @@
 # 001. Scheduler core and harness adapters
 
-Status: draft for maintainer review, 2026-10-10
+Status: approved by the maintainer 2026-10-12; implementation plan not yet written
 Class: tooling. Domain: automation (sensitive path, process-spec section 5).
 Derives from: [process-spec](../../docs/process-spec.md) sections 3, 4.3, 5,
 6.1 to 6.6; [design-tree](../../docs/design-tree.md) R6 to R9;
