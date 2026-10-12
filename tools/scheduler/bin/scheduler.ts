@@ -70,6 +70,7 @@ for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => schedule
 if (has("--once")) {
   const info = await scheduler.tick();
   console.log(JSON.stringify(info));
+  while (scheduler.active > 0) await new Promise((r) => setTimeout(r, 1000));
   scheduler.stop("once");
 }
 await scheduler.run();
