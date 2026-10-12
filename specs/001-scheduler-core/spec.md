@@ -1,6 +1,7 @@
 # 001. Scheduler core and harness adapters
 
-Status: approved by the maintainer 2026-10-12; implementation plan not yet written
+Status: approved by the maintainer 2026-10-12; implementation plans written
+2026-10-12 in [plans/](plans/) (1-core, 2-runs, 3-service), not yet executed
 Class: tooling. Domain: automation (sensitive path, process-spec section 5).
 Derives from: [process-spec](../../docs/process-spec.md) sections 3, 4.3, 5,
 6.1 to 6.6; [design-tree](../../docs/design-tree.md) R6 to R9;
