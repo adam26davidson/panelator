@@ -6,7 +6,7 @@ import { join } from "node:path";
 const op = process.argv[2];
 const input = readFileSync(0, "utf8");
 const fields = Object.fromEntries(input.split("\n").filter((l) => l.includes("=")).map((l) => l.split("=", 2) as [string, string]));
-if (op === "get" && fields.host === "github.com") {
+if (op === "get" && fields.protocol === "https" && fields.host === "github.com") {
   const stateDir = process.env.PANELATOR_STATE_DIR;
   if (stateDir) {
     try {

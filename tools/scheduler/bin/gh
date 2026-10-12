@@ -2,14 +2,32 @@
 # gh shim for pipeline stages (spec 001 section 12): the App installation token never
 # appears in a prompt or argv; it is read here from the scheduler's state directory.
 set -eu
-self_dir=$(cd "$(dirname "$0")" && pwd)
+self="$(cd "$(dirname "$0")" && pwd)/gh"
 state="${PANELATOR_STATE_DIR:?PANELATOR_STATE_DIR is not set}"
 token_file="$state/token.json"
+GH_TOKEN=""
 if [ -r "$token_file" ]; then
-  GH_TOKEN=$(sed -n 's/.*"token":"\([^"]*\)".*/\1/p' "$token_file")
-  export GH_TOKEN
+  GH_TOKEN=$(sed -n 's/.*"token":"\([^"]*\)".*/\1/p' "$token_file") || GH_TOKEN=""
 fi
-# drop our own directory from PATH and exec the real gh
-PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vx "$self_dir" | paste -sd: -)
+# fail closed: never let the real gh fall back to an ambient token or a person's gh login
+if [ -z "$GH_TOKEN" ]; then
+  echo "panelator gh shim: no token in $token_file" >&2
+  exit 1
+fi
+export GH_TOKEN
+unset GITHUB_TOKEN
+# drop every PATH entry that resolves to this shim's directory (trailing slashes, symlinks,
+# metacharacters all compare by inode) and exec the real gh
+new_path=""
+set -f
+old_ifs=$IFS
+IFS=:
+for entry in $PATH; do
+  if [ "${entry:-.}/gh" -ef "$self" ]; then continue; fi
+  new_path="${new_path:+$new_path:}$entry"
+done
+IFS=$old_ifs
+set +f
+PATH=$new_path
 export PATH
 exec gh "$@"
