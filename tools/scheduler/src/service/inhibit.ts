@@ -22,6 +22,10 @@ export class SleepInhibitor {
     child.on("exit", () => {
       if (this.#child === child) this.#child = null;
     });
+    child.on("error", (e) => {
+      if (this.#child === child) this.#child = null;
+      console.error(`sleep inhibitor unavailable: ${(e as Error).message}`);
+    });
     child.unref();
     this.#child = child;
   }

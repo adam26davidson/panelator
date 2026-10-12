@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fastForwardMain, fetchOrigin, schedulerChanged } from "../src/service/git.ts";
 import { SleepInhibitor } from "../src/service/inhibit.ts";
 import { ServiceLog } from "../src/service/log.ts";
@@ -40,6 +40,24 @@ describe("SleepInhibitor (AC-30)", () => {
     i.release();
     expect(killed).toBe(1);
     expect(i.held).toBe(false);
+  });
+  it("drops the hold on a spawn error (missing binary) and spawns again on the next acquire", () => {
+    let spawns = 0;
+    const handlers: Record<string, (arg: unknown) => void> = {};
+    const fakeSpawn = (() => { spawns++; return { kill: () => true, unref() {}, on(ev: string, fn: (arg: unknown) => void) { handlers[ev] = fn; } }; }) as never;
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const i = new SleepInhibitor({ enabled: true, spawn: fakeSpawn });
+      i.acquire();
+      expect(i.held).toBe(true);
+      handlers.error!(new Error("ENOENT"));
+      expect(i.held).toBe(false);
+      expect(errSpy).toHaveBeenCalledWith("sleep inhibitor unavailable: ENOENT");
+      i.acquire();
+      expect(spawns).toBe(2);
+    } finally {
+      errSpy.mockRestore();
+    }
   });
   it("does nothing when disabled", () => {
     const i = new SleepInhibitor({ enabled: false, spawn: (() => { throw new Error("no"); }) as never });
