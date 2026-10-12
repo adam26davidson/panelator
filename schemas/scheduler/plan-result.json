@@ -21,7 +21,7 @@
       }
     },
     "questions": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-    "findings": { "type": "array", "items": { "$ref": "finding.json" } }
+    "findings": { "type": "array", "items": { "type": "object" }, "description": "Side-channel finding records; each is validated against finding.json when queued (AC-28), never a reason to fail the stage." }
   },
   "if": { "properties": { "verdict": { "const": "spec_gap" } } },
   "then": { "required": ["questions"], "properties": { "questions": { "type": "array", "minItems": 1 } } }

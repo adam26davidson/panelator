@@ -7,6 +7,6 @@
   "properties": {
     "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "addressed": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
-    "findings": { "type": "array", "items": { "$ref": "finding.json" } }
+    "findings": { "type": "array", "items": { "type": "object" }, "description": "Side-channel finding records; each is validated against finding.json when queued (AC-28), never a reason to fail the stage." }
   }
 }
