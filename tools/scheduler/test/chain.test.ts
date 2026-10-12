@@ -139,6 +139,20 @@ describe("chain: merge, rebase, liveness, postpone", () => {
     const r = transition(at("merge"), { type: "merge_result", status: "not_mergeable", detail: "conflict in a.ts" });
     expect(r.actions[0]).toMatchObject({ type: "run_stage", stage: "fix", fixInput: expect.stringContaining("conflict in a.ts") });
   });
+  it("merge_blocked by a security-review label goes to needs-human, labels security-review and releases (AC-11)", () => {
+    const r = transition(at("merge", { pr: { number: 3, head_sha: "b".repeat(40) } }), { type: "merge_blocked", reason: "security-review label present" });
+    expect(r.state.stage).toBe("needs-human");
+    expect(r.state.securityFinding).toBe(true);
+    expect(r.actions).toEqual([
+      { type: "label", add: ["security-review", "needs-human"], remove: ["in-progress"] },
+      { type: "notify", gate: "sensitive-path", label: "needs-human", text: "security-review label present" },
+      { type: "release", reason: "sensitive-path", savePatch: false },
+    ]);
+    expect(r.actions.find((a) => a.type === "merge")).toBeUndefined();
+  });
+  it("merge_blocked outside the merge stage is invalid", () => {
+    expect(() => transition(at("review"), { type: "merge_blocked", reason: "x" })).toThrow(/invalid/);
+  });
   it("rebase conflict before any stage goes to fix (AC-16)", () => {
     const r = transition(at("review"), { type: "rebase_conflict", detail: "CONFLICT a.ts" });
     expect(r.state.stage).toBe("fix");

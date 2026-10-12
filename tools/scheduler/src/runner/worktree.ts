@@ -69,6 +69,12 @@ export async function uncommittedPatch(worktree: string): Promise<string> {
   }
 }
 
+/** Drops every uncommitted change (tracked edits and untracked files); HEAD is untouched. Save a patch first. */
+export async function discardUncommitted(worktree: string): Promise<void> {
+  await git(worktree, "checkout", "--", ".");
+  await git(worktree, "clean", "-fd");
+}
+
 async function canonical(p: string): Promise<string> {
   return realpath(p).catch(() => resolve(p));
 }

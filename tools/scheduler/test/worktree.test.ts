@@ -1,28 +1,9 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { linkProfileSkills } from "../src/runner/skills.ts";
-import { diffFilesAgainstBase, ensureWorktree, rebaseOntoMain, removeWorktree, uncommittedPatch } from "../src/runner/worktree.ts";
-
-function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
-}
-
-/** origin (bare) + a checkout that stands in for the scheduler's repo. */
-function repoPair() {
-  const root = mkdtempSync(join(tmpdir(), "wt-"));
-  const origin = join(root, "origin.git");
-  git(root, "init", "--bare", "-q", "-b", "main", origin);
-  const repo = join(root, "repo");
-  git(root, "clone", "-q", origin, repo);
-  writeFileSync(join(repo, "a.txt"), "a\n");
-  git(repo, "add", "a.txt");
-  git(repo, "commit", "-q", "-m", "init");
-  git(repo, "push", "-q", "origin", "main");
-  return { root, origin, repo, worktrees: join(root, "worktrees") };
-}
+import { diffFilesAgainstBase, discardUncommitted, ensureWorktree, rebaseOntoMain, removeWorktree, uncommittedPatch } from "../src/runner/worktree.ts";
+import { git, repoPair } from "./helpers/repo-pair.ts";
 
 describe("worktrees (AC-16)", () => {
   it("creates a worktree on branch issue-N and reuses it", async () => {
@@ -127,6 +108,21 @@ describe("worktrees (AC-16)", () => {
     await expect(rebaseOntoMain(w.path)).rejects.toThrow(/unstaged changes/);
     expect(git(w.path, "status", "--porcelain").trim()).toBe("M a.txt");
     expect(readFileSync(join(w.path, "a.txt"), "utf8")).toBe("changed\n");
+  });
+  it("discards modified and untracked files and leaves HEAD unchanged", async () => {
+    const { repo, worktrees } = repoPair();
+    const w = await ensureWorktree(repo, worktrees, 15);
+    const head = git(w.path, "rev-parse", "HEAD").trim();
+    writeFileSync(join(w.path, "a.txt"), "changed\n");
+    mkdirSync(join(w.path, "newdir"));
+    writeFileSync(join(w.path, "newdir", "u.txt"), "u\n");
+    writeFileSync(join(w.path, "top.txt"), "t\n");
+    await discardUncommitted(w.path);
+    expect(git(w.path, "status", "--porcelain", "--untracked-files=all").trim()).toBe("");
+    expect(readFileSync(join(w.path, "a.txt"), "utf8")).toBe("a\n");
+    expect(existsSync(join(w.path, "newdir"))).toBe(false);
+    expect(existsSync(join(w.path, "top.txt"))).toBe(false);
+    expect(git(w.path, "rev-parse", "HEAD").trim()).toBe(head);
   });
 });
 

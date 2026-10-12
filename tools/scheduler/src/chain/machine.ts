@@ -157,6 +157,7 @@ export function transition(state: ChainState, event: ChainEvent): Step {
         if (event.status === "merged") return { state: { ...state, stage: "done" }, actions: [{ type: "label", add: [], remove: [CLAIM_LABEL] }, { type: "done" }] };
         return toFix(state, `PR not mergeable:\n${event.detail ?? ""}`);
       }
+      if (event.type === "merge_blocked") return needsHuman({ ...state, securityFinding: true }, "sensitive-path", event.reason, [SECURITY_REVIEW_LABEL]);
       break;
     default:
       break;

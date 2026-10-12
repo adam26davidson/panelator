@@ -31,6 +31,8 @@ export type ChainEvent =
   | { type: "stage_failed"; stage: AgentStageName; reason: string; postpone?: boolean }
   | { type: "checks"; status: "green" | "failed" | "pending"; log?: string; sensitive: boolean }
   | { type: "merge_result"; status: "merged" | "not_mergeable"; detail?: string }
+  /** AC-11: a security-review label on the issue or PR refuses the merge; valid only in stage merge. */
+  | { type: "merge_blocked"; reason: string }
   | { type: "rebase_conflict"; detail: string }
   | { type: "liveness_expired" };
 
