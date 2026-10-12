@@ -1,0 +1,15 @@
+#!/bin/sh
+# gh shim for pipeline stages (spec 001 section 12): the App installation token never
+# appears in a prompt or argv; it is read here from the scheduler's state directory.
+set -eu
+self_dir=$(cd "$(dirname "$0")" && pwd)
+state="${PANELATOR_STATE_DIR:?PANELATOR_STATE_DIR is not set}"
+token_file="$state/token.json"
+if [ -r "$token_file" ]; then
+  GH_TOKEN=$(sed -n 's/.*"token":"\([^"]*\)".*/\1/p' "$token_file")
+  export GH_TOKEN
+fi
+# drop our own directory from PATH and exec the real gh
+PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vx "$self_dir" | paste -sd: -)
+export PATH
+exec gh "$@"

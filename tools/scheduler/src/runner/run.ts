@@ -11,6 +11,7 @@ import { appendFindings } from "../state/findings.ts";
 import type { StatePaths } from "../state/paths.ts";
 import { newRunId, runDir, writeUsageRecord, type UsageRecord } from "../state/runs.ts";
 import type { Harness, Profile, StageDefinition } from "../types.ts";
+import { stageEnv } from "./credentials.ts";
 import { spawnBounded, type SpawnResult } from "./process.ts";
 import { linkProfileSkills } from "./skills.ts";
 
@@ -101,7 +102,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
     try {
       spawned = await spawnBounded({
         argv: cmd.argv,
-        env: { ...cmd.env, PATH: `${ctx.binDir}:${process.env.PATH ?? ""}`, PANELATOR_STATE_DIR: ctx.paths.root },
+        env: { ...cmd.env, ...stageEnv(ctx.binDir, ctx.paths.root) },
         cwd: req.worktree,
         timeoutMs: req.def.bounds.timeout_min * 60_000,
         scope: { enabled: ctx.systemdScope, unitName: `panelator-stage-${runId}`, systemdRunBin: ctx.systemdRunBin },
