@@ -1,0 +1,33 @@
+import type { Adapter, StageRun } from "./types.ts";
+
+export interface FakeOptions {
+  events: unknown[];
+  result?: unknown;
+  exitCode?: number;
+  scriptPath: string;
+  sleepMs?: number;
+  eventsFile?: string;
+}
+
+/** Replays a recorded stream through a throwaway script and writes a canned result (spec section 13). */
+export function fakeAdapter(opts: FakeOptions): Adapter & { opts: FakeOptions } {
+  return {
+    harness: "fake",
+    opts,
+    buildCommand(run: StageRun) {
+      const argv = [
+        process.execPath, opts.scriptPath, opts.eventsFile ?? "", run.resultPath, String(opts.exitCode ?? 0), String(opts.sleepMs ?? 0),
+      ];
+      if (opts.result !== undefined) argv.push(JSON.stringify(opts.result));
+      return { argv, env: {} };
+    },
+    judge(_events, exitCode, timedOut) {
+      if (timedOut) return { outcome: "timeout", reason: "stage timeout", apiErrorStatus: null, finalText: null };
+      if (exitCode !== 0) return { outcome: "failed", reason: `exit ${exitCode}`, apiErrorStatus: null, finalText: null };
+      return { outcome: "ok", reason: null, apiErrorStatus: null, finalText: "fake" };
+    },
+    usage() {
+      return { cost_usd: null, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0 };
+    },
+  };
+}
