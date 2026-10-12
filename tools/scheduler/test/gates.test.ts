@@ -99,6 +99,11 @@ describe("automationChangeGate (AC-12)", () => {
   it("passes a non-automation spec regardless", () => {
     expect(automationChangeGate(issue(), parseSpec(fx("good-backend.md")), ME, "validated")).toEqual({ ok: true });
   });
+  it("detects a spec listing a parent directory of the automation paths", () => {
+    const s = parseSpec(fx("good-backend.md").replace("- `schemas/thing.json`", "- `tools/`"));
+    expect(automationChangeGate(issue(), s, ME, "validated")).toMatchObject({ ok: false, action: "ignore" });
+    expect(automationChangeGate(issue({ labelEvents: [ev("validated", ME, "labeled", "1")] }), s, ME, "validated")).toEqual({ ok: true });
+  });
 });
 
 describe("readyGate (AC-9)", () => {

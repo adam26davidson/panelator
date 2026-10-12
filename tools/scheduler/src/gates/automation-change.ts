@@ -6,7 +6,10 @@ import { ignore, pass, type GateResult } from "./types.ts";
 const AUTOMATION_PREFIXES = ["tools/scheduler/", "agents/"];
 
 export function touchesAutomation(spec: ParsedSpec): boolean {
-  return spec.listedPaths.some((p) => AUTOMATION_PREFIXES.some((a) => p === a || p.startsWith(a) || a.startsWith(p + "/") ));
+  return spec.listedPaths.some((p) => {
+    const dir = p.endsWith("/") ? p : p + "/";
+    return AUTOMATION_PREFIXES.some((a) => p === a || p.startsWith(a) || a.startsWith(dir));
+  });
 }
 
 export function automationChangeGate(issue: IssueData, spec: ParsedSpec, maintainer: string, validatedLabel: string): GateResult {
