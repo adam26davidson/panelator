@@ -82,6 +82,24 @@ describe("pull requests, checks, merge (AC-14)", () => {
     const { c } = client([runs([])]);
     expect((await c.checks("a".repeat(40), ["test"])).status).toBe("pending");
   });
+  it("paginates check runs fully, finding a required check on page 2", async () => {
+    const pages = [
+      Array.from({ length: 100 }, (_, i) => ({ id: i + 10, name: `other-${i}`, status: "completed", conclusion: "success" })),
+      [{ id: 1, name: "test", status: "completed", conclusion: "success" }],
+    ];
+    const { c, gh } = client([{
+      method: "GET", path: /^\/repos\/o\/r\/commits\/[0-9a-f]+\/check-runs$/,
+      reply: (_m, _b, url) => { const page = Number(url.searchParams.get("page") ?? "1"); return { body: { total_count: 101, check_runs: pages[page - 1] ?? [] }, headers: pageLink(url, page, pages.length) }; },
+    }]);
+    const summary = await c.checks("a".repeat(40), ["test"]);
+    expect(summary.status).toBe("green");
+    expect(summary.runs).toHaveLength(101);
+    expect(gh.calls.filter((x) => x.url.includes("/check-runs"))).toHaveLength(2);
+  });
+  it("throws when the check runs disagree with the server total", async () => {
+    const { c } = client([{ method: "GET", path: /^\/repos\/o\/r\/commits\/[0-9a-f]+\/check-runs$/, reply: () => ({ body: { total_count: 3, check_runs: [{ id: 1, name: "test", status: "completed", conclusion: "success" }] } }) }]);
+    await expect(c.checks("a".repeat(40), ["test"])).rejects.toThrow(/check runs incomplete: got 1, server reports 3/);
+  });
   it("reads a PR and squash-merges with the sha guard", async () => {
     const { c, gh } = client([
       { method: "GET", path: /^\/repos\/o\/r\/pulls\/9$/, reply: () => ({ body: pr }) },
@@ -101,6 +119,19 @@ describe("pull requests, checks, merge (AC-14)", () => {
     const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
       const u = String(input instanceof Request ? input.url : input);
       if (u.includes("/actions/jobs/2/logs")) return new Response(text, { status: 200, headers: { "content-type": "text/plain" } });
+      return gh.fetch(input, init);
+    }) as typeof fetch;
+    const c = new GitHubClient(new Octokit({ auth: "x", request: { fetch: fetchFn } }), "o/r");
+    const excerpt = await c.jobLogExcerpt(2, 50);
+    expect(excerpt.split("\n")).toHaveLength(50);
+    expect(excerpt.endsWith("line 299")).toBe(true);
+  });
+  it("decodes a binary (octet-stream) job log before taking the tail", async () => {
+    const text = Array.from({ length: 300 }, (_, i) => `line ${i}`).join("\n");
+    const gh = mockGitHub([]);
+    const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+      const u = String(input instanceof Request ? input.url : input);
+      if (u.includes("/actions/jobs/2/logs")) return new Response(new TextEncoder().encode(text), { status: 200, headers: { "content-type": "application/octet-stream" } });
       return gh.fetch(input, init);
     }) as typeof fetch;
     const c = new GitHubClient(new Octokit({ auth: "x", request: { fetch: fetchFn } }), "o/r");

@@ -85,8 +85,13 @@ export class GitHubClient {
 
   /** `required` empty means every check run on the sha must succeed; a required name not yet reported is pending. */
   async checks(sha: string, required: string[]): Promise<CheckSummary> {
-    const { data } = await this.octokit.request("GET /repos/{owner}/{repo}/commits/{ref}/check-runs", { ...this.base, ref: sha, per_page: 100 });
-    const runs: CheckRun[] = data.check_runs.map((r) => ({ name: r.name, id: Number(r.id), status: r.status, conclusion: r.conclusion ?? null }));
+    let total = 0;
+    const raw = await this.octokit.paginate("GET /repos/{owner}/{repo}/commits/{ref}/check-runs", { ...this.base, ref: sha, per_page: 100 }, (response) => {
+      total = response.data.total_count;
+      return response.data;
+    });
+    const runs: CheckRun[] = raw.map((r) => ({ name: r.name, id: Number(r.id), status: r.status, conclusion: r.conclusion ?? null }));
+    if (runs.length !== total) throw new Error(`check runs incomplete: got ${runs.length}, server reports ${total}`);
     const considered = required.length ? runs.filter((r) => required.includes(r.name)) : runs;
     const missing = required.filter((n) => !runs.some((r) => r.name === n));
     const failed = considered.filter((r) => r.status === "completed" && r.conclusion !== "success" && r.conclusion !== "skipped" && r.conclusion !== "neutral").map((r) => ({ name: r.name, id: r.id }));
@@ -97,7 +102,7 @@ export class GitHubClient {
 
   async jobLogExcerpt(jobId: number, lines = 200): Promise<string> {
     const res = await this.octokit.request("GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs", { ...this.base, job_id: jobId });
-    const text = typeof res.data === "string" ? res.data : String(res.data ?? "");
+    const text = typeof res.data === "string" ? res.data : res.data instanceof ArrayBuffer ? new TextDecoder().decode(res.data) : String(res.data ?? "");
     return text.split("\n").filter((l) => l.length).slice(-lines).join("\n");
   }
 

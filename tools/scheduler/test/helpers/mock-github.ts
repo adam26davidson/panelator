@@ -13,10 +13,14 @@ export function mockGitHub(routes: Route[]): { fetch: typeof fetch; calls: Call[
       const m = r.path.exec(url.pathname);
       if (m && r.method === method) {
         const res = r.reply(m, body, url);
-        return new Response(JSON.stringify(res.body), { status: res.status ?? 200, headers: { "content-type": "application/json", ...(res.headers ?? {}) } });
+        const response = new Response(JSON.stringify(res.body), { status: res.status ?? 200, headers: { "content-type": "application/json", ...(res.headers ?? {}) } });
+        Object.defineProperty(response, "url", { value: url.href });
+        return response;
       }
     }
-    return new Response(JSON.stringify({ message: `mock: no route for ${method} ${url.pathname}` }), { status: 404, headers: { "content-type": "application/json" } });
+    const res = new Response(JSON.stringify({ message: `mock: no route for ${method} ${url.pathname}` }), { status: 404, headers: { "content-type": "application/json" } });
+    Object.defineProperty(res, "url", { value: url.href });
+    return res;
   }) as typeof fetch;
   return { fetch: fetchFn, calls, routes };
 }
