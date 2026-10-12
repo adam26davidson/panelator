@@ -1,0 +1,26 @@
+# Read once at service start (spec section 14). Everything else is fetched from main at runtime.
+repo: adam26davidson/panelator
+maintainer: adam26davidson
+app:
+  id: 0                      # set after the GitHub App is created (plan 3, Task 1)
+  installation_id: 0
+  private_key_path: ~/.config/panelator/scheduler-app.pem
+  bot_login: panelator-pipeline[bot]
+poll_interval_s: 45
+slots: 1
+liveness_hours: 2
+retry_cost_limit_usd: 1.0
+notify_rate_limit_hours: 4
+state_dir: ~/.local/state/panelator-scheduler
+labels:
+  validated: validated
+  claim: in-progress
+  priority: priority
+  feature_classes: [class:product]
+  debt_classes: [class:bug, class:tooling, class:dependency]
+systemd:
+  scope: true                # wrap stages in systemd-run --user --scope
+  inhibit: true              # hold systemd-inhibit while a stage is in flight
+decide:
+  base_url: ""               # /v1/systemone; unused in v0
+  key_env: PANELATOR_DECIDE_KEY
