@@ -6,8 +6,9 @@ screens from widgets with drag and drop, preview them in a realistic simulator,
 and control the board live. Write your own widgets as WebAssembly modules and
 share them on the marketplace.
 
-Status: requirements settled, nothing built yet. First milestone is the widget
-runtime spike (see the product spec, section 12).
+Status: requirements settled. First milestone is the scheduler of spec 001
+(`specs/001-scheduler-core/`), which then builds everything else; the widget
+runtime spike (product spec, section 12) is the first product milestone.
 
 ## Documents
 
