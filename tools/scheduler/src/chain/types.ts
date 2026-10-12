@@ -14,6 +14,7 @@ export interface ChainState {
   planFailures: number;
   implementFailures: number;
   securityFinding: boolean;
+  sensitive: boolean;
   pr: { number: number; head_sha: string } | null;
   plan: PlanResult | null;
   pendingFixInput: string | null;

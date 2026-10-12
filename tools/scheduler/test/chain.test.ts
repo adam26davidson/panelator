@@ -72,6 +72,14 @@ describe("chain: verify (AC-14)", () => {
     const g = transition(at("verify"), { type: "checks", status: "green", sensitive: true });
     expect(g.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1, profile: "security" }]);
   });
+  it("a failed check after the fix limit goes to needs-human instead of another fix (AC-13)", () => {
+    const r = transition(at("verify", { fixes: 2 }), { type: "checks", status: "failed", log: "FAIL x.test.ts", sensitive: false });
+    expect(r.state.stage).toBe("needs-human");
+    expect(r.actions.find((a) => a.type === "run_stage")).toBeUndefined();
+    const notifies = r.actions.filter((a) => a.type === "notify");
+    expect(notifies).toHaveLength(1);
+    expect(notifies[0]).toMatchObject({ gate: "fix-loop" });
+  });
 });
 
 describe("chain: review (AC-11, AC-13)", () => {
@@ -93,7 +101,7 @@ describe("chain: review (AC-11, AC-13)", () => {
     const r1 = transition(at("review"), { type: "stage_ok", stage: "review", result: changes, security: true });
     expect(r1.state.stage).toBe("needs-human");
     expect(r1.state.securityFinding).toBe(true);
-    expect(r1.actions).toContainEqual({ type: "label", add: ["security-review", "needs-human"], remove: [] });
+    expect(r1.actions).toContainEqual({ type: "label", add: ["security-review", "needs-human"], remove: ["in-progress"] });
     const r2 = transition({ ...r1.state, stage: "review" }, { type: "stage_ok", stage: "review", result: approve, security: true });
     expect(r2.state.stage).toBe("needs-human");
     expect(r2.actions.find((a) => a.type === "merge")).toBeUndefined();
@@ -125,6 +133,13 @@ describe("chain: merge, rebase, liveness, postpone", () => {
     expect(r1.actions).toEqual([{ type: "wait", seconds: 1800 }]);
     const r2 = transition(r1.state, { type: "start" });
     expect(r2.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1 }]);
+  });
+  it("a postponed security review resumes with the security profile (AC-11, AC-25)", () => {
+    const g = transition(at("verify"), { type: "checks", status: "green", sensitive: true });
+    const w = transition(g.state, { type: "stage_failed", stage: "review", reason: "429", postpone: true });
+    expect(w.state.stage).toBe("waiting");
+    const r = transition(w.state, { type: "start" });
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1, profile: "security" }]);
   });
   it("throws on an event that is invalid for the stage", () => {
     expect(() => transition(at("plan"), { type: "merge_result", status: "merged" })).toThrow(/invalid/);

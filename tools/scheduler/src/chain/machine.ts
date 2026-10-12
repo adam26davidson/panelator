@@ -1,4 +1,4 @@
-import { MAX_FIXES, NEEDS_CLARIFICATION, NEEDS_HUMAN, readyGate } from "../gates/index.ts";
+import { fixLoopGate, NEEDS_CLARIFICATION, NEEDS_HUMAN, readyGate } from "../gates/index.ts";
 import type { AgentStageName } from "../types.ts";
 import type { Action, ChainEvent, ChainState } from "./types.ts";
 
@@ -10,7 +10,7 @@ export const POSTPONE_WAIT_S = 1800;
 export function initialChainState(issue: number): ChainState {
   return {
     issue, stage: "claimed", attempt: 1, fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0,
-    securityFinding: false, pr: null, plan: null, pendingFixInput: null, postponedUntil: null, resumeStage: null,
+    securityFinding: false, sensitive: false, pr: null, plan: null, pendingFixInput: null, postponedUntil: null, resumeStage: null,
   };
 }
 
@@ -37,6 +37,7 @@ function needsHuman(state: ChainState, gate: string, text: string, extraLabels: 
 }
 
 function toFix(state: ChainState, fixInput: string, patch: Partial<ChainState> = {}): Step {
+  if (!fixLoopGate(state.fixes).ok) return needsHuman(state, "fix-loop", `fix loop limit reached after ${state.fixes} fixes: ${fixInput}`);
   return run(state, "fix", { fixInput }, { ...patch, pendingFixInput: fixInput });
 }
 
@@ -82,7 +83,11 @@ export function transition(state: ChainState, event: ChainEvent): Step {
       if (event.type === "start") return run(state, "plan");
       break;
     case "waiting":
-      if (event.type === "start" && state.resumeStage) return run(state, state.resumeStage, state.resumeStage === "fix" && state.pendingFixInput ? { fixInput: state.pendingFixInput } : {}, { attempt: state.attempt });
+      if (event.type === "start" && state.resumeStage) {
+        const extra = state.resumeStage === "fix" && state.pendingFixInput ? { fixInput: state.pendingFixInput }
+          : state.resumeStage === "review" && state.sensitive ? { profile: "security" as const } : {};
+        return run(state, state.resumeStage, extra, { attempt: state.attempt });
+      }
       break;
     case "plan":
       if (event.type === "stage_ok" && event.stage === "plan") {
@@ -117,9 +122,10 @@ export function transition(state: ChainState, event: ChainEvent): Step {
       break;
     case "verify":
       if (event.type === "checks") {
-        if (event.status === "pending") return { state, actions: [{ type: "wait", seconds: PENDING_WAIT_S }] };
-        if (event.status === "failed") return toFix(state, `A required check failed:\n${event.log ?? "(no log excerpt)"}`);
-        return run(state, "review", event.sensitive ? { profile: "security" } : {});
+        const checked = { ...state, sensitive: event.sensitive };
+        if (event.status === "pending") return { state: checked, actions: [{ type: "wait", seconds: PENDING_WAIT_S }] };
+        if (event.status === "failed") return toFix(checked, `A required check failed:\n${event.log ?? "(no log excerpt)"}`);
+        return run(checked, "review", checked.sensitive ? { profile: "security" } : {});
       }
       break;
     case "review":
@@ -127,20 +133,13 @@ export function transition(state: ChainState, event: ChainEvent): Step {
         const r = event.result;
         const securityHit = event.security && r.findings_on_pr.length > 0;
         if (securityHit) {
-          return {
-            state: { ...state, stage: "needs-human", securityFinding: true },
-            actions: [
-              { type: "label", add: [SECURITY_REVIEW_LABEL, NEEDS_HUMAN], remove: [] },
-              { type: "notify", gate: "sensitive-path", label: NEEDS_HUMAN, text: `security review returned ${r.findings_on_pr.length} finding(s)` },
-            ],
-          };
+          return needsHuman({ ...state, securityFinding: true }, "sensitive-path", `security review returned ${r.findings_on_pr.length} finding(s)`, [SECURITY_REVIEW_LABEL]);
         }
         if (r.verdict === "escalate") return needsHuman(state, "review", "review escalated to the maintainer");
         if (r.verdict === "approve") {
           if (state.securityFinding) return needsHuman(state, "sensitive-path", "an earlier security finding blocks merge");
           return { state: { ...state, stage: "merge" }, actions: [{ type: "merge" }] };
         }
-        if (state.fixes >= MAX_FIXES) return needsHuman(state, "fix-loop", `changes requested after ${state.fixes} fixes`);
         const text = `Review requested changes:\n${r.findings_on_pr.map((f, i) => `${i}. [${f.criterion}] ${f.file}:${f.line} ${f.scenario}`).join("\n")}`;
         return toFix(state, text);
       }
