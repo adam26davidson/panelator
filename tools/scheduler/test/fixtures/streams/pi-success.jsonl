@@ -1,0 +1,12 @@
+{"type":"session","version":3,"id":"33333333-3333-4333-8333-333333333333","timestamp":"2026-10-12T07:55:37.000Z","cwd":"/w"}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"Reply with exactly the word pong and nothing else."}],"timestamp":1791791737000}}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"Reply with exactly the word pong and nothing else."}],"timestamp":1791791737000}}
+{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-responses","provider":"openai","model":"gpt-6-astra","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"pending","timestamp":1791791737500}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"pong"}}
+{"type":"message_update","usage":{"input":525,"output":5,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":530,"cost":{"input":0.00525,"output":0.00025,"cacheRead":0,"cacheWrite":0,"total":0.0055}},"assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"pong"}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"pong"}],"api":"openai-responses","provider":"openai","model":"gpt-6-astra","usage":{"input":525,"output":5,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":530,"cost":{"input":0.00525,"output":0.00025,"cacheRead":0,"cacheWrite":0,"total":0.0055}},"stopReason":"stop","timestamp":1791791757572,"responseId":"resp_1","rawStopReason":"completed","thinkingLevel":"medium"}}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"pong"}],"api":"openai-responses","provider":"openai","model":"gpt-6-astra","usage":{"input":525,"output":5,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":530,"cost":{"input":0.00525,"output":0.00025,"cacheRead":0,"cacheWrite":0,"total":0.0055}},"stopReason":"stop","timestamp":1791791757572},"toolResults":[]}
+{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"pong"}],"stopReason":"stop","usage":{"input":525,"output":5,"cacheRead":0,"cacheWrite":0,"totalTokens":530,"cost":{"input":0.00525,"output":0.00025,"cacheRead":0,"cacheWrite":0,"total":0.0055}}}],"willRetry":false}
+{"type":"agent_settled"}
