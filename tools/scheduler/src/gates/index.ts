@@ -1,0 +1,11 @@
+export * from "./types.ts";
+export { authorityGate, latestLabelActor } from "./authority.ts";
+export { validatedGate } from "./validated.ts";
+export { specPresentGate, NEEDS_SPEC } from "./spec-present.ts";
+export { uiDesignGate, NEEDS_DESIGN } from "./ui-design.ts";
+export { automationChangeGate, touchesAutomation } from "./automation-change.ts";
+export { readyGate, NEEDS_CLARIFICATION } from "./ready.ts";
+export { scopeGate, type ScopeResult } from "./scope.ts";
+export { isSensitive } from "./sensitive.ts";
+export { fixLoopGate, NEEDS_HUMAN, MAX_FIXES } from "./fix-loop.ts";
+export { livenessGate } from "./liveness.ts";
