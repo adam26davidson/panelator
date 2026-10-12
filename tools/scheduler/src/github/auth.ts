@@ -7,11 +7,13 @@ export interface AppClient {
   octokit: Octokit;
   installationToken(): Promise<TokenFile>;
   refreshTokenFile(paths: StatePaths): Promise<TokenFile>;
-  startTokenRefresh(paths: StatePaths, intervalMs?: number): () => void;
+  startTokenRefresh(paths: StatePaths, intervalMs?: number, retryMs?: number): () => void;
   botLogin(): Promise<string>;
 }
 
 export const TOKEN_REFRESH_MS = 50 * 60_000;
+export const TOKEN_RETRY_MS = 60_000;
+export const TOKEN_RETRY_ATTEMPTS = 3;
 
 export function createAppClient(cfg: Config["app"], privateKey: string, fetchFn: typeof fetch = fetch): AppClient {
   const app = new App({ appId: cfg.id, privateKey, Octokit: Octokit.defaults({ request: { fetch: fetchFn } }) });
@@ -34,12 +36,44 @@ export function createAppClient(cfg: Config["app"], privateKey: string, fetchFn:
       await writeToken(paths, t);
       return t;
     },
-    startTokenRefresh(paths, intervalMs = TOKEN_REFRESH_MS) {
+    startTokenRefresh(paths, intervalMs = TOKEN_REFRESH_MS, retryMs = TOKEN_RETRY_MS) {
+      let stopped = false;
+      let inFlight = false;
+      let retry: ReturnType<typeof setTimeout> | null = null;
+      const clearRetry = () => {
+        if (retry) clearTimeout(retry);
+        retry = null;
+      };
+      // A failed mint is retried up to TOKEN_RETRY_ATTEMPTS per tick so token.json never sits expired until the next tick.
+      const attempt = (n: number) => {
+        inFlight = true;
+        client
+          .refreshTokenFile(paths)
+          .catch((e) => {
+            console.error(`token refresh failed (attempt ${n}/${TOKEN_RETRY_ATTEMPTS}): ${(e as Error).message}`);
+            if (stopped || n >= TOKEN_RETRY_ATTEMPTS) return;
+            retry = setTimeout(() => {
+              retry = null;
+              attempt(n + 1);
+            }, retryMs);
+            retry.unref();
+          })
+          .finally(() => {
+            inFlight = false;
+          });
+      };
       const timer = setInterval(() => {
-        client.refreshTokenFile(paths).catch((e) => console.error(`token refresh failed: ${(e as Error).message}`));
+        // Overlapping refreshes would race on token.json's temp file; the running one already mints a fresh token.
+        if (inFlight) return;
+        clearRetry();
+        attempt(1);
       }, intervalMs);
       timer.unref();
-      return () => clearInterval(timer);
+      return () => {
+        stopped = true;
+        clearInterval(timer);
+        clearRetry();
+      };
     },
     async botLogin() {
       const { data } = await app.octokit.request("GET /app");

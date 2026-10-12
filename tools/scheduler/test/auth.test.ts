@@ -1,15 +1,16 @@
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createAppClient } from "../src/github/auth.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import { readToken } from "../src/state/token.ts";
-import { appRoute, mockGitHub, tokenRoute } from "./helpers/mock-github.ts";
+import { appRoute, mockGitHub, tokenRoute, type Route } from "./helpers/mock-github.ts";
 
 export const testKey = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs1", format: "pem" }, publicKeyEncoding: { type: "pkcs1", format: "pem" } }).privateKey;
 const app = { id: 123, installation_id: 456, private_key_path: "/x", bot_login: "panelator-pipeline[bot]" };
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("createAppClient", () => {
   it("mints an installation token with a JWT and reports the bot login", async () => {
@@ -20,31 +21,59 @@ describe("createAppClient", () => {
     expect(gh.calls[0]).toMatchObject({ method: "POST", url: "/app/installations/456/access_tokens" });
     expect(await c.botLogin()).toBe("panelator-pipeline[bot]");
   });
-  it("writes token.json and refreshes on the interval (review focus 5)", async () => {
-    // Fake only the interval: octokit's throttling/retry plugins schedule every request through
-    // Bottleneck's global setTimeout, so faking setTimeout would park the requests forever.
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+
+  // Real timers throughout: octokit queues requests on Bottleneck's real setTimeout, and @octokit/auth-app
+  // merges concurrent in-flight token requests, so fake-clock tick counting is not deterministic.
+  it("writes token.json, refreshes on the interval, and stop() ends the refresh (review focus 5)", async () => {
+    const gh = mockGitHub([tokenRoute, appRoute]);
+    const c = createAppClient(app, testKey, gh.fetch);
+    const p = statePaths(mkdtempSync(join(tmpdir(), "auth-")));
+    await ensureStateDirs(p);
+    await c.refreshTokenFile(p);
+    expect((await readToken(p))?.token).toBe("ghs_mock");
+    const count = () => gh.calls.filter((x) => x.url.endsWith("/access_tokens")).length;
+    const before = count();
+    const stop = c.startTokenRefresh(p, 30, 10);
+    await vi.waitFor(() => expect(count() - before).toBeGreaterThanOrEqual(2), { timeout: 5000 });
+    stop();
+    await sleep(100); // let a tick that fired just before stop() reach the mock
+    const atStop = count();
+    await sleep(150); // five intervals: a live timer would mint again
+    expect(count()).toBe(atStop);
+  });
+
+  it("retries a failed refresh before the next interval tick", async () => {
+    let failNext = false;
+    const flakyTokenRoute: Route = {
+      ...tokenRoute,
+      reply: (m, body, url) => {
+        if (!failNext) return tokenRoute.reply(m, body, url);
+        failNext = false;
+        // 401 is not retried by octokit's own retry plugin, so the tick fails exactly once.
+        return { status: 401, body: { message: "boom" } };
+      },
+    };
+    const gh = mockGitHub([flakyTokenRoute, appRoute]);
+    const c = createAppClient(app, testKey, gh.fetch);
+    const p = statePaths(mkdtempSync(join(tmpdir(), "auth-")));
+    await ensureStateDirs(p);
+    await c.refreshTokenFile(p);
+    const count = () => gh.calls.filter((x) => x.url.endsWith("/access_tokens")).length;
+    const before = count();
+    rmSync(p.token); // only the retry can recreate it
+    failNext = true;
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      const gh = mockGitHub([tokenRoute, appRoute]);
-      const c = createAppClient(app, testKey, gh.fetch);
-      const p = statePaths(mkdtempSync(join(tmpdir(), "auth-")));
-      await ensureStateDirs(p);
-      await c.refreshTokenFile(p);
-      expect((await readToken(p))?.token).toBe("ghs_mock");
-      const after = () => gh.calls.filter((x) => x.url.endsWith("/access_tokens")).length;
-      const before = after();
-      const stop = c.startTokenRefresh(p, 1000);
-      // One tick at a time: @octokit/auth-app merges concurrent in-flight token requests, so two ticks
-      // fired before the first request settles would produce a single POST.
-      await vi.advanceTimersByTimeAsync(1000);
-      await vi.waitFor(() => expect(after() - before).toBe(1));
-      await vi.advanceTimersByTimeAsync(1000);
-      await vi.waitFor(() => expect(after() - before).toBe(2));
-      await vi.advanceTimersByTimeAsync(500);
+      // First tick at 2 s fails; its retry 10 ms later succeeds. The 3.5 s wait ends before the 4 s tick,
+      // so only the retry (not the next interval tick) can produce the second mint.
+      const stop = c.startTokenRefresh(p, 2000, 10);
+      await vi.waitFor(() => expect(count() - before).toBe(2), { timeout: 3500 });
       stop();
-      await vi.waitFor(() => expect(after() - before).toBe(2));
+      await vi.waitFor(async () => expect((await readToken(p))?.token).toBe("ghs_mock"));
+      expect(err).toHaveBeenCalledTimes(1);
+      expect(String(err.mock.calls[0][0])).toMatch(/^token refresh failed \(attempt 1\/3\): /);
     } finally {
-      vi.useRealTimers();
+      err.mockRestore();
     }
   });
 });
