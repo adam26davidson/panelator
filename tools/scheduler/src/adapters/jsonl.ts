@@ -1,12 +1,14 @@
 import { createReadStream } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 
 /** Strict LF framing (pi json.md): never use readline, which also splits on U+2028/U+2029. */
 export class JsonlSplitter {
   #buf = "";
+  #decoder = new StringDecoder("utf8");
   #malformed: string[] = [];
 
   push(chunk: Buffer | string): unknown[] {
-    this.#buf += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    this.#buf += typeof chunk === "string" ? chunk : this.#decoder.write(chunk);
     const out: unknown[] = [];
     let idx: number;
     while ((idx = this.#buf.indexOf("\n")) >= 0) {
@@ -22,6 +24,7 @@ export class JsonlSplitter {
 
   end(): { records: unknown[]; malformed: string[] } {
     const records: unknown[] = [];
+    this.#buf += this.#decoder.end();
     const tail = this.#buf.trim();
     this.#buf = "";
     if (tail) {

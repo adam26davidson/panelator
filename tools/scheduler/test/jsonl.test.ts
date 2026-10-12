@@ -15,6 +15,14 @@ describe("JsonlSplitter", () => {
     const s = new JsonlSplitter();
     expect(s.push('{"t":"a b"}\n')).toEqual([{ t: "a b" }]);
   });
+  it("decodes a multi-byte UTF-8 character split across chunks", () => {
+    const s = new JsonlSplitter();
+    const b = Buffer.from('{"t":"é"}\n');
+    expect([b[6], b[7]]).toEqual([0xc3, 0xa9]);
+    const records = [...s.push(b.subarray(0, 7)), ...s.push(b.subarray(7))];
+    expect(records).toEqual([{ t: "é" }]);
+    expect(s.end()).toEqual({ records: [], malformed: [] });
+  });
   it("reports a malformed tail without throwing (review focus 5)", async () => {
     const r = await readJsonlFile(fx("claude-partial-tail.jsonl"));
     expect(r.records).toHaveLength(2);
