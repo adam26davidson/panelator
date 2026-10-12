@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -76,6 +76,44 @@ describe("worktrees (AC-16)", () => {
     await removeWorktree(repo, w.path);
     expect(existsSync(w.path)).toBe(false);
   });
+  it("refuses to delete the main worktree or a directory that is not a worktree", async () => {
+    const { root, repo } = repoPair();
+    await expect(removeWorktree(repo, repo)).rejects.toThrow();
+    expect(existsSync(join(repo, "a.txt"))).toBe(true);
+    const plain = join(root, "not-a-worktree");
+    mkdirSync(plain);
+    writeFileSync(join(plain, "keep.txt"), "k\n");
+    await expect(removeWorktree(repo, plain)).rejects.toThrow();
+    expect(existsSync(join(plain, "keep.txt"))).toBe(true);
+  });
+  it("lists and patches paths with spaces, quotes and non-ASCII characters unquoted", async () => {
+    const { repo, worktrees } = repoPair();
+    const w = await ensureWorktree(repo, worktrees, 11);
+    writeFileSync(join(w.path, 'q"uote.txt'), "q\n");
+    git(w.path, "add", 'q"uote.txt');
+    git(w.path, "commit", "-q", "-m", "q");
+    writeFileSync(join(w.path, "sp ace.txt"), "s\n");
+    writeFileSync(join(w.path, "café.txt"), "c\n");
+    expect(await diffFilesAgainstBase(w.path)).toEqual(['café.txt', 'q"uote.txt', "sp ace.txt"].sort());
+    const before = git(w.path, "status", "--porcelain", "-z");
+    const patch = await uncommittedPatch(w.path);
+    expect(patch).toContain("café.txt");
+    expect(patch).toContain("sp ace.txt");
+    expect(git(w.path, "status", "--porcelain", "-z")).toBe(before);
+  });
+  it("rethrows a non-conflict rebase failure and leaves the tree untouched", async () => {
+    const { repo, worktrees } = repoPair();
+    const w = await ensureWorktree(repo, worktrees, 12);
+    writeFileSync(join(repo, "c.txt"), "c\n");
+    git(repo, "add", "c.txt");
+    git(repo, "commit", "-q", "-m", "c");
+    git(repo, "push", "-q", "origin", "main");
+    git(w.path, "fetch", "-q", "origin");
+    writeFileSync(join(w.path, "a.txt"), "changed\n");
+    await expect(rebaseOntoMain(w.path)).rejects.toThrow(/unstaged changes/);
+    expect(git(w.path, "status", "--porcelain").trim()).toBe("M a.txt");
+    expect(readFileSync(join(w.path, "a.txt"), "utf8")).toBe("changed\n");
+  });
 });
 
 describe("linkProfileSkills (AC-26)", () => {
@@ -91,5 +129,19 @@ describe("linkProfileSkills (AC-26)", () => {
     expect(exclude).toContain(".claude/skills");
     expect(exclude).toContain(".agents/skills");
     expect(git(w.path, "status", "--porcelain").trim()).toBe("");
+  });
+  it("replaces its own symlink but refuses to delete a real directory at the link path", async () => {
+    const { repo, worktrees } = repoPair();
+    const profile = { name: "backend", dir: "/p", skillsDir: join(repo, "agents-skills"), instructions: "", tools: [] };
+    const w = await ensureWorktree(repo, worktrees, 13);
+    await linkProfileSkills(w.path, "claude", profile);
+    const link = await linkProfileSkills(w.path, "claude", profile);
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    const w2 = await ensureWorktree(repo, worktrees, 14);
+    const real = join(w2.path, ".claude", "skills");
+    mkdirSync(real, { recursive: true });
+    writeFileSync(join(real, "SKILL.md"), "tracked\n");
+    await expect(linkProfileSkills(w2.path, "claude", profile)).rejects.toThrow(real);
+    expect(readFileSync(join(real, "SKILL.md"), "utf8")).toBe("tracked\n");
   });
 });
