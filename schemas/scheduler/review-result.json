@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "review-result.json",
+  "type": "object",
+  "required": ["verdict", "findings_on_pr", "declined_to_judge"],
+  "additionalProperties": false,
+  "properties": {
+    "verdict": { "enum": ["approve", "changes_requested", "escalate"] },
+    "findings_on_pr": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["criterion", "file", "line", "scenario"],
+        "additionalProperties": false,
+        "properties": {
+          "criterion": { "type": "string", "pattern": "^(AC-[0-9]+|rule:.+)$" },
+          "file": { "type": "string", "minLength": 1 },
+          "line": { "type": "integer", "minimum": 0 },
+          "scenario": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "declined_to_judge": { "type": "array", "items": { "type": "string" } },
+    "findings": { "type": "array", "items": { "$ref": "finding.json" } }
+  }
+}

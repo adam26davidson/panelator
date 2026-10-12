@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "implement-result.json",
+  "type": "object",
+  "required": ["pr_number", "head_sha", "tasks_done"],
+  "additionalProperties": false,
+  "properties": {
+    "pr_number": { "type": "integer", "minimum": 1 },
+    "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "tasks_done": { "type": "array", "items": { "type": "string" } },
+    "findings": { "type": "array", "items": { "$ref": "finding.json" } }
+  }
+}

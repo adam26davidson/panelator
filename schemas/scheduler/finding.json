@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "finding.json",
+  "title": "Finding record (process-spec 4.2)",
+  "type": "object",
+  "required": ["what", "where", "evidence", "noticed_how"],
+  "additionalProperties": false,
+  "properties": {
+    "what": { "type": "string", "minLength": 1 },
+    "where": { "type": "string", "minLength": 1 },
+    "evidence": { "type": "string", "minLength": 1 },
+    "suspected_cause": { "type": "string" },
+    "noticed_how": { "type": "string", "minLength": 1 },
+    "security": { "type": "boolean" }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fix-result.json",
+  "type": "object",
+  "required": ["head_sha", "addressed"],
+  "additionalProperties": false,
+  "properties": {
+    "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "addressed": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+    "findings": { "type": "array", "items": { "$ref": "finding.json" } }
+  }
+}
