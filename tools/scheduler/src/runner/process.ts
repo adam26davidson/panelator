@@ -61,6 +61,7 @@ export function spawnBounded(o: SpawnOptions): Promise<SpawnResult> {
     let timedOut = false;
     let killedByEvent = false;
     let killing = false;
+    let killTimer: NodeJS.Timeout | undefined;
     const grace = o.graceMs ?? 10_000;
 
     const kill = (why: "timeout" | "event") => {
@@ -69,7 +70,8 @@ export function spawnBounded(o: SpawnOptions): Promise<SpawnResult> {
       if (why === "timeout") timedOut = true;
       else killedByEvent = true;
       killGroup(pgid, "SIGTERM");
-      setTimeout(() => killGroup(pgid, "SIGKILL"), grace).unref();
+      killTimer = setTimeout(() => killGroup(pgid, "SIGKILL"), grace);
+      killTimer.unref();
     };
 
     const timer = setTimeout(() => kill("timeout"), o.timeoutMs);
@@ -80,10 +82,12 @@ export function spawnBounded(o: SpawnOptions): Promise<SpawnResult> {
     child.stderr.on("data", (c: Buffer) => o.onStderrChunk?.(c));
     child.on("error", (e) => {
       clearTimeout(timer);
+      clearTimeout(killTimer);
       reject(e);
     });
     child.on("close", async (exitCode, signal) => {
       clearTimeout(timer);
+      clearTimeout(killTimer);
       if (killing || isProcessGroupAlive(pgid)) {
         killGroup(pgid, "SIGKILL");
         await waitGroupGone(pgid, 30_000);

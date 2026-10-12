@@ -51,4 +51,13 @@ describe("spawnBounded", () => {
     expect(r.killedByEvent).toBe(true);
     expect(r.timedOut).toBe(false);
   }, 20_000);
+  it("escalates to SIGKILL after the grace period when the leader ignores SIGTERM", async () => {
+    const r = await spawnBounded({
+      argv: [process.execPath, "-e", "process.on('SIGTERM',()=>{}); setInterval(()=>{}, 1000)"], env: {}, cwd: tmpdir(),
+      timeoutMs: 500, graceMs: 400, onStdoutChunk: () => {},
+    });
+    expect(r.timedOut).toBe(true);
+    expect(r.signal).toBe("SIGKILL");
+    expect(isProcessGroupAlive(r.pgid)).toBe(false);
+  }, 20_000);
 });
