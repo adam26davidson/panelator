@@ -25,6 +25,10 @@ function run(state: ChainState, stage: AgentStageName, extra: Partial<Extract<Ac
   return { state: { ...state, ...patch, stage, attempt, resumeStage: null }, actions: [{ type: "run_stage", stage, attempt, ...extra }] };
 }
 
+function reviewProfile(state: ChainState): { profile?: "security" } {
+  return state.sensitive ? { profile: "security" } : {};
+}
+
 function needsHuman(state: ChainState, gate: string, text: string, extraLabels: string[] = []): Step {
   return {
     state: { ...state, stage: "needs-human" },
@@ -69,7 +73,7 @@ export function transition(state: ChainState, event: ChainEvent): Step {
         if (state.implementFailures === 0) return run(state, "implement", {}, { implementFailures: 1, attempt: 2 });
         return needsHuman(state, "implement", `implement failed twice: ${event.reason}`);
       case "review":
-        if (state.attempt === 1) return run(state, "review", {}, { attempt: 2 });
+        if (state.attempt === 1) return run(state, "review", reviewProfile(state), { attempt: 2 });
         return needsHuman(state, "review", `review failed twice: ${event.reason}`);
       case "fix":
         return needsHuman(state, "fix", `fix failed: ${event.reason}`);
@@ -85,7 +89,7 @@ export function transition(state: ChainState, event: ChainEvent): Step {
     case "waiting":
       if (event.type === "start" && state.resumeStage) {
         const extra = state.resumeStage === "fix" && state.pendingFixInput ? { fixInput: state.pendingFixInput }
-          : state.resumeStage === "review" && state.sensitive ? { profile: "security" as const } : {};
+          : state.resumeStage === "review" ? reviewProfile(state) : {};
         return run(state, state.resumeStage, extra, { attempt: state.attempt });
       }
       break;
@@ -125,7 +129,7 @@ export function transition(state: ChainState, event: ChainEvent): Step {
         const checked = { ...state, sensitive: event.sensitive };
         if (event.status === "pending") return { state: checked, actions: [{ type: "wait", seconds: PENDING_WAIT_S }] };
         if (event.status === "failed") return toFix(checked, `A required check failed:\n${event.log ?? "(no log excerpt)"}`);
-        return run(checked, "review", checked.sensitive ? { profile: "security" } : {});
+        return run(checked, "review", reviewProfile(checked));
       }
       break;
     case "review":

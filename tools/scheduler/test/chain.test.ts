@@ -106,6 +106,10 @@ describe("chain: review (AC-11, AC-13)", () => {
     expect(r2.state.stage).toBe("needs-human");
     expect(r2.actions.find((a) => a.type === "merge")).toBeUndefined();
   });
+  it("a failed sensitive review retries once with the security profile (AC-11)", () => {
+    const r = transition(at("review", { sensitive: true }), { type: "stage_failed", stage: "review", reason: "timeout" });
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 2, profile: "security" }]);
+  });
   it("escalate goes to needs-human", () => {
     const r = transition(at("review"), { type: "stage_ok", stage: "review", result: { ...approve, verdict: "escalate" }, security: false });
     expect(r.state.stage).toBe("needs-human");
