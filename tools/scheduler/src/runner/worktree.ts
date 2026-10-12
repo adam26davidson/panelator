@@ -69,9 +69,10 @@ export async function uncommittedPatch(worktree: string): Promise<string> {
   }
 }
 
-/** Drops every uncommitted change (tracked edits and untracked files); HEAD is untouched. Save a patch first. */
+/** Drops every uncommitted change (staged, unstaged and untracked); HEAD is untouched. Save a patch first. */
 export async function discardUncommitted(worktree: string): Promise<void> {
-  await git(worktree, "checkout", "--", ".");
+  // reset --hard, not checkout -- .: checkout restores from the index and would leave staged changes behind
+  await git(worktree, "reset", "-q", "--hard");
   await git(worktree, "clean", "-fd");
 }
 

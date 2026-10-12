@@ -9,7 +9,7 @@ import { agentsDir, defaultConfigPath, loadConfig } from "../src/config.ts";
 import { GitHubClient } from "../src/github/client.ts";
 import { ensureWorktree } from "../src/runner/worktree.ts";
 import { loadStageDefinitions } from "../src/stages/definition.ts";
-import { listClaims, writeClaim, type Claim } from "../src/state/claims.ts";
+import { listClaims, readClaim, writeClaim, type Claim } from "../src/state/claims.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import type { Notification } from "../src/notify/types.ts";
 import { mockGitHub, type Route } from "./helpers/mock-github.ts";
@@ -37,7 +37,7 @@ function scriptedAdapter(results: Record<string, unknown[]>): Adapter & { ran: s
   };
 }
 
-function ghRoutes(sha: string, over: { checks?: unknown[]; mergeable?: boolean; issueLabels?: string[] } = {}): Route[] {
+function ghRoutes(sha: string, over: { checks?: unknown[]; mergeable?: boolean; merged?: boolean; issueLabels?: string[] } = {}): Route[] {
   const labels = [...["validated", "in-progress", "class:product"], ...(over.issueLabels ?? [])].map((name) => ({ name }));
   return [
     { method: "GET", path: /^\/repos\/o\/r\/issues\/7$/, reply: () => ({ body: { number: 7, title: "Thing", body: "Spec: specs/010-thing/spec.md", labels, updated_at: "2026-10-12T00:00:00Z" } }) },
@@ -45,7 +45,7 @@ function ghRoutes(sha: string, over: { checks?: unknown[]; mergeable?: boolean; 
     { method: "POST", path: /^\/repos\/o\/r\/issues\/7\/labels$/, reply: () => ({ body: [] }) },
     { method: "DELETE", path: /^\/repos\/o\/r\/issues\/7\/labels\/[^/]+$/, reply: () => ({ body: {} }) },
     { method: "POST", path: /^\/repos\/o\/r\/issues\/7\/comments$/, reply: () => ({ status: 201, body: {} }) },
-    { method: "GET", path: /^\/repos\/o\/r\/pulls\/9$/, reply: () => ({ body: { number: 9, head: { sha }, html_url: "u", mergeable: over.mergeable ?? true, mergeable_state: "clean", merged: false, state: "open" } }) },
+    { method: "GET", path: /^\/repos\/o\/r\/pulls\/9$/, reply: () => ({ body: { number: 9, head: { sha }, html_url: "u", mergeable: over.mergeable ?? true, mergeable_state: "clean", merged: over.merged ?? false, state: over.merged ? "closed" : "open" } }) },
     { method: "GET", path: /^\/repos\/o\/r\/commits\/[0-9a-f]+\/check-runs$/, reply: () => ({ body: { total_count: 1, check_runs: over.checks ?? [{ id: 1, name: "test", status: "completed", conclusion: "success" }] } }) },
     { method: "PUT", path: /^\/repos\/o\/r\/pulls\/9\/merge$/, reply: () => ({ body: { merged: true, message: "ok" } }) },
   ];
@@ -155,5 +155,26 @@ describe("driveChain", () => {
     expect(gh.calls.filter((c) => c.method === "POST" && c.url.endsWith("/labels")).map((c) => c.body)).toContainEqual({ labels: ["security-review", "needs-human"] });
     expect(notifications).toEqual([expect.objectContaining({ gate: "sensitive-path", label: "needs-human" })]);
     expect(await listClaims(paths)).toEqual([]);
+  }, 60_000);
+
+  it("persists a cleared run_id when a stage throws, so liveness can still expire the claim (AC-15)", async () => {
+    const { deps, claim, paths } = await setup(() => ({}));
+    const planning = (await step(deps, claim)).claim;
+    expect(planning.state.stage).toBe("plan");
+    const broken = scriptedAdapter({});
+    deps.adapterFor = () => ({ ...broken, buildCommand: () => { throw new Error("boom"); } });
+    await expect(step(deps, planning)).rejects.toThrow("boom");
+    expect((await readClaim(paths, 7))?.run_id).toBeNull();
+  }, 60_000);
+
+  it("treats an already merged PR as merged without another merge PUT (crash after merge)", async () => {
+    const { deps, claim, gh, paths, sha } = await setup(() => ({}), (sha) => ghRoutes(sha, { merged: true }));
+    const atMerge: Claim = { ...claim, state: { ...claim.state, stage: "merge", pr: { number: 9, head_sha: sha } } };
+    await writeClaim(paths, atMerge);
+    const r = await step(deps, atMerge);
+    expect(r.claim.state.stage).toBe("done");
+    expect(r.status).toBe("ended");
+    expect(gh.calls.find((c) => c.method === "PUT")).toBeUndefined();
+    expect(readFileSync(join(paths.root, "merges.jsonl"), "utf8")).toContain('"pr":9');
   }, 60_000);
 });

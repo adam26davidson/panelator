@@ -117,7 +117,11 @@ describe("worktrees (AC-16)", () => {
     mkdirSync(join(w.path, "newdir"));
     writeFileSync(join(w.path, "newdir", "u.txt"), "u\n");
     writeFileSync(join(w.path, "top.txt"), "t\n");
+    writeFileSync(join(w.path, "staged.txt"), "s\n");
+    git(w.path, "add", "a.txt", "staged.txt");
     await discardUncommitted(w.path);
+    expect(git(w.path, "status", "--porcelain").trim()).toBe("");
+    expect(existsSync(join(w.path, "staged.txt"))).toBe(false);
     expect(git(w.path, "status", "--porcelain", "--untracked-files=all").trim()).toBe("");
     expect(readFileSync(join(w.path, "a.txt"), "utf8")).toBe("a\n");
     expect(existsSync(join(w.path, "newdir"))).toBe(false);

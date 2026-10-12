@@ -128,7 +128,9 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
         { def, input, issue: claim.issue, attempt, worktree: claim.worktree, profile, model, harness },
       );
     } finally {
+      // Persisted, not only in memory: a throw here or later in the step must not leave a run "in flight" on disk (AC-15).
       claim.run_id = null;
+      await writeClaim(deps.paths, { ...claim, run_id: null, last_activity_at: deps.now().toISOString() });
     }
   };
 
@@ -174,9 +176,12 @@ async function mergeEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> {
   const prLabels = await deps.gh.issueLabels(pr.number);
   if (labels.includes(SECURITY_REVIEW_LABEL) || prLabels.includes(SECURITY_REVIEW_LABEL)) return { type: "merge_blocked", reason: "security-review label present" };
   const info = await deps.gh.pullRequest(pr.number);
-  if (info.mergeable === false) return { type: "merge_result", status: "not_mergeable", detail: info.mergeable_state };
-  const r = await deps.gh.mergePullRequest(pr.number, info.head_sha);
-  if (!r.merged) return { type: "merge_result", status: "not_mergeable", detail: r.message };
+  // Already merged (a crash between the merge PUT and writeClaim): record it and finish without merging again.
+  if (!info.merged) {
+    if (info.mergeable === false) return { type: "merge_result", status: "not_mergeable", detail: info.mergeable_state };
+    const r = await deps.gh.mergePullRequest(pr.number, info.head_sha);
+    if (!r.merged) return { type: "merge_result", status: "not_mergeable", detail: r.message };
+  }
   const cls = classOf({ number: claim.issue, title: "", author: "", body: "", labels, labelEvents: [], createdAt: "" }, deps.cfg.labels);
   await appendMerge(deps.paths, { issue: claim.issue, pr: pr.number, cls, at: deps.now().toISOString() });
   return { type: "merge_result", status: "merged" };
@@ -226,6 +231,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
   return status;
 }
 
+/** Errors propagate to the caller; the service loop (Task 7) catches and logs them per chain. */
 export async function step(deps: DriverDeps, claim: Claim): Promise<{ claim: Claim; status: StepStatus }> {
   const stage = claim.state.stage;
   if (ENDED.includes(stage)) return { claim, status: "ended" };
