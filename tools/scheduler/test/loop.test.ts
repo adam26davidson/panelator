@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
@@ -158,6 +158,26 @@ describe("Scheduler.tick", () => {
     const t = await s.tick();
     expect(t.errors[0]).toMatch(/freshness/);
     expect(t.claimed).toEqual([1]);
+  }, 30_000);
+  it("writes the claim file before the claim label, so a failed claim leaves no orphaned in-progress (review fix 1)", async () => {
+    const { s, gh, paths } = await setup(routes([issue(1)]));
+    rmSync(paths.worktrees, { recursive: true, force: true });
+    writeFileSync(paths.worktrees, "not a directory\n");
+    const t = await s.tick();
+    expect(t.errors[0]).toMatch(/claim 1/);
+    expect(t.claimed).toEqual([]);
+    expect(gh.calls.find((c) => c.method === "POST" && c.url === "/repos/o/r/issues/1/labels")).toBeUndefined();
+    expect(await listClaims(paths)).toEqual([]);
+  }, 30_000);
+
+  it("claims nothing once a restart is pending and requests the restart from the idle tick (review fix 2, AC-17)", async () => {
+    const { s, deps, gh, started } = await setup(routes([issue(1)]));
+    deps.fastForward = async () => ({ moved: true, changedPaths: ["tools/scheduler/src/x.ts"] });
+    const t = await s.tick();
+    expect(t.restartPending).toBe(true);
+    expect(t.claimed).toEqual([]);
+    expect(gh.calls.find((c) => c.method === "POST" && c.url === "/repos/o/r/issues/1/labels")).toBeUndefined();
+    expect(started).toContain(-1);
   }, 30_000);
 });
 

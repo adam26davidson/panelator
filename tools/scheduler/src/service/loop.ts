@@ -76,7 +76,8 @@ export class Scheduler {
         this.#active.delete(claim.issue);
         if (this.#active.size === 0) {
           d.inhibitor.release();
-          if (this.#restartPending) d.requestRestart();
+          // Mid-tick, the tick's own finally requests the restart once it is done.
+          if (this.#restartPending && !this.#ticking) d.requestRestart();
         }
       });
     this.#active.set(claim.issue, p);
@@ -117,7 +118,6 @@ export class Scheduler {
         if (ff.moved && schedulerChanged(ff.changedPaths)) {
           this.#restartPending = true;
           info.restartPending = true;
-          if (this.#active.size === 0) d.requestRestart();
         }
       } catch (e) {
         info.errors.push(`freshness: ${(e as Error).message}`);
@@ -128,7 +128,8 @@ export class Scheduler {
         if (this.#active.has(claim.issue)) continue;
         if (await this.#liveness(claim, info.errors)) info.released.push(claim.issue);
       }
-      if (this.#stopping) return info;
+      // A pending self-update stops resuming and claiming, like a stop, so the restart is not held up by new chains.
+      if (this.#stopping || this.#restartPending) return info;
 
       for (const claim of await listClaims(d.paths)) {
         if (this.#active.has(claim.issue)) continue;
@@ -167,13 +168,15 @@ export class Scheduler {
       for (const issue of ranked.slice(0, free)) {
         if (this.#stopping) break;
         try {
-          await d.gh.addLabels(issue.number, [CLAIM_LABEL]);
+          // Claim file before the label: a failure in between leaves a claim without in-progress, which the
+          // next tick's stale-claim check drops (GitHub wins), never an in-progress label with no claim file.
           const wt = await ensureWorktree(d.repoDir, d.paths.worktrees, issue.number);
           const claim: Claim = {
             issue: issue.number, slot: this.#active.size, state: initialChainState(issue.number), worktree: wt.path,
             started_at: d.now().toISOString(), last_activity_at: d.now().toISOString(), run_id: null,
           };
           await writeClaim(d.paths, claim);
+          await d.gh.addLabels(issue.number, [CLAIM_LABEL]);
           info.claimed.push(issue.number);
           this.#start(claim);
         } catch (e) {
@@ -184,6 +187,7 @@ export class Scheduler {
     } finally {
       this.#ticking = false;
       d.serviceLog.tick({ ...info, active: [...this.#active.keys()] });
+      if (this.#restartPending && this.#active.size === 0) d.requestRestart();
     }
   }
 
