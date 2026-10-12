@@ -70,6 +70,20 @@ describe("worktrees (AC-16)", () => {
     expect(patch).toContain("e.txt");
     expect(git(w.path, "status", "--porcelain").trim()).toBe("?? e.txt");
   });
+  it("builds a patch that git apply accepts with a binary file among the changes", async () => {
+    const { repo, worktrees } = repoPair();
+    const w = await ensureWorktree(repo, worktrees, 12);
+    const bytes = Buffer.from([0x00, 0xff, 0x10, 0x80]);
+    writeFileSync(join(w.path, "blob.bin"), bytes);
+    writeFileSync(join(w.path, "notes.txt"), "n\n");
+    const patch = await uncommittedPatch(w.path);
+    const fresh = await ensureWorktree(repo, worktrees, 13);
+    const patchFile = join(worktrees, "release.patch");
+    writeFileSync(patchFile, patch);
+    git(fresh.path, "apply", patchFile);
+    expect(readFileSync(join(fresh.path, "blob.bin")).equals(bytes)).toBe(true);
+    expect(readFileSync(join(fresh.path, "notes.txt"), "utf8")).toBe("n\n");
+  });
   it("removes a worktree", async () => {
     const { repo, worktrees } = repoPair();
     const w = await ensureWorktree(repo, worktrees, 9);

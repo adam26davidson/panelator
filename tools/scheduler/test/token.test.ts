@@ -31,7 +31,8 @@ describe("gh shim", () => {
     mkdirSync(fakeBin);
     writeFileSync(join(fakeBin, "gh"), "#!/bin/sh\necho \"token=$GH_TOKEN args=$*\"\n");
     chmodSync(join(fakeBin, "gh"), 0o755);
-    const env = { ...process.env, ...stageEnv(binDir, p.root), PATH: `${binDir}:${fakeBin}:/usr/bin:/bin` };
+    // an ambient token in the scheduler's env is scrubbed; the shim's own export wins
+    const env = { ...process.env, GH_TOKEN: "ambient", ...stageEnv(binDir, p.root), PATH: `${binDir}:${fakeBin}:/usr/bin:/bin` };
     const out = execFileSync("gh", ["pr", "list"], { env, encoding: "utf8" });
     expect(out.trim()).toBe("token=ghs_secret args=pr list");
   });
@@ -83,5 +84,22 @@ describe("git credential helper", () => {
     expect(e.GIT_CONFIG_VALUE_0).toBe("");
     expect(e.GIT_CONFIG_KEY_1).toBe("credential.helper");
     expect(e.GIT_CONFIG_VALUE_1).toBe("/b/git-credential-panelator.ts");
+    expect(e.GIT_SSH_COMMAND).toBe("/bin/false");
+    expect(e.SSH_AUTH_SOCK).toBe("");
+    expect(e.GH_TOKEN).toBe("");
+    expect(e.GITHUB_TOKEN).toBe("");
+    expect(e.GIT_AUTHOR_NAME).toBeUndefined();
+  });
+  it("stageEnv pins the bot identity on stage commits when given one", () => {
+    const repo = mkdtempSync(join(tmpdir(), "ident-"));
+    execFileSync("git", ["init", "-q", repo]);
+    writeFileSync(join(repo, "f.txt"), "f\n");
+    execFileSync("git", ["add", "f.txt"], { cwd: repo });
+    const identity = { name: "panelator-pipeline[bot]", email: "panelator-pipeline[bot]@users.noreply.github.com" };
+    execFileSync("git", ["commit", "-q", "-m", "f"], { cwd: repo, env: { ...process.env, ...stageEnv("/b", "/s", identity) } });
+    expect(execFileSync("git", ["log", "-1", "--format=%an <%ae>"], { cwd: repo, encoding: "utf8" }).trim())
+      .toBe("panelator-pipeline[bot] <panelator-pipeline[bot]@users.noreply.github.com>");
+    expect(execFileSync("git", ["log", "-1", "--format=%cn <%ce>"], { cwd: repo, encoding: "utf8" }).trim())
+      .toBe("panelator-pipeline[bot] <panelator-pipeline[bot]@users.noreply.github.com>");
   });
 });

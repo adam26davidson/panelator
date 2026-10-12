@@ -48,6 +48,9 @@ describe("runStage", () => {
     expect(out.usage).toMatchObject({ run_id: out.runId, issue: 7, stage: "plan", attempt: 1, outcome: "ok", harness: "fake", events_path: `runs/${out.runId}/events.jsonl` });
     expect(existsSync(join(paths.usage, `${out.runId}.json`))).toBe(true);
     expect(out.findings).toEqual({ queued: 1, rejected: [expect.stringContaining("rejected")] });
+    expect(out.ioErrors).toEqual([]);
+    const outcome = JSON.parse(readFileSync(join(dir, "outcome.json"), "utf8"));
+    expect(outcome).toMatchObject({ outcome: "ok", reason: null, spawnError: null, ioErrors: [], findings: out.findings });
   });
   it("fails with result: invalid when the result file is missing", async () => {
     const { paths, ctx, req } = setup({});
@@ -63,6 +66,11 @@ describe("runStage", () => {
     const out = await runStage(ctx, req);
     expect(out.outcome).toBe("failed");
     expect(out.resultErrors.join(" ")).toMatch(/domain|tasks/);
+    const outcomePath = join(paths.runs, out.runId, "outcome.json");
+    expect(existsSync(outcomePath)).toBe(true);
+    const outcome = JSON.parse(readFileSync(outcomePath, "utf8"));
+    expect(outcome.resultErrors).toEqual(out.resultErrors);
+    expect(outcome).toMatchObject({ outcome: "failed", reason: "result: invalid", ioErrors: [] });
   });
   it("records failed on a non-zero exit", async () => {
     const { paths, ctx, req } = setup({ result: goodPlan, exitCode: 1 });
@@ -96,6 +104,9 @@ describe("runStage", () => {
     expect(out.reason).toMatch(/^spawn:/);
     expect(out.result).toBeNull();
     expect(existsSync(join(paths.runs, out.runId, "usage.json"))).toBe(true);
+    const outcome = JSON.parse(readFileSync(join(paths.runs, out.runId, "outcome.json"), "utf8"));
+    expect(typeof outcome.spawnError).toBe("string");
+    expect(outcome.spawnError.length).toBeGreaterThan(0);
   });
   it("stops the run at max_turns and records bounds, ignoring any result (AC-23)", async () => {
     const { paths, ctx, req } = setup({ result: goodPlan, sleepMs: 2000, stream: "pi-tool-calls.jsonl", turnEndType: "turn_end" });

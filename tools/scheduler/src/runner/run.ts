@@ -23,6 +23,8 @@ export interface RunnerContext {
   now?: () => Date;
   sessionId?: () => string;
   binDir: string;
+  /** Author and committer identity for stage commits (the App's bot user); supplied by plan 3. */
+  gitIdentity?: { name: string; email: string };
 }
 
 export interface StageRequest {
@@ -48,6 +50,8 @@ export interface StageOutcome {
   eventsPath: string;
   /** Lines of events.jsonl that did not parse (e.g. a partial tail from a killed process). */
   malformed: string[];
+  /** Write errors on events.jsonl or stderr.log; also appended to reason and persisted in outcome.json. */
+  ioErrors: string[];
 }
 
 const rec = (e: unknown): Record<string, unknown> => (typeof e === "object" && e !== null ? (e as Record<string, unknown>) : {});
@@ -102,7 +106,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
     try {
       spawned = await spawnBounded({
         argv: cmd.argv,
-        env: { ...cmd.env, ...stageEnv(ctx.binDir, ctx.paths.root) },
+        env: { ...cmd.env, ...stageEnv(ctx.binDir, ctx.paths.root, ctx.gitIdentity) },
         cwd: req.worktree,
         timeoutMs: req.def.bounds.timeout_min * 60_000,
         scope: { enabled: ctx.systemdScope, unitName: `panelator-stage-${runId}`, systemdRunBin: ctx.systemdRunBin },
@@ -176,7 +180,16 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   };
   await writeUsageRecord(ctx.paths, usage);
 
-  return { runId, outcome: judgement.outcome, reason: judgement.reason, result, resultErrors, judgement, usage, findings, eventsPath, malformed };
+  const ioMessages = ioErrors.map((e) => e.message);
+  let reason = judgement.reason;
+  if (ioMessages.length) reason = reason === null ? `io: ${ioMessages.join("; ")}` : `${reason}; io: ${ioMessages.join("; ")}`;
+  // AC-21/AC-22: the reason and errors behind the outcome are kept with the run, not only returned.
+  const persisted = {
+    outcome: judgement.outcome, reason, apiErrorStatus: judgement.apiErrorStatus, resultErrors, malformed, findings, spawnError, ioErrors: ioMessages,
+  };
+  await writeFile(join(dir, "outcome.json"), JSON.stringify(persisted, null, 2));
+
+  return { runId, outcome: judgement.outcome, reason, result, resultErrors, judgement, usage, findings, eventsPath, malformed, ioErrors: ioMessages };
 }
 
 /** Ends a write stream and waits for it to settle, whether it finishes or errors. */

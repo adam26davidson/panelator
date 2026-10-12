@@ -63,7 +63,7 @@ export async function uncommittedPatch(worktree: string): Promise<string> {
   const untracked = nulRecords((await git(worktree, "ls-files", "-z", "--others", "--exclude-standard")).stdout);
   if (untracked.length) await git(worktree, "add", "--intent-to-add", "--", ...untracked);
   try {
-    return (await git(worktree, "-c", "core.quotePath=false", "diff", "HEAD")).stdout;
+    return (await git(worktree, "-c", "core.quotePath=false", "diff", "--binary", "HEAD")).stdout;
   } finally {
     if (untracked.length) await git(worktree, "reset", "-q", "--", ...untracked);
   }
