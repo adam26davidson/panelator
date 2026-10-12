@@ -1,0 +1,4 @@
+name: security
+tools: [Read, Glob, Grep, Bash]
+credential_hook: null
+review_criteria: review-criteria.md

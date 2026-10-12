@@ -1,0 +1,11 @@
+# Globs, one per line, matched against repo-relative paths (process-spec section 5).
+# dir/ matches everything under dir; * within a segment; ** across segments.
+backend/**/auth/**
+backend/**/sandbox/**
+backend/**/provisioning/**
+backend/**/relay/**
+firmware/**/provisioning/**
+firmware/**/wasm/**
+tools/scheduler/
+agents/
+.github/
