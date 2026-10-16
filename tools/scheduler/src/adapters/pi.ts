@@ -17,7 +17,8 @@ const PI_TOOL: Record<string, string> = { read: "read", edit: "edit", write: "wr
 const READ_ONLY_TOOLS = ["read", "grep", "find"];
 
 export function piToolNames(tools: string[]): string[] {
-  const mapped = tools.map((t) => PI_TOOL[t.toLowerCase()]).filter((t): t is string => t !== undefined);
+  // Own keys only: a profile naming `toString` or `constructor` must be dropped, not resolved through Object.prototype.
+  const mapped = tools.map((t) => t.toLowerCase()).filter((k) => Object.hasOwn(PI_TOOL, k)).map((k) => PI_TOOL[k]);
   return [...new Set(mapped)];
 }
 

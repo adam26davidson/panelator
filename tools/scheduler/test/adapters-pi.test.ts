@@ -37,6 +37,7 @@ describe("piAdapter.buildCommand (AC-19)", () => {
     expect(piToolNames(["Read", "Edit", "Write", "Bash", "Glob", "Grep"])).toEqual(["read", "edit", "write", "bash", "find", "grep"]);
     expect(piToolNames(["GREP", "glob", "WebFetch", "TodoWrite", "Read"])).toEqual(["grep", "find", "read"]);
     expect(piToolNames(["Read", "read", "Grep"])).toEqual(["read", "grep"]);
+    expect(piToolNames(["Read", "toString", "constructor", "__proto__", "hasOwnProperty"])).toEqual(["read"]);
   });
   it("passes only a read-only mapped list for plan and review, falling back to read,grep,find (AC-2)", () => {
     for (const stage of ["plan", "review"] as const) {
