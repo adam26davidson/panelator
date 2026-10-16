@@ -1,9 +1,10 @@
 export interface Call { method: string; url: string; body: unknown }
 export type Route = { method: string; path: RegExp; reply: (m: RegExpExecArray, body: unknown, url: URL) => { status?: number; body: unknown; headers?: Record<string, string> } };
 
-/** A fetch that answers from a route table and records every call. Unmatched routes return 404 with the url. */
-export function mockGitHub(routes: Route[]): { fetch: typeof fetch; calls: Call[]; routes: Route[] } {
+/** A fetch that answers from a route table and records every call. Unmatched routes return 404 with the url and are listed in `unmatched`. */
+export function mockGitHub(routes: Route[]): { fetch: typeof fetch; calls: Call[]; routes: Route[]; unmatched: string[] } {
   const calls: Call[] = [];
+  const unmatched: string[] = [];
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input instanceof Request ? input.url : input));
     const method = (init?.method ?? "GET").toUpperCase();
@@ -18,11 +19,12 @@ export function mockGitHub(routes: Route[]): { fetch: typeof fetch; calls: Call[
         return response;
       }
     }
+    unmatched.push(`${method} ${url.pathname}`);
     const res = new Response(JSON.stringify({ message: `mock: no route for ${method} ${url.pathname}` }), { status: 404, headers: { "content-type": "application/json" } });
     Object.defineProperty(res, "url", { value: url.href });
     return res;
   }) as typeof fetch;
-  return { fetch: fetchFn, calls, routes };
+  return { fetch: fetchFn, calls, routes, unmatched };
 }
 
 export const tokenRoute: Route = {

@@ -63,6 +63,7 @@ describe("end to end: one issue through the whole chain with the fake adapter an
     ];
     const gh = mockGitHub(routes);
     const notifications: Notification[] = [];
+    const logs: Record<string, unknown>[] = [];
     const adapter = scripted({
       plan: [{ verdict: "ready", domain: "backend", tasks: [{ id: "T1", description: "d", files: ["a.txt"] }], findings: [{ what: "w", where: "a.txt:1", evidence: "e", noticed_how: "n" }] }],
       implement: [{ pr_number: 9, head_sha: SHA, tasks_done: ["T1"] }],
@@ -73,7 +74,7 @@ describe("end to end: one issue through the whole chain with the fake adapter an
       cfg, paths, gh: new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r"),
       notifier: { notify: async (n) => { notifications.push(n); } },
       stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: pair.repo, binDir: join(pair.root, "bin"),
-      adapterFor: () => adapter, systemdScope: false, now: () => new Date(), log: () => {},
+      adapterFor: () => adapter, systemdScope: false, now: () => new Date(), log: (rec) => { logs.push(rec); },
       fetchOrigin: async () => { git(pair.repo, "fetch", "-q", "origin"); },
       botLogin: "panelator-pipeline[bot]", serviceLog: new ServiceLog(paths.serviceLog), inhibitor: new SleepInhibitor({ enabled: false }),
       fastForward: async () => ({ moved: false, changedPaths: [] }), sleep: async () => {}, monotonic: () => 0, requestRestart: () => {},
@@ -84,6 +85,8 @@ describe("end to end: one issue through the whole chain with the fake adapter an
     // wait for the background chain to finish
     for (let i = 0; i < 200 && s.active > 0; i++) await new Promise((r) => setTimeout(r, 100));
     expect(s.active).toBe(0);
+    expect(logs.filter((r) => r.kind === "error")).toEqual([]);
+    expect(gh.unmatched).toEqual([]);
 
     expect(adapter.ran).toEqual(["plan", "implement", "review"]);
     expect(labelLog).toEqual(["+in-progress", "-in-progress"]);
