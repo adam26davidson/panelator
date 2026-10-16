@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -34,7 +34,37 @@ function setup(opts: { result?: unknown; exitCode?: number; sleepMs?: number; ti
   return { paths, ctx, req, root };
 }
 
+/** A systemd-run stand-in that records its argv, then runs the command after `--`. */
+function argvCapturingSystemdRun(dir: string): { bin: string; argvFile: string } {
+  const bin = join(dir, "capture-systemd-run.mjs");
+  const argvFile = join(dir, "systemd-run-argv.json");
+  writeFileSync(bin, [
+    `#!${process.execPath}`,
+    `import { spawn } from "node:child_process";`,
+    `import { writeFileSync } from "node:fs";`,
+    `writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv));`,
+    `const argv = process.argv.slice(process.argv.indexOf("--") + 1);`,
+    `spawn(argv[0], argv.slice(1), { stdio: "inherit" }).on("exit", (code) => process.exit(code ?? 1));`,
+  ].join("\n") + "\n");
+  chmodSync(bin, 0o755);
+  return { bin, argvFile };
+}
+
 describe("runStage", () => {
+  it("passes RuntimeMaxSec of the stage timeout plus ten minutes to the scope (spec 003 AC-1)", async () => {
+    const { paths, ctx, req, root } = setup({ result: goodPlan, timeoutMin: 2 });
+    const shim = argvCapturingSystemdRun(root);
+    ctx.systemdScope = true;
+    ctx.systemdRunBin = shim.bin;
+    await ensureStateDirs(paths);
+    const out = await runStage(ctx, req);
+    expect(out.outcome).toBe("ok");
+    const argv: string[] = JSON.parse(readFileSync(shim.argvFile, "utf8"));
+    const props = argv.flatMap((a, i) => (argv[i - 1] === "-p" ? [a] : []));
+    expect(props).toEqual(["MemoryMax=50%", "OOMPolicy=continue", "KillMode=control-group", "RuntimeMaxSec=720"]);
+    expect(argv[argv.indexOf("--unit") + 1]).toMatch(/^panelator-stage-/);
+  });
+
   it("records a successful run: events, command, result, usage record, findings (AC-22, AC-24, AC-28)", async () => {
     const { paths, ctx, req } = setup({ result: goodPlan });
     await ensureStateDirs(paths);
