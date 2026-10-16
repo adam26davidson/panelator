@@ -9,7 +9,7 @@ import type { Notifier } from "../notify/types.ts";
 import { listProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
 import { retryDecision } from "../runner/retry.ts";
 import { runStage, type StageOutcome } from "../runner/run.ts";
-import { diffFilesAgainstBase, discardUncommitted, rebaseOntoMain, removeWorktree, resetToBase, syncToRemote, uncommittedPatch } from "../runner/worktree.ts";
+import { commitsPatch, diffFilesAgainstBase, discardUncommitted, rebaseOntoMain, removeWorktree, resetToBase, syncToRemote, uncommittedPatch } from "../runner/worktree.ts";
 import { specPathFromIssueBody } from "../spec/link.ts";
 import { parseSpec } from "../spec/parse.ts";
 import type { StageInput } from "../stages/prompt.ts";
@@ -105,23 +105,33 @@ function botIdentity(deps: DriverDeps): { name: string; email: string } {
 /**
  * Fetch, keep any leftovers as a patch, then put the worktree where the next step must see it: current
  * main while there is no PR (C1), otherwise the PR branch's remote head (R1), so the diffs the gates
- * judge (sensitivity, scope) are of the commit GitHub holds and not of a stale local copy.
+ * judge (sensitivity, scope) are of the commit GitHub holds and not of a stale local copy. Commits the reset
+ * or sync discards are saved as a patch first (spec 005), like the uncommitted leftovers.
  */
 async function syncWorktree(deps: DriverDeps, claim: Claim): Promise<void> {
   await deps.fetchOrigin();
   // A dirty tree makes the rebase or reset throw or lose work: keep the leftovers as a patch, then start from HEAD.
   const patch = await uncommittedPatch(claim.worktree);
   if (patch.trim()) {
-    const saved = await savePatch(deps.paths, claim.issue, patch, deps.now());
+    const saved = await savePatch(deps.paths, claim.issue, patch, deps.now(), "uncommitted");
     await discardUncommitted(claim.worktree);
     deps.log({ kind: "recovered-uncommitted", issue: claim.issue, patch: saved });
   }
   if (claim.state.pr === null) {
+    const commits = await commitsPatch(claim.worktree, "origin/main");
+    if (commits.trim()) {
+      const saved = await savePatch(deps.paths, claim.issue, commits, deps.now(), "commits");
+      deps.log({ kind: "recovered-commits", issue: claim.issue, patch: saved, base: "origin/main" });
+    }
     await resetToBase(claim.worktree);
     return;
   }
-  const sync = await syncToRemote(claim.worktree, `origin/issue-${claim.issue}`);
-  if (sync.moved) deps.log({ kind: "worktree-synced", issue: claim.issue, pr: claim.state.pr.number, dropped: sync.dropped });
+  const remoteBranch = `origin/issue-${claim.issue}`;
+  const sync = await syncToRemote(claim.worktree, remoteBranch);
+  if (!sync.moved) return;
+  // The dropped head is still in the object store after the reset.
+  const saved = sync.dropped === null ? null : await savePatch(deps.paths, claim.issue, await commitsPatch(claim.worktree, remoteBranch, sync.dropped), deps.now(), "dropped");
+  deps.log({ kind: "worktree-synced", issue: claim.issue, pr: claim.state.pr.number, dropped: sync.dropped, patch: saved });
 }
 
 /** One line per check run on the PR head for the review prompt; a lookup failure leaves the summary at "(none)". */
@@ -273,7 +283,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         await deps.notifier.notify({ issue: claim.issue, gate: a.gate, label: a.label, text: a.text });
         break;
       case "release":
-        if (a.savePatch) await savePatch(deps.paths, claim.issue, await uncommittedPatch(claim.worktree).catch(() => ""), deps.now());
+        if (a.savePatch) await savePatch(deps.paths, claim.issue, await uncommittedPatch(claim.worktree).catch(() => ""), deps.now(), "release");
         await removeClaim(deps.paths, claim.issue);
         status = "ended";
         break;

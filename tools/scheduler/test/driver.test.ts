@@ -226,16 +226,36 @@ describe("driveChain", () => {
   }, 60_000);
 
   it("starts plan from origin/main even when the worktree carries a stray commit (C1)", async () => {
-    const { deps, claim, adapter, pair } = await setup(() => ({ plan: [plan] }), undefined, (_pair, wt) => {
+    const { deps, claim, adapter, pair, paths } = await setup(() => ({ plan: [plan] }), undefined, (_pair, wt) => {
       writeFileSync(join(wt, "stray.txt"), "stray\n");
       git(wt, "add", "stray.txt");
       git(wt, "commit", "-q", "-m", "stray");
     });
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
     let c = (await step(deps, claim)).claim;
     c = (await step(deps, c)).claim;
     expect(adapter.ran).toEqual(["plan:claude-fable-5-1"]);
     expect(c.state.stage).toBe("implement");
     expect(git(claim.worktree, "rev-parse", "HEAD").trim()).toBe(git(pair.repo, "rev-parse", "origin/main").trim());
+    // Spec 005, AC-2: the stray commit was saved as a patch before the reset.
+    const saved = readdirSync(paths.patches).filter((f) => /^7-.*\.patch$/.test(f));
+    expect(saved).toHaveLength(1);
+    const patchPath = join(paths.patches, saved[0]);
+    const text = readFileSync(patchPath, "utf8");
+    expect(text.startsWith("From ")).toBe(true);
+    expect(text).toContain("stray.txt");
+    expect(logs).toContainEqual({ kind: "recovered-commits", issue: 7, patch: patchPath, base: "origin/main" });
+  }, 60_000);
+
+  it("writes no patch and no recovered-commits record when the reset has nothing to discard (spec 005, AC-4)", async () => {
+    const { deps, claim, paths } = await setup(() => ({ plan: [plan] }));
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    let c = (await step(deps, claim)).claim;
+    c = (await step(deps, c)).claim;
+    expect(readdirSync(paths.patches)).toEqual([]);
+    expect(logs.find((r) => r.kind === "recovered-commits")).toBeUndefined();
   }, 60_000);
 
   it("goes back to verify with the new head instead of merging when the PR head moved after review (C2)", async () => {
@@ -265,6 +285,8 @@ describe("driveChain", () => {
     });
     const atMerge: Claim = { ...claim, state: { ...claim.state, stage: "merge", pr: { number: 9, head_sha: sha } } };
     await writeClaim(paths, atMerge);
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
     const r1 = await step(deps, atMerge);
     expect(r1.claim.state.stage).toBe("verify");
     expect(git(claim.worktree, "rev-parse", "HEAD").trim()).toBe(sha);
@@ -272,6 +294,48 @@ describe("driveChain", () => {
     expect(git(claim.worktree, "rev-parse", "HEAD").trim()).toBe(over.prHead);
     expect(r2.claim.state.sensitive).toBe(true);
     expect(r2.claim.state.stage).toBe("review");
+    // A fast-forward drops nothing (spec 005, AC-4).
+    expect(logs).toContainEqual({ kind: "worktree-synced", issue: 7, pr: 9, dropped: null, patch: null });
+    expect(readdirSync(paths.patches)).toEqual([]);
+  }, 60_000);
+
+  it("saves the local commits it drops when the worktree diverged from the PR head (spec 005, AC-3)", async () => {
+    const over: { prHead?: string } = {};
+    let other = "";
+    let local = "";
+    const { deps, claim, paths, sha } = await setup(() => ({}), (sha) => ghRoutes(sha, over), (pair, worktree) => {
+      git(worktree, "push", "-q", "-u", "origin", "issue-7");
+      other = join(pair.root, "other");
+      git(pair.root, "clone", "-q", "-b", "issue-7", pair.origin, other);
+      writeFileSync(join(other, "remote.txt"), "pushed from elsewhere\n");
+      git(other, "add", "-A");
+      git(other, "commit", "-q", "-m", "remote change");
+      git(other, "push", "-q", "origin", "issue-7");
+      over.prHead = git(other, "rev-parse", "HEAD").trim();
+      writeFileSync(join(worktree, "local.txt"), "local only\n");
+      git(worktree, "add", "local.txt");
+      git(worktree, "commit", "-q", "-m", "local change");
+      local = git(worktree, "rev-parse", "HEAD").trim();
+    });
+    const atMerge: Claim = { ...claim, state: { ...claim.state, stage: "merge", pr: { number: 9, head_sha: sha } } };
+    await writeClaim(paths, atMerge);
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    const r1 = await step(deps, atMerge);
+    expect(r1.claim.state.stage).toBe("verify");
+    await step(deps, r1.claim);
+    expect(git(claim.worktree, "rev-parse", "HEAD").trim()).toBe(over.prHead);
+    const saved = readdirSync(paths.patches).filter((f) => /^7-.*\.patch$/.test(f));
+    expect(saved).toHaveLength(1);
+    const patchPath = join(paths.patches, saved[0]);
+    const text = readFileSync(patchPath, "utf8");
+    expect(text).toContain("local.txt");
+    expect(text).not.toContain("remote.txt");
+    expect(logs).toContainEqual({ kind: "worktree-synced", issue: 7, pr: 9, dropped: local, patch: patchPath });
+    expect(logs.find((r) => r.kind === "recovered-commits")).toBeUndefined();
+    // The patch applies onto the remote head it was cut against.
+    git(other, "am", patchPath);
+    expect(readFileSync(join(other, "local.txt"), "utf8")).toBe("local only\n");
   }, 60_000);
 
   it("refuses an implement result whose PR is not issue-7 into main (I1, AC-10)", async () => {

@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { linkProfileSkills } from "../src/runner/skills.ts";
-import { diffFilesAgainstBase, discardUncommitted, ensureWorktree, rebaseOntoMain, removeWorktree, resetToBase, syncToRemote, uncommittedPatch } from "../src/runner/worktree.ts";
+import { commitsPatch, diffFilesAgainstBase, discardUncommitted, ensureWorktree, rebaseOntoMain, removeWorktree, resetToBase, syncToRemote, uncommittedPatch } from "../src/runner/worktree.ts";
 import { git, repoPair } from "./helpers/repo-pair.ts";
 
 describe("worktrees (AC-16)", () => {
@@ -187,6 +187,41 @@ describe("resetToBase (C1)", () => {
     expect(git(w.path, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("issue-7");
     expect(existsSync(join(w.path, "stray.txt"))).toBe(false);
     expect(existsSync(join(w.path, "c.txt"))).toBe(true);
+  });
+});
+
+describe("commitsPatch (spec 005)", () => {
+  it("returns a patch of the commits past the base that git am applies onto it, and an empty string when there are none", async () => {
+    const { repo, worktrees, root } = repoPair();
+    const w = await ensureWorktree(repo, worktrees, 7);
+    expect(await commitsPatch(w.path, "origin/main")).toBe("");
+    writeFileSync(join(w.path, "k.txt"), "kept\n");
+    git(w.path, "add", "k.txt");
+    git(w.path, "commit", "-q", "-m", "keep me");
+    const patch = await commitsPatch(w.path, "origin/main");
+    expect(patch.startsWith("From ")).toBe(true);
+    expect(patch).toContain("keep me");
+    expect(patch).toContain("k.txt");
+    const file = join(root, "k.patch");
+    writeFileSync(file, patch);
+    git(repo, "am", file);
+    expect(readFileSync(join(repo, "k.txt"), "utf8")).toBe("kept\n");
+    expect(git(repo, "log", "-1", "--format=%s").trim()).toBe("keep me");
+  });
+  it("takes only the commits reachable from an explicit head and not from the base", async () => {
+    const { repo, worktrees } = repoPair();
+    const w = await ensureWorktree(repo, worktrees, 7);
+    writeFileSync(join(w.path, "one.txt"), "1\n");
+    git(w.path, "add", "one.txt");
+    git(w.path, "commit", "-q", "-m", "first");
+    const first = git(w.path, "rev-parse", "HEAD").trim();
+    writeFileSync(join(w.path, "two.txt"), "2\n");
+    git(w.path, "add", "two.txt");
+    git(w.path, "commit", "-q", "-m", "second");
+    const patch = await commitsPatch(w.path, "origin/main", first);
+    expect(patch).toContain("one.txt");
+    expect(patch).not.toContain("two.txt");
+    expect(await commitsPatch(w.path, first, first)).toBe("");
   });
 });
 

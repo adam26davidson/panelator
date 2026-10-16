@@ -69,6 +69,11 @@ export async function diffFilesAgainstBase(worktree: string, base = "origin/main
   return [...new Set([...committed, ...dirty])].sort();
 }
 
+/** Spec 005: the commits reachable from `head` and not from `base`, as a `git am`-able mailbox; empty when there are none. */
+export async function commitsPatch(worktree: string, base: string, head = "HEAD"): Promise<string> {
+  return (await git(worktree, "format-patch", "--stdout", `${base}..${head}`)).stdout;
+}
+
 export async function uncommittedPatch(worktree: string): Promise<string> {
   const untracked = nulRecords((await git(worktree, "ls-files", "-z", "--others", "--exclude-standard")).stdout);
   if (untracked.length) await git(worktree, "add", "--intent-to-add", "--", ...untracked);
