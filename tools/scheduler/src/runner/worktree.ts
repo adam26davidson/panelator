@@ -95,6 +95,36 @@ async function canonical(p: string): Promise<string> {
   return realpath(p).catch(() => resolve(p));
 }
 
+async function isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+  try {
+    await git(cwd, "merge-base", "--is-ancestor", ancestor, descendant);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * R1: put the worktree on the branch's remote head when GitHub is ahead of it, so every diff the
+ * scheduler judges (sensitivity, scope) is of the commit the PR actually holds. Local commits that
+ * are not on the remote yet are kept when they build on it (the stage pushes them); when the two
+ * have diverged the remote wins and the old local head is reported (it stays in the reflog).
+ * A branch with no remote counterpart yet is left alone.
+ */
+export async function syncToRemote(worktree: string, remoteBranch: string): Promise<{ moved: boolean; dropped: string | null }> {
+  const head = (await git(worktree, "rev-parse", "HEAD")).stdout.trim();
+  let remote: string;
+  try {
+    remote = (await git(worktree, "rev-parse", "--verify", "--quiet", `${remoteBranch}^{commit}`)).stdout.trim();
+  } catch {
+    return { moved: false, dropped: null };
+  }
+  if (remote === head || (await isAncestor(worktree, remote, head))) return { moved: false, dropped: null };
+  const fastForward = await isAncestor(worktree, head, remote);
+  await git(worktree, "reset", "-q", "--hard", remote);
+  return { moved: true, dropped: fastForward ? null : head };
+}
+
 export async function removeWorktree(repo: string, path: string): Promise<void> {
   try {
     await git(repo, "worktree", "remove", "--force", path);

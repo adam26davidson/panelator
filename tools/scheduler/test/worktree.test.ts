@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { linkProfileSkills } from "../src/runner/skills.ts";
-import { diffFilesAgainstBase, discardUncommitted, ensureWorktree, rebaseOntoMain, removeWorktree, resetToBase, uncommittedPatch } from "../src/runner/worktree.ts";
+import { diffFilesAgainstBase, discardUncommitted, ensureWorktree, rebaseOntoMain, removeWorktree, resetToBase, syncToRemote, uncommittedPatch } from "../src/runner/worktree.ts";
 import { git, repoPair } from "./helpers/repo-pair.ts";
 
 describe("worktrees (AC-16)", () => {
@@ -130,6 +130,43 @@ describe("worktrees (AC-16)", () => {
     expect(existsSync(join(w.path, "newdir"))).toBe(false);
     expect(existsSync(join(w.path, "top.txt"))).toBe(false);
     expect(git(w.path, "rev-parse", "HEAD").trim()).toBe(head);
+  });
+});
+
+describe("syncToRemote (R1)", () => {
+  it("fast-forwards to a remote that moved ahead, keeps local commits that build on it, and prefers the remote when diverged", async () => {
+    const { repo, worktrees, root, origin } = repoPair();
+    const w = await ensureWorktree(repo, worktrees, 7);
+    // No remote branch yet: untouched.
+    expect(await syncToRemote(w.path, "origin/issue-7")).toEqual({ moved: false, dropped: null });
+    git(w.path, "push", "-q", "-u", "origin", "issue-7");
+    const other = join(root, "other");
+    git(root, "clone", "-q", "-b", "issue-7", origin, other);
+    writeFileSync(join(other, "r.txt"), "remote\n");
+    git(other, "add", "r.txt");
+    git(other, "commit", "-q", "-m", "remote");
+    git(other, "push", "-q", "origin", "issue-7");
+    const remote = git(other, "rev-parse", "HEAD").trim();
+    git(w.path, "fetch", "-q", "origin");
+    // Remote ahead: fast-forward, nothing dropped.
+    expect(await syncToRemote(w.path, "origin/issue-7")).toEqual({ moved: true, dropped: null });
+    expect(git(w.path, "rev-parse", "HEAD").trim()).toBe(remote);
+    // Local ahead (unpushed work on top of the remote): kept.
+    writeFileSync(join(w.path, "l.txt"), "local\n");
+    git(w.path, "add", "l.txt");
+    git(w.path, "commit", "-q", "-m", "local");
+    const local = git(w.path, "rev-parse", "HEAD").trim();
+    expect(await syncToRemote(w.path, "origin/issue-7")).toEqual({ moved: false, dropped: null });
+    expect(git(w.path, "rev-parse", "HEAD").trim()).toBe(local);
+    // Diverged: the remote wins and the old local head is reported.
+    writeFileSync(join(other, "r.txt"), "remote 2\n");
+    git(other, "commit", "-q", "-am", "remote 2");
+    git(other, "push", "-q", "origin", "issue-7");
+    const remote2 = git(other, "rev-parse", "HEAD").trim();
+    git(w.path, "fetch", "-q", "origin");
+    expect(await syncToRemote(w.path, "origin/issue-7")).toEqual({ moved: true, dropped: local });
+    expect(git(w.path, "rev-parse", "HEAD").trim()).toBe(remote2);
+    expect(existsSync(join(w.path, "l.txt"))).toBe(false);
   });
 });
 

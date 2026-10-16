@@ -1,4 +1,4 @@
-import { chmodSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
@@ -243,6 +243,31 @@ describe("driveChain", () => {
     expect(r.claim.state.stage).toBe("verify");
     expect(r.claim.state.pr).toEqual({ number: 9, head_sha: moved });
     expect(gh.calls.find((c) => c.method === "PUT")).toBeUndefined();
+  }, 60_000);
+
+  it("syncs the worktree to the moved PR head before verify, so sensitivity is judged on the pushed diff (R1)", async () => {
+    const over: { prHead?: string } = {};
+    const { deps, claim, paths, sha } = await setup(() => ({}), (sha) => ghRoutes(sha, over), (pair, worktree) => {
+      // The PR branch is on origin; a commit touching a sensitive path is pushed to it from another clone.
+      git(worktree, "push", "-q", "-u", "origin", "issue-7");
+      const other = join(pair.root, "other");
+      git(pair.root, "clone", "-q", "-b", "issue-7", pair.origin, other);
+      mkdirSync(join(other, "backend", "api", "auth"), { recursive: true });
+      writeFileSync(join(other, "backend", "api", "auth", "token.rs"), "// pushed from elsewhere\n");
+      git(other, "add", "-A");
+      git(other, "commit", "-q", "-m", "auth change");
+      git(other, "push", "-q", "origin", "issue-7");
+      over.prHead = git(other, "rev-parse", "HEAD").trim();
+    });
+    const atMerge: Claim = { ...claim, state: { ...claim.state, stage: "merge", pr: { number: 9, head_sha: sha } } };
+    await writeClaim(paths, atMerge);
+    const r1 = await step(deps, atMerge);
+    expect(r1.claim.state.stage).toBe("verify");
+    expect(git(claim.worktree, "rev-parse", "HEAD").trim()).toBe(sha);
+    const r2 = await step(deps, r1.claim);
+    expect(git(claim.worktree, "rev-parse", "HEAD").trim()).toBe(over.prHead);
+    expect(r2.claim.state.sensitive).toBe(true);
+    expect(r2.claim.state.stage).toBe("review");
   }, 60_000);
 
   it("refuses an implement result whose PR is not issue-7 into main (I1, AC-10)", async () => {

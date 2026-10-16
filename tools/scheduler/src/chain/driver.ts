@@ -9,7 +9,7 @@ import type { Notifier } from "../notify/types.ts";
 import { listProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
 import { retryDecision } from "../runner/retry.ts";
 import { runStage, type StageOutcome } from "../runner/run.ts";
-import { diffFilesAgainstBase, discardUncommitted, rebaseOntoMain, removeWorktree, resetToBase, uncommittedPatch } from "../runner/worktree.ts";
+import { diffFilesAgainstBase, discardUncommitted, rebaseOntoMain, removeWorktree, resetToBase, syncToRemote, uncommittedPatch } from "../runner/worktree.ts";
 import { specPathFromIssueBody } from "../spec/link.ts";
 import { parseSpec } from "../spec/parse.ts";
 import type { StageInput } from "../stages/prompt.ts";
@@ -102,6 +102,28 @@ function botIdentity(deps: DriverDeps): { name: string; email: string } {
   return { name: deps.cfg.app.bot_login, email: `${deps.cfg.app.bot_login}@users.noreply.github.com` };
 }
 
+/**
+ * Fetch, keep any leftovers as a patch, then put the worktree where the next step must see it: current
+ * main while there is no PR (C1), otherwise the PR branch's remote head (R1), so the diffs the gates
+ * judge (sensitivity, scope) are of the commit GitHub holds and not of a stale local copy.
+ */
+async function syncWorktree(deps: DriverDeps, claim: Claim): Promise<void> {
+  await deps.fetchOrigin();
+  // A dirty tree makes the rebase or reset throw or lose work: keep the leftovers as a patch, then start from HEAD.
+  const patch = await uncommittedPatch(claim.worktree);
+  if (patch.trim()) {
+    const saved = await savePatch(deps.paths, claim.issue, patch, deps.now());
+    await discardUncommitted(claim.worktree);
+    deps.log({ kind: "recovered-uncommitted", issue: claim.issue, patch: saved });
+  }
+  if (claim.state.pr === null) {
+    await resetToBase(claim.worktree);
+    return;
+  }
+  const sync = await syncToRemote(claim.worktree, `origin/issue-${claim.issue}`);
+  if (sync.moved) deps.log({ kind: "worktree-synced", issue: claim.issue, pr: claim.state.pr.number, dropped: sync.dropped });
+}
+
 async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageName): Promise<ChainEvent | null> {
   const state = claim.state;
   // I2: never start a second run while the last one's scope is still alive.
@@ -112,18 +134,8 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   const def = deps.stages[stage];
   const sensitiveGlobs = readSensitiveGlobs(deps.agentsDir);
 
-  await deps.fetchOrigin();
-  // A dirty tree makes the rebase or reset throw or lose work: keep the leftovers as a patch, then start from HEAD.
-  const patch = await uncommittedPatch(claim.worktree);
-  if (patch.trim()) {
-    const saved = await savePatch(deps.paths, claim.issue, patch, deps.now());
-    await discardUncommitted(claim.worktree);
-    deps.log({ kind: "recovered-uncommitted", issue: claim.issue, patch: saved });
-  }
-  if (state.pr === null) {
-    // C1: with no PR yet (plan, implement) the branch starts from current main, so no conflict can arise here.
-    await resetToBase(claim.worktree);
-  } else if (!state.conflictPending) {
+  await syncWorktree(deps, claim);
+  if (state.pr !== null && !state.conflictPending) {
     const rebase = await rebaseOntoMain(claim.worktree, "origin/main", botIdentity(deps));
     if (!rebase.ok) return { type: "rebase_conflict", detail: rebase.conflict };
   }
@@ -192,6 +204,8 @@ async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> 
   const pr = claim.state.pr;
   if (!pr) throw new Error(`verify without a PR (issue ${claim.issue})`);
   const summary = await deps.gh.checks(pr.head_sha, deps.cfg.required_checks);
+  // R1: judge sensitivity on the pushed head (after head_moved the local copy is stale).
+  await syncWorktree(deps, claim);
   const sensitive = isSensitive(await diffFilesAgainstBase(claim.worktree), readSensitiveGlobs(deps.agentsDir)).length > 0;
   if (summary.status === "failed") {
     const first = summary.failed[0];
