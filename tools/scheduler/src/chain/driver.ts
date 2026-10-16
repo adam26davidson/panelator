@@ -113,14 +113,14 @@ async function syncWorktree(deps: DriverDeps, claim: Claim): Promise<void> {
   // A dirty tree makes the rebase or reset throw or lose work: keep the leftovers as a patch, then start from HEAD.
   const patch = await uncommittedPatch(claim.worktree);
   if (patch.trim()) {
-    const saved = await savePatch(deps.paths, claim.issue, patch, deps.now());
+    const saved = await savePatch(deps.paths, claim.issue, patch, deps.now(), "uncommitted");
     await discardUncommitted(claim.worktree);
     deps.log({ kind: "recovered-uncommitted", issue: claim.issue, patch: saved });
   }
   if (claim.state.pr === null) {
     const commits = await commitsPatch(claim.worktree, "origin/main");
     if (commits.trim()) {
-      const saved = await savePatch(deps.paths, claim.issue, commits, deps.now());
+      const saved = await savePatch(deps.paths, claim.issue, commits, deps.now(), "commits");
       deps.log({ kind: "recovered-commits", issue: claim.issue, patch: saved, base: "origin/main" });
     }
     await resetToBase(claim.worktree);
@@ -130,7 +130,7 @@ async function syncWorktree(deps: DriverDeps, claim: Claim): Promise<void> {
   const sync = await syncToRemote(claim.worktree, remoteBranch);
   if (!sync.moved) return;
   // The dropped head is still in the object store after the reset.
-  const saved = sync.dropped === null ? null : await savePatch(deps.paths, claim.issue, await commitsPatch(claim.worktree, remoteBranch, sync.dropped), deps.now());
+  const saved = sync.dropped === null ? null : await savePatch(deps.paths, claim.issue, await commitsPatch(claim.worktree, remoteBranch, sync.dropped), deps.now(), "dropped");
   deps.log({ kind: "worktree-synced", issue: claim.issue, pr: claim.state.pr.number, dropped: sync.dropped, patch: saved });
 }
 
@@ -283,7 +283,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         await deps.notifier.notify({ issue: claim.issue, gate: a.gate, label: a.label, text: a.text });
         break;
       case "release":
-        if (a.savePatch) await savePatch(deps.paths, claim.issue, await uncommittedPatch(claim.worktree).catch(() => ""), deps.now());
+        if (a.savePatch) await savePatch(deps.paths, claim.issue, await uncommittedPatch(claim.worktree).catch(() => ""), deps.now(), "release");
         await removeClaim(deps.paths, claim.issue);
         status = "ended";
         break;

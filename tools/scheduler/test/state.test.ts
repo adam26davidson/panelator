@@ -1,7 +1,8 @@
 import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { savePatch } from "../src/state/patches.ts";
 import { initialChainState } from "../src/chain/machine.ts";
 import { listClaims, readClaim, removeClaim, touchClaim, writeClaim } from "../src/state/claims.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
@@ -87,5 +88,22 @@ describe("token file", () => {
     await writeToken(p, { token: "ghs_x", expires_at: "2026-10-12T01:00:00Z" });
     expect(await readToken(p)).toEqual({ token: "ghs_x", expires_at: "2026-10-12T01:00:00Z" });
     expect(statSync(p.token).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe("savePatch", () => {
+  it("never overwrites: a kind suffix separates same-second saves and a true collision gets a numeric suffix (spec 005 review)", async () => {
+    const p = statePaths(mkdtempSync(join(tmpdir(), "patches-")));
+    await ensureStateDirs(p);
+    const now = new Date("2026-10-16T12:00:00Z");
+    const a = await savePatch(p, 7, "diff a\n", now, "uncommitted");
+    const b = await savePatch(p, 7, "diff b\n", now, "commits");
+    const c = await savePatch(p, 7, "diff c\n", now, "commits");
+    const d = await savePatch(p, 7, "diff d\n", now);
+    expect([a, b, c, d].map((x) => basename(x!))).toEqual(["7-20261016T120000-uncommitted.patch", "7-20261016T120000-commits.patch", "7-20261016T120000-commits-1.patch", "7-20261016T120000.patch"]);
+    expect(readFileSync(a!, "utf8")).toBe("diff a\n");
+    expect(readFileSync(b!, "utf8")).toBe("diff b\n");
+    expect(readFileSync(c!, "utf8")).toBe("diff c\n");
+    expect(await savePatch(p, 7, "  \n", now)).toBeNull();
   });
 });
