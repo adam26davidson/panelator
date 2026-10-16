@@ -10,15 +10,33 @@ export interface PiStageRun extends StageRun {
 /** I5: tools plan and review never get, whatever the profile allows. */
 const WRITE_TOOLS = ["edit", "write", "bash"];
 
+/** Claude Code tool names (as profiles list them) to pi's. */
+const PI_TOOL: Record<string, string> = { read: "read", edit: "edit", write: "write", bash: "bash", glob: "find", grep: "grep" };
+
+/** What plan and review get when no profile narrows it. */
+const READ_ONLY_TOOLS = ["read", "grep", "find"];
+
+export function piToolNames(tools: string[]): string[] {
+  const mapped = tools.map((t) => PI_TOOL[t.toLowerCase()]).filter((t): t is string => t !== undefined);
+  return [...new Set(mapped)];
+}
+
 function buildCommand(run: PiStageRun): Command {
   const argv = ["pi", "--mode", "json", "--model", run.model, "--session-id", run.sessionId, "--approve"];
   if (run.effort) argv.push("--thinking", run.effort);
+  const readOnly = run.stage === "plan" || run.stage === "review";
+  let tools: string[] = [];
   if (run.profile) {
-    const readOnly = run.stage === "plan" || run.stage === "review";
-    const tools = readOnly ? run.profile.tools.filter((t) => !WRITE_TOOLS.includes(t.toLowerCase())) : run.profile.tools;
-    if (tools.length) argv.push("--tools", tools.join(","));
-    argv.push("--skill", run.profile.skillsDir);
+    tools = piToolNames(run.profile.tools);
+    if (readOnly) {
+      tools = tools.filter((t) => !WRITE_TOOLS.includes(t));
+      if (!tools.length) tools = READ_ONLY_TOOLS;
+    }
+  } else if (readOnly) {
+    tools = READ_ONLY_TOOLS;
   }
+  if (tools.length) argv.push("--tools", tools.join(","));
+  if (run.profile) argv.push("--skill", run.profile.skillsDir);
   for (const e of run.extensions ?? []) argv.push("-e", e);
   argv.push(run.prompt);
   return { argv, env: { CI: "true" } };

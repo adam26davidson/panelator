@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readJsonlFile } from "../src/adapters/jsonl.ts";
-import { piAdapter } from "../src/adapters/pi.ts";
+import { piAdapter, piToolNames } from "../src/adapters/pi.ts";
 import type { StageRun } from "../src/adapters/types.ts";
 
 const fx = async (n: string) => (await readJsonlFile(join(import.meta.dirname, "fixtures", "streams", n))).records;
@@ -28,9 +28,32 @@ describe("piAdapter.buildCommand (AC-19)", () => {
   it("drops edit, write and bash from the profile tools for plan and review (I5)", () => {
     for (const stage of ["review", "plan"] as const) {
       const { argv } = piAdapter.buildCommand({ ...run, stage, profile: { ...run.profile!, tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep"] } });
-      expect(argv.slice(argv.indexOf("--tools"), argv.indexOf("--tools") + 2)).toEqual(["--tools", "Read,Glob,Grep"]);
+      expect(argv.slice(argv.indexOf("--tools"), argv.indexOf("--tools") + 2)).toEqual(["--tools", "read,find,grep"]);
       const lower = piAdapter.buildCommand({ ...run, stage }).argv;
       expect(lower[lower.indexOf("--tools") + 1]).toBe("read");
+    }
+  });
+  it("maps Claude Code tool names to pi names, case-insensitively, dropping unknowns and duplicates, in order (AC-1)", () => {
+    expect(piToolNames(["Read", "Edit", "Write", "Bash", "Glob", "Grep"])).toEqual(["read", "edit", "write", "bash", "find", "grep"]);
+    expect(piToolNames(["GREP", "glob", "WebFetch", "TodoWrite", "Read"])).toEqual(["grep", "find", "read"]);
+    expect(piToolNames(["Read", "read", "Grep"])).toEqual(["read", "grep"]);
+  });
+  it("passes only a read-only mapped list for plan and review, falling back to read,grep,find (AC-2)", () => {
+    for (const stage of ["plan", "review"] as const) {
+      const only = piAdapter.buildCommand({ ...run, stage, profile: { ...run.profile!, tools: ["Edit", "Write", "Bash"] } }).argv;
+      expect(only.slice(only.indexOf("--tools"), only.indexOf("--tools") + 2)).toEqual(["--tools", "read,grep,find"]);
+    }
+  });
+  it("passes read,grep,find for plan and review with no profile (AC-3)", () => {
+    for (const stage of ["plan", "review"] as const) {
+      const { argv } = piAdapter.buildCommand({ ...run, stage, profile: null });
+      expect(argv.slice(argv.indexOf("--tools"), argv.indexOf("--tools") + 2)).toEqual(["--tools", "read,grep,find"]);
+      expect(argv).not.toContain("--skill");
+    }
+  });
+  it("passes no --tools for implement and fix with no profile (AC-4)", () => {
+    for (const stage of ["implement", "fix"] as const) {
+      expect(piAdapter.buildCommand({ ...run, stage, profile: null }).argv).not.toContain("--tools");
     }
   });
   it("adds -e for each extension", () => {
