@@ -6,10 +6,10 @@ import type { Config } from "../config.ts";
 import { isSensitive, scopeGate } from "../gates/index.ts";
 import type { GitHubClient } from "../github/client.ts";
 import type { Notifier } from "../notify/types.ts";
-import { readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
+import { listProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
 import { retryDecision } from "../runner/retry.ts";
 import { runStage, type StageOutcome } from "../runner/run.ts";
-import { diffFilesAgainstBase, discardUncommitted, rebaseOntoMain, removeWorktree, uncommittedPatch } from "../runner/worktree.ts";
+import { diffFilesAgainstBase, discardUncommitted, rebaseOntoMain, removeWorktree, resetToBase, uncommittedPatch } from "../runner/worktree.ts";
 import { specPathFromIssueBody } from "../spec/link.ts";
 import { parseSpec } from "../spec/parse.ts";
 import type { StageInput } from "../stages/prompt.ts";
@@ -17,6 +17,7 @@ import { removeClaim, writeClaim, type Claim } from "../state/claims.ts";
 import { appendMerge } from "../state/merges.ts";
 import { savePatch } from "../state/patches.ts";
 import type { StatePaths } from "../state/paths.ts";
+import { newRunId } from "../state/runs.ts";
 import { classOf } from "../shortlist/rank.ts";
 import type { AgentStageName, FixResult, Harness, ImplementResult, Profile, StageDefinition } from "../types.ts";
 import { POSTPONE_WAIT_S, SECURITY_REVIEW_LABEL, transition } from "./machine.ts";
@@ -35,6 +36,11 @@ export interface DriverDeps {
   binDir: string;
   adapterFor: (harness: Harness) => Adapter;
   systemdScope: boolean;
+  /** Test seam: a stand-in for systemd-run; production leaves it unset. */
+  systemdRunBin?: string;
+  /** I2: whether a stage scope unit is still active, and a best-effort stop for one. */
+  unitActive: (unit: string) => Promise<boolean>;
+  stopUnit: (unit: string) => Promise<void>;
   now: () => Date;
   log: (rec: Record<string, unknown>) => void;
   fetchOrigin: () => Promise<void>;
@@ -43,6 +49,9 @@ export interface DriverDeps {
 export type StepStatus = "continue" | "waiting" | "ended";
 const AGENT_STAGES: AgentStageName[] = ["plan", "implement", "review", "fix"];
 const ENDED: ChainState["stage"][] = ["done", "released", "needs-human"];
+/** C1: prepended to the fix input when the fix stage has to resolve a rebase conflict itself. */
+export const CONFLICT_FIX_LINE = "Rebase this branch onto origin/main and resolve the conflicts before addressing the items below.";
+const stageUnit = (runId: string) => `panelator-stage-${runId}`;
 
 export { defaultAdapterFor };
 
@@ -64,7 +73,8 @@ async function buildInput(deps: DriverDeps, claim: Claim, issueTitle: string, is
   const pr = s.pr ? { number: s.pr.number, head_sha: s.pr.head_sha, url: `https://github.com/${deps.cfg.repo}/pull/${s.pr.number}` } : undefined;
   return {
     issue: { number: claim.issue, title: issueTitle, body: issueBody },
-    spec: specText, plan: s.plan ?? undefined, pr, ci, fix_input: s.pendingFixInput ?? undefined,
+    spec: specText, plan: s.plan ?? undefined, pr, ci,
+    fix_input: s.pendingFixInput === null ? undefined : s.conflictPending ? `${CONFLICT_FIX_LINE}\n${s.pendingFixInput}` : s.pendingFixInput,
     result_path: "", profile_instructions: "",
   };
 }
@@ -72,39 +82,47 @@ async function buildInput(deps: DriverDeps, claim: Claim, issueTitle: string, is
 function pickProfile(deps: DriverDeps, def: StageDefinition, state: ChainState, security: boolean): Profile | null {
   if (security && def.name === "review") return resolveProfile(deps.agentsDir, "security");
   if (def.profile === "none") return null;
-  const name = def.profile === "from-issue" ? state.plan?.domain ?? "backend" : def.profile;
-  try {
-    return resolveProfile(deps.agentsDir, name);
-  } catch {
-    return resolveProfile(deps.agentsDir, "backend");
-  }
+  // I4: an unknown profile throws; the plan stage already refused a domain with no profile.
+  return resolveProfile(deps.agentsDir, def.profile === "from-issue" ? state.plan?.domain ?? "backend" : def.profile);
 }
 
-/** AC-10/AC-11: the result must name the commit the worktree is on, and the PR must point at that same commit. */
+/** AC-10/AC-11: the result must name the commit the worktree is on, and the PR must be issue-N into main at that same commit (I1). */
 async function prBound(deps: DriverDeps, claim: Claim, stage: "implement" | "fix", result: ImplementResult | FixResult): Promise<boolean> {
   const head = await worktreeHead(claim.worktree);
   if (result.head_sha !== head) return false;
   const prNumber = stage === "implement" ? (result as ImplementResult).pr_number : claim.state.pr?.number;
   if (prNumber === undefined) return false;
   const pr = await deps.gh.pullRequest(prNumber);
-  return pr.head_sha === result.head_sha;
+  return pr.head_sha === result.head_sha && pr.base_ref === "main" && pr.head_ref === `issue-${claim.issue}`;
 }
 
-async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageName): Promise<ChainEvent> {
+/** `null`: the claim's previous stage is still running in its scope (survived a scheduler crash); wait for it. */
+async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageName): Promise<ChainEvent | null> {
   const state = claim.state;
+  // I2: never start a second run while the last one's scope is still alive.
+  if (claim.run_id && deps.systemdScope && (await deps.unitActive(stageUnit(claim.run_id)))) {
+    deps.log({ kind: "stage-still-running", issue: claim.issue, run_id: claim.run_id });
+    return null;
+  }
   const def = deps.stages[stage];
   const sensitiveGlobs = readSensitiveGlobs(deps.agentsDir);
 
   await deps.fetchOrigin();
-  // A dirty tree makes the rebase throw: keep the leftovers as a patch, then start from HEAD.
+  // A dirty tree makes the rebase or reset throw or lose work: keep the leftovers as a patch, then start from HEAD.
   const patch = await uncommittedPatch(claim.worktree);
   if (patch.trim()) {
     const saved = await savePatch(deps.paths, claim.issue, patch, deps.now());
     await discardUncommitted(claim.worktree);
     deps.log({ kind: "recovered-uncommitted", issue: claim.issue, patch: saved });
   }
-  const rebase = await rebaseOntoMain(claim.worktree);
-  if (!rebase.ok) return { type: "rebase_conflict", detail: rebase.conflict };
+  if (state.pr === null) {
+    // C1: with no PR yet (plan, implement) the branch starts from current main, so no conflict can arise here.
+    await resetToBase(claim.worktree);
+  } else if (!state.conflictPending) {
+    const rebase = await rebaseOntoMain(claim.worktree);
+    if (!rebase.ok) return { type: "rebase_conflict", detail: rebase.conflict };
+  }
+  // C1: with a conflict pending the fix stage rebases and resolves it itself (its input says so).
 
   const { data: issue } = await deps.gh.octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}", { owner: deps.gh.owner, repo: deps.gh.repo, issue_number: claim.issue });
   const specPath = specPathFromIssueBody(String(issue.body ?? ""));
@@ -117,16 +135,21 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   const attempt = state.attempt;
   const exec = async (model?: string, harness?: Harness): Promise<StageOutcome> => {
     const h = harness ?? def.harness;
-    claim.run_id = `${claim.issue}-${stage}-${attempt}`;
+    // I2: the real run id, persisted before the run, so a restart can find the run's scope unit.
+    const runId = newRunId(claim.issue, stage, attempt, deps.now());
+    claim.run_id = runId;
     await writeClaim(deps.paths, { ...claim, last_activity_at: deps.now().toISOString() });
     try {
-      return await runStage(
+      const out = await runStage(
         {
-          paths: deps.paths, adapter: deps.adapterFor(h), systemdScope: deps.systemdScope, binDir: deps.binDir, now: deps.now,
+          paths: deps.paths, adapter: deps.adapterFor(h), systemdScope: deps.systemdScope, systemdRunBin: deps.systemdRunBin, binDir: deps.binDir, now: deps.now,
           gitIdentity: { name: deps.cfg.app.bot_login, email: `${deps.cfg.app.bot_login}@users.noreply.github.com` },
         },
-        { def, input, issue: claim.issue, attempt, worktree: claim.worktree, profile, model, harness },
+        { def, input, issue: claim.issue, attempt, worktree: claim.worktree, profile, model, harness, runId },
       );
+      // I2: a killed run can leave processes behind in its scope; stop the unit (best-effort).
+      if ((out.outcome === "timeout" || out.outcome === "bounds") && deps.systemdScope) await deps.stopUnit(stageUnit(runId)).catch(() => {});
+      return out;
     } finally {
       // Persisted, not only in memory: a throw here or later in the step must not leave a run "in flight" on disk (AC-15).
       claim.run_id = null;
@@ -147,7 +170,12 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   if (out.outcome !== "ok") return { type: "stage_failed", stage, reason: out.reason ?? out.outcome };
 
   const result = out.result as never;
-  if (stage === "plan") return { type: "stage_ok", stage: "plan", result };
+  if (stage === "plan") {
+    // I4: a domain with no profile fails the plan rather than running under another profile.
+    const domain = (out.result as { domain: string }).domain;
+    if (!listProfiles(deps.agentsDir).includes(domain)) return { type: "stage_failed", stage: "plan", reason: `profile not available: ${domain}` };
+    return { type: "stage_ok", stage: "plan", result };
+  }
   if (stage === "review") return { type: "stage_ok", stage: "review", result, security };
   if (!(await prBound(deps, claim, stage, result))) return { type: "stage_failed", stage, reason: "result: pr mismatch" };
   const diff = await diffFilesAgainstBase(claim.worktree);
@@ -178,8 +206,10 @@ async function mergeEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> {
   const info = await deps.gh.pullRequest(pr.number);
   // Already merged (a crash between the merge PUT and writeClaim): record it and finish without merging again.
   if (!info.merged) {
+    // C2: merge only the commit that verify and review ran on; a moved head goes back to verify.
+    if (info.head_sha !== pr.head_sha) return { type: "head_moved", head_sha: info.head_sha };
     if (info.mergeable === false) return { type: "merge_result", status: "not_mergeable", detail: info.mergeable_state };
-    const r = await deps.gh.mergePullRequest(pr.number, info.head_sha);
+    const r = await deps.gh.mergePullRequest(pr.number, pr.head_sha);
     if (!r.merged) return { type: "merge_result", status: "not_mergeable", detail: r.message };
   }
   const cls = classOf({ number: claim.issue, title: "", author: "", body: "", labels, labelEvents: [], createdAt: "" }, deps.cfg.labels);
@@ -241,8 +271,11 @@ export async function step(deps: DriverDeps, claim: Claim): Promise<{ claim: Cla
     const until = claim.state.postponedUntil;
     if (until && new Date(until) > deps.now()) return { claim, status: "waiting" };
     event = { type: "start" };
-  } else if (AGENT_STAGES.includes(stage as AgentStageName)) event = await runAgentStage(deps, claim, stage as AgentStageName);
-  else if (stage === "verify") event = await verifyEvent(deps, claim);
+  } else if (AGENT_STAGES.includes(stage as AgentStageName)) {
+    const ev = await runAgentStage(deps, claim, stage as AgentStageName);
+    if (ev === null) return { claim, status: "waiting" };
+    event = ev;
+  } else if (stage === "verify") event = await verifyEvent(deps, claim);
   else if (stage === "merge") event = await mergeEvent(deps, claim);
   else throw new Error(`unhandled stage ${stage}`);
 

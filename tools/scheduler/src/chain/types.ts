@@ -20,6 +20,8 @@ export interface ChainState {
   pendingFixInput: string | null;
   postponedUntil: string | null;
   resumeStage: AgentStageName | null;
+  /** C1: set by a rebase conflict, cleared by the next successful fix; the driver skips the rebase while it is set. */
+  conflictPending: boolean;
 }
 
 export type ChainEvent =
@@ -34,6 +36,8 @@ export type ChainEvent =
   /** AC-11: a security-review label on the issue or PR refuses the merge; valid only in stage merge. */
   | { type: "merge_blocked"; reason: string }
   | { type: "rebase_conflict"; detail: string }
+  /** The PR head moved after verify and review; valid only in stage merge, which goes back to verify. */
+  | { type: "head_moved"; head_sha: string }
   | { type: "liveness_expired" };
 
 export type Action =

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { chmodSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
@@ -37,7 +37,7 @@ function scriptedAdapter(results: Record<string, unknown[]>): Adapter & { ran: s
   };
 }
 
-function ghRoutes(sha: string, over: { checks?: unknown[]; mergeable?: boolean; merged?: boolean; issueLabels?: string[] } = {}): Route[] {
+function ghRoutes(sha: string, over: { checks?: unknown[]; mergeable?: boolean; merged?: boolean; issueLabels?: string[]; prHead?: string; headRef?: string } = {}): Route[] {
   const labels = [...["validated", "in-progress", "class:product"], ...(over.issueLabels ?? [])].map((name) => ({ name }));
   return [
     { method: "GET", path: /^\/repos\/o\/r\/issues\/7$/, reply: () => ({ body: { number: 7, title: "Thing", body: "Spec: specs/010-thing/spec.md", labels, updated_at: "2026-10-12T00:00:00Z" } }) },
@@ -45,18 +45,23 @@ function ghRoutes(sha: string, over: { checks?: unknown[]; mergeable?: boolean; 
     { method: "POST", path: /^\/repos\/o\/r\/issues\/7\/labels$/, reply: () => ({ body: [] }) },
     { method: "DELETE", path: /^\/repos\/o\/r\/issues\/7\/labels\/[^/]+$/, reply: () => ({ body: {} }) },
     { method: "POST", path: /^\/repos\/o\/r\/issues\/7\/comments$/, reply: () => ({ status: 201, body: {} }) },
-    { method: "GET", path: /^\/repos\/o\/r\/pulls\/9$/, reply: () => ({ body: { number: 9, head: { sha }, html_url: "u", mergeable: over.mergeable ?? true, mergeable_state: "clean", merged: over.merged ?? false, state: over.merged ? "closed" : "open" } }) },
+    { method: "GET", path: /^\/repos\/o\/r\/pulls\/9$/, reply: () => ({ body: { number: 9, base: { ref: "main" }, head: { ref: over.headRef ?? "issue-7", sha: over.prHead ?? sha }, html_url: "u", mergeable: over.mergeable ?? true, mergeable_state: "clean", merged: over.merged ?? false, state: over.merged ? "closed" : "open" } }) },
     { method: "GET", path: /^\/repos\/o\/r\/commits\/[0-9a-f]+\/check-runs$/, reply: () => ({ body: { total_count: 1, check_runs: over.checks ?? [{ id: 1, name: "test", status: "completed", conclusion: "success" }] } }) },
     { method: "PUT", path: /^\/repos\/o\/r\/pulls\/9\/merge$/, reply: () => ({ body: { merged: true, message: "ok" } }) },
   ];
 }
 
-/** `results` and `routes` take the worktree's real HEAD, which the PR binding (AC-10/AC-11) checks against. */
-async function setup(results: (sha: string) => Record<string, unknown[]>, routes: (sha: string) => Route[] = (sha) => ghRoutes(sha)) {
+/** `results` and `routes` take the worktree's real HEAD, which the PR binding (AC-10/AC-11) checks against; `prepare` runs before it is read. */
+async function setup(
+  results: (sha: string) => Record<string, unknown[]>,
+  routes: (sha: string) => Route[] = (sha) => ghRoutes(sha),
+  prepare: (pair: ReturnType<typeof repoPair>, worktree: string) => void = () => {},
+) {
   const pair = repoPair({ "a.txt": "a\n", "specs/010-thing/spec.md": spec });
   const paths = statePaths(join(pair.root, "state"));
   await ensureStateDirs(paths);
   const wt = await ensureWorktree(pair.repo, pair.worktrees, 7);
+  prepare(pair, wt.path);
   const sha = git(wt.path, "rev-parse", "HEAD").trim();
   const gh = mockGitHub(routes(sha));
   const notifications: Notification[] = [];
@@ -67,6 +72,7 @@ async function setup(results: (sha: string) => Record<string, unknown[]>, routes
     notifier: { notify: async (n) => { notifications.push(n); } },
     stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: pair.repo, binDir: join(pair.root, "bin"),
     adapterFor: () => adapter, systemdScope: false, now: () => new Date(), log: () => {}, fetchOrigin: async () => { git(pair.repo, "fetch", "-q", "origin"); },
+    unitActive: async () => false, stopUnit: async () => {},
   };
   const claim: Claim = { issue: 7, slot: 0, state: initialChainState(7), worktree: wt.path, started_at: new Date().toISOString(), last_activity_at: new Date().toISOString(), run_id: null };
   await writeClaim(paths, claim);
@@ -76,6 +82,28 @@ async function setup(results: (sha: string) => Record<string, unknown[]>, routes
 const plan = { verdict: "ready", domain: "backend", tasks: [{ id: "T1", description: "d", files: ["a.txt"] }] };
 const impl = (sha: string) => ({ pr_number: 9, head_sha: sha, tasks_done: ["T1"] });
 const approve = { verdict: "approve", findings_on_pr: [], declined_to_judge: [] };
+
+/** A stand-in for systemd-run, written to tmp: drops the scope flags and runs the command after `--`. */
+function fakeSystemdRun(dir: string): string {
+  const p = join(dir, "fake-systemd-run.mjs");
+  writeFileSync(p, [
+    `#!${process.execPath}`,
+    `import { spawn } from "node:child_process";`,
+    `const argv = process.argv.slice(process.argv.indexOf("--") + 1);`,
+    `spawn(argv[0], argv.slice(1), { stdio: "inherit" }).on("exit", (code) => process.exit(code ?? 1));`,
+  ].join("\n") + "\n");
+  chmodSync(p, 0o755);
+  return p;
+}
+
+/** One commit on the issue branch and a conflicting commit on main, both touching a.txt. */
+function conflicting(pair: ReturnType<typeof repoPair>, worktree: string): void {
+  writeFileSync(join(worktree, "a.txt"), "worktree\n");
+  git(worktree, "commit", "-q", "-am", "worktree change");
+  writeFileSync(join(pair.repo, "a.txt"), "main\n");
+  git(pair.repo, "commit", "-q", "-am", "main change");
+  git(pair.repo, "push", "-q", "origin", "main");
+}
 
 describe("driveChain", () => {
   it("runs a full chain to done, applying labels and recording a merge (AC-1, AC-3, AC-14)", async () => {
@@ -176,5 +204,101 @@ describe("driveChain", () => {
     expect(r.status).toBe("ended");
     expect(gh.calls.find((c) => c.method === "PUT")).toBeUndefined();
     expect(readFileSync(join(paths.root, "merges.jsonl"), "utf8")).toContain('"pr":9');
+  }, 60_000);
+
+  it("runs one fix after a rebase conflict without rebasing again, and reaches verify (C1, AC-16)", async () => {
+    const { deps, claim, adapter, paths, sha } = await setup((sha) => ({ fix: [{ head_sha: sha, addressed: [] }] }), undefined, conflicting);
+    const atReview: Claim = { ...claim, state: { ...claim.state, stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } } };
+    let r = await step(deps, atReview);
+    expect(r.claim.state.stage).toBe("fix");
+    expect(r.claim.state.conflictPending).toBe(true);
+    r = await step(deps, r.claim);
+    expect(adapter.ran).toEqual(["fix:claude-sonnet-5-5"]);
+    expect(r.claim.state.stage).toBe("verify");
+    expect(r.claim.state.conflictPending).toBe(false);
+    const fixRun = readdirSync(paths.runs).find((d) => d.startsWith("7-fix-"))!;
+    const input = JSON.parse(readFileSync(join(paths.runs, fixRun, "input.json"), "utf8"));
+    expect(input.fix_input).toMatch(/^Rebase this branch onto origin\/main and resolve the conflicts before addressing the items below\.\nRebase onto main conflicted:/);
+  }, 60_000);
+
+  it("starts plan from origin/main even when the worktree carries a stray commit (C1)", async () => {
+    const { deps, claim, adapter, pair } = await setup(() => ({ plan: [plan] }), undefined, (_pair, wt) => {
+      writeFileSync(join(wt, "stray.txt"), "stray\n");
+      git(wt, "add", "stray.txt");
+      git(wt, "commit", "-q", "-m", "stray");
+    });
+    let c = (await step(deps, claim)).claim;
+    c = (await step(deps, c)).claim;
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(c.state.stage).toBe("implement");
+    expect(git(claim.worktree, "rev-parse", "HEAD").trim()).toBe(git(pair.repo, "rev-parse", "origin/main").trim());
+  }, 60_000);
+
+  it("goes back to verify with the new head instead of merging when the PR head moved after review (C2)", async () => {
+    const moved = "f".repeat(40);
+    const { deps, claim, gh, paths, sha } = await setup(() => ({}), (sha) => ghRoutes(sha, { prHead: moved }));
+    const atMerge: Claim = { ...claim, state: { ...claim.state, stage: "merge", pr: { number: 9, head_sha: sha } } };
+    await writeClaim(paths, atMerge);
+    const r = await step(deps, atMerge);
+    expect(r.claim.state.stage).toBe("verify");
+    expect(r.claim.state.pr).toEqual({ number: 9, head_sha: moved });
+    expect(gh.calls.find((c) => c.method === "PUT")).toBeUndefined();
+  }, 60_000);
+
+  it("refuses an implement result whose PR is not issue-7 into main (I1, AC-10)", async () => {
+    const { deps, claim, notifications, gh } = await setup((sha) => ({ plan: [plan], implement: [impl(sha), impl(sha)] }), (sha) => ghRoutes(sha, { headRef: "other" }));
+    const final = await driveChain(deps, claim, () => false);
+    expect(final.state.stage).toBe("needs-human");
+    expect(notifications[0]).toMatchObject({ gate: "implement", text: expect.stringContaining("result: pr mismatch") });
+    expect(gh.calls.find((c) => c.method === "PUT")).toBeUndefined();
+  }, 60_000);
+
+  it("waits without running anything while the claim's stage scope is still active (I2)", async () => {
+    const { deps, claim, adapter, paths } = await setup(() => ({ plan: [plan] }));
+    const asked: string[] = [];
+    const stopped: string[] = [];
+    deps.systemdScope = true;
+    deps.unitActive = async (u) => { asked.push(u); return true; };
+    deps.stopUnit = async (u) => { stopped.push(u); };
+    const running: Claim = { ...claim, run_id: "7-plan-1-20261012T120000", state: { ...claim.state, stage: "plan" } };
+    await writeClaim(paths, running);
+    const r = await step(deps, running);
+    expect(r.status).toBe("waiting");
+    expect(r.claim.state.stage).toBe("plan");
+    expect(asked).toEqual(["panelator-stage-7-plan-1-20261012T120000"]);
+    expect(adapter.ran).toEqual([]);
+    expect(stopped).toEqual([]);
+    expect((await readClaim(paths, 7))?.run_id).toBe("7-plan-1-20261012T120000");
+  }, 60_000);
+
+  it("persists the real run id and stops the stage scope after a timeout (I2, AC-23)", async () => {
+    const { deps, claim, paths, pair } = await setup(() => ({}));
+    const stopped: string[] = [];
+    const seenRunIds: (string | null)[] = [];
+    deps.systemdScope = true;
+    deps.systemdRunBin = fakeSystemdRun(pair.root);
+    deps.now = () => new Date("2026-10-12T12:00:00Z");
+    deps.stopUnit = async (u) => { stopped.push(u); seenRunIds.push((await readClaim(paths, 7))?.run_id ?? null); };
+    deps.stages = { ...deps.stages, plan: { ...deps.stages.plan, bounds: { ...deps.stages.plan.bounds, timeout_min: 1 / 60 } } };
+    deps.adapterFor = () => ({
+      harness: "fake",
+      buildCommand: (run) => ({ argv: [process.execPath, script, events, run.resultPath, "0", "30000"], env: {} }),
+      judge: (_e, _x, timedOut) => timedOut ? { outcome: "timeout", reason: "stage timeout", apiErrorStatus: null, finalText: null } : { outcome: "failed", reason: "x", apiErrorStatus: null, finalText: null },
+      usage: () => ({ cost_usd: null, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, turns: 0, tool_calls: 0 }),
+    });
+    const planning = (await step(deps, claim)).claim;
+    await step(deps, planning);
+    expect(stopped[0]).toBe("panelator-stage-7-plan-1-20261012T120000");
+    expect(seenRunIds[0]).toBe("7-plan-1-20261012T120000");
+    expect(readdirSync(paths.runs)).toContain("7-plan-1-20261012T120000");
+  }, 60_000);
+
+  it("fails a plan whose domain names a profile that does not exist, retrying once then needs-human (I4)", async () => {
+    const firmware = { ...plan, domain: "firmware" };
+    const { deps, claim, adapter, notifications } = await setup(() => ({ plan: [firmware, { ...firmware }] }));
+    const final = await driveChain(deps, claim, () => false);
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1"]);
+    expect(final.state.stage).toBe("needs-human");
+    expect(notifications[0]).toMatchObject({ gate: "plan", text: expect.stringContaining("profile not available: firmware") });
   }, 60_000);
 });

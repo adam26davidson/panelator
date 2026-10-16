@@ -18,6 +18,7 @@ export async function fastForwardMain(repoDir: string): Promise<{ moved: boolean
   return { moved: true, changedPaths };
 }
 
+/** AC-17: the scheduler's own code, and agents/ (stages, profiles, config) which it reads at start (I6). */
 export function schedulerChanged(paths: string[]): boolean {
-  return paths.some((p) => p.startsWith("tools/scheduler/"));
+  return paths.some((p) => p.startsWith("tools/scheduler/") || p.startsWith("agents/"));
 }

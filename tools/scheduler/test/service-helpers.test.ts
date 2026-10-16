@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { fastForwardMain, fetchOrigin, schedulerChanged } from "../src/service/git.ts";
 import { SleepInhibitor } from "../src/service/inhibit.ts";
+import { systemdStopUnit, systemdUnitActive } from "../src/service/units.ts";
 import { ServiceLog } from "../src/service/log.ts";
 import { git, repoPair } from "./helpers/repo-pair.ts";
 
@@ -23,6 +24,32 @@ describe("fastForwardMain (AC-17)", () => {
     expect(r).toEqual({ moved: true, changedPaths: ["tools/scheduler/src/x.ts"] });
     expect(schedulerChanged(r.changedPaths)).toBe(true);
     expect(schedulerChanged(["web/a.ts"])).toBe(false);
+  });
+  it("counts agents/ changes as scheduler changes, so stage and profile edits restart it (I6)", () => {
+    expect(schedulerChanged(["agents/stages/review.yaml"])).toBe(true);
+    expect(schedulerChanged(["agents/profiles/backend/profile.yaml"])).toBe(true);
+    expect(schedulerChanged(["docs/agents/x.md", "specs/001-scheduler-core/spec.md"])).toBe(false);
+  });
+});
+
+describe("stage scope units (I2)", () => {
+  it("asks systemctl --user is-active and treats a non-zero exit as inactive", async () => {
+    const calls: string[][] = [];
+    const ok = async (cmd: string, args: string[]) => { calls.push([cmd, ...args]); return {}; };
+    const fail = async (cmd: string, args: string[]) => { calls.push([cmd, ...args]); throw new Error("inactive"); };
+    expect(await systemdUnitActive("panelator-stage-r1", { enabled: true, exec: ok })).toBe(true);
+    expect(await systemdUnitActive("panelator-stage-r1", { enabled: true, exec: fail })).toBe(false);
+    expect(calls[0]).toEqual(["systemctl", "--user", "is-active", "panelator-stage-r1"]);
+  });
+  it("stops a unit and swallows errors", async () => {
+    const calls: string[][] = [];
+    await systemdStopUnit("panelator-stage-r1", { enabled: true, exec: async (cmd, args) => { calls.push([cmd, ...args]); throw new Error("not loaded"); } });
+    expect(calls).toEqual([["systemctl", "--user", "stop", "panelator-stage-r1"]]);
+  });
+  it("does nothing when scopes are disabled", async () => {
+    const exec = async () => { throw new Error("must not run"); };
+    expect(await systemdUnitActive("u", { enabled: false, exec })).toBe(false);
+    await systemdStopUnit("u", { enabled: false, exec });
   });
 });
 

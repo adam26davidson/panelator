@@ -11,6 +11,8 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/env node tools/scheduler/bin/scheduler.ts
 Restart=on-failure
 RestartSec=10
+# 78 (EX_CONFIG): a config error the scheduler reported in the service log; restarting cannot fix it.
+RestartPreventExitStatus=78
 KillSignal=SIGTERM
 KillMode=mixed
 TimeoutStopSec=6000

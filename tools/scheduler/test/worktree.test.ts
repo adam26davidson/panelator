@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { linkProfileSkills } from "../src/runner/skills.ts";
-import { diffFilesAgainstBase, discardUncommitted, ensureWorktree, rebaseOntoMain, removeWorktree, uncommittedPatch } from "../src/runner/worktree.ts";
+import { diffFilesAgainstBase, discardUncommitted, ensureWorktree, rebaseOntoMain, removeWorktree, resetToBase, uncommittedPatch } from "../src/runner/worktree.ts";
 import { git, repoPair } from "./helpers/repo-pair.ts";
 
 describe("worktrees (AC-16)", () => {
@@ -127,6 +127,26 @@ describe("worktrees (AC-16)", () => {
     expect(existsSync(join(w.path, "newdir"))).toBe(false);
     expect(existsSync(join(w.path, "top.txt"))).toBe(false);
     expect(git(w.path, "rev-parse", "HEAD").trim()).toBe(head);
+  });
+});
+
+describe("resetToBase (C1)", () => {
+  it("moves the worktree branch to origin/main, dropping a stray commit", async () => {
+    const { repo, worktrees } = repoPair();
+    const w = await ensureWorktree(repo, worktrees, 7);
+    writeFileSync(join(w.path, "stray.txt"), "stray\n");
+    git(w.path, "add", "stray.txt");
+    git(w.path, "commit", "-q", "-m", "stray");
+    writeFileSync(join(repo, "c.txt"), "c\n");
+    git(repo, "add", "c.txt");
+    git(repo, "commit", "-q", "-m", "c");
+    git(repo, "push", "-q", "origin", "main");
+    git(w.path, "fetch", "-q", "origin");
+    await resetToBase(w.path);
+    expect(git(w.path, "rev-parse", "HEAD").trim()).toBe(git(w.path, "rev-parse", "origin/main").trim());
+    expect(git(w.path, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("issue-7");
+    expect(existsSync(join(w.path, "stray.txt"))).toBe(false);
+    expect(existsSync(join(w.path, "c.txt"))).toBe(true);
   });
 });
 

@@ -9,6 +9,7 @@ import { listClaims, removeClaim, writeClaim, type Claim } from "../state/claims
 import { recentMerges } from "../state/merges.ts";
 import { savePatch } from "../state/patches.ts";
 import { pruneUsage } from "../state/runs.ts";
+import { readToken } from "../state/token.ts";
 import type { SleepInhibitor } from "./inhibit.ts";
 import type { ServiceLog } from "./log.ts";
 import { schedulerChanged } from "./git.ts";
@@ -21,7 +22,12 @@ export interface SchedulerDeps extends DriverDeps {
   sleep: (ms: number) => Promise<void>;
   monotonic: () => number;
   requestRestart: () => void;
+  /** I3: rewrites token.json now; the 50-minute timer does not fire across a laptop sleep. */
+  refreshToken?: () => Promise<void>;
 }
+
+/** I3: a token this close to expiry is refreshed at the start of a tick. */
+export const TOKEN_REFRESH_MARGIN_MS = 5 * 60_000;
 
 export interface TickInfo {
   eligible: number;
@@ -101,6 +107,11 @@ export class Scheduler {
     return true;
   }
 
+  async #refreshToken(): Promise<void> {
+    const d = this.#deps;
+    await d.refreshToken?.().catch((e) => d.log({ kind: "error", error: `token refresh: ${(e as Error).message}` }));
+  }
+
   async #expire(claim: Claim): Promise<void> {
     const { state, actions } = transition(claim.state, { type: "liveness_expired" });
     await applyActions(this.#deps, { ...claim, state }, actions);
@@ -112,6 +123,8 @@ export class Scheduler {
     const d = this.#deps;
     const info: TickInfo = { eligible: 0, claimed: [], released: [], errors: [], restartPending: this.#restartPending };
     try {
+      const token = await readToken(d.paths).catch(() => null);
+      if (token && new Date(token.expires_at).getTime() - d.now().getTime() < TOKEN_REFRESH_MARGIN_MS) await this.#refreshToken();
       try {
         await d.fetchOrigin();
         const ff = await d.fastForward();
@@ -203,7 +216,10 @@ export class Scheduler {
       await d.sleep(intervalMs);
       const wall = d.now().getTime() - lastWall;
       const mono = d.monotonic() - lastMono;
-      if (wall - mono > intervalMs) d.serviceLog.write({ kind: "resumed", slept_ms: wall - mono });
+      if (wall - mono > intervalMs) {
+        d.serviceLog.write({ kind: "resumed", slept_ms: wall - mono });
+        await this.#refreshToken();
+      }
     }
     await Promise.allSettled([...this.#active.values()]);
     d.inhibitor.release();

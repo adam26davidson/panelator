@@ -29,7 +29,9 @@ function buildCommand(run: ClaudeStageRun): Command {
   ];
   if (run.effort) argv.push("--effort", run.effort);
   if (run.fallbackModel) argv.push("--fallback-model", run.fallbackModel);
-  const tools = run.profile && run.profile.tools.length ? run.profile.tools : ["Read", "Glob", "Grep"];
+  // I5: plan and review only read, whatever the profile allows; the result file is their one write.
+  const readOnly = run.stage === "plan" || run.stage === "review";
+  const tools = !readOnly && run.profile && run.profile.tools.length ? run.profile.tools : ["Read", "Glob", "Grep"];
   // Absolute-path permission rule: the // prefix replaces the leading slash (Write(//tmp/x) means /tmp/x); syntax to be confirmed at the AC-29 hand-run.
   const writeResult = `Write(/${run.resultPath})`;
   argv.push("--add-dir", dirname(run.resultPath));

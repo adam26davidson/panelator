@@ -76,6 +76,11 @@ export async function discardUncommitted(worktree: string): Promise<void> {
   await git(worktree, "clean", "-fd");
 }
 
+/** C1: points the issue branch at base before a stage with no PR (plan, first implement). Save a patch first. */
+export async function resetToBase(worktree: string, base = "origin/main"): Promise<void> {
+  await git(worktree, "reset", "-q", "--hard", base);
+}
+
 async function canonical(p: string): Promise<string> {
   return realpath(p).catch(() => resolve(p));
 }

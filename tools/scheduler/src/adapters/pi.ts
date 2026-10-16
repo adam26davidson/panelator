@@ -7,11 +7,16 @@ export interface PiStageRun extends StageRun {
   extensions?: string[];
 }
 
+/** I5: tools plan and review never get, whatever the profile allows. */
+const WRITE_TOOLS = ["edit", "write", "bash"];
+
 function buildCommand(run: PiStageRun): Command {
   const argv = ["pi", "--mode", "json", "--model", run.model, "--session-id", run.sessionId, "--approve"];
   if (run.effort) argv.push("--thinking", run.effort);
   if (run.profile) {
-    if (run.profile.tools.length) argv.push("--tools", run.profile.tools.join(","));
+    const readOnly = run.stage === "plan" || run.stage === "review";
+    const tools = readOnly ? run.profile.tools.filter((t) => !WRITE_TOOLS.includes(t.toLowerCase())) : run.profile.tools;
+    if (tools.length) argv.push("--tools", tools.join(","));
     argv.push("--skill", run.profile.skillsDir);
   }
   for (const e of run.extensions ?? []) argv.push("-e", e);

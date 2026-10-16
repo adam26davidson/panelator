@@ -11,6 +11,7 @@ export function initialChainState(issue: number): ChainState {
   return {
     issue, stage: "claimed", attempt: 1, fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0,
     securityFinding: false, sensitive: false, pr: null, plan: null, pendingFixInput: null, postponedUntil: null, resumeStage: null,
+    conflictPending: false,
   };
 }
 
@@ -60,7 +61,7 @@ export function transition(state: ChainState, event: ChainEvent): Step {
   }
   if (event.type === "rebase_conflict") {
     if (!["plan", "implement", "review", "fix", "verify", "merge"].includes(state.stage)) invalid(state, event);
-    return toFix(state, `Rebase onto main conflicted:\n${event.detail}`);
+    return toFix(state, `Rebase onto main conflicted:\n${event.detail}`, { conflictPending: true });
   }
   if (event.type === "stage_failed") {
     if (event.postpone) {
@@ -118,12 +119,13 @@ export function transition(state: ChainState, event: ChainEvent): Step {
           ? { number: event.result.pr_number, head_sha: event.result.head_sha }
           : state.pr ? { ...state.pr, head_sha: event.result.head_sha } : null;
         const fixes = event.stage === "fix" ? state.fixes + 1 : state.fixes;
+        const done = { ...state, pr, fixes, conflictPending: false };
         if (!event.scope.ok) {
           const text = `Diff touches files outside the plan's file scope:\n${event.scope.violations.map((v) => `- ${v}`).join("\n")}`;
-          if (state.scopeViolations >= 1) return needsHuman({ ...state, pr, fixes }, "scope", text);
-          return toFix({ ...state, pr, fixes }, text, { scopeViolations: 1 });
+          if (state.scopeViolations >= 1) return needsHuman(done, "scope", text);
+          return toFix(done, text, { scopeViolations: 1 });
         }
-        return { state: { ...state, stage: "verify", pr, fixes, pendingFixInput: null }, actions: [{ type: "verify" }] };
+        return { state: { ...done, stage: "verify", pendingFixInput: null }, actions: [{ type: "verify" }] };
       }
       break;
     case "verify":
@@ -157,6 +159,7 @@ export function transition(state: ChainState, event: ChainEvent): Step {
         if (event.status === "merged") return { state: { ...state, stage: "done" }, actions: [{ type: "label", add: [], remove: [CLAIM_LABEL] }, { type: "done" }] };
         return toFix(state, `PR not mergeable:\n${event.detail ?? ""}`);
       }
+      if (event.type === "head_moved") return { state: { ...state, stage: "verify", pr: { ...state.pr!, head_sha: event.head_sha } }, actions: [{ type: "verify" }] };
       if (event.type === "merge_blocked") return needsHuman({ ...state, securityFinding: true }, "sensitive-path", event.reason, [SECURITY_REVIEW_LABEL]);
       break;
     default:

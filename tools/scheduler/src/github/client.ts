@@ -80,7 +80,7 @@ export class GitHubClient {
 
   async pullRequest(n: number): Promise<PullRequestInfo> {
     const { data } = await this.octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", { ...this.base, pull_number: n });
-    return { number: data.number, head_sha: data.head.sha, url: data.html_url, mergeable: data.mergeable ?? null, mergeable_state: String(data.mergeable_state ?? ""), merged: Boolean(data.merged), state: data.state as "open" | "closed" };
+    return { number: data.number, head_sha: data.head.sha, base_ref: data.base.ref, head_ref: data.head.ref, url: data.html_url, mergeable: data.mergeable ?? null, mergeable_state: String(data.mergeable_state ?? ""), merged: Boolean(data.merged), state: data.state as "open" | "closed" };
   }
 
   /** `required` empty means every check run on the sha must succeed; a required name not yet reported is pending. */

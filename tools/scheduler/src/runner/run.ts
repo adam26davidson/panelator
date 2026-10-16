@@ -36,6 +36,8 @@ export interface StageRequest {
   profile: Profile | null;
   model?: string;
   harness?: Harness;
+  /** I2: the driver persists the run id in the claim before the run, so it supplies it here. */
+  runId?: string;
 }
 
 export interface StageOutcome {
@@ -64,7 +66,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   }
   const now = ctx.now ?? (() => new Date());
   const startedAt = now();
-  const runId = newRunId(req.issue, req.def.name, req.attempt, startedAt);
+  const runId = req.runId ?? newRunId(req.issue, req.def.name, req.attempt, startedAt);
   const dir = runDir(ctx.paths, runId);
   await mkdir(dir, { recursive: true });
   const resultPath = join(dir, "result.json");

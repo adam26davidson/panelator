@@ -25,6 +25,14 @@ describe("piAdapter.buildCommand (AC-19)", () => {
     expect(argv[argv.length - 1]).toContain("/tmp/r.json");
     expect(env.CI).toBe("true");
   });
+  it("drops edit, write and bash from the profile tools for plan and review (I5)", () => {
+    for (const stage of ["review", "plan"] as const) {
+      const { argv } = piAdapter.buildCommand({ ...run, stage, profile: { ...run.profile!, tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep"] } });
+      expect(argv.slice(argv.indexOf("--tools"), argv.indexOf("--tools") + 2)).toEqual(["--tools", "Read,Glob,Grep"]);
+      const lower = piAdapter.buildCommand({ ...run, stage }).argv;
+      expect(lower[lower.indexOf("--tools") + 1]).toBe("read");
+    }
+  });
   it("adds -e for each extension", () => {
     const { argv } = piAdapter.buildCommand({ ...run, extensions: ["/x/container.ts"] } as StageRun & { extensions: string[] });
     expect(argv.slice(argv.indexOf("-e"), argv.indexOf("-e") + 2)).toEqual(["-e", "/x/container.ts"]);

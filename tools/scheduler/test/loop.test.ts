@@ -10,6 +10,7 @@ import { SleepInhibitor } from "../src/service/inhibit.ts";
 import { loadStageDefinitions } from "../src/stages/definition.ts";
 import { listClaims, writeClaim } from "../src/state/claims.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
+import { writeToken } from "../src/state/token.ts";
 import { initialChainState } from "../src/chain/machine.ts";
 import type { Notification } from "../src/notify/types.ts";
 import { mockGitHub, pageLink, type Route } from "./helpers/mock-github.ts";
@@ -48,6 +49,7 @@ async function setup(rs: Route[], slots = 1, drive?: NonNullable<ConstructorPara
     // the "chain" here is a stub: it records the issue and parks the claim in verify so the test controls time
     adapterFor: () => { throw new Error("not used"); }, systemdScope: false, now: () => now, log: () => {},
     fetchOrigin: async () => { git(pair.repo, "fetch", "-q", "origin"); },
+    unitActive: async () => false, stopUnit: async () => {},
     botLogin: "panelator-pipeline[bot]", serviceLog: new ServiceLog(paths.serviceLog), inhibitor: new SleepInhibitor({ enabled: false }),
     fastForward: async () => ({ moved: false, changedPaths: [] }), sleep: async () => {}, monotonic: () => mono, requestRestart: () => { started.push(-1); },
   };
@@ -179,6 +181,15 @@ describe("Scheduler.tick", () => {
     expect(gh.calls.find((c) => c.method === "POST" && c.url === "/repos/o/r/issues/1/labels")).toBeUndefined();
     expect(started).toContain(-1);
   }, 30_000);
+
+  it("refreshes token.json at the start of a tick when it expires within 5 minutes (I3)", async () => {
+    const { s, deps, paths } = await setup(routes([]));
+    let refreshes = 0;
+    deps.refreshToken = async () => { refreshes++; };
+    await writeToken(paths, { token: "ghs_x", expires_at: new Date(deps.now().getTime() + 2 * 60_000).toISOString() });
+    await s.tick();
+    expect(refreshes).toBe(1);
+  }, 30_000);
 });
 
 describe("Scheduler.run", () => {
@@ -188,6 +199,8 @@ describe("Scheduler.run", () => {
     const origTick = s.tick.bind(s);
     s.tick = async () => { ticks++; return origTick(); };
     const sleeps: number[] = [];
+    let refreshes = 0;
+    deps.refreshToken = async () => { refreshes++; };
     deps.sleep = async (ms) => {
       sleeps.push(ms);
       if (sleeps.length === 1) { setNow(new Date("2026-10-12T13:00:00Z")); setMono(1000); } // wall jumped an hour, monotonic 1 s: slept
@@ -195,6 +208,7 @@ describe("Scheduler.run", () => {
     };
     await s.run();
     expect(ticks).toBe(2);
+    expect(refreshes).toBe(1);
     const log = readFileSync(paths.serviceLog, "utf8");
     expect(log).toContain('"kind":"resumed"');
     expect(log.trim().split("\n").pop()).toContain('"kind":"stopped"');

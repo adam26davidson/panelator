@@ -1,6 +1,9 @@
 export interface PullRequestInfo {
   number: number;
   head_sha: string;
+  /** I1: the branch the PR merges into and the branch it comes from. */
+  base_ref: string;
+  head_ref: string;
   url: string;
   mergeable: boolean | null;
   mergeable_state: string;

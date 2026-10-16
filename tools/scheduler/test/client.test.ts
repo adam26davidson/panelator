@@ -65,7 +65,7 @@ describe("labels, comments, activity", () => {
 });
 
 describe("pull requests, checks, merge (AC-14)", () => {
-  const pr = { number: 9, head: { sha: "a".repeat(40) }, html_url: "https://github.com/o/r/pull/9", mergeable: true, mergeable_state: "clean", merged: false, state: "open" };
+  const pr = { number: 9, base: { ref: "main" }, head: { ref: "issue-12", sha: "a".repeat(40) }, html_url: "https://github.com/o/r/pull/9", mergeable: true, mergeable_state: "clean", merged: false, state: "open" };
   const runs = (list: unknown[]): Route => ({ method: "GET", path: /^\/repos\/o\/r\/commits\/[0-9a-f]+\/check-runs$/, reply: () => ({ body: { total_count: list.length, check_runs: list } }) });
   it("summarises check runs as green, failed or pending, honouring the required list", async () => {
     const { c } = client([runs([
@@ -105,7 +105,7 @@ describe("pull requests, checks, merge (AC-14)", () => {
       { method: "GET", path: /^\/repos\/o\/r\/pulls\/9$/, reply: () => ({ body: pr }) },
       { method: "PUT", path: /^\/repos\/o\/r\/pulls\/9\/merge$/, reply: () => ({ body: { merged: true, message: "Pull Request successfully merged", sha: "m" } }) },
     ]);
-    expect(await c.pullRequest(9)).toEqual({ number: 9, head_sha: "a".repeat(40), url: pr.html_url, mergeable: true, mergeable_state: "clean", merged: false, state: "open" });
+    expect(await c.pullRequest(9)).toEqual({ number: 9, head_sha: "a".repeat(40), base_ref: "main", head_ref: "issue-12", url: pr.html_url, mergeable: true, mergeable_state: "clean", merged: false, state: "open" });
     expect(await c.mergePullRequest(9, "a".repeat(40))).toEqual({ merged: true, message: "Pull Request successfully merged" });
     expect(gh.calls.find((x) => x.method === "PUT")?.body).toEqual({ merge_method: "squash", sha: "a".repeat(40) });
   });

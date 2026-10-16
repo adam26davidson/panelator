@@ -157,6 +157,23 @@ describe("chain: merge, rebase, liveness, postpone", () => {
     const r = transition(at("review"), { type: "rebase_conflict", detail: "CONFLICT a.ts" });
     expect(r.state.stage).toBe("fix");
   });
+  it("a rebase conflict marks the fix as conflict-pending, and a successful fix clears it (C1)", () => {
+    const r1 = transition(at("review"), { type: "rebase_conflict", detail: "CONFLICT a.ts" });
+    expect(r1.state.stage).toBe("fix");
+    expect(r1.state.conflictPending).toBe(true);
+    const r2 = transition(r1.state, { type: "stage_ok", stage: "fix", result: { head_sha: "c".repeat(40), addressed: [] }, scope: { ok: true } });
+    expect(r2.state.stage).toBe("verify");
+    expect(r2.state.conflictPending).toBe(false);
+  });
+  it("head_moved in merge goes back to verify with the new head (C2)", () => {
+    const r = transition(at("merge", { pr: { number: 3, head_sha: "b".repeat(40) } }), { type: "head_moved", head_sha: "e".repeat(40) });
+    expect(r.state.stage).toBe("verify");
+    expect(r.state.pr).toEqual({ number: 3, head_sha: "e".repeat(40) });
+    expect(r.actions).toEqual([{ type: "verify" }]);
+  });
+  it("head_moved outside the merge stage is invalid (C2)", () => {
+    expect(() => transition(at("review", { pr: { number: 3, head_sha: "b".repeat(40) } }), { type: "head_moved", head_sha: "e".repeat(40) })).toThrow(/invalid/);
+  });
   it("liveness expiry releases with a patch and a comment (AC-15)", () => {
     const r = transition(at("implement"), { type: "liveness_expired" });
     expect(r.state.stage).toBe("released");
