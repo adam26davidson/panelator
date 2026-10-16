@@ -124,6 +124,18 @@ async function syncWorktree(deps: DriverDeps, claim: Claim): Promise<void> {
   if (sync.moved) deps.log({ kind: "worktree-synced", issue: claim.issue, pr: claim.state.pr.number, dropped: sync.dropped });
 }
 
+/** One line per check run on the PR head for the review prompt; a lookup failure leaves the summary at "(none)". */
+async function ciSummary(deps: DriverDeps, sha: string): Promise<string | undefined> {
+  try {
+    const s = await deps.gh.checks(sha, deps.cfg.required_checks);
+    const lines = s.runs.map((r) => `${r.name}: ${r.status === "completed" ? r.conclusion ?? "unknown" : r.status}`);
+    const head = s.status === "green" ? `All required checks passed for ${sha}.` : s.status === "failed" ? `Required checks failed for ${sha}.` : `Checks still pending for ${sha}.`;
+    return [head, ...lines].join("\n");
+  } catch {
+    return undefined;
+  }
+}
+
 async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageName): Promise<ChainEvent | null> {
   const state = claim.state;
   // I2: never start a second run while the last one's scope is still alive.
@@ -147,7 +159,8 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   const diffBefore = await diffFilesAgainstBase(claim.worktree);
   const security = stage === "review" && (state.sensitive || isSensitive(diffBefore, sensitiveGlobs).length > 0);
   const profile = pickProfile(deps, def, state, security);
-  const input = await buildInput(deps, claim, String(issue.title ?? ""), String(issue.body ?? ""), specText, undefined);
+  const ci = stage === "review" && state.pr ? await ciSummary(deps, state.pr.head_sha) : undefined;
+  const input = await buildInput(deps, claim, String(issue.title ?? ""), String(issue.body ?? ""), specText, ci);
 
   const attempt = state.attempt;
   const exec = async (model?: string, harness?: Harness): Promise<StageOutcome> => {

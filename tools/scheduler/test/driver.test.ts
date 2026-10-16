@@ -115,6 +115,10 @@ describe("driveChain", () => {
     expect(gh.calls.filter((c) => c.method === "DELETE").map((c) => c.url)).toContain("/repos/o/r/issues/7/labels/in-progress");
     expect(await listClaims(paths)).toEqual([]);
     expect(readFileSync(join(paths.root, "merges.jsonl"), "utf8")).toContain('"cls":"feature"');
+    // The review prompt gets the PR head's check conclusions, so it never tries to run the suite itself.
+    const reviewRun = readdirSync(paths.runs).find((d) => d.startsWith("7-review-"))!;
+    const reviewInput = JSON.parse(readFileSync(join(paths.runs, reviewRun, "input.json"), "utf8"));
+    expect(reviewInput.ci).toBe(`All required checks passed for ${sha}.\ntest: success`);
   }, 60_000);
 
   it("posts questions, labels needs-clarification and releases on spec_gap (AC-9)", async () => {

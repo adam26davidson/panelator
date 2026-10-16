@@ -30,3 +30,10 @@ list precise questions for the maintainer instead of guessing.
 Write the JSON result to {{result_path}} with the shape
 { "verdict": "ready" | "spec_gap", "domain": "...", "tasks": [{ "id": "T1", "description": "...", "files": ["..."] }], "questions": ["..."], "findings": [] }
 and nothing else. Do not modify files in the repository.
+
+`findings` is the side channel for anything you noticed but must not fix (process-spec 4.2).
+Every entry is an object, never a string, with exactly these fields:
+{ "what": "...", "where": "<file:line or component>", "evidence": "...", "noticed_how": "...", "suspected_cause": "...", "security": false }
+where `suspected_cause` and `security` are optional and the other four are required. Leave it `[]`
+when there is nothing to record. The result must contain only the fields shown above; any other
+property makes it invalid and fails the stage.

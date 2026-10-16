@@ -34,3 +34,10 @@ What to fix:
 Address each item, run `pnpm test` from the repo root, commit and push. Write the JSON
 result to {{result_path}}: { "head_sha": "<40 hex>", "addressed": [0, 1], "findings": [] }
 where addressed lists the indices of the items you resolved.
+
+`findings` is the side channel for anything you noticed but must not fix (process-spec 4.2).
+Every entry is an object, never a string, with exactly these fields:
+{ "what": "...", "where": "<file:line or component>", "evidence": "...", "noticed_how": "...", "suspected_cause": "...", "security": false }
+where `suspected_cause` and `security` are optional and the other four are required. Leave it `[]`
+when there is nothing to record. The result must contain only the fields shown above; any other
+property makes it invalid and fails the stage.
