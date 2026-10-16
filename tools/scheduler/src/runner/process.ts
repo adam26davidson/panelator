@@ -8,7 +8,7 @@ export interface SpawnOptions {
   onStdoutChunk: (chunk: Buffer) => void;
   onStderrChunk?: (chunk: Buffer) => void;
   graceMs?: number;
-  scope?: { enabled: boolean; unitName: string; systemdRunBin?: string };
+  scope?: { enabled: boolean; unitName: string; systemdRunBin?: string; runtimeMaxSec?: number };
   killOnEvent?: () => boolean;
 }
 
@@ -21,8 +21,8 @@ export interface SpawnResult {
   wallMs: number;
 }
 
-export function scopeArgv(argv: string[], unitName: string, bin = "systemd-run"): string[] {
-  return [bin, "--user", "--scope", "--quiet", "--unit", unitName, "-p", "MemoryMax=50%", "-p", "OOMPolicy=continue", "-p", "KillMode=control-group", "--", ...argv];
+export function scopeArgv(argv: string[], unitName: string, bin = "systemd-run", runtimeMaxSec?: number): string[] {
+  return [bin, "--user", "--scope", "--quiet", "--unit", unitName, "-p", "MemoryMax=50%", "-p", "OOMPolicy=continue", "-p", "KillMode=control-group", ...(runtimeMaxSec === undefined ? [] : ["-p", `RuntimeMaxSec=${runtimeMaxSec}`]), "--", ...argv];
 }
 
 export function isProcessGroupAlive(pgid: number): boolean {
@@ -48,7 +48,7 @@ async function waitGroupGone(pgid: number, maxMs: number): Promise<void> {
 }
 
 export function spawnBounded(o: SpawnOptions): Promise<SpawnResult> {
-  const argv = o.scope?.enabled ? scopeArgv(o.argv, o.scope.unitName, o.scope.systemdRunBin) : o.argv;
+  const argv = o.scope?.enabled ? scopeArgv(o.argv, o.scope.unitName, o.scope.systemdRunBin, o.scope.runtimeMaxSec) : o.argv;
   const started = Date.now();
   return new Promise((resolve, reject) => {
     const child = spawn(argv[0], argv.slice(1), {

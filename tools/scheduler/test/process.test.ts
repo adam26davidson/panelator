@@ -19,6 +19,17 @@ describe("scopeArgv (AC-30)", () => {
       "-p", "MemoryMax=50%", "-p", "OOMPolicy=continue", "-p", "KillMode=control-group", "--", "claude", "-p", "x",
     ]);
   });
+
+  it("adds RuntimeMaxSec after the other properties when given a runtime ceiling (spec 003 AC-1)", () => {
+    expect(scopeArgv(["claude", "-p", "x"], "panelator-stage-r1", "systemd-run", 720)).toEqual([
+      "systemd-run", "--user", "--scope", "--quiet", "--unit", "panelator-stage-r1",
+      "-p", "MemoryMax=50%", "-p", "OOMPolicy=continue", "-p", "KillMode=control-group", "-p", "RuntimeMaxSec=720", "--", "claude", "-p", "x",
+    ]);
+  });
+
+  it("produces the same list for an undefined ceiling as for none (spec 003 AC-3)", () => {
+    expect(scopeArgv(["claude"], "u", "systemd-run", undefined)).toEqual(scopeArgv(["claude"], "u"));
+  });
 });
 
 describe("spawnBounded", () => {

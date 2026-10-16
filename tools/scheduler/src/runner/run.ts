@@ -111,7 +111,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
         env: { ...cmd.env, ...stageEnv(ctx.binDir, ctx.paths.root, ctx.gitIdentity) },
         cwd: req.worktree,
         timeoutMs: req.def.bounds.timeout_min * 60_000,
-        scope: { enabled: ctx.systemdScope, unitName: `panelator-stage-${runId}`, systemdRunBin: ctx.systemdRunBin },
+        scope: { enabled: ctx.systemdScope, unitName: `panelator-stage-${runId}`, systemdRunBin: ctx.systemdRunBin, runtimeMaxSec: req.def.bounds.timeout_min * 60 + 600 },
         onStdoutChunk: (c) => {
           eventsOut.write(c);
           if (c.length) endsWithLf = c[c.length - 1] === 0x0a;
