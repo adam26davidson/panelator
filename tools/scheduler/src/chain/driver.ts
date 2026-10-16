@@ -97,6 +97,11 @@ async function prBound(deps: DriverDeps, claim: Claim, stage: "implement" | "fix
 }
 
 /** `null`: the claim's previous stage is still running in its scope (survived a scheduler crash); wait for it. */
+/** The bot identity every commit the scheduler makes or rewrites carries (stage commits and rebases alike). */
+function botIdentity(deps: DriverDeps): { name: string; email: string } {
+  return { name: deps.cfg.app.bot_login, email: `${deps.cfg.app.bot_login}@users.noreply.github.com` };
+}
+
 async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageName): Promise<ChainEvent | null> {
   const state = claim.state;
   // I2: never start a second run while the last one's scope is still alive.
@@ -119,7 +124,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
     // C1: with no PR yet (plan, implement) the branch starts from current main, so no conflict can arise here.
     await resetToBase(claim.worktree);
   } else if (!state.conflictPending) {
-    const rebase = await rebaseOntoMain(claim.worktree);
+    const rebase = await rebaseOntoMain(claim.worktree, "origin/main", botIdentity(deps));
     if (!rebase.ok) return { type: "rebase_conflict", detail: rebase.conflict };
   }
   // C1: with a conflict pending the fix stage rebases and resolves it itself (its input says so).
@@ -143,7 +148,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
       const out = await runStage(
         {
           paths: deps.paths, adapter: deps.adapterFor(h), systemdScope: deps.systemdScope, systemdRunBin: deps.systemdRunBin, binDir: deps.binDir, now: deps.now,
-          gitIdentity: { name: deps.cfg.app.bot_login, email: `${deps.cfg.app.bot_login}@users.noreply.github.com` },
+          gitIdentity: botIdentity(deps),
         },
         { def, input, issue: claim.issue, attempt, worktree: claim.worktree, profile, model, harness, runId },
       );

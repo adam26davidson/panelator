@@ -27,14 +27,17 @@ describe("worktrees (AC-16)", () => {
     git(repo, "commit", "-q", "-m", "c");
     git(repo, "push", "-q", "origin", "main");
     git(w.path, "fetch", "-q", "origin");
-    expect(await rebaseOntoMain(w.path)).toEqual({ ok: true, moved: true });
+    // The identity is what makes this pass on a CI runner with no git config; the committer must be the bot.
+    const bot = { name: "panelator-pipeline[bot]", email: "panelator-pipeline[bot]@users.noreply.github.com" };
+    expect(await rebaseOntoMain(w.path, "origin/main", bot)).toEqual({ ok: true, moved: true });
     expect(existsSync(join(w.path, "c.txt"))).toBe(true);
+    expect(git(w.path, "log", "-1", "--format=%an|%cn <%ce>").trim()).toBe("t|panelator-pipeline[bot] <panelator-pipeline[bot]@users.noreply.github.com>");
     writeFileSync(join(repo, "b.txt"), "other\n");
     git(repo, "add", "b.txt");
     git(repo, "commit", "-q", "-m", "conflict");
     git(repo, "push", "-q", "origin", "main");
     git(w.path, "fetch", "-q", "origin");
-    const r = await rebaseOntoMain(w.path);
+    const r = await rebaseOntoMain(w.path, "origin/main", bot);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.conflict).toMatch(/CONFLICT/);
     expect(git(w.path, "status", "--porcelain").trim()).toBe("");

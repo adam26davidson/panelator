@@ -29,10 +29,20 @@ export async function ensureWorktree(repo: string, worktreesDir: string, issue: 
   return { path, branch, created: true };
 }
 
-export async function rebaseOntoMain(worktree: string, base = "origin/main"): Promise<{ ok: true; moved: boolean } | { ok: false; conflict: string }> {
+export interface GitIdentity {
+  name: string;
+  email: string;
+}
+
+/**
+ * Rebase the worktree onto `base`. Rewritten commits keep their author; the committer is `identity`
+ * when given, so the service never depends on the ambient git config (a CI runner has none).
+ */
+export async function rebaseOntoMain(worktree: string, base = "origin/main", identity?: GitIdentity): Promise<{ ok: true; moved: boolean } | { ok: false; conflict: string }> {
   const before = (await git(worktree, "rev-parse", "HEAD")).stdout.trim();
+  const ident = identity ? ["-c", `user.name=${identity.name}`, "-c", `user.email=${identity.email}`] : [];
   try {
-    await git(worktree, "rebase", base);
+    await git(worktree, ...ident, "rebase", base);
   } catch (e) {
     const err = e as { stdout?: string; stderr?: string };
     const output = `${err.stdout ?? ""}\n${err.stderr ?? ""}`.trim();
