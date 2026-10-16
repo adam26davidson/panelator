@@ -2,8 +2,8 @@
 repo: adam26davidson/panelator
 maintainer: adam26davidson
 app:
-  id: 0                      # set after the GitHub App is created (plan 3, Task 1)
-  installation_id: 0
+  id: 5343912
+  installation_id: 172040609
   private_key_path: ~/.config/panelator/scheduler-app.pem
   bot_login: panelator-pipeline[bot]
 poll_interval_s: 45
