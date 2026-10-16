@@ -33,7 +33,7 @@ describe("claudeAdapter.buildCommand (AC-18)", () => {
   });
   it("passes the profile tool allowlist and a fallback model when given (AC-26, AC-25)", () => {
     const { argv } = claudeAdapter.buildCommand({ ...run, stage: "implement", profile: { name: "backend", dir: "/a", skillsDir: "/a/skills", instructions: "", tools: ["Read", "Bash"] }, fallbackModel: "claude-opus-5-5" } as StageRun & { fallbackModel: string });
-    expect(argv.slice(argv.indexOf("--allowedTools"), argv.indexOf("--allowedTools") + 2)).toEqual(["--allowedTools", "Read,Bash,Write(//tmp/r.json)"]);
+    expect(argv.slice(argv.indexOf("--allowedTools"), argv.indexOf("--allowedTools") + 2)).toEqual(["--allowedTools", "Read,Bash,Edit(//tmp/r.json)"]);
     expect(argv.slice(argv.indexOf("--add-dir"), argv.indexOf("--add-dir") + 2)).toEqual(["--add-dir", "/tmp"]);
     expect(argv.slice(argv.indexOf("--fallback-model"), argv.indexOf("--fallback-model") + 2)).toEqual(["--fallback-model", "claude-opus-5-5"]);
   });
@@ -41,14 +41,14 @@ describe("claudeAdapter.buildCommand (AC-18)", () => {
     const backend = { name: "backend", dir: "/a", skillsDir: "/a/skills", instructions: "", tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep"] };
     for (const stage of ["review", "plan"] as const) {
       const { argv } = claudeAdapter.buildCommand({ ...run, stage, profile: backend });
-      expect(argv.slice(argv.indexOf("--allowedTools"), argv.indexOf("--allowedTools") + 2)).toEqual(["--allowedTools", "Read,Glob,Grep,Write(//tmp/r.json)"]);
+      expect(argv.slice(argv.indexOf("--allowedTools"), argv.indexOf("--allowedTools") + 2)).toEqual(["--allowedTools", "Read,Glob,Grep,Edit(//tmp/r.json)"]);
     }
     const impl = claudeAdapter.buildCommand({ ...run, stage: "fix", profile: backend }).argv;
-    expect(impl[impl.indexOf("--allowedTools") + 1]).toBe("Read,Edit,Write,Bash,Glob,Grep,Write(//tmp/r.json)");
+    expect(impl[impl.indexOf("--allowedTools") + 1]).toBe("Read,Edit,Write,Bash,Glob,Grep,Edit(//tmp/r.json)");
   });
   it("without a profile still allows reading and writing the result file outside the worktree (plan stage)", () => {
     const { argv } = claudeAdapter.buildCommand({ ...run, profile: null });
-    expect(argv.slice(argv.indexOf("--allowedTools"), argv.indexOf("--allowedTools") + 2)).toEqual(["--allowedTools", "Read,Glob,Grep,Write(//tmp/r.json)"]);
+    expect(argv.slice(argv.indexOf("--allowedTools"), argv.indexOf("--allowedTools") + 2)).toEqual(["--allowedTools", "Read,Glob,Grep,Edit(//tmp/r.json)"]);
     expect(argv.slice(argv.indexOf("--add-dir"), argv.indexOf("--add-dir") + 2)).toEqual(["--add-dir", "/tmp"]);
   });
 });

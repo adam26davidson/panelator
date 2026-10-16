@@ -32,8 +32,10 @@ function buildCommand(run: ClaudeStageRun): Command {
   // I5: plan and review only read, whatever the profile allows; the result file is their one write.
   const readOnly = run.stage === "plan" || run.stage === "review";
   const tools = !readOnly && run.profile && run.profile.tools.length ? run.profile.tools : ["Read", "Glob", "Grep"];
-  // Absolute-path permission rule: the // prefix replaces the leading slash (Write(//tmp/x) means /tmp/x); syntax to be confirmed at the AC-29 hand-run.
-  const writeResult = `Write(/${run.resultPath})`;
+  // Absolute-path permission rule: the // prefix replaces the leading slash (Edit(//tmp/x) means /tmp/x). Claude Code
+  // matches file-path rules for Edit and Read only; an Edit rule also covers the Write tool, while a Write(path) rule
+  // is accepted but never consulted (confirmed at the AC-29 hand-run: the plan stage's result write was denied).
+  const writeResult = `Edit(/${run.resultPath})`;
   argv.push("--add-dir", dirname(run.resultPath));
   argv.push("--allowedTools", [...tools, writeResult].join(","));
   return { argv, env: { CI: "true", CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(run.bounds.timeout_min * 60_000) } };
