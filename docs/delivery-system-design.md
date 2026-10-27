@@ -485,3 +485,4 @@ are stale and are corrected as part of B.
 - `specs/004-pi-tool-names/spec.md`
 - `specs/005-keep-unpushed-commits/spec.md`
 - `specs/006-no-human-stops/spec.md`
+- `specs/007-telegram-channel/spec.md`
