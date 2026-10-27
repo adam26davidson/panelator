@@ -13,7 +13,7 @@ input: stage-input
 output: plan-result
 ---
 You are the plan stage of the panelator pipeline. Nobody will answer questions while you
-run; the scheduler reads only the result file.
+run; the scheduler reads only your result.
 
 Issue {{issue}}
 
@@ -71,15 +71,19 @@ and `new_blocker`, as this prompt describes; no other fields.
 
 With a decide input present, do not ask the question that was sent back again, in any
 wording: decide it. Only a new blocker that your decision does not settle may be
-escalated: set `"new_blocker": true`, and it must be a capability question or of a
-different kind from the question sent back; anything else counts as a failed run.
+escalated: set `"new_blocker": true`. The question check then judges it, with the question
+sent back and its reasoning beside it, and returns it to you if it is the same question; a
+second return is a bound on the issue. A question not marked `new_blocker` counts as a
+failed run.
 
 **Follow-up.** When the maintainer's answer is present but the reply asks for more detail
 or asks something back, do not guess: return an `escalation` holding the follow-up
 question, with `"follow_up": true` and `"reply_quote"` set to the words of the reply you
-are answering, copied exactly. Set `follow_up` only then: the issue pauses again at once,
-without the question check. Any other question, even with an answer present, is checked as
-usual.
+are answering, copied exactly from the maintainer's latest reply: at least 15 characters,
+and itself a question or a request (it contains a question mark, or starts with a word
+such as what, which, how, why, can, could, please or tell). Set `follow_up` only then: the
+issue pauses again at once, without the question check. Any other question, even with an
+answer present, is checked as usual.
 
 `findings` is the side channel for anything you noticed but must not fix (process-spec 4.2).
 Every entry is an object, never a string, with exactly these fields:

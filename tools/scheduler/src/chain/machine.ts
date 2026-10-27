@@ -53,7 +53,7 @@ export function initialChainState(issue: number, specProblem: string | null = nu
     sensitive: false, pr: null, plan: null, pendingFixInput: null, postponedUntil: null, resumeStage: null, conflictPending: false,
     track: "issue", rescues: 0, specRescues: 0, replans: 0, specRevisions: 0, specAnswers: 0, decideReturns: 0, history: [],
     rescueRun: false, specMode: null, specProblem, question: null, askingStage: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
-    pendingAnswer: null, recordAnswer: false, decideInput: null, decideKind: null, parkedPr: null, pendingSince: null, checksRerun: false, securityPass: false,
+    pendingAnswer: null, recordIds: [], recordKind: null, recordAnswer: false, decideInput: null, decidedQuestion: null, parkedPr: null, pendingSince: null, checksRerun: false, securityPass: false,
     chainFailures: null, chainErrors: 0,
     ...(ledger ? { ...ledgerOf(ledger), history: ledger.history.slice(-HISTORY_MAX_ENTRIES).map(clip) } : {}),
   };
@@ -96,8 +96,8 @@ function run(state: ChainState, stage: AgentStageName, extra: Partial<Extract<Ac
 /** The answer fields an unrecorded answer (T4) restores when no other answer is in hand, so its spec PR must carry its mark. */
 function restorePending(s: ChainState): Partial<ChainState> {
   const p = s.pendingAnswer;
-  if (!p || s.answerQuestionIds.length) return {};
-  return { answer: p.text, answerQuestionIds: [...p.ids], answerQuestionId: p.ids[p.ids.length - 1], answerKind: p.kind };
+  if (!p || s.recordIds.length) return {};
+  return { answer: p.text, answerQuestionIds: [...p.ids], answerQuestionId: p.ids[p.ids.length - 1], answerKind: p.kind, recordIds: [...p.ids], recordKind: p.kind };
 }
 
 /** Every entry into the spec stage goes through here and sets the spec track; an unrecorded answer comes along (T4). */
@@ -150,8 +150,8 @@ function escalate(state: ChainState, stuck: Stuck, reason: string, fixInput: str
   // The PR is closed: its fix input, conflict and rescue flag go with it, and so do a decide-mode input, an ADR requirement on its
   // run and the answer it was applying (T-minor 3); an answer not yet recorded on main stays in `pendingAnswer` (T4).
   const dropPr: Partial<ChainState> = {
-    pr: null, pendingFixInput: null, conflictPending: false, rescueRun: false, decideInput: null, decideKind: null, recordAnswer: false, securityPass: false,
-    answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
+    pr: null, pendingFixInput: null, conflictPending: false, rescueRun: false, decideInput: null, decidedQuestion: null, recordAnswer: false, securityPass: false,
+    answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null, recordIds: [], recordKind: null,
   };
   const close = (why: string): Action[] => (s.pr ? [{ type: "close_pr", pr: s.pr.number, branch: branchOf(s), comment: `${why}${clip(reason)}` }] : []);
   if (s.replans < MAX_REPLANS) {
@@ -258,34 +258,49 @@ function pause(s: ChainState, question: Question, asking: AskingStage): Step {
 }
 
 /** AC-14: the asking stage runs again in decide mode; verify, or a second return on the issue, is a bound hit. */
-function decideYourself(state: ChainState, asking: AskingStage, reasoning: string, kind: Question["kind"] = state.question?.kind ?? "other"): Step {
+function decideYourself(state: ChainState, asking: AskingStage, reasoning: string, sentBack: Question | null = state.question): Step {
   const question = state.question;
   const s = { ...state, decideReturns: state.decideReturns + 1, question: null };
   if (asking === "verify" || s.decideReturns > MAX_DECIDE_RETURNS) return escalateAsker(s, asking, `decide_yourself: ${reasoning}`, question);
-  return resume(s, asking, { decideInput: reasoning, decideKind: kind }, "decide");
+  return resume(s, asking, { decideInput: reasoning, decidedQuestion: sentBack }, "decide");
 }
 
 const squash = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
 
-/**
- * C2, AC-15: a follow-up answers the maintainer's reply, which asked something back: it says so (`follow_up`) and
- * quotes the part of the reply it answers, and that quote must be in the reply the stage was given.
- */
-function isFollowUp(state: ChainState, q: Question): boolean {
-  const quote = q.reply_quote === undefined ? "" : squash(q.reply_quote);
-  return q.follow_up === true && state.answer !== null && quote.length > 0 && squash(state.answer).includes(quote);
+/** Tm1: the shortest quote of the reply a follow-up may rest on, after whitespace is collapsed. */
+export const FOLLOW_UP_QUOTE_MIN = 15;
+/** Tm1: a quoted request starts with one of these words (or the quote contains a question mark). */
+const REQUEST_WORDS = ["can", "could", "would", "will", "please", "tell", "explain", "clarify", "say", "what", "which", "why", "how", "when", "where", "who", "is", "are", "do", "does", "should"];
+
+/** The maintainer's latest reply as written: the last part of the joined answer, without its "Question #<id>: " prefix. */
+function latestReply(answer: string): string {
+  const parts = answer.split(/(?:^|\n\n)Question #\d+: /);
+  return parts[parts.length - 1];
 }
 
-/** C3: in decide mode only a new blocker may be asked: marked `new_blocker`, and a capability question or of another kind. */
-const isNewBlocker = (state: ChainState, q: Question): boolean => q.new_blocker === true && (q.kind === "capability" || q.kind !== state.decideKind);
+/**
+ * C2, Tm1, AC-15: a follow-up answers the maintainer's reply, which asked something back. It says so (`follow_up`) and
+ * quotes the part of the latest reply it answers: at least FOLLOW_UP_QUOTE_MIN characters, found in that reply as
+ * written, and itself a question or a request (a "?" in it, or a first word from REQUEST_WORDS).
+ */
+function isFollowUp(state: ChainState, q: Question): boolean {
+  if (q.follow_up !== true || state.answer === null || q.reply_quote === undefined) return false;
+  const quote = squash(q.reply_quote);
+  const asks = quote.includes("?") || REQUEST_WORDS.includes(quote.split(" ")[0].replace(/[^a-z]/g, ""));
+  return quote.length >= FOLLOW_UP_QUOTE_MIN && asks && squash(latestReply(state.answer)).includes(quote);
+}
 
 /**
- * A stage's result carries a question (AC-12, AC-14, AC-15, AC-17): a follow-up pauses at once; in decide mode anything
- * but a new blocker fails the run; otherwise the question check runs.
+ * A stage's result carries a question (AC-12, AC-14, AC-15, AC-17). Decide mode comes first (Tm1): only a question marked
+ * `new_blocker` goes on, to the question check, which sees the question sent back (CM2); anything else fails the run.
+ * Otherwise a follow-up pauses at once, and any other question goes to the check.
  */
 function ask(state: ChainState, stage: Stuck, question: Question): Step {
+  if (state.decideInput !== null) {
+    if (question.new_blocker !== true) return failedInDecideMode(state, stage);
+    return run({ ...state, rescueRun: false }, "question-check", {}, { question, askingStage: stage });
+  }
   if (isFollowUp(state, question)) return pause({ ...state, rescueRun: false }, question, stage);
-  if (state.decideInput !== null && !isNewBlocker(state, question)) return failedInDecideMode(state, stage);
   return run({ ...state, rescueRun: false }, "question-check", {}, { question, askingStage: stage });
 }
 
@@ -298,8 +313,10 @@ function failedInDecideMode(state: ChainState, stage: Stuck): Step {
  * On the spec track the answered question's id and kind stay until the spec PR merges: its fixes are scope-checked with them.
  */
 function settle(state: ChainState, stage: AgentStageName): ChainState {
-  const s: ChainState = { ...state, rescueRun: false, decideInput: null, decideKind: null, answer: null };
+  const s: ChainState = { ...state, rescueRun: false, decideInput: null, decidedQuestion: null, answer: null };
   if (state.track === "issue") Object.assign(s, { answerQuestionId: null, answerQuestionIds: [], answerKind: null });
+  // TI1: a spec or fix run that succeeded with answers to record carried every mark (the driver refuses one without).
+  if (stage === "spec" || stage === "fix" || state.track === "issue") Object.assign(s, { recordIds: [], recordKind: null });
   if (stage === "fix") s.recordAnswer = false;
   return s;
 }
@@ -368,7 +385,7 @@ function stageOk(state: ChainState, event: StageOk): Step {
         if (r.question.kind !== "other") return ask(state, "spec", r.question);
         // AC-14: kind other is not sent to the check; in decide mode it is a failed run like any question.
         if (state.decideInput !== null) return failedInDecideMode(state, "spec");
-        return decideYourself({ ...state, rescueRun: false }, "spec", KIND_OTHER_REASONING, "other");
+        return decideYourself({ ...state, rescueRun: false }, "spec", KIND_OTHER_REASONING, r.question);
       }
       if (r.pr_number === undefined || r.head_sha === undefined) throw new Error(`spec revised without a PR (issue ${state.issue})`);
       const scope = scopeOf(state, event);
@@ -426,7 +443,7 @@ function verifyChecks(state: ChainState, event: Extract<ChainEvent, { type: "che
   }
   // Verify moves on: the window closes, and a reply that resumed verify is no longer an input (AC-18).
   const moved: ChainState = { ...checked, pendingSince: null, checksRerun: false, answer: null, securityPass: false };
-  if (state.track === "issue") Object.assign(moved, { answerQuestionId: null, answerQuestionIds: [], answerKind: null });
+  if (state.track === "issue") Object.assign(moved, { answerQuestionId: null, answerQuestionIds: [], answerKind: null, recordIds: [], recordKind: null });
   if (event.status === "failed") {
     const text = `A required check failed:\n${event.log ?? "(no log excerpt)"}`;
     return toFix(note(moved, text), text);
@@ -439,7 +456,8 @@ function specMerged(state: ChainState, gate: NonNullable<Extract<ChainEvent, { t
   const deleteBranch: Action = { type: "delete_branch", branch: branchOf(state) };
   const fresh: Partial<ChainState> = {
     fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, conflictPending: false, pendingFixInput: null, pendingSince: null, checksRerun: false,
-    rescueRun: false, specProblem: null, specMode: null, decideInput: null, decideKind: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
+    rescueRun: false, specProblem: null, specMode: null, decideInput: null, decidedQuestion: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
+    recordIds: [], recordKind: null,
     recordAnswer: false, securityPass: false,
     // T4: a merged spec PR on this chain carried the unrecorded answer (the driver refused one without its mark).
     pendingAnswer: null,
@@ -483,25 +501,42 @@ const strongest = (a: Question["kind"] | null, b: Question["kind"]): Question["k
 function answered(state: ChainState, event: Extract<ChainEvent, { type: "answered" }>): Step {
   const { question, askingStage: asking } = state;
   if (!question || !asking) throw new Error(`paused without a question (issue ${state.issue})`);
-  const reply = `Question #${event.questionId}: ${event.answer}`;
-  const ids = [...state.answerQuestionIds, event.questionId];
-  const kind = strongest(state.answerKind, question.kind);
+  const id = event.questionId;
+  const reply = `Question #${id}: ${event.answer}`;
+  const ids = [...state.answerQuestionIds, id];
   const answer = state.answer === null ? reply : `${state.answer}\n\n${reply}`;
-  const recordable = kind === "product" || kind === "technical";
+  // TI1: a product or technical answer must be recorded, and so must a follow-up's answer while the decision it
+  // completes is unrecorded. The kind that routes is the strongest of the answers still to record, not of answers
+  // already recorded: a later capability answer on a spec PR is not a decision to record.
+  const decisionKind = question.kind === "product" || question.kind === "technical" ? question.kind : null;
+  const recordable = decisionKind !== null || (question.follow_up === true && state.recordIds.length > 0);
+  const recordKind = recordable ? (strongest(state.recordKind, decisionKind ?? state.recordKind!) as "product" | "technical") : state.recordKind;
+  const recordIds = recordable ? [...new Set([...state.recordIds, id])] : state.recordIds;
   const before = state.answer ?? state.pendingAnswer?.text ?? null;
-  const pendingAnswer: PendingAnswer | null = recordable ? { ids, kind, text: before === null ? reply : `${before}\n\n${reply}` } : state.pendingAnswer;
-  const s: ChainState = { ...state, answer, answerQuestionId: event.questionId, answerQuestionIds: ids, answerKind: kind, pendingAnswer, question: null };
-  if (asking === "spec") return resume(s, "spec");
+  const pendingAnswer: PendingAnswer | null = recordable
+    ? {
+      ids: [...new Set([...(state.pendingAnswer?.ids ?? []), ...recordIds])],
+      kind: strongest(state.pendingAnswer?.kind ?? null, recordKind!) as "product" | "technical",
+      text: before === null ? reply : `${before}\n\n${reply}`,
+    }
+    : state.pendingAnswer;
+  // Tm2: an answer ends decide mode; the stage runs again with the answer, not the earlier reasoning.
+  const s: ChainState = {
+    ...state, answer, answerQuestionId: id, answerQuestionIds: ids, answerKind: strongest(state.answerKind, question.kind), recordIds, recordKind,
+    pendingAnswer, question: null, decideInput: null, decidedQuestion: null,
+  };
+  if (asking === "spec") return resume(s, "spec", {}, s.specMode === "decide" ? "write" : undefined);
   // A capability answer is not a decision: the asking stage runs again with it, and nothing is recorded.
   if (!recordable) return resume(s, asking);
   const decision = `${question.question}\nAnswer: ${event.answer}`;
+  const marks = recordIds.map((r) => `(maintainer answer, question #${r})`).join(", ");
   if (asking === "review" || asking === "fix") {
     // On a spec PR the decision is recorded in that PR; there is no issue PR to park.
     if (s.track === "spec") {
-      return toFix(s, `Record the maintainer's decision in this spec PR, marked (maintainer answer, question #${event.questionId}), then apply it:\n${decision}`);
+      return toFix(s, `Record the maintainer's decision in this spec PR, marked ${marks}, then apply it:\n${decision}`);
     }
-    if (kind === "product") return toSpec({ ...s, parkedPr: s.pr, pr: null }, "record");
-    return toFix(s, `Record the maintainer's decision as an ADR under docs/decisions/, marked (maintainer answer, question #${event.questionId}), then apply it:\n${decision}`, { recordAnswer: true });
+    if (recordKind === "product") return toSpec({ ...s, parkedPr: s.pr, pr: null }, "record");
+    return toFix(s, `Record the maintainer's decision as an ADR under docs/decisions/, marked ${marks}, then apply it:\n${decision}`, { recordAnswer: true });
   }
   return toSpec(s, "record");
 }
@@ -531,7 +566,7 @@ function releaseClaim(state: ChainState, why: string, text: string, gate: string
 }
 
 /** The stage a chain error is charged to (C7): the agent stage it was in or waiting to resume, else fix (verify, merge) or plan. */
-function stuckOf(s: ChainState): Stuck {
+export function stuckOf(s: ChainState): Stuck {
   const stage = s.stage === "waiting" ? s.resumeStage : s.stage;
   if (stage === "question-check") return s.askingStage && s.askingStage !== "verify" ? s.askingStage : "fix";
   if (stage === "plan" || stage === "implement" || stage === "review" || stage === "fix" || stage === "spec") return stage;

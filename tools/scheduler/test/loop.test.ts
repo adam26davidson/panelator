@@ -11,7 +11,7 @@ import { loadStageDefinitions } from "../src/stages/definition.ts";
 import { listClaims, writeClaim } from "../src/state/claims.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import { writeToken } from "../src/state/token.ts";
-import { initialChainState, ledgerOf } from "../src/chain/machine.ts";
+import { HISTORY_ENTRY_MAX, initialChainState, ledgerOf } from "../src/chain/machine.ts";
 import { step } from "../src/chain/driver.ts";
 import { questionMarker } from "../src/chain/question.ts";
 import { writeLedger } from "../src/state/ledger.ts";
@@ -215,6 +215,10 @@ describe("Scheduler.tick", () => {
     await new Promise((r) => setTimeout(r, 100));
     expect((await listClaims(paths))[0].state.chainFailures).toBeNull();
     expect(calls).toBe(2);
+    // Tm6: the error kept is clipped like a history entry.
+    await new Scheduler(deps, { driveChain: async () => { throw new Error("x".repeat(HISTORY_ENTRY_MAX + 50)); } }).tick();
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await listClaims(paths))[0].state.chainFailures?.last).toHaveLength(HISTORY_ENTRY_MAX);
   }, 30_000);
 
   it("records a freshness error and still lists and claims when fast-forward fails (ruling 7c)", async () => {
@@ -432,10 +436,12 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     }
     expect(calls).toBe(MAX_CHAIN_FAILURES + 1);
     expect((await listClaims(paths)).map((c) => c.issue)).toEqual([7]);
-    // C7: reported once, when the count reaches MAX_CHAIN_FAILURES, not on every later failure.
+    // C7: reported once, when the count reaches MAX_CHAIN_FAILURES, not on every later failure; CM3: with a finding.
     expect(notifications.filter((n) => n.gate === "chain_error")).toEqual([
       expect.objectContaining({ issue: 7, text: expect.stringContaining("an abandonment") }),
     ]);
+    const findings = readFileSync(paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(findings).toEqual([expect.objectContaining({ issue: 7, finding: expect.objectContaining({ what: "pending work keeps failing", evidence: "boom", noticed_how: "scheduler chain error" }) })]);
   }, 30_000);
 
   it("never expires a claim in stage paused or abandoned, whose liveness_expired is invalid", async () => {

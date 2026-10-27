@@ -192,7 +192,10 @@ AC-10 second sentence, AC-13)
   ledger, so a restart does not reset them. A claim that carries work the
   driver must finish (a resume's `answered` event or an abandonment's
   actions) is never released; when it has failed three times in a row, one
-  notification says so.
+  finding (with the last error) is appended and one notification says so.
+  Any transition that goes through resets the count. At abandonment, an
+  answer not yet recorded is carried into the fresh ledger, so a later
+  claim records it first.
 
 **Review escalation and security** (replaces AC-11)
 
@@ -259,9 +262,13 @@ AC-10 second sentence, AC-13)
   **What enforces the protection is protected too.** The security criterion
   that lets a merged spec change a gate, a bound or a label rule does not
   cover anything that enforces the charter rule or the protected decisions:
-  `isSensitive`, the driver's selection of the security review, the charter
-  revert line of the fix input, the charter rule of the spec-PR scope gate,
-  and the sensitive-path list. Weakening one is a finding unless the PR cites
+  whatever decides that a sensitive diff gets the security review, that both
+  reviews must approve (AC-9), and that a sensitive path must be listed in
+  the spec (today `isSensitive`, the driver's sensitive-diff check and
+  security-review selection, the machine's two-review pass, the issue-PR
+  scope gate's listed-in-the-spec rule, and the security profile's
+  instructions), the charter revert line of the fix input, the charter rule
+  of the spec-PR scope gate, and the sensitive-path list. Weakening one is a finding unless the PR cites
   a verified maintainer answer that asks for it. Specs 001 and 006 are
   sensitive paths; a change to either, or to that code, that weakens the
   enforcement is a finding on the same terms. The spec review (AC-21)
@@ -332,10 +339,13 @@ AC-10 second sentence, AC-13)
   - a review must return `approve` or `changes_requested`;
   - a plan, implement or fix result must not carry an `escalation`.
 
-  The one exception is a new blocker the decision does not settle: a
-  question marked `new_blocker: true` that is of kind `capability` or of a
-  different kind from the question sent back goes to the question check as
-  usual. Any other result counts as a failed run. Given the asking stage is verify
+  The one exception is a new blocker the decision does not settle: any
+  question marked `new_blocker: true` goes to the question check, whose
+  input then carries the question sent back and the reasoning given. Given
+  it is the same question in other words, the check returns
+  `decide_yourself`, which is the issue's second and a bound hit. Any other
+  result counts as a failed run. An answer from the maintainer ends decide
+  mode. Given the asking stage is verify
   (AC-17), `decide_yourself` is a bound hit with the fix stage as the stuck
   stage and the reasoning as its input. A spec stage `question` of kind
   `other` is not sent to the check: it counts as a `decide_yourself` with the
@@ -368,16 +378,21 @@ AC-10 second sentence, AC-13)
 
   **Follow-ups.** Given a stage that runs with the maintainer's reply as input
   returns a question marked `follow_up: true` whose `reply_quote` is found in
-  that reply (the reply asked for more detail, or asked a question back, and
-  the question answers it), then it is a follow-up: the chain pauses again at
+  the maintainer's latest reply as written (without the scheduler's
+  `Question #<id>: ` prefix), is at least 15 characters, and is itself a
+  question or a request (it contains `?` or starts with a request word such
+  as what, which, how, why, can, could, please or tell), and the stage is not
+  in decide mode (AC-14 comes first), then it is a follow-up: the chain pauses again at
   once (AC-13), without the question check, and the question is logged as
   `asked`. A follow-up is not a failed run and counts toward no bound. Any
   other question from a stage with a reply as input goes to the question
-  check as usual (AC-12). Given the follow-up is answered, then the second
-  reply adds to the first: the stage gets both, each prefixed with its
-  question id; every answered id of the chain is kept; the strongest kind
-  (product, then technical, then capability) routes the answer as AC-18
-  says; and the mark of any of those ids records it.
+  check as usual (AC-12); the question check returns `send` when the
+  maintainer's latest reply asked something back. Given the follow-up is
+  answered, then the second reply adds to the first: the stage gets both,
+  each prefixed with its question id, and every answered id of the chain is
+  kept. A follow-up's answer is to be recorded with the decision it
+  completes; the strongest kind among the answers still to record
+  (product, then technical) routes the answer as AC-18 says.
 - AC-16. **One reminder, no timeout.** Given a question unanswered for 24
   hours, then one reminder is sent: an issue comment that @-mentions the
   maintainer, and one notification. No second reminder is sent. The issue is
@@ -429,7 +444,12 @@ AC-10 second sentence, AC-13)
     failed run. Verify and a fresh review follow.
 
   A spec PR that records an answer and whose diff does not carry the mark is
-  a failed run. On an issue PR, an ADR the diff adds under `docs/decisions/`
+  a failed run. The scheduler keeps the answers still to record apart from
+  the history of answers: a run that records them (the spec stage, or a
+  fix) must add the mark of every one of them in its own commits (a mark an
+  earlier commit of the PR carries does not count for a newer answer), and
+  once it succeeds they are recorded. A later capability answer on the same
+  PR is not a decision to record. On an issue PR, an ADR the diff adds under `docs/decisions/`
   is always in the plan's scope: an agent records its own large decision
   there (design section 3, item 2). An edit to an existing ADR is in scope
   only for a fix recording an answer, or when its added lines carry a

@@ -107,11 +107,15 @@ describe("committed stage prompts (AC-1, AC-14, AC-15, AC-17)", () => {
   }
   for (const n of ["plan", "implement", "fix", "review", "spec"]) {
     it(`${n}.md marks a follow-up with follow_up and reply_quote, and a decide-mode new blocker with new_blocker (C2, C3)`, () => {
-      const t = read(n);
+      const t = read(n).replace(/\s+/g, " ");
       expect(t).toMatch(/"follow_up": true` and `"reply_quote"`/);
-      expect(t).toMatch(/Any other question, even with an answer present, is\s+checked as\s+usual\./);
+      expect(t).toMatch(/Any other question, even with an answer present, is checked as usual\./);
       expect(t).toMatch(/"new_blocker": true/);
-      expect(t).toMatch(/capability question or of a\s+different kind from (the question|the one) sent\s+back/);
+      // CM2: any new blocker goes to the check, which sees the question sent back.
+      expect(t).toMatch(/The question check then judges it, with the question sent back and its reasoning beside it/);
+      expect(t).not.toMatch(/different kind from/);
+      // Tm1: the quote is from the latest reply, at least 15 characters, a question or a request.
+      expect(t).toMatch(/at least 15 characters, and itself a question or a request/);
       expect(t).not.toMatch(/you must not escalate/);
     });
   }
@@ -124,6 +128,17 @@ describe("committed stage prompts (AC-1, AC-14, AC-15, AC-17)", () => {
     const t = read("review");
     expect(t).toContain("`rule:delivery-system-design §3`");
     expect(t).toMatch(/of kind\s+`product` or `technical` whose question is the decision the PR made/);
+  });
+  it("question-check.md sends an exchange the maintainer's reply asked for, judges a decide-mode blocker against the question sent back, and does not claim to read only a file (Cl6, CM2, Tm7)", () => {
+    const t = read("question-check");
+    expect(t).toContain("{{answer}}");
+    expect(t).toMatch(/latest reply asks something back[\s\S]*return `send`/);
+    expect(t).toContain("{{decide_input}}");
+    expect(t).toMatch(/same\s+question as the one sent back, in any wording, return `decide_yourself`/);
+    expect(t).not.toMatch(/reads only the result file/);
+  });
+  it("review.md never lets a product decision pass as an agent's own ADR (Cl7)", () => {
+    expect(read("review")).toMatch(/a product decision never is\s+one an agent may make/);
   });
   it("question-check.md reads the issue's answered questions and words the question it sends (C8, C10)", () => {
     const t = read("question-check");

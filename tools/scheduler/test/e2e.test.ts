@@ -134,10 +134,10 @@ function agents(w: () => ChainWorld) {
       return { pr_number: n, head_sha: sha, tasks_done: ["T1"] };
     },
     fix: (files: Record<string, string>) => (run: StageRun) => ({ head_sha: w().push(run, files, "fix"), addressed: [0] }),
-    /** A fix recording the newest question's answer as an ADR carrying its mark (AC-18). */
+    /** A fix recording the answers of the questions asked so far as an ADR carrying each mark (AC-18, TI1). */
     adr: (file = "docs/decisions/0001-x.md") => (run: StageRun) => {
-      const id = w().questions().at(-1)!.id;
-      return { head_sha: w().push(run, { [file]: `# Use option 1\n\nDecided by the maintainer (maintainer answer, question #${id}).\n` }, "adr"), addressed: [] };
+      const marks = w().questions().map((q) => `(maintainer answer, question #${q.id})`).join(", ");
+      return { head_sha: w().push(run, { [file]: `# Use option 1\n\nDecided by the maintainer ${marks}.\n` }, "adr"), addressed: [] };
     },
     spec: (n: number, files: Record<string, string>) => (run: StageRun) => {
       const sha = w().push(run, files, "spec");

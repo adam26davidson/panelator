@@ -326,15 +326,6 @@
           ],
           "description": "T4: a product or technical answer not yet recorded on main; a re-claim records it first."
         },
-        "decideKind": {
-          "enum": [
-            "product",
-            "technical",
-            "capability",
-            "other",
-            null
-          ]
-        },
         "securityPass": {
           "type": "boolean"
         },
@@ -367,6 +358,31 @@
           "type": "integer",
           "minimum": 0,
           "description": "C7: releases for repeated chain errors."
+        },
+        "decidedQuestion": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "question.json"
+            }
+          ],
+          "description": "CM2: the question sent back to decide, while decide mode lasts."
+        },
+        "recordIds": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "description": "TI1: answered product or technical questions a recording run must still mark."
+        },
+        "recordKind": {
+          "enum": [
+            "product",
+            "technical",
+            null
+          ]
         }
       }
     },

@@ -1,5 +1,6 @@
 import { applyActions, completePause, driveChain as defaultDriveChain, step, type DriverDeps } from "../chain/driver.ts";
-import { CLAIM_LABEL, ENDED, NEEDS_DECISION_LABEL, initialChainState, ledgerOf, transition } from "../chain/machine.ts";
+import { CLAIM_LABEL, ENDED, HISTORY_ENTRY_MAX, NEEDS_DECISION_LABEL, initialChainState, ledgerOf, stuckOf as stuckStage, transition } from "../chain/machine.ts";
+import { appendFindings } from "../state/findings.ts";
 import { livenessGate } from "../gates/index.ts";
 import { ensureWorktree, uncommittedPatch } from "../runner/worktree.ts";
 import { buildSelectContext } from "../shortlist/fetch.ts";
@@ -108,13 +109,18 @@ export class Scheduler {
     if (!claim) return;
     const before = claim.state.chainFailures;
     if (error === null && before === null) return;
-    const chainFailures = error === null ? null : { count: (before?.count ?? 0) + 1, last: error };
+    const chainFailures = error === null ? null : { count: (before?.count ?? 0) + 1, last: error.slice(0, HISTORY_ENTRY_MAX) };
     const state = { ...claim.state, chainFailures };
     await writeClaim(d.paths, { ...claim, state });
     await writeLedger(d.paths, issue, ledgerOf(state));
     if (chainFailures?.count === MAX_CHAIN_FAILURES && carriesPending(claim)) {
       const text = `Issue #${issue}: the scheduler failed ${MAX_CHAIN_FAILURES} times in a row finishing work it must not drop (${claim.pendingEvent ? `the ${claim.pendingEvent.type} event` : "an abandonment"}); it keeps retrying. Last error: ${error}`;
       d.serviceLog.write({ kind: "pending-work-failing", issue, failures: chainFailures.count, error });
+      // CM3: a problem the system must be able to resolve: a finding, as well as the notification.
+      await appendFindings(d.paths, { issue, stage: stuckStage(claim.state), run_id: "chain-error", timestamp: d.now().toISOString() }, [{
+        what: "pending work keeps failing", where: `issue #${issue}, ${claim.pendingEvent ? `pending ${claim.pendingEvent.type} event` : "pending abandonment actions"}`,
+        evidence: chainFailures.last, noticed_how: "scheduler chain error",
+      }]);
       await d.notifier.notify({ issue, gate: "chain_error", label: "", text });
     }
   }

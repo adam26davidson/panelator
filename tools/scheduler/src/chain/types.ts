@@ -48,8 +48,14 @@ export interface ChainState {
   answerKind: Question["kind"] | null;
   /** T4: a product or technical answer not yet recorded on main; part of the ledger, so a release keeps it. */
   pendingAnswer: PendingAnswer | null;
-  /** C3: the kind of the question the check sent back to decide, while decide mode lasts. */
-  decideKind: Question["kind"] | null;
+  /** C3, CM2: the question the check sent back to decide, while decide mode lasts; a new blocker is checked against it. */
+  decidedQuestion: Question | null;
+  /**
+   * TI1: the answered product or technical questions not yet recorded by a successful run, and their strongest kind.
+   * `answerQuestionIds` is the history of the chain's answers; these are the ones a recording run must still mark.
+   */
+  recordIds: number[];
+  recordKind: "product" | "technical" | null;
   /** C5: on a sensitive diff, review runs twice: the normal review, then (with this set) the security review. */
   securityPass: boolean;
   /** C7: the chain's consecutive driver errors, kept in the ledger so a restart does not reset them. */

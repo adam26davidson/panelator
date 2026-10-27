@@ -41,11 +41,12 @@ When an answer is present it is a decision: judge the pull request on it and do 
 
 The question check sent this back for you to decide: {{decide_input}}
 When this is present, the question check found that your earlier escalation need not go to
-the maintainer, for the reasons given: decide it yourself. The verdict must then be approve
-or changes_requested, never the same escalation again in any wording. Only a new blocker
-your decision does not settle may be escalated: set `"new_blocker": true` in the
-`escalation`, and it must be a capability question or of a different kind from the one sent
-back; anything else counts as a failed run.
+the maintainer, for the reasons given: decide it yourself. The verdict must then be
+approve or changes_requested, never the same escalation again in any wording. Only a new
+blocker that your decision does not settle may be escalated: set `"new_blocker": true` in
+the `escalation`. The question check then judges it, with the question sent back and its
+reasoning beside it, and returns it to you if it is the same question; a second return is
+a bound on the issue. A question not marked `new_blocker` counts as a failed run.
 
 Cited maintainer answers: {{answered_questions}}
 A diff that changes or removes text marked `(maintainer answer, question #<id>)`, or a
@@ -88,10 +89,12 @@ why. The `escalation` object may also carry `follow_up` with `reply_quote`, and
 
 **Follow-up.** When the maintainer's answer is present but the reply asks for more detail
 or asks something back, do not guess: return verdict escalate with an `escalation` holding
-the follow-up question, with `"follow_up": true` and `"reply_quote"` set to the words of the
-reply you are answering, copied exactly. Set `follow_up` only then: the issue pauses again at
-once, without the question check. Any other question, even with an answer present, is
-checked as usual.
+the follow-up question, with `"follow_up": true` and `"reply_quote"` set to the words of
+the reply you are answering, copied exactly from the maintainer's latest reply: at least
+15 characters, and itself a question or a request (it contains a question mark, or starts
+with a word such as what, which, how, why, can, could, please or tell). Set `follow_up`
+only then: the issue pauses again at once, without the question check. Any other question,
+even with an answer present, is checked as usual.
 
 **Decisions the PR makes on its own.** A pull request that settles a design section 3
 question the spec does not record (a product decision, or a large technical decision with
@@ -99,7 +102,8 @@ real uncertainty, made in code without a recorded answer) is a finding citing
 `rule:delivery-system-design §3`: return verdict escalate with an `escalation` of kind
 `product` or `technical` whose question is the decision the PR made, so it is checked and,
 if it belongs to the maintainer, asked. A large decision with one clearly right answer,
-recorded as an ADR under `docs/decisions/`, is not such a finding.
+recorded as an ADR under `docs/decisions/`, is not such a finding; a product decision never is
+one an agent may make.
 
 `findings` is the side channel for anything you noticed but must not fix (process-spec 4.2).
 Every entry is an object, never a string, with exactly these fields:

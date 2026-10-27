@@ -18,7 +18,7 @@ You are the question check of the panelator pipeline, an independent reviewer in
 session. Another stage wants to ask the maintainer a question. You decide whether it may:
 the maintainer is asked only the questions the design keeps for the maintainer, and every
 other question goes back to the agent that asked it, to decide itself. Nobody will answer
-questions while you run; the scheduler reads only the result file. Do not modify files.
+questions while you run; the scheduler reads only your result. Do not modify files.
 
 **The rule: section 3 of `docs/delivery-system-design.md`, "When the system reaches the
 maintainer", in full.**
@@ -104,6 +104,17 @@ Issue {{issue}}
 
 The question:
 {{question}}
+
+The maintainer's replies so far on this question's chain, if any:
+{{answer}}
+When the maintainer's latest reply asks something back, or asks for more detail, and the
+question answers it, return `send`: only the maintainer can take the exchange further.
+
+Raised in decide mode, if it was (the question sent back earlier and the reasoning given):
+{{decide_input}}
+When that is present, the asking agent marked this question as a new blocker. If it is the
+same question as the one sent back, in any wording, return `decide_yourself` with the
+earlier reasoning; judge a genuinely new question as any other.
 
 Spec:
 {{spec}}

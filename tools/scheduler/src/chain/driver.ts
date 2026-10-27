@@ -35,7 +35,7 @@ import { classOf } from "../shortlist/rank.ts";
 import type {
   AgentStageName, FixOutcome, Harness, ImplementOutcome, ImplementResult, IssueData, PlanOutcome, Profile, SpecResult, StageDefinition,
 } from "../types.ts";
-import { CLAIM_LABEL, NEEDS_DECISION_LABEL, POSTPONE_WAIT_S, branchOf, ledgerOf, transition } from "./machine.ts";
+import { CLAIM_LABEL, NEEDS_DECISION_LABEL, POSTPONE_WAIT_S, branchOf, initialChainState, ledgerOf, transition } from "./machine.ts";
 import { formatQuestion, questionBody, questionMarker } from "./question.ts";
 import type { Action, ChainEvent, ChainState } from "./types.ts";
 
@@ -143,9 +143,9 @@ async function saveWorktreeWork(deps: DriverDeps, claim: Claim, kind: string): P
   if (u || c) deps.log({ kind: "worktree-saved", issue: claim.issue, uncommitted: u, commits: c });
 }
 
-/** The lines the PR adds (`origin/main...HEAD`), per file. */
-async function addedLinesByFile(worktree: string): Promise<Map<string, string[]>> {
-  const out = await gitOut(worktree, "-c", "core.quotePath=false", "diff", "--unified=0", "--no-color", "origin/main...HEAD");
+/** The lines the PR adds (`origin/main...HEAD`), or those of another range (a run's own: `<start>..HEAD`), per file. */
+async function addedLinesByFile(worktree: string, range = "origin/main...HEAD"): Promise<Map<string, string[]>> {
+  const out = await gitOut(worktree, "-c", "core.quotePath=false", "diff", "--unified=0", "--no-color", range);
   const files = new Map<string, string[]>();
   let current: string[] | null = null;
   for (const line of out.split("\n")) {
@@ -195,12 +195,14 @@ async function verifiedDecisionFiles(deps: DriverDeps, issue: number, worktree: 
   return out;
 }
 
-/** A capability answer is not a decision and is not recorded (AC-18): only a product or technical answer needs its mark. */
-const answerToRecord = (s: ChainState): boolean => s.answerQuestionIds.length > 0 && (s.answerKind === "product" || s.answerKind === "technical");
+/** A capability answer is not a decision and is not recorded (AC-18): only answers still to record need their marks (TI1). */
+const answerToRecord = (s: ChainState): boolean => s.recordIds.length > 0;
 
-/** T3: the mark of any answered question of the chain counts. */
-async function carriesMark(worktree: string, questionIds: number[]): Promise<boolean> {
-  return (await addedLines(worktree)).some((l) => questionIds.some((id) => l.includes(answerMark(id))));
+const marksAll = (lines: string[], questionIds: number[]): boolean => questionIds.every((id) => lines.some((l) => l.includes(answerMark(id))));
+
+/** TI1: every answer still to record carries its mark in the lines this run added (`<start>..HEAD`), not in earlier commits. */
+async function carriesMarks(worktree: string, questionIds: number[], start: string): Promise<boolean> {
+  return marksAll([...(await addedLinesByFile(worktree, `${start}..HEAD`)).values()].flat(), questionIds);
 }
 
 /** Files under docs/decisions/ the PR adds (`origin/main...HEAD`). */
@@ -208,13 +210,14 @@ async function addedDecisionFiles(worktree: string): Promise<string[]> {
   return (await gitOut(worktree, "-c", "core.quotePath=false", "diff", "--diff-filter=A", "--name-only", "origin/main...HEAD")).split("\n").filter((f) => f.startsWith(DECISIONS));
 }
 
-/** AC-18: a fix recording a technical answer adds a file under docs/decisions/ that carries the mark of an answered id of the chain. */
-async function recordsAnswer(worktree: string, questionIds: number[]): Promise<boolean> {
-  for (const f of await addedDecisionFiles(worktree)) {
-    const text = await readFile(join(worktree, f), "utf8").catch(() => "");
-    if (questionIds.some((id) => text.includes(answerMark(id)))) return true;
-  }
-  return false;
+/**
+ * AC-18, TI1: a fix recording a technical answer adds a file under docs/decisions/, and the lines this run wrote to such
+ * files carry the mark of every answer still to record.
+ */
+async function recordsAnswer(worktree: string, questionIds: number[], start: string): Promise<boolean> {
+  const adrs = new Set(await addedDecisionFiles(worktree));
+  const lines = [...(await addedLinesByFile(worktree, `${start}..HEAD`)).entries()].filter(([f]) => adrs.has(f)).flatMap(([, l]) => l);
+  return adrs.size > 0 && marksAll(lines, questionIds);
 }
 
 /** C8: the issue's answered questions, for the question check: one already answered may settle the new one. */
@@ -253,7 +256,11 @@ async function buildInput(
     // Each reply already carries its "Question #<id>: " prefix (T3).
     answer: s.answer ?? undefined,
     mode: s.specMode ?? undefined,
-    decide_input: s.decideInput ?? undefined,
+    // CM2: the question check of a decide-mode new blocker sees the question sent back and why.
+    decide_input: s.decideInput === null ? undefined
+      : claim.state.stage === "question-check" && s.decidedQuestion
+        ? `Sent back earlier for the asking stage to decide: ${s.decidedQuestion.question}\nThe reasoning given: ${s.decideInput}`
+        : s.decideInput,
     spec_problem: s.specProblem ?? undefined,
     answered_questions: answered,
     result_path: "", profile_instructions: "",
@@ -391,6 +398,8 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   }
   // C1: with a conflict pending the fix stage rebases and resolves it itself (its input says so).
 
+  // TI1: where this run starts; a recording run's marks must be in what it adds after this commit.
+  const start = await worktreeHead(claim.worktree);
   const issue = await fetchIssue(deps, claim.issue);
   const specPath = specPathFromIssueBody(issue.body);
   const specText = specOnMain(deps.repoDir, specPath);
@@ -465,15 +474,16 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
     case "question-check":
       return { type: "stage_ok", stage: "question-check", result: out.result as never };
     case "spec":
-      return specEvent(deps, claim, issue.body, out.result as SpecResult);
+      return specEvent(deps, claim, issue.body, out.result as SpecResult, start);
     case "implement":
     case "fix":
-      return codeEvent(deps, claim, stage, out.result as ImplementOutcome | FixOutcome, issue.body, specText, sensitiveGlobs);
+      return codeEvent(deps, claim, stage, out.result as ImplementOutcome | FixOutcome, issue.body, specText, sensitiveGlobs, start);
   }
 }
 
 async function codeEvent(
   deps: DriverDeps, claim: Claim, stage: "implement" | "fix", result: ImplementOutcome | FixOutcome, issueBody: string, specText: string, sensitiveGlobs: string[],
+  start: string,
 ): Promise<ChainEvent> {
   const state = claim.state;
   // AC-17: a result that escalates has no PR or scope to check.
@@ -485,11 +495,11 @@ async function codeEvent(
   if (prNumber === undefined || !(await prBound(deps, claim, { prNumber, branch: branchOf(state) }, r.head_sha))) {
     return { type: "stage_failed", stage, reason: "result: pr mismatch" };
   }
-  if (stage === "fix" && state.recordAnswer && !(await recordsAnswer(claim.worktree, state.answerQuestionIds))) {
+  if (stage === "fix" && state.recordAnswer && !(await recordsAnswer(claim.worktree, state.recordIds, start))) {
     return { type: "stage_failed", stage, reason: "result: answer not recorded under docs/decisions/" };
   }
   // AC-18: a fix on a spec PR records a product or technical answer in that PR, carrying the mark.
-  if (stage === "fix" && state.track === "spec" && answerToRecord(state) && !(await carriesMark(claim.worktree, state.answerQuestionIds))) {
+  if (stage === "fix" && state.track === "spec" && answerToRecord(state) && !(await carriesMarks(claim.worktree, state.recordIds, start))) {
     return { type: "stage_failed", stage, reason: "result: answer not marked" };
   }
   const diff = await diffFilesAgainstBase(claim.worktree);
@@ -506,7 +516,7 @@ async function codeEvent(
 }
 
 /** AC-18, AC-21, AC-22: the checks on a spec stage result, in order, then the spec PR's scope. */
-async function specEvent(deps: DriverDeps, claim: Claim, issueBody: string, r: SpecResult): Promise<ChainEvent> {
+async function specEvent(deps: DriverDeps, claim: Claim, issueBody: string, r: SpecResult, start: string): Promise<ChainEvent> {
   const state = claim.state;
   const failed = (reason: string): ChainEvent => ({ type: "stage_failed", stage: "spec", reason });
   if (r.verdict === "question") return { type: "stage_ok", stage: "spec", result: r };
@@ -517,7 +527,7 @@ async function specEvent(deps: DriverDeps, claim: Claim, issueBody: string, r: S
   const pr = r.pr_number === undefined || r.head_sha === undefined ? null : await prBound(deps, claim, { prNumber: r.pr_number, branch: `spec-${claim.issue}` }, r.head_sha);
   if (!pr) return failed("result: pr mismatch");
   if (CLOSING_KEYWORD.test(pr.body)) return failed("result: spec PR body closes an issue");
-  if (answerToRecord(state) && !(await carriesMark(claim.worktree, state.answerQuestionIds))) return failed("result: answer not marked");
+  if (answerToRecord(state) && !(await carriesMarks(claim.worktree, state.recordIds, start))) return failed("result: answer not marked");
   const scope = await specTrackScope(deps, claim, await diffFilesAgainstBase(claim.worktree), specPath);
   if (issueSpec === null) await deps.gh.setIssueBody(claim.issue, `${issueBody}\n\nSpec: ${specPath}`);
   return { type: "stage_ok", stage: "spec", result: r, scope };
@@ -675,8 +685,10 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         if (claim.state.stage === "abandoned") {
           // Spec 005: nothing the worktree removal discards goes unsaved (the last run's leftovers, commits never in a PR).
           await saveWorktreeWork(deps, claim, "abandoned");
-          // AC-7: an abandoned issue's ledger is archived, after its finding; a later claim starts with fresh counts.
+          // AC-7: an abandoned issue's ledger is archived, after its finding; a later claim starts with fresh counts,
+          // but an answer not yet recorded on main is carried into the fresh ledger (Tm4).
           await archiveLedger(deps.paths, claim.issue, deps.now());
+          if (claim.state.pendingAnswer) await writeLedger(deps.paths, claim.issue, { ...ledgerOf(initialChainState(claim.issue)), pendingAnswer: claim.state.pendingAnswer });
         }
         await removeWorktree(deps.repoDir, claim.worktree).catch((e) => deps.log({ kind: "error", issue: claim.issue, error: `worktree remove: ${(e as Error).message}` }));
         await removeClaim(deps.paths, claim.issue);
@@ -798,7 +810,10 @@ export async function step(deps: DriverDeps, claim: Claim): Promise<{ claim: Cla
   }
 
   const before = claim.state;
-  const { state, actions } = transition(before, event);
+  const next = transition(before, event);
+  // Tm3: a transition that went through is progress: the count of consecutive chain errors starts again.
+  const state = next.state.chainFailures === null ? next.state : { ...next.state, chainFailures: null };
+  const actions = next.actions;
   claim = { ...claim, state, last_activity_at: deps.now().toISOString() };
   // AC-7: the ledger is written whenever a counter or the history changes, before any action.
   if (JSON.stringify(ledgerOf(before)) !== JSON.stringify(ledgerOf(state))) await writeLedger(deps.paths, claim.issue, ledgerOf(state));

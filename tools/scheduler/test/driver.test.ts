@@ -595,6 +595,73 @@ describe("driver: PR binding (spec 006)", () => {
   }, 60_000);
 });
 
+describe("driver: final review cycle 2", () => {
+  it("a spec-PR fix recording answer #556 fails when only #555's mark, from an earlier commit, is on the PR; its own #556 mark passes (TI1)", async () => {
+    for (const [mark, ok] of [[555, false], [556, true]] as const) {
+      let wt = "";
+      const t = await setup(() => ({ fix: [(run: StageRun) => ({ head_sha: commitIn(run.worktree, { "specs/010-thing/spec.md": `${spec}\nUse lru (maintainer answer, question #${mark}).\n` }, "fix"), addressed: [] })] }),
+        (sha) => ghRoutes(sha, { prs: { 12: { headRef: "spec-7", head: () => head(wt) } } }), (_p, w) => {
+          wt = w;
+          git(w, "checkout", "-q", "-b", "spec-7");
+          commitIn(w, { "docs/product-spec.md": "# Product\n\nLocal only (maintainer answer, question #555).\n" }, "record 555");
+          git(w, "push", "-q", "-u", "origin", "spec-7");
+        });
+      const c = at(t.claim, {
+        stage: "fix", track: "spec", pr: { number: 12, head_sha: t.sha }, answerQuestionId: 556, answerQuestionIds: [555, 556], answerKind: "product", recordIds: [556], recordKind: "technical",
+        pendingFixInput: "Record the decision.",
+      });
+      await writeClaim(t.paths, c);
+      const r = await step(t.deps, c);
+      // Past the mark check (the fixture's parent design then fails the spec-PR scope, which is not under test here).
+      if (ok) {
+        expect(r.claim.state.history.some((h) => h.includes("answer not marked"))).toBe(false);
+        expect(r.claim.state).toMatchObject({ recordIds: [], answerKind: "product" });
+      }
+      else expect(r.claim.state.history).toContain("fix attempt 1 failed: result: answer not marked");
+    }
+  }, 60_000);
+
+  it("a spec stage with two answers to record must mark both (TI1)", async () => {
+    for (const [text, ok] of [["Use a (maintainer answer, question #555).", false], ["Use a (maintainer answer, question #555); local (maintainer answer, question #556).", true]] as const) {
+      let wt = "";
+      const t = await setup(() => ({ spec: [(run: StageRun) => ({ verdict: "revised", spec_path: "specs/010-thing/spec.md", pr_number: 12, head_sha: commitIn(run.worktree, { "specs/010-thing/spec.md": `${spec}\n${text}\n` }) })] }),
+        (sha) => ghRoutes(sha, { prs: { 12: { headRef: "spec-7", head: () => head(wt), body: "Refs #7" } } }), (_p, w) => { wt = w; });
+      const c = at(t.claim, { stage: "spec", track: "spec", specMode: "write", answer: "Question #555: a\n\nQuestion #556: local", answerQuestionId: 556, answerQuestionIds: [555, 556], answerKind: "product", recordIds: [555, 556], recordKind: "product" });
+      await writeClaim(t.paths, c);
+      const r = await step(t.deps, c);
+      if (ok) expect(r.claim.state.recordIds).toEqual([]);
+      else expect(r.claim.state.history).toContain("spec attempt 1 failed: result: answer not marked");
+    }
+  }, 60_000);
+
+  it("the question check of a decide-mode new blocker gets the question sent back and its reasoning (CM2)", async () => {
+    const { deps, claim, paths } = await setup(() => ({ "question-check": [{ verdict: "decide_yourself", reasoning: "same question" }] }));
+    const c = at(claim, { stage: "question-check", question: { ...Q, question: "Which index?", new_blocker: true }, askingStage: "plan", decideInput: "pick a", decidedQuestion: Q, decideReturns: 1 });
+    await writeClaim(paths, c);
+    await step(deps, c);
+    expect(inputOf(paths, "7-question-check-").decide_input).toBe("Sent back earlier for the asking stage to decide: Which store?\nIt decides the schema.\nThe reasoning given: pick a");
+  }, 60_000);
+
+  it("a transition that goes through resets the chain-failure count (Tm3)", async () => {
+    const { deps, claim, paths } = await setup(() => ({ plan: [plan] }));
+    const c = at(claim, { stage: "plan", chainFailures: { count: 2, last: "boom" } });
+    await writeClaim(paths, c);
+    const r = await step(deps, c);
+    expect(r.claim.state).toMatchObject({ stage: "implement", chainFailures: null });
+    expect(JSON.parse(readFileSync(ledgerFile(paths), "utf8")).chainFailures).toBeNull();
+  }, 60_000);
+
+  it("an abandonment carries an unrecorded answer into the fresh ledger (Tm4)", async () => {
+    const pending = { ids: [555], kind: "product" as const, text: "Question #555: yes" };
+    const { deps, claim, paths } = await setup(() => ({ fix: [] }));
+    const c = at(claim, { stage: "fix", track: "spec", pr: null, rescues: 1, replans: 1, specRevisions: 1, specRescues: 1, pendingFixInput: "x", pendingAnswer: pending });
+    await writeClaim(paths, c);
+    await step(deps, c);
+    expect(readdirSync(paths.escalations).some((f) => f.startsWith("7.abandoned-"))).toBe(true);
+    expect(JSON.parse(readFileSync(ledgerFile(paths), "utf8"))).toMatchObject({ rescues: 0, replans: 0, history: [], pendingAnswer: pending });
+  }, 60_000);
+});
+
 describe("driver: a branch left on origin by a failed attempt (final review T2)", () => {
   /** Pushes a commit to issue-7 on origin from a scratch clone, as an implement that failed after its push would. */
   function leaveStaleBranch(pair: ReturnType<typeof repoPair>): void {
@@ -725,7 +792,7 @@ describe("driver: questions (spec 006 AC-12, AC-13, AC-17)", () => {
   }, 60_000);
 
   it("logs a follow-up as asked when it pauses without the check (T-minor 5)", async () => {
-    const fu = { ...Q, follow_up: true, reply_quote: "which store" };
+    const fu = { ...Q, follow_up: true, reply_quote: "Which store do you mean?" };
     const { deps, claim, paths } = await setup(() => ({ plan: [{ escalation: fu }] }));
     const c = at(claim, { stage: "plan", answer: "Question #555: Which store do you mean?", answerQuestionId: 555, answerQuestionIds: [555], answerKind: "capability" });
     await writeClaim(paths, c);
@@ -767,13 +834,16 @@ describe("driver: questions (spec 006 AC-12, AC-13, AC-17)", () => {
 
 let addedWt = "";
 describe("driver: recorded answers in a fix (spec 006 AC-18)", () => {
-  const recording = { recordAnswer: true, answerQuestionId: 555, answerQuestionIds: [555], answerKind: "technical" as const, answer: "Question #555: use a", pendingFixInput: "Record the decision." };
+  const recording = {
+    recordAnswer: true, answerQuestionId: 555, answerQuestionIds: [555], answerKind: "technical" as const, recordIds: [555], recordKind: "technical" as const,
+    answer: "Question #555: use a", pendingFixInput: "Record the decision.",
+  };
   const adr = (wt: string) => ({ head_sha: commitIn(wt, { "docs/decisions/0001-store.md": "Use a. (maintainer answer, question #555)\n" }), addressed: [] });
 
-  it("accepts a recording fix whose ADR carries the mark of an earlier answer of the chain (T3)", async () => {
+  it("accepts a recording fix whose ADR carries the mark of each answer still to record, not of every answer of the chain (T3, TI1)", async () => {
     let wt = "";
     const { deps, claim, paths, sha } = await setup(() => ({ fix: [(run: StageRun) => adr(run.worktree)] }), (sha) => ghRoutes(sha, { prs: { 9: { head: () => head(wt) } } }), (_p, w) => { wt = w; });
-    const c = at(claim, { stage: "fix", plan: plan as never, pr: { number: 9, head_sha: sha }, ...recording, answerQuestionId: 556, answerQuestionIds: [555, 556] });
+    const c = at(claim, { stage: "fix", plan: plan as never, pr: { number: 9, head_sha: sha }, ...recording, answerQuestionId: 556, answerQuestionIds: [554, 555, 556], recordIds: [555] });
     await writeClaim(paths, c);
     expect((await step(deps, c)).claim.state.stage).toBe("verify");
   }, 60_000);
@@ -826,7 +896,7 @@ describe("driver: recorded answers in a fix (spec 006 AC-18)", () => {
 describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
   it("fails a spec-PR fix that records a product answer without its mark (AC-18)", async () => {
     const { deps, claim, paths, sha } = await setup((sha) => ({ fix: [{ head_sha: sha, addressed: [] }] }), (sha) => ghRoutes(sha, { prs: { 12: { headRef: "spec-7", head: sha } } }), onSpec7);
-    const c = at(claim, { stage: "fix", track: "spec", pr: { number: 12, head_sha: sha }, answer: "keep it local", answerQuestionId: 555, answerQuestionIds: [555], answerKind: "product", pendingFixInput: "Record the decision." });
+    const c = at(claim, { stage: "fix", track: "spec", pr: { number: 12, head_sha: sha }, answer: "keep it local", answerQuestionId: 555, answerQuestionIds: [555], answerKind: "product", recordIds: [555], recordKind: "product", pendingFixInput: "Record the decision." });
     await writeClaim(paths, c);
     expect((await step(deps, c)).claim.state.history).toContain("fix attempt 1 failed: result: answer not marked");
   }, 60_000);
@@ -957,7 +1027,7 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     let wt = "";
     const routes = { prs: { 12: { headRef: "spec-7", head: () => head(wt), body: "Refs #7" } } };
     const unmarked = await setup(() => ({ spec: [(run: StageRun) => revised(commitIn(run.worktree, { "specs/010-thing/spec.md": spec + "\nUse a.\n" })), (run: StageRun) => revised(commitIn(run.worktree, { "specs/010-thing/spec.md": spec + "\nUse a. (maintainer answer, question #555)\n" }))] }), (sha) => ghRoutes(sha, routes), (_p, w) => { wt = w; });
-    const c = at(unmarked.claim, { stage: "spec", track: "spec", specMode: "write", answer: "use a", answerQuestionId: 555, answerQuestionIds: [555], answerKind: "technical" });
+    const c = at(unmarked.claim, { stage: "spec", track: "spec", specMode: "write", answer: "use a", answerQuestionId: 555, answerQuestionIds: [555], answerKind: "technical", recordIds: [555], recordKind: "technical" });
     await writeClaim(unmarked.paths, c);
     const r = await step(unmarked.deps, c);
     expect(r.claim.state.history).toContain("spec attempt 1 failed: result: answer not marked");

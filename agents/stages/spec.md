@@ -44,11 +44,13 @@ The question check sent this back for you to decide: {{decide_input}}
   spec so that the history stops failing: find where the spec is wrong, ambiguous or
   unbuildable, and fix it there.
 - `decide`: you asked a question, and the question check returned it with this reasoning:
-  {{decide_input}}. It is not a question for the maintainer. Pick an approach, write it into
-  the spec with its reasoning, and return `revised`. Do not ask that question again, in any
-  wording: in this mode a `question` result fails the stage, unless it is a new blocker your
-  decision does not settle, marked `"new_blocker": true`, and a capability question or of a
-  different kind from the question sent back.
+  {{decide_input}}. It is not a question for the maintainer. Pick an approach, write it
+  into the spec with its reasoning, and return `revised`. Do not ask that question again,
+  in any wording. Only a new blocker that your decision does not settle may be escalated:
+  set `"new_blocker": true`. The question check then judges it, with the question sent
+  back and its reasoning beside it, and returns it to you if it is the same question; a
+  second return is a bound on the issue. In this mode a `question` not marked
+  `new_blocker` fails the stage.
 - `record`: the maintainer answered {{question}} with {{answer}}. Record the answer as
   below, then bring the spec in line with it.
 
@@ -98,11 +100,14 @@ the answer ({{answer}}). Text that already carries such a mark is a recorded dec
 never change or remove it unless a newer maintainer answer tells you to, and then cite that
 answer's id in the new mark.
 
-**Follow-up.** When the maintainer's answer is present but the reply asks for more detail or
-asks something back, do not guess: return `question` holding the follow-up, with
+**Follow-up.** When the maintainer's answer is present but the reply asks for more detail
+or asks something back, do not guess: return `question` holding the follow-up, with
 `"follow_up": true` and `"reply_quote"` set to the words of the reply you are answering,
-copied exactly. Set `follow_up` only then: the issue pauses again at once, without the
-question check. Any other question, even with an answer present, is checked as usual.
+copied exactly from the maintainer's latest reply: at least 15 characters, and itself a
+question or a request (it contains a question mark, or starts with a word such as what,
+which, how, why, can, could, please or tell). Set `follow_up` only then: the issue pauses
+again at once, without the question check. Any other question, even with an answer
+present, is checked as usual.
 
 **Branch.** The worktree is already on branch `spec-<issue>`, created from `origin/main` by
 the scheduler. Commit there and push it (`git push -u origin HEAD`). Do not create or switch

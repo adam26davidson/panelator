@@ -659,30 +659,55 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
     }
   });
   it("a review follow-up of kind other pauses: the follow-up row comes first (T-minor 2)", () => {
-    const fu: Question = { ...qOther, follow_up: true, reply_quote: "what breaks" };
+    const fu: Question = { ...qOther, follow_up: true, reply_quote: "What breaks if we skip it?" };
     const r = transition(at("review", { pr: pr3, answer: "Question #5: What breaks if we skip it?" }), reviewEscalates(fu));
     expect(r.actions).toEqual([{ type: "pause", question: fu, asking: "review" }]);
   });
-  it("in decide mode a new blocker of another kind, or a capability one, goes to the check; the same question again fails (C3)", () => {
-    const decide = { decideInput: "pick lru", decideKind: "technical" as const, plan };
+  it("in decide mode any question marked new_blocker goes to the check; an unmarked one fails the run (C3, CM2)", () => {
+    const decide = { decideInput: "pick lru", decidedQuestion: q, plan };
     const escalates = (question: Question) => ({ type: "stage_ok" as const, stage: "implement" as const, result: { escalation: question } });
-    for (const question of [{ ...qCapability, new_blocker: true }, { ...qProduct, new_blocker: true }]) {
+    for (const question of [{ ...qCapability, new_blocker: true }, { ...qProduct, new_blocker: true }, { ...q, question: "Which eviction policy?", new_blocker: true }]) {
       const r = transition(at("implement", decide), escalates(question));
       expect(r.actions).toEqual([{ type: "run_stage", stage: "question-check", attempt: 1 }]);
-      expect(r.state).toMatchObject({ question, askingStage: "implement", decideInput: "pick lru" });
+      expect(r.state).toMatchObject({ question, askingStage: "implement", decideInput: "pick lru", decidedQuestion: q });
     }
-    for (const question of [q, { ...q, new_blocker: true }, qProduct]) {
+    for (const question of [q, qProduct]) {
       const r = transition(at("implement", decide), escalates(question));
       expect(r.actions).toEqual([{ type: "run_stage", stage: "implement", attempt: 2 }]);
       expect(r.state.history).toEqual(["implement attempt 1 failed: escalated in decide mode"]);
     }
-    // decide_yourself records the kind it sent back; a spec question of kind other counts as kind other.
+    // The check returning the same question again is the second decide_yourself: a bound hit.
+    const again = transition(at("question-check", { ...decide, question: { ...q, new_blocker: true }, askingStage: "implement", decideReturns: 1 }), checkSays("decide_yourself", "same question"));
+    expect(again.state).toMatchObject({ decideReturns: 2, rescues: 1, rescueRun: true });
+    // decide_yourself keeps the question it sent back; a spec question of kind other is kept the same way.
     const d = transition(at("question-check", { question: qProduct, askingStage: "plan" }), checkSays("decide_yourself", "decide"));
-    expect(d.state).toMatchObject({ stage: "plan", decideKind: "product", decideInput: "decide" });
+    expect(d.state).toMatchObject({ stage: "plan", decidedQuestion: qProduct, decideInput: "decide" });
     const o = transition(at("spec", { track: "spec", specMode: "write" }), specOk({ verdict: "question", question: qOther }));
-    expect(o.state.decideKind).toBe("other");
+    expect(o.state.decidedQuestion).toEqual(qOther);
     const settled = transition(d.state, { type: "stage_ok", stage: "plan", result: plan });
-    expect(settled.state).toMatchObject({ decideInput: null, decideKind: null });
+    expect(settled.state).toMatchObject({ decideInput: null, decidedQuestion: null });
+  });
+  it("decide mode is checked before the follow-up rule (Tm1)", () => {
+    const fu: Question = { ...q, follow_up: true, reply_quote: "Which cache do you mean?" };
+    const r = transition(at("implement", { plan, decideInput: "d", decidedQuestion: q, answer: "Question #5: Which cache do you mean?" }), { type: "stage_ok", stage: "implement", result: { escalation: fu } });
+    expect(r.state.history).toEqual(["implement attempt 1 failed: escalated in decide mode"]);
+  });
+  it("a follow-up quote must be at least 15 characters of the latest reply as written, and a question or a request (Tm1)", () => {
+    const state = at("implement", { plan, answer: "Question #5: Use lru.\n\nQuestion #6: Fine. Which size do you suggest?", answerQuestionIds: [5, 6], answerKind: "capability" });
+    const toCheck = (quote: string) => {
+      const r = transition(state, { type: "stage_ok", stage: "implement", result: { escalation: { ...qCapability, follow_up: true, reply_quote: quote } } });
+      return r.state.stage;
+    };
+    expect(toCheck("Which size do you suggest?")).toBe("paused");
+    expect(toCheck("which size do  you\nsuggest")).toBe("paused"); // a request word, whitespace and case aside
+    expect(toCheck("size?")).toBe("question-check"); // too short
+    expect(toCheck("Fine. Which size do you")).toBe("question-check"); // neither a question mark nor a request word first
+    expect(toCheck("Question #6: Fine. Which size")).toBe("question-check"); // the prefix is not the reply
+    expect(toCheck("Use lru. What else?")).toBe("question-check"); // not in the latest reply
+  });
+  it("an answer ends decide mode (Tm2)", () => {
+    const r = transition(at("paused", { question: qCapability, askingStage: "implement", plan, decideInput: "d", decidedQuestion: q }), answered());
+    expect(r.state).toMatchObject({ stage: "implement", decideInput: null, decidedQuestion: null });
   });
   it("decide_yourself reruns the asker in decide mode; the second one escalates (AC-14)", () => {
     const r1 = transition(at("question-check", { question: q, askingStage: "implement", plan }), checkSays("decide_yourself", "pick lru"));
@@ -848,25 +873,52 @@ describe("chain: answer chains and unrecorded answers (final review T3, T4, T-mi
   it("a follow-up's reply adds to the first: every id, both texts, the strongest kind routes (T3)", () => {
     // A product question from review, a follow-up of kind capability, then the second reply.
     const first = transition(at("paused", { question: qProduct, askingStage: "review", pr: pr3 }), answered("Which widget do you mean?", 5));
-    expect(first.state).toMatchObject({ stage: "spec", specMode: "record", answerQuestionIds: [5], answerKind: "product" });
-    const asked = { ...first.state, stage: "paused" as const, question: { ...qCapability, follow_up: true, reply_quote: "Which widget" }, askingStage: "spec" as const };
+    expect(first.state).toMatchObject({ stage: "spec", specMode: "record", answerQuestionIds: [5], answerKind: "product", recordIds: [5], recordKind: "product" });
+    const asked = { ...first.state, stage: "paused" as const, question: { ...qCapability, follow_up: true, reply_quote: "Which widget do you mean?" }, askingStage: "spec" as const };
     const second = transition(asked, answered("The clock widget.", 6));
     expect(second.state).toMatchObject({
-      stage: "spec", specMode: "record", answerQuestionId: 6, answerQuestionIds: [5, 6], answerKind: "product",
+      stage: "spec", specMode: "record", answerQuestionId: 6, answerQuestionIds: [5, 6], answerKind: "product", recordIds: [5, 6], recordKind: "product",
       answer: "Question #5: Which widget do you mean?\n\nQuestion #6: The clock widget.",
       pendingAnswer: { ids: [5, 6], kind: "product", text: "Question #5: Which widget do you mean?\n\nQuestion #6: The clock widget." },
     });
-    // A capability reply after a technical one keeps the technical route: the fix records an ADR.
-    const tech = { ...at("paused", { question: qCapability, askingStage: "review", pr: pr3 }), answer: "Question #5: lru, but which size?", answerQuestionId: 5, answerQuestionIds: [5], answerKind: "technical" as const };
+    // A capability follow-up's reply after an unrecorded technical one keeps the technical route: the fix records an ADR with both marks.
+    const tech = {
+      ...at("paused", { question: { ...qCapability, follow_up: true, reply_quote: "lru, but which size?" }, askingStage: "review", pr: pr3 }),
+      answer: "Question #5: lru, but which size?", answerQuestionId: 5, answerQuestionIds: [5], answerKind: "technical" as const, recordIds: [5], recordKind: "technical" as const,
+    };
     const r = transition(tech, answered("1000 entries", 6));
-    expect(r.state).toMatchObject({ stage: "fix", recordAnswer: true, answerQuestionIds: [5, 6], answerKind: "technical" });
+    expect(r.state).toMatchObject({ stage: "fix", recordAnswer: true, answerQuestionIds: [5, 6], recordIds: [5, 6], answerKind: "technical" });
+    expect(r.state.pendingFixInput).toContain("marked (maintainer answer, question #5), (maintainer answer, question #6)");
     expect(r.state.pendingFixInput).toContain("No GPU on this runner\nAnswer: 1000 entries");
   });
-  it("on the spec track a later capability answer keeps the product answer's ids and kind (Task 6 minor)", () => {
-    const s = at("paused", { track: "spec", pr: pr8, question: qCapability, askingStage: "review", answer: null, answerQuestionId: 5, answerQuestionIds: [5], answerKind: "product", pendingAnswer: { ids: [5], kind: "product", text: "Question #5: yes" } });
+  it("on a spec PR that recorded a product answer, a later capability answer is not a decision to record (Task 6 minor, TI1)", () => {
+    const pending = { ids: [5], kind: "product" as const, text: "Question #5: yes" };
+    const s = at("paused", { track: "spec", pr: pr8, question: qCapability, askingStage: "review", answer: null, answerQuestionId: 5, answerQuestionIds: [5], answerKind: "product", recordIds: [], pendingAnswer: pending });
     const r = transition(s, answered("the runner is back", 6));
-    expect(r.state).toMatchObject({ answerQuestionIds: [5, 6], answerKind: "product", answer: "Question #6: the runner is back" });
-    expect(r.state.pendingAnswer).toEqual({ ids: [5, 6], kind: "product", text: "Question #5: yes\n\nQuestion #6: the runner is back" });
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1 }]);
+    expect(r.state).toMatchObject({ answerQuestionIds: [5, 6], answerKind: "product", recordIds: [], recordKind: null, answer: "Question #6: the runner is back" });
+    expect(r.state.pendingAnswer).toEqual(pending);
+  });
+  it("two answers on one spec PR: the second must be recorded on its own, whatever marks the PR already carries (TI1)", () => {
+    const pending = { ids: [5], kind: "product" as const, text: "Question #5: yes" };
+    const s = at("paused", { track: "spec", pr: pr8, question: q, askingStage: "review", answerQuestionId: 5, answerQuestionIds: [5], answerKind: "product", recordIds: [], pendingAnswer: pending });
+    const r = transition(s, answered("use lru", 6));
+    expect(r.state).toMatchObject({ stage: "fix", recordIds: [6], recordKind: "technical", answerQuestionIds: [5, 6] });
+    expect(r.state.pendingFixInput).toContain("marked (maintainer answer, question #6), then apply it");
+    expect(r.state.pendingFixInput).not.toContain("question #5)");
+    expect(r.state.pendingAnswer).toEqual({ ids: [5, 6], kind: "product", text: "Question #5: yes\n\nQuestion #6: use lru" });
+    // The fix that records it clears what was to record; the spec PR keeps the product kind for its scope.
+    const done = transition(r.state, fixOk("c".repeat(40)));
+    expect(done.state).toMatchObject({ recordIds: [], recordKind: null, answerKind: "product" });
+  });
+  it("two questions in a row from the spec stage: both answers are to record, and its revised result clears them (TI1, Tm5)", () => {
+    const pending = { ids: [5], kind: "product" as const, text: "Question #5: yes" };
+    const s = at("paused", { track: "spec", specMode: "write", question: q, askingStage: "spec", answer: "Question #5: yes", answerQuestionId: 5, answerQuestionIds: [5], answerKind: "product", recordIds: [5], recordKind: "product", pendingAnswer: pending });
+    const r = transition(s, answered("use lru", 6));
+    expect(r.state).toMatchObject({ stage: "spec", specMode: "write", recordIds: [5, 6], recordKind: "product" });
+    expect(r.state.pendingAnswer?.ids).toEqual([5, 6]);
+    const ok = transition(r.state, specOk(revised));
+    expect(ok.state).toMatchObject({ recordIds: [], recordKind: null, answerQuestionIds: [5, 6] });
   });
   it("a claim seeded with an unrecorded answer starts at the spec stage in record mode with the answer (T4)", () => {
     const ledger = { ...ledgerOf(initialChainState(1)), replans: 1, pendingAnswer: { ids: [5], kind: "product" as const, text: "Question #5: yes" } };
@@ -896,9 +948,9 @@ describe("chain: answer chains and unrecorded answers (final review T3, T4, T-mi
     expect(transition(at("paused", { question: qCapability, askingStage: "implement", plan }), answered()).state.pendingAnswer).toBeNull();
   });
   it("a re-plan or a spec revision drops the answer fields the closed PR was applying (T-minor 3)", () => {
-    const applying = { answer: "Question #5: retry", answerQuestionId: 5, answerQuestionIds: [5], answerKind: "capability" as const, decideInput: "d", decideKind: "technical" as const };
+    const applying = { answer: "Question #5: retry", answerQuestionId: 5, answerQuestionIds: [5], answerKind: "capability" as const, decideInput: "d", decidedQuestion: q };
     const replan = transition(at("fix", { pr: pr3, rescues: 1, rescueRun: true, pendingFixInput: "x", ...applying }), { type: "stage_failed", stage: "fix", reason: "boom" });
-    expect(replan.state).toMatchObject({ stage: "plan", replans: 1, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null, decideInput: null, decideKind: null });
+    expect(replan.state).toMatchObject({ stage: "plan", replans: 1, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null, decideInput: null, decidedQuestion: null });
     const revise = transition(at("fix", { pr: pr3, rescues: 1, replans: 1, rescueRun: true, pendingFixInput: "x", ...applying }), { type: "stage_failed", stage: "fix", reason: "boom" });
     expect(revise.state).toMatchObject({ stage: "spec", specMode: "revise", answer: null, answerQuestionIds: [], answerKind: null });
   });
@@ -1064,7 +1116,7 @@ describe("chain: every event in every stage (AC-27)", () => {
     {},
     { rescues: 1, specRescues: 1, replans: 1, specRevisions: 1, specAnswers: 1, decideReturns: 1, fixes: 2, attempt: 2, planFailures: 1, implementFailures: 1, scopeViolations: 1, rescueRun: true },
     { answer: "a", answerQuestionId: 5, answerQuestionIds: [5], answerKind: "technical", decideInput: "d", parkedPr: pr3, pendingSince: AT, checksRerun: true, specProblem: "spec missing" },
-    { pendingAnswer: { ids: [5], kind: "product", text: "Question #5: yes" }, securityPass: true, sensitive: true, decideKind: "technical", chainErrors: 1, chainFailures: { count: 3, last: "x" } },
+    { pendingAnswer: { ids: [5], kind: "product", text: "Question #5: yes" }, securityPass: true, sensitive: true, decidedQuestion: q, recordIds: [5], recordKind: "product", chainErrors: 1, chainFailures: { count: 3, last: "x" } },
   ];
 
   it("every event in every stage: valid pairs never throw, invalid pairs throw the invalid-event error, nothing waits on a human but paused (AC-27)", () => {
