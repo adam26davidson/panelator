@@ -91,3 +91,80 @@ describe("result schemas", () => {
     expect(() => validate("nope", {})).toThrow(/unknown schema/);
   });
 });
+
+describe("spec 006 schemas", () => {
+  const q = { kind: "technical", question: "WAMR or wasm3?", options: [{ label: "WAMR", cost: "keeps AOT" }, { label: "wasm3", cost: "slower" }], recommendation: "WAMR" };
+  const sha = "a".repeat(40);
+
+  it("review escalate requires an escalation object (AC-8, review focus 3)", () => {
+    expect(validate("review-result", { verdict: "escalate", findings_on_pr: [], declined_to_judge: [] }).ok).toBe(false);
+    expect(validate("review-result", { verdict: "escalate", findings_on_pr: [], declined_to_judge: [], escalation: q }).ok).toBe(true);
+    expect(validate("review-result", { verdict: "approve", findings_on_pr: [], declined_to_judge: [] }).ok).toBe(true);
+  });
+
+  it("spec-result: revised needs spec_path, pr_number, head_sha; question needs question (AC-21)", () => {
+    const revised = { verdict: "revised", spec_path: "specs/006-no-human-stops/spec.md", pr_number: 3, head_sha: sha };
+    expect(validate("spec-result", revised).ok).toBe(true);
+    expect(validate("spec-result", { ...revised, spec_path: undefined }).ok).toBe(false);
+    expect(validate("spec-result", { ...revised, spec_path: "docs/x.md" }).ok).toBe(false);
+    expect(validate("spec-result", { verdict: "question", question: q }).ok).toBe(true);
+    expect(validate("spec-result", { verdict: "question" }).ok).toBe(false);
+  });
+
+  it("question-check-result is send or decide_yourself with reasoning (AC-12)", () => {
+    expect(validate("question-check-result", { verdict: "send", reasoning: "needs the maintainer" }).ok).toBe(true);
+    expect(validate("question-check-result", { verdict: "decide_yourself", reasoning: "r" }).ok).toBe(true);
+    expect(validate("question-check-result", { verdict: "maybe", reasoning: "r" }).ok).toBe(false);
+    expect(validate("question-check-result", { verdict: "send" }).ok).toBe(false);
+  });
+
+  it("question options need label and cost", () => {
+    expect(validate("question", q).ok).toBe(true);
+    expect(validate("question", { ...q, options: [{ label: "x" }] }).ok).toBe(false);
+  });
+
+  it("plan, implement and fix results may carry an escalation instead of their fields, never of kind other (AC-17)", () => {
+    expect(validate("implement-result", { escalation: { ...q, kind: "capability" } }).ok).toBe(true);
+    expect(validate("implement-result", { escalation: { ...q, kind: "other" } }).ok).toBe(false);
+    expect(validate("implement-result", { tasks_done: [] }).ok).toBe(false);
+    expect(validate("fix-result", { escalation: q, findings: [finding] }).ok).toBe(true);
+    expect(validate("fix-result", { escalation: { ...q, kind: "other" } }).ok).toBe(false);
+    expect(validate("fix-result", { addressed: [] }).ok).toBe(false);
+    expect(validate("implement-result", { pr_number: 1, head_sha: sha, tasks_done: [] }).ok).toBe(true);
+  });
+
+  it("a plan result holding only an escalation validates; spec_gap still needs questions (AC-17, review focus 9)", () => {
+    expect(validate("plan-result", { escalation: q }).ok).toBe(true);
+    expect(validate("plan-result", { verdict: "spec_gap", domain: "backend", tasks: [] }).ok).toBe(false);
+    expect(validate("plan-result", { verdict: "spec_gap", domain: "backend", tasks: [], questions: ["why?"] }).ok).toBe(true);
+  });
+
+  const ledger = { rescues: 1, specRescues: 0, replans: 1, specRevisions: 2, specAnswers: 0, decideReturns: 1, history: ["plan attempt 1 failed: x"] };
+  const paused = {
+    issue: 7, phase: "paused", state: { stage: "waiting" }, question: q, asking_stage: "plan", nonce: "abc123",
+    question_comment_id: 99, asked_at: "2026-10-27T10:00:00Z", reminded: false, answer: null, reply_comment_id: null,
+  };
+
+  it("paused requires phase, nonce, question_comment_id and asked_at, the last two nullable", () => {
+    expect(validate("paused", paused).ok).toBe(true);
+    expect(validate("paused", { ...paused, phase: "pausing", question_comment_id: null, asked_at: null }).ok).toBe(true);
+    for (const k of ["phase", "nonce", "question_comment_id", "asked_at"]) {
+      const { [k]: _omit, ...rest } = paused as Record<string, unknown>;
+      expect(validate("paused", rest).ok, k).toBe(false);
+    }
+    expect(validate("paused", { ...paused, phase: "later" }).ok).toBe(false);
+  });
+
+  it("escalation-ledger round-trips a full record and rejects a partial one", () => {
+    expect(validate("escalation-ledger", ledger).ok).toBe(true);
+    expect(validate("escalation-ledger", JSON.parse(JSON.stringify(ledger))).ok).toBe(true);
+    const { history: _h, ...partial } = ledger;
+    expect(validate("escalation-ledger", partial).ok).toBe(false);
+  });
+
+  it("question-log-entry accepts question_comment_id and reply_comment_id", () => {
+    const e = { issue: 7, at: "2026-10-27T10:00:00Z", event: "answered", asking_stage: "plan", question_comment_id: 99, reply_comment_id: 101, question: q, answer: "WAMR" };
+    expect(validate("question-log-entry", e).ok).toBe(true);
+    expect(validate("question-log-entry", { ...e, event: "guessed" }).ok).toBe(false);
+  });
+});

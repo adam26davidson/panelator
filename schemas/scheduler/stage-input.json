@@ -2,33 +2,99 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "stage-input.json",
   "type": "object",
-  "required": ["issue", "spec", "result_path", "profile_instructions"],
+  "required": [
+    "issue",
+    "spec",
+    "result_path",
+    "profile_instructions"
+  ],
   "additionalProperties": false,
   "properties": {
     "issue": {
       "type": "object",
-      "required": ["number", "title", "body"],
+      "required": [
+        "number",
+        "title",
+        "body"
+      ],
       "properties": {
-        "number": { "type": "integer" },
-        "title": { "type": "string" },
-        "body": { "type": "string" }
+        "number": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        }
       }
     },
-    "spec": { "type": "string" },
-    "plan": { "type": "object" },
+    "spec": {
+      "type": "string"
+    },
+    "plan": {
+      "type": "object"
+    },
     "pr": {
       "type": "object",
-      "required": ["number", "head_sha", "url"],
+      "required": [
+        "number",
+        "head_sha",
+        "url"
+      ],
       "properties": {
-        "number": { "type": "integer" },
-        "head_sha": { "type": "string" },
-        "url": { "type": "string" }
+        "number": {
+          "type": "integer"
+        },
+        "head_sha": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
       }
     },
-    "ci": { "type": "string" },
-    "findings": { "type": "string" },
-    "fix_input": { "type": "string" },
-    "result_path": { "type": "string" },
-    "profile_instructions": { "type": "string" }
+    "ci": {
+      "type": "string"
+    },
+    "findings": {
+      "type": "string"
+    },
+    "fix_input": {
+      "type": "string"
+    },
+    "result_path": {
+      "type": "string"
+    },
+    "profile_instructions": {
+      "type": "string"
+    },
+    "history": {
+      "type": "string"
+    },
+    "question": {
+      "type": "string"
+    },
+    "answer": {
+      "type": "string"
+    },
+    "decide_input": {
+      "type": "string"
+    },
+    "spec_problem": {
+      "type": "string"
+    },
+    "answered_questions": {
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "write",
+        "answer",
+        "revise",
+        "decide",
+        "record"
+      ]
+    }
   }
 }

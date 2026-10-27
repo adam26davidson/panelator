@@ -2,11 +2,79 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "fix-result.json",
   "type": "object",
-  "required": ["head_sha", "addressed"],
   "additionalProperties": false,
   "properties": {
-    "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-    "addressed": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
-    "findings": { "type": "array", "items": { "type": "object" }, "description": "Side-channel finding records; each is validated against finding.json when queued (AC-28), never a reason to fail the stage." }
-  }
+    "head_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "addressed": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Side-channel finding records; each is validated against finding.json when queued (AC-28), never a reason to fail the stage."
+    },
+    "escalation": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "question.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "not": {
+                "const": "other"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "head_sha",
+        "addressed"
+      ],
+      "properties": {
+        "head_sha": true,
+        "addressed": true
+      }
+    },
+    {
+      "required": [
+        "escalation"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "head_sha"
+            ]
+          },
+          {
+            "required": [
+              "addressed"
+            ]
+          }
+        ]
+      },
+      "properties": {
+        "escalation": true,
+        "head_sha": true,
+        "addressed": true
+      }
+    }
+  ]
 }

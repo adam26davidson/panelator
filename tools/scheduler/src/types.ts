@@ -54,6 +54,37 @@ export interface IssueData {
   createdAt: string;
 }
 
+export type SpecMode = "write" | "answer" | "revise" | "decide" | "record";
+export type AskingStage = "plan" | "implement" | "review" | "fix" | "spec" | "verify";
+
+export interface Question {
+  kind: "product" | "technical" | "capability" | "other";
+  question: string;
+  options: { label: string; cost: string }[];
+  recommendation: string;
+}
+
+/** A plan, implement or fix result that carries only an escalation (AC-17). Never of kind "other". */
+export interface EscalationOnly {
+  escalation: Question;
+  findings?: Finding[];
+}
+
+export interface SpecResult {
+  verdict: "revised" | "question";
+  spec_path?: string;
+  pr_number?: number;
+  head_sha?: string;
+  question?: Question;
+  findings?: Finding[];
+}
+
+export interface QuestionCheckResult {
+  verdict: "send" | "decide_yourself";
+  reasoning: string;
+  findings?: Finding[];
+}
+
 export interface PlanTask {
   id: string;
   description: string;
@@ -65,15 +96,21 @@ export interface PlanResult {
   domain: string;
   tasks: PlanTask[];
   questions?: string[];
+  escalation?: Question;
   findings?: Finding[];
 }
+
+export type PlanOutcome = PlanResult | EscalationOnly;
 
 export interface ImplementResult {
   pr_number: number;
   head_sha: string;
   tasks_done: string[];
+  escalation?: Question;
   findings?: Finding[];
 }
+
+export type ImplementOutcome = ImplementResult | EscalationOnly;
 
 export interface ReviewFinding {
   criterion: string;
@@ -86,14 +123,18 @@ export interface ReviewResult {
   verdict: "approve" | "changes_requested" | "escalate";
   findings_on_pr: ReviewFinding[];
   declined_to_judge: string[];
+  escalation?: Question;
   findings?: Finding[];
 }
 
 export interface FixResult {
   head_sha: string;
   addressed: number[];
+  escalation?: Question;
   findings?: Finding[];
 }
+
+export type FixOutcome = FixResult | EscalationOnly;
 
 export interface Finding {
   what: string;

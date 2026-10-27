@@ -2,27 +2,145 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "plan-result.json",
   "type": "object",
-  "required": ["verdict", "domain", "tasks"],
   "additionalProperties": false,
   "properties": {
-    "verdict": { "enum": ["ready", "spec_gap"] },
-    "domain": { "enum": ["backend", "web-ui", "widget", "firmware", "infra"] },
+    "verdict": {
+      "enum": [
+        "ready",
+        "spec_gap"
+      ]
+    },
+    "domain": {
+      "enum": [
+        "backend",
+        "web-ui",
+        "widget",
+        "firmware",
+        "infra"
+      ]
+    },
     "tasks": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "description", "files"],
+        "required": [
+          "id",
+          "description",
+          "files"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "description": { "type": "string", "minLength": 1 },
-          "files": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       }
     },
-    "questions": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-    "findings": { "type": "array", "items": { "type": "object" }, "description": "Side-channel finding records; each is validated against finding.json when queued (AC-28), never a reason to fail the stage." }
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Side-channel finding records; each is validated against finding.json when queued (AC-28), never a reason to fail the stage."
+    },
+    "escalation": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "question.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "not": {
+                "const": "other"
+              }
+            }
+          }
+        }
+      ]
+    }
   },
-  "if": { "properties": { "verdict": { "const": "spec_gap" } } },
-  "then": { "required": ["questions"], "properties": { "questions": { "type": "array", "minItems": 1 } } }
+  "oneOf": [
+    {
+      "required": [
+        "verdict",
+        "domain",
+        "tasks"
+      ],
+      "if": {
+        "properties": {
+          "verdict": {
+            "const": "spec_gap"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "questions"
+        ],
+        "properties": {
+          "questions": {
+            "type": "array",
+            "minItems": 1
+          }
+        }
+      },
+      "properties": {
+        "verdict": true,
+        "domain": true,
+        "tasks": true
+      }
+    },
+    {
+      "required": [
+        "escalation"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "verdict"
+            ]
+          },
+          {
+            "required": [
+              "domain"
+            ]
+          },
+          {
+            "required": [
+              "tasks"
+            ]
+          }
+        ]
+      },
+      "properties": {
+        "escalation": true,
+        "verdict": true,
+        "domain": true,
+        "tasks": true
+      }
+    }
+  ]
 }

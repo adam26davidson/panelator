@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "spec-result.json",
+  "type": "object",
+  "required": [
+    "verdict"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "verdict": {
+      "enum": [
+        "revised",
+        "question"
+      ]
+    },
+    "spec_path": {
+      "type": "string",
+      "pattern": "^specs/[0-9]{3}-[a-z0-9-]+/spec\\.md$"
+    },
+    "pr_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "head_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "question": {
+      "$ref": "question.json"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Side-channel finding records; each is validated against finding.json when queued (AC-28), never a reason to fail the stage."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "const": "revised"
+          }
+        },
+        "required": [
+          "verdict"
+        ]
+      },
+      "then": {
+        "required": [
+          "spec_path",
+          "pr_number",
+          "head_sha"
+        ],
+        "properties": {
+          "spec_path": true,
+          "pr_number": true,
+          "head_sha": true
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "const": "question"
+          }
+        },
+        "required": [
+          "verdict"
+        ]
+      },
+      "then": {
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": true
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paused.json",
+  "type": "object",
+  "required": [
+    "issue",
+    "phase",
+    "state",
+    "question",
+    "asking_stage",
+    "nonce",
+    "question_comment_id",
+    "asked_at",
+    "reminded"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "issue": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "phase": {
+      "enum": [
+        "pausing",
+        "paused",
+        "resuming"
+      ]
+    },
+    "state": {
+      "type": "object"
+    },
+    "question": {
+      "$ref": "question.json"
+    },
+    "asking_stage": {
+      "enum": [
+        "plan",
+        "implement",
+        "review",
+        "fix",
+        "spec",
+        "verify"
+      ]
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 1
+    },
+    "question_comment_id": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "asked_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reminded": {
+      "type": "boolean"
+    },
+    "answer": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reply_comment_id": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    }
+  }
+}

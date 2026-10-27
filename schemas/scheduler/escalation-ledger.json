@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "escalation-ledger.json",
+  "type": "object",
+  "required": [
+    "rescues",
+    "specRescues",
+    "replans",
+    "specRevisions",
+    "specAnswers",
+    "decideReturns",
+    "history"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "rescues": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "specRescues": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "replans": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "specRevisions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "specAnswers": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "decideReturns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

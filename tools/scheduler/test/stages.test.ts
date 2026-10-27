@@ -71,6 +71,10 @@ describe("renderPrompt", () => {
     expect(out).toContain('"verdict": "ready"');
     expect(out).toContain("| (none)");
   });
+  it("renders the spec 006 placeholders, (none) when absent", () => {
+    expect(renderPrompt("{{mode}}|{{history}}|{{answer}}", { ...input, mode: "revise", history: "h" })).toBe("revise|h|(none)");
+    expect(renderPrompt("{{question}}{{decide_input}}{{spec_problem}}{{answered_questions}}", input)).toBe("(none)".repeat(4));
+  });
   it("throws on an unknown placeholder", () => {
     expect(() => renderPrompt("{{nope}}", input)).toThrow(/unknown placeholder/);
   });

@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "question-log-entry.json",
+  "type": "object",
+  "required": [
+    "issue",
+    "at",
+    "event",
+    "asking_stage"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "issue": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event": {
+      "enum": [
+        "asked",
+        "checked",
+        "sent",
+        "reminded",
+        "answered"
+      ]
+    },
+    "asking_stage": {
+      "enum": [
+        "plan",
+        "implement",
+        "review",
+        "fix",
+        "spec",
+        "verify"
+      ]
+    },
+    "question_comment_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "question": {
+      "$ref": "question.json"
+    },
+    "verdict": {
+      "type": "string"
+    },
+    "reasoning": {
+      "type": "string"
+    },
+    "reply_comment_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "answer": {
+      "type": "string"
+    }
+  }
+}

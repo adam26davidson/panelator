@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "question-check-result.json",
+  "type": "object",
+  "required": [
+    "verdict",
+    "reasoning"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "verdict": {
+      "enum": [
+        "send",
+        "decide_yourself"
+      ]
+    },
+    "reasoning": {
+      "type": "string",
+      "minLength": 1
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Side-channel finding records; each is validated against finding.json when queued (AC-28), never a reason to fail the stage."
+    }
+  }
+}

@@ -13,7 +13,13 @@ export type SchemaName =
   | "finding"
   | "usage-record"
   | "claim"
-  | "stage-input";
+  | "stage-input"
+  | "question"
+  | "spec-result"
+  | "question-check-result"
+  | "paused"
+  | "escalation-ledger"
+  | "question-log-entry";
 
 const NAMES: SchemaName[] = [
   "finding",
@@ -24,6 +30,12 @@ const NAMES: SchemaName[] = [
   "usage-record",
   "claim",
   "stage-input",
+  "question",
+  "spec-result",
+  "question-check-result",
+  "paused",
+  "escalation-ledger",
+  "question-log-entry",
 ];
 
 export const schemaDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "schemas", "scheduler");

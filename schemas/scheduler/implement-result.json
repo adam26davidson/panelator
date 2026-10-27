@@ -2,12 +2,90 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "implement-result.json",
   "type": "object",
-  "required": ["pr_number", "head_sha", "tasks_done"],
   "additionalProperties": false,
   "properties": {
-    "pr_number": { "type": "integer", "minimum": 1 },
-    "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-    "tasks_done": { "type": "array", "items": { "type": "string" } },
-    "findings": { "type": "array", "items": { "type": "object" }, "description": "Side-channel finding records; each is validated against finding.json when queued (AC-28), never a reason to fail the stage." }
-  }
+    "pr_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "head_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "tasks_done": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Side-channel finding records; each is validated against finding.json when queued (AC-28), never a reason to fail the stage."
+    },
+    "escalation": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "question.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "not": {
+                "const": "other"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "pr_number",
+        "head_sha",
+        "tasks_done"
+      ],
+      "properties": {
+        "pr_number": true,
+        "head_sha": true,
+        "tasks_done": true
+      }
+    },
+    {
+      "required": [
+        "escalation"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "pr_number"
+            ]
+          },
+          {
+            "required": [
+              "head_sha"
+            ]
+          },
+          {
+            "required": [
+              "tasks_done"
+            ]
+          }
+        ]
+      },
+      "properties": {
+        "escalation": true,
+        "pr_number": true,
+        "head_sha": true,
+        "tasks_done": true
+      }
+    }
+  ]
 }

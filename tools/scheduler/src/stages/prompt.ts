@@ -1,4 +1,4 @@
-import type { PlanResult } from "../types.ts";
+import type { PlanResult, SpecMode } from "../types.ts";
 
 export interface StageInput {
   issue: { number: number; title: string; body: string };
@@ -8,6 +8,13 @@ export interface StageInput {
   ci?: string;
   findings?: string;
   fix_input?: string;
+  history?: string;
+  question?: string;
+  answer?: string;
+  mode?: SpecMode;
+  decide_input?: string;
+  spec_problem?: string;
+  answered_questions?: string;
   result_path: string;
   profile_instructions: string;
 }
@@ -23,6 +30,13 @@ export function renderPrompt(template: string, input: StageInput): string {
     ci: input.ci ?? NONE,
     findings: input.findings ?? NONE,
     fix_input: input.fix_input ?? NONE,
+    history: input.history ?? NONE,
+    question: input.question ?? NONE,
+    answer: input.answer ?? NONE,
+    mode: input.mode ?? NONE,
+    decide_input: input.decide_input ?? NONE,
+    spec_problem: input.spec_problem ?? NONE,
+    answered_questions: input.answered_questions ?? NONE,
     result_path: input.result_path,
     profile_instructions: input.profile_instructions,
   };
