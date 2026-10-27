@@ -57,10 +57,14 @@ Anti-goals (failure even if everything technically works):
 
 Only for:
 
-1. **Product decisions.** A user would notice it, or it changes what
-   panelator promises them: audience, scope and non-goals, built-in widgets,
-   milestones, trust and privacy promises, money and hosting (the kinds of
-   decision recorded in `product-spec.md`).
+1. **Product decisions.** Big-picture choices about what panelator is and
+   what it promises its users: audience, scope and non-goals, built-in
+   widgets, milestones, trust and privacy promises, money and hosting (the
+   kinds of decision recorded in `product-spec.md`). That a user could
+   notice a change does not make it a product decision: a slightly slower
+   response, a layout or wording choice within an agreed design, or any
+   other detail that keeps the product's promises is decided by agents (UI
+   and UX detail by the design stage and its visual review).
 2. **Large technical decisions with real uncertainty.** Large means costly to
    reverse (language, runtime, database, major structure). Real uncertainty
    means sensible options remain after the agent's own investigation, and the
@@ -88,13 +92,19 @@ the maintainer answers. It releases its concurrency slot so other work
 continues. On a reply it returns to the shortlist ahead of everything else and
 resumes where it stopped. If unanswered for 24 hours, one reminder is sent.
 After that it stays paused, listed on the console's Questions screen and in
-each reflection plan, and is never abandoned without the maintainer.
-*(author's call: slot release, priority on resume, reminder, no timeout)*
+each reflection plan, and is never abandoned without the maintainer. A reply
+that is itself a question or a request for more detail gets a follow-up from
+the stage that asked, and the work stays paused; such an exchange does not
+count against any bound.
+*(author's call: slot release, priority on resume, reminder, no timeout,
+follow-ups)*
 
-**Recording.** Every question and answer is logged (feeds the "questions per
-week" and "answered 'obvious, just do it'" measurements, which tune the
-threshold), and the decision is written where it belongs: the issue, the spec,
-or an ADR.
+**Recording.** Every question and answer is logged in the questions log
+(feeds the "questions per week" and "answered 'obvious, just do it'"
+measurements, which tune the threshold), and the decision is written where it
+belongs (section 10): a product answer into `product-spec.md` or the relevant
+top design, a technical answer into the spec or an ADR. Every recorded answer
+is marked with its question comment id. *(author's call: the marking)*
 
 ## 4. The chain with no human stops
 
@@ -103,7 +113,7 @@ Replaces the `needs-human` rows of spec 001 section 5 and the gates in section
 
 | Situation (spec 001 today) | New behaviour |
 |---|---|
-| plan or implement failed twice; scope violated twice; fix loop exhausted (`needs-human`, AC-10, AC-13) | **Rescue:** one more attempt on the strongest model with the full history of attempts, results and review findings. If it fails: the PR is closed and its branch saved as a patch, and the issue is planned again from scratch. If re-planning also fails: the issue goes to the spec agent, on the theory that the spec is wrong. If the spec agent finds nothing to change, it may escalate as a large technical question; if the section 3 check sends that back as "decide it yourself", the spec agent must pick an approach and the chain runs once more on it. If that fails too, the issue is labelled `abandoned` with the full record and left open for spec C to re-triage, a finding is filed, and delivery reflection picks it up. *(author's call: the terminal state)* |
+| plan or implement failed twice; scope violated twice; fix loop exhausted (`needs-human`, AC-10, AC-13) | **Rescue:** one more attempt on the strongest model with the full history of attempts, results and review findings. If it fails: the PR is closed and its branch saved as a patch, and the issue is planned again from scratch. If re-planning also fails: the issue goes to the spec agent, on the theory that the spec is wrong. If the spec agent finds nothing to change, it may escalate as a large technical question; if the section 3 check sends that back as "decide it yourself", the spec agent must pick an approach and the chain runs once more on it. If that fails too, the issue is labelled `abandoned` with the full record and left open for spec C to re-triage, a finding is filed, and delivery reflection picks it up. The maintainer is told, for information only, with no request to act; C's re-triage is the recovery path. *(author's call: the terminal state)* |
 | review returns `escalate` | The review result must carry a reason classified as one of section 3's kinds, or as "other". A section 3 kind goes to the maintainer; "other" becomes input to a rescue attempt. |
 | security finding on a sensitive path (AC-11, `security-review`) | Fix loop with the finding as input, then a fresh security review by an independent reviewer (section 6.3). Reaches the maintainer only if a finding raises a section 3 question. |
 | `needs-spec`, `needs-design` (AC-7, AC-8) | Work for the spec agent: write or complete the spec, or run the design stage to produce the design artifacts. |
@@ -132,12 +142,19 @@ not something a prompt can change.
   this document, may be changed by the system through a reviewed PR. Changes to
   the scheduler and `agents/` must keep the recorded end-to-end chain tests
   passing, and are reviewed by an independent reviewer (section 6.3).
-- **The maintainer's recorded decisions are protected.** Changing a statement
-  in this document that is not marked *(author's call)*, changing section 3
-  itself, or changing a recorded product decision in `product-spec.md` is a
-  section 3 question to the maintainer, not a reviewed PR. `docs/product-spec.md`
-  and this document are added to `agents/sensitive-paths.txt`, so the security
-  review enforces it (spec 006). *(author's call: the mechanism)*
+- **The maintainer's recorded decisions are protected.** Protected are: the
+  statements in this document not marked *(author's call)*, section 3 itself,
+  the recorded product decisions in `product-spec.md`, and the decision entries
+  in `docs/design-tree.md`. Not protected are statements marked *(author's
+  call)* and the editorial and tracking parts (the section 11 table, section
+  12, the children lists); those change with an ordinary reviewed PR. A change
+  to a protected statement is a section 3 question, always sent to the
+  maintainer by the question check. A PR may otherwise change one only by
+  citing a maintainer answer the scheduler can verify: an answered entry in the
+  questions log, referenced by its question comment id. `docs/product-spec.md`,
+  `docs/design-tree.md` and this document are added to
+  `agents/sensitive-paths.txt`, so the security review enforces it (spec 006).
+  *(author's call: the mechanism)*
 - process-spec section 5's "changes to the automation need a human-approved
   spec, always" is replaced by the points above.
 
@@ -378,6 +395,11 @@ Rules:
   technical choices (section 3) are recorded in the upper designs; lower
   designs and specs are agent territory. A spec that would contradict its
   parent is a change to the parent first, made as a reviewed PR (level 2).
+  A maintainer's product answer is written into `product-spec.md` (or the
+  relevant top design) through a reviewed spec PR that cites the logged
+  answer; a technical answer goes into the spec or an ADR. Each is marked with
+  its question comment id, and changing marked text without a newer logged
+  answer is a review finding. *(author's call)*
 - **Enforced in code.** The spec-present gate rejects a spec whose parent does
   not exist or does not list it as a child. A design-tree check (part of the
   same gate module, run in CI) rejects designs with fewer than two children,
@@ -402,9 +424,10 @@ Order *(author's call)*: B first, because until it lands the old gates still
 make every scheduler PR wait for the maintainer's `validated` label and stop
 on security findings. Until A exists, a question for the maintainer is posted
 as an issue comment that @-mentions the maintainer, the 24-hour reminder
-likewise, and the existing notify interface logs both (spec 006). B itself
-changes `tools/scheduler/`, so under today's gates its issue needs the
-maintainer's `validated` label once, the last time that gate applies. Then A,
+likewise, and the existing notify interface logs both (spec 006). B (spec
+006) is built by hand in a supervised session, not through the pipeline,
+because under the old gates the pipeline would stop on it for the maintainer.
+Then A,
 and the rest in table order (each depends on the ones before). F is split so
 that the AWS account and cap enforcement exist before E hosts the console in
 that account. *(author's call: the split)*
@@ -413,7 +436,7 @@ that account. *(author's call: the split)*
 |---|---|---|
 | B | Chain without human stops | section 4, section 5, the spec agent, the section 3 classification check (question check), the design hierarchy of section 10 and its gate checks, process-spec, spec 001 and `specs/README.md` amendments, `docs/charter.md` on the sensitive list |
 | A | Telegram channel | long-poll service, questions with options, resume-on-reply, reminders |
-| C | Agent registry and direct actions | section 6: definition format, triggers, scheduler support, action log, locks enforced in code, action audit; the parameter store (auto and locked, enforced in code) and applying the system-vs-product work ratio in the shortlist (replacing the fixed 2:1); re-triaging abandoned issues (until C, they stay open labelled `abandoned`) |
+| C | Agent registry and direct actions | section 6: definition format, triggers, scheduler support, action log, locks enforced in code, action audit; the parameter store (auto and locked, enforced in code) and applying the system-vs-product work ratio in the shortlist (replacing the fixed 2:1); re-triaging abandoned issues, the recovery path for abandonment (until C, they stay open labelled `abandoned`; the maintainer is informed, not asked to act) |
 | D | Event store, metrics and reflection | section 7, the three reflection agents, plans as issues: issues filed from a plan are authored by the App and labelled `validated`, so the shortlist works them |
 | F1 | Delivery-system AWS account and cap | section 8: the delivery-system AWS account, AWS Budgets enforcement, the scheduler's running estimate, daily forecasting |
 | E | Design stage and console | the design stage (design tools, visual review, three screen sizes), then the console of section 9, hosted in F1's account; re-evaluating the issues spec 006 parked with `needs-design-stage` and removing the label |
@@ -434,8 +457,8 @@ are stale and are corrected as part of B.
 - `specs/001-scheduler-core/spec.md`: AC-7 to AC-13, the section 5 table, and
   section 8 rows for spec present, UI design present, automation change,
   ready, scope, sensitive path and fix loop.
-- `agents/sensitive-paths.txt`: add `docs/charter.md`, `docs/product-spec.md`
-  and this document.
+- `agents/sensitive-paths.txt`: add `docs/charter.md`, `docs/product-spec.md`,
+  `docs/design-tree.md` and this document.
 - `specs/README.md`: spec approval wording, the `Parent:` line, and the design hierarchy rules of section 10.
 - `docs/product-spec.md` and this document: a children list each.
 

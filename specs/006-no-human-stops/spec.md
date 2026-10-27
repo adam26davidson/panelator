@@ -29,13 +29,18 @@ Specifically:
   can raise a question, including "I cannot do this" (design section 3, item
   3). Until spec A (Telegram) exists, questions are issue comments that
   @-mention the maintainer, and the maintainer's reply comment resumes the
-  work. Every question and answer is logged, and every answer is written into
-  the spec or an ADR before the work continues.
+  work; a reply that asks something back gets a follow-up question. Every
+  question and answer is logged, and every answer is recorded before the work
+  continues: a product answer in `docs/product-spec.md` or the top design it
+  belongs to, a technical answer in the spec or an ADR, each marked with the
+  question it answers.
 - Security findings go through the fix loop instead of blocking.
 - The automation-change gate is removed. `docs/charter.md` becomes a sensitive
   path, and the security review rejects any change to it. The two top designs
-  become sensitive paths too, so the maintainer's recorded decisions in them
-  are protected (design section 5).
+  and `docs/design-tree.md` become sensitive paths too, so the maintainer's
+  recorded decisions in them, as design section 5 defines them, are
+  protected. A PR that cites a maintainer answer to change one is accepted
+  only when the scheduler has verified the answer.
 - The design hierarchy (design section 10) gets a `Parent:` line on every spec,
   a `Children` list on every design, and checks for both.
 - The documents that describe the old gates are updated.
@@ -49,14 +54,11 @@ Specifically:
   issue without design artifacts is parked (AC-20). No human is asked. Spec E
   re-evaluates every issue labelled `needs-design-stage` and removes the label
   once it can run the design stage; this spec only applies it.
-- Standing agents, the findings filer, the action log (spec C). Abandonment
-  appends a finding to the existing queue (spec 001 AC-28); nothing consumes
-  it yet.
+- Standing agents, the findings filer, the action log, and re-triaging
+  abandoned issues (spec C). Abandonment appends a finding to the existing
+  queue (spec 001 AC-28); nothing consumes it yet.
 - Metrics (spec D). The records this spec writes (the escalation ledger, the
   questions log) are the raw events D will read.
-- Narrowing what counts as a product decision (design section 3, item 1).
-  That is the maintainer's call; the question check applies section 3 as
-  written.
 - Intake and grilling. The authority and validated gates are unchanged.
 - Firmware release (spec G).
 
@@ -64,6 +66,8 @@ Specifically:
 
 "Given" states use the fake harness and a mocked GitHub API, as in spec 001.
 Each criterion names the spec 001 criterion it replaces where there is one.
+Section 4 is the single source for the chain's transitions; the criteria
+below say what each path must do.
 
 **Escalation path** (replaces the `needs-human` rows of spec 001 section 5,
 AC-10 second sentence, AC-13)
@@ -97,7 +101,7 @@ AC-10 second sentence, AC-13)
 - AC-3. **A third bound triggers a spec revision.** Given a re-plan has run,
   when a bound from AC-1 is hit again, then the spec stage runs in `revise`
   mode with the history as input.
-- AC-4. **A revised spec is merged, then the issue is planned again.** Given
+- AC-4. **A merged spec PR is checked again, then the work goes on.** Given
   the spec stage returns `revised` with a PR, then that PR goes through the
   scope check of AC-22, verify, review and merge. Review uses the `spec`
   profile, or the `security` profile when the diff touches a sensitive path.
@@ -105,18 +109,36 @@ AC-10 second sentence, AC-13)
   merge:
   - `spec-<issue>` is deleted in the worktree and on GitHub;
   - the merge is not recorded in the shortlist's feature-to-debt merge record;
-  - the chain continues at plan with fresh stage counters, reading the spec
-    from `origin/main`.
+  - the scheduler runs spec-present (with the parent checks of AC-23) and the
+    UI-design gate again, on `origin/main`.
+
+  Given both pass, then the chain continues with fresh stage counters,
+  reading the spec from `origin/main`: at a fix on the parked issue PR when
+  there is one (AC-18), otherwise at plan. Given spec-present fails, then it
+  is a bound hit with the spec stage as the stuck stage, under the spec-track
+  rule of AC-5: the spec stage runs again in `write` mode with the reason, or
+  the issue is abandoned. Given the UI-design gate fails, then the issue
+  receives `needs-design-stage` as in AC-20 and the claim is released; the
+  escalation ledger is kept.
 - AC-5. **After a revision, the next bound ends in abandonment.** Given a spec
   revision has merged for the issue, when a bound from AC-1 is hit again,
   then:
-  - the issue's PR is closed, its branch saved as a patch and deleted;
+  - the issue's PR (and a parked issue PR, AC-18) is closed, its branch saved
+    as a patch and deleted;
   - the issue receives the `abandoned` label before `in-progress` is removed,
-    and a comment that @-mentions the maintainer and links the run records;
-  - the issue stays open; the shortlist skips any issue labelled `abandoned`;
+    and an informational comment that names the bounds hit and links the run
+    records. The comment does not @-mention the maintainer and asks nothing
+    of them;
+  - the issue stays open; the shortlist skips any issue labelled `abandoned`.
+    The recovery path is spec C's re-triage (design section 11). The
+    maintainer may remove the label, but is not asked to;
   - one finding naming the issue and the bounds hit (from the ledger of AC-7)
     is appended to the findings queue;
   - one notification is sent.
+
+  Given the scheduler stops partway through an abandonment, then the next
+  tick finishes it from the first step not yet done; no step is repeated other
+  than the one in flight when it stopped.
 
   **Spec track.** A bound hit by the spec stage itself, or on a spec PR (its
   fix loop, its scope, its review), runs one rescue of the stuck stage if the
@@ -130,7 +152,8 @@ AC-10 second sentence, AC-13)
   - one answered spec gap (`MAX_SPEC_ANSWERS`); a `spec_gap` after it is a
     bound hit;
   - one `decide_yourself` return;
-  - six hours of pending required checks (`VERIFY_PENDING_MAX_H`, AC-17).
+  - six hours of pending required checks (`VERIFY_PENDING_MAX_H`), before the
+    re-run of AC-17 and again after it.
 
   All are counted per issue. A test asserts their values. No stage definition
   or prompt can change them.
@@ -140,13 +163,13 @@ AC-10 second sentence, AC-13)
   same counters and history. They are kept in `escalations/<issue>.json` in
   the state directory, written whenever a counter or the history changes, and
   read when the issue is claimed and when it is abandoned. At abandonment the
-  ledger is archived, so an issue the maintainer later unlabels starts with
-  fresh counts. The history gains
-  an entry on every failed run, scope violation, `changes_requested` and check
-  failure, not only when a bound is hit. Each entry is capped in length, and
-  the last 20 are kept. Given a claim file written before this spec (with
-  `securityFinding` and without the new fields), when it is read, then it
-  loads with defaults and its chain continues.
+  ledger is archived, so an issue whose `abandoned` label is later removed
+  starts with fresh counts. The history gains an entry on every failed run,
+  scope violation, `changes_requested` and check failure, not only when a
+  bound is hit. Each entry is capped in length, and the last 20 are kept.
+  Given a claim file written before this spec (with `securityFinding` and
+  without the new fields), when it is read, then it loads with defaults and
+  its chain continues.
 
 **Review escalation and security** (replaces AC-11)
 
@@ -177,12 +200,33 @@ AC-10 second sentence, AC-13)
     `docs/charter.md` is a finding;
   - the fix stage's input from that finding says to revert the change.
 
-  Given a diff touching `docs/product-spec.md` or
-  `docs/delivery-system-design.md`, then it is sensitive (both are listed),
-  and the security criteria make any change to them a finding unless it only
-  edits the file's `## Children` section or cites a recorded maintainer answer
-  (the question comment and the maintainer's reply, or the ADR recording it).
-  Given a diff that removes any of these three entries from
+  Given a diff touching `docs/product-spec.md`,
+  `docs/delivery-system-design.md` or `docs/design-tree.md`, then it is
+  sensitive (all three are listed), and the security criteria apply design
+  section 5:
+  - **Protected** are the maintainer's recorded decisions: the statements of
+    the delivery design not marked *(author's call)*, including all of its
+    section 3; the recorded product decisions in `docs/product-spec.md`; and
+    the decision entries in `docs/design-tree.md`. Changing, removing or
+    adding one is a finding unless the PR cites a verified maintainer answer
+    that it carries out.
+  - **Not protected** are statements marked *(author's call)* and the
+    editorial and tracking parts: the delivery design's section 11 table, its
+    section 12, and the `## Children` section of either top design. These
+    change with the reviewed PR alone.
+  - **A citation counts only if the scheduler verifies it.** A citation has
+    the form `(maintainer answer, question #<question comment id>)`. Before
+    any review, the scheduler checks every id the diff cites: it is verified
+    when `questions/log.jsonl` has an `answered` entry with that question
+    comment id (the log is the only source, as design section 5 states). The
+    review input lists each cited id as verified or
+    not, with the question and the answer; the criteria accept only a
+    verified id.
+  - Text anywhere marked as a recorded answer (AC-18) is changed or removed
+    only by a PR citing a verified answer to a newer question; otherwise
+    that is a finding.
+
+  Given a diff that removes any of these four entries from
   `agents/sensitive-paths.txt`, or removes or weakens these rules in the
   security criteria, then that is a finding too. A test asserts that both
   files contain these entries.
@@ -195,24 +239,32 @@ AC-10 second sentence, AC-13)
 
 - AC-12. **Every question is checked first.** Given a stage produces a question
   (a review escalation, the spec stage's `question` verdict, an escalation on a
-  plan, implement or fix result, or the verify bound of AC-17), then the
-  question check stage runs first, in a fresh session, with:
+  plan, implement or fix result, or the verify bound of AC-17), other than a
+  follow-up (AC-15), then the question check stage runs first, in a fresh
+  session, with:
   - the question;
-  - the design's section 3 rules;
+  - the design's section 3 rules, including its narrowed product-decision
+    rule (big-picture choices about what panelator is and promises; a detail
+    a user could notice that keeps those promises is not one);
+  - the design's section 5 rule that a request to change a recorded
+    maintainer decision (AC-10) is a question for the maintainer;
   - the spec;
   - the history.
 
-  It returns `send` or `decide_yourself`, with reasoning. Given the check
+  It returns `send` or `decide_yourself`, with reasoning. A question that asks
+  to change a recorded maintainer decision is always `send`. Given the check
   fails, it is retried once (the fallback of AC-26 applies first); a second
   failure is a bound hit for the stage that asked (AC-1).
 - AC-13. **A sent question pauses the issue.** Given `send`, then, in this
   order:
-  - the chain state, the asking stage and the question are written to
-    `paused/<issue>.json` in the state directory;
+  - the chain state, the asking stage, the question and a new random nonce
+    are written to `paused/<issue>.json` in the state directory;
   - one issue comment headed "Question for the maintainer" is posted. It
-    @-mentions the maintainer login from `agents/scheduler.yaml` and carries
-    the options, the cost of each and the recommendation. Its comment id and
-    GitHub's creation time are stored in the paused record;
+    @-mentions the maintainer login from `agents/scheduler.yaml`, carries
+    the options, the cost of each and the recommendation, and ends with the
+    nonce as a hidden HTML comment (`<!-- panelator-question:<nonce> -->`).
+    Its comment id and GitHub's creation time are stored in the paused
+    record;
   - the issue receives `needs-decision`, then loses `in-progress`;
   - one notification is sent;
   - the claim is released.
@@ -220,7 +272,8 @@ AC-10 second sentence, AC-13)
   No stage of the issue runs until it is answered, and the shortlist treats an
   issue with a paused record as claimed. A crash between any two steps is
   completed on the next tick from the record, without a second question
-  comment.
+  comment: recovery adopts a bot comment only when it carries the record's
+  nonce, never an earlier question's comment.
 - AC-14. **Anything else is sent back to decide.** Given `decide_yourself`, then
   the stage that asked runs again with the check's reasoning as input, and
   must decide:
@@ -230,24 +283,40 @@ AC-10 second sentence, AC-13)
 
   Any other result counts as a failed run. Given the asking stage is verify
   (AC-17), `decide_yourself` is a bound hit with the fix stage as the stuck
-  stage and the reasoning as its input. A second question from the same stage
-  on the same issue goes to the check again. A second `decide_yourself` on the
-  issue is a bound hit on the escalation path (AC-1 to AC-5).
+  stage and the reasoning as its input. A spec stage `question` of kind
+  `other` is not sent to the check: it counts as a `decide_yourself` with the
+  reasoning "kind other is not a question for the maintainer". A second
+  question from the same stage on the same issue goes to the check again. A
+  second `decide_yourself` on the issue is a bound hit on the escalation path
+  (AC-1 to AC-5).
 - AC-15. **The maintainer's reply resumes the issue.** Given an issue labelled
   `needs-decision` with a `paused/` record, when a poll finds a comment by the
   maintainer whose id is higher than the question comment's id and whose
   creation time is later, then, in this order:
-  - a claim is written from the saved state;
+  - the paused record is marked `resuming` with the reply, and `answered` is
+    logged;
+  - a claim is written holding the saved state and the `answered` event, not
+    yet applied;
   - the issue receives `in-progress`, then loses `needs-decision`;
   - the paused record is removed;
-  - the chain resumes at the stage AC-18 names, in a fresh session with the
-    question and the reply as input.
+  - the chain starts. Its first step applies the `answered` event like any
+    other event (the section 4 transition, its actions and the ledger write),
+    so the chain continues at the stage AC-18 names, in a fresh session with
+    the question and the reply as input.
 
-  The resumed issue takes the next free slot before any shortlisted issue,
-  including priority-labelled ones. A comment from anyone else, or one older
-  than the question, does nothing. A record whose issue already has a claim or
-  a running chain is not resumed again. A paused issue the maintainer closes
-  has its record dropped.
+  Given the scheduler stops partway, then the next tick finishes the resume
+  from the record before the chain starts, with no second claim and no second
+  `answered` line. The resumed issue takes the next free slot before any
+  shortlisted issue, including priority-labelled ones. A comment from anyone
+  else, or one older than the question, does nothing. A record whose issue
+  already has a running chain is not resumed again. A paused issue the
+  maintainer closes has its record dropped.
+
+  **Follow-ups.** Given a stage that runs with the maintainer's reply as input
+  returns a question instead of a decision (for example because the reply
+  asked for more detail, or asked a question back), then it is a follow-up:
+  the chain pauses again at once (AC-13), without the question check. A
+  follow-up is not a failed run and counts toward no bound.
 - AC-16. **One reminder, no timeout.** Given a question unanswered for 24
   hours, then one reminder is sent: an issue comment that @-mentions the
   maintainer, and one notification. No second reminder is sent. The issue is
@@ -257,32 +326,57 @@ AC-10 second sentence, AC-13)
   `technical`; `other` does not validate there), then the question goes to the
   question check (AC-12) with that stage as the asking stage. A result with an
   `escalation` need not carry the stage's other required fields, and the
-  scheduler skips its PR and scope checks. Given a PR whose required checks
-  have stayed pending for six hours since verify first saw them pending, then
-  the chain raises a question of kind `capability` ("a required check never
+  scheduler skips its PR, scope and plan-domain checks. Given a PR whose
+  required checks have stayed pending for six hours since verify first saw
+  them pending, then:
+  - the scheduler re-runs, once, each pending required check that has a
+    workflow run;
+  - a fix stage runs with an investigation of the workflow as input: the
+    pending check names, whether each has a run, and the workflow files
+    that should produce them;
+  - verify starts a new six-hour window.
+
+  Given the checks are still pending at the end of that window, then the
+  chain raises a question of kind `capability` ("a required check never
   reported"), with verify as the asking stage, through the question check.
-- AC-18. **Answers are recorded before the chain continues.** Given the
-  maintainer's answer to a `product` or `technical` question:
-  - asked by the spec stage: the spec stage resumes in its mode and writes the
-    answer into the spec, or into an ADR under `docs/decisions/`, in its spec
-    PR;
+- AC-18. **Answers are recorded before the chain continues.** Every recorded
+  answer is marked where it is written with
+  `(maintainer answer, question #<question comment id>)`. Given the
+  maintainer's answer to a `product` question, then it is written into
+  `docs/product-spec.md`, or into the top design it belongs to, through a spec
+  PR that carries the mark:
+  - asked by the spec stage: the spec stage resumes in its mode and records
+    it in its own spec PR;
+  - asked by plan or implement: the spec stage runs in `record` mode; after
+    that spec PR merges, plan runs;
+  - asked by review or fix: the issue PR is parked, the spec stage runs in
+    `record` mode, and after that spec PR merges, the parked PR is restored
+    and a fix stage applies the decision. Verify and a fresh review follow.
+
+  Given the answer to a `technical` question, then:
+  - asked by the spec stage: the spec stage resumes in its mode and writes it
+    into the spec, or into an ADR under `docs/decisions/`, in its spec PR;
   - asked by plan or implement: the spec stage runs in `record` mode and
     writes it the same way; after that spec PR merges, plan runs;
   - asked by review or fix: the fix stage runs with the answer as input,
     records it as an ADR under `docs/decisions/` in the issue PR, and applies
-    it; a fix result whose diff adds no file there is a failed run. Verify and
-    a fresh review follow.
+    it. A fix result whose diff adds no file there carrying the mark is a
+    failed run. Verify and a fresh review follow.
 
-  Given an answer to a `capability` question, the asking stage runs again with
-  the answer as input (verify starts its six-hour window again); it is not a
-  decision, so nothing beyond the log is recorded. Every question is logged
-  in `questions/log.jsonl` in the state directory, one line per event, each
-  with the issue, the asking stage and a timestamp:
+  A spec PR that records an answer and whose diff does not carry the mark is
+  a failed run. Given an answer to a `capability` question, the asking stage
+  runs again with the answer as input (verify starts its six-hour window
+  again); it is not a decision, so nothing beyond the log is recorded and no
+  ADR is required. The answer stays an input only until the stage it resumed
+  succeeds, or, for verify, until verify moves on to review or fix. Every
+  question is logged in `questions/log.jsonl` in the state directory, one line
+  per event, each with the issue, the asking stage, a timestamp and, once
+  sent, the question comment id:
   - asked, with the question;
   - checked, with the verdict and reasoning;
-  - sent, with the comment id;
+  - sent;
   - reminded;
-  - answered, with the answer.
+  - answered, with the reply's comment id and the answer.
 
 **Spec stage** (replaces AC-7, AC-8 routing and AC-9)
 
@@ -307,12 +401,21 @@ AC-10 second sentence, AC-13)
   - `question`, required for `question`, in the shape of AC-8's escalation;
   - optional `findings`.
 
-  **Branch.** The PR is from branch `spec-<issue>` into `main`. The scheduler
-  creates that branch from `origin/main` and checks it out in the issue's
-  worktree before the spec stage runs; the stage commits on it and pushes it,
-  and does not create or switch branches. The PR body refers to the issue as
-  `Refs #<issue>`; a spec PR whose body contains a closing keyword for any
-  issue is a failed run.
+  Given the issue body has a `Spec:` line, then `spec_path` must equal it, or
+  the result is a failed run. Given it has none, then the scheduler appends
+  `Spec: <spec_path>` to the issue body.
+
+  **Branch.** The PR is from branch `spec-<issue>` into `main`. Every entry
+  into the spec stage puts the chain on the spec track, so the spec stage, a
+  question check it asks and its spec PR all use `spec-<issue>`. The
+  scheduler creates that branch from `origin/main` and checks it out in the
+  issue's worktree before the spec stage runs; the stage commits on it and
+  pushes it, and does not create or switch branches. The PR body refers to the
+  issue as `Refs #<issue>`; a spec PR whose body contains a closing keyword
+  for any issue is a failed run. Given a claim on the spec track is released
+  (liveness, or repeated chain failures), then its spec PR is closed and
+  `spec-<issue>` is deleted, so the next claim starts the spec work again from
+  `origin/main`.
 
   **Scope.** The scope check of AC-22 holds the spec PR to:
   - the spec's directory;
@@ -320,12 +423,17 @@ AC-10 second sentence, AC-13)
   - `docs/decisions/`;
   - the `Children` section of the spec's parent design file. The parent must
     be one of the two top designs or a file under `docs/designs/`; the charter
-    is never an allowed parent.
+    is never an allowed parent;
+  - either top design in full, only while the chain records a maintainer's
+    product answer (AC-18). Both are sensitive, so the security review checks
+    the citation (AC-10).
 
   **Review.** Review of a spec PR uses the `spec` profile, unless the diff
   touches a sensitive path, when the `security` profile wins. The `spec`
   criteria: the spec fits its parent design and the issue body; it has the
-  spec field set; it does not decide a section 3 question itself.
+  spec field set; it does not decide a section 3 question itself; it changes
+  or removes no text marked as a recorded answer unless it cites a verified
+  answer to a newer question (AC-10).
 - AC-22. **The spec PR's own diff is gated.** Given a spec stage `revised`
   result, or a fix on a spec PR, then the scheduler checks the PR's diff
   against AC-21's scope. A violation is handled like implement's: one fix with
@@ -364,8 +472,11 @@ AC-10 second sentence, AC-13)
   (an exception to spec 001 AC-25). The question check stage is defined
   `harness: pi` with an OpenAI model, `independent: true`, and a Claude
   `fallback`. Given its primary run fails with a quota or rate-limit error,
-  then it is retried once on the fallback in a fresh session. The usage
-  record names the model that produced the result.
+  then it is retried once on the fallback in a fresh session. Given the
+  fallback run also fails with a quota or rate-limit error, then the stage is
+  postponed, as any strong-tier stage is (spec 001 AC-25). The usage record
+  names the model that produced the result, and accepts the `spec` and
+  `question-check` stage names.
 
 **No human stop is left**
 
@@ -376,7 +487,10 @@ AC-10 second sentence, AC-13)
   - every other pair must throw the machine's invalid-event error, and any
     other exception fails the test;
   - no valid pair leads to a state that waits on a human other than `paused`
-    (AC-13).
+    (AC-13);
+  - a failure postponed for quota is handled before every other failure rule:
+    in a rescue run it postpones the rescue, which stays a rescue and is not
+    spent.
 
   The ended states are `done`, `released`, `abandoned` and `paused`.
 - AC-28. **End-to-end chains are recorded.** Recorded end-to-end tests (fake
@@ -386,6 +500,8 @@ AC-10 second sentence, AC-13)
   - re-plan then merge;
   - spec revision then merge;
   - a question paused, answered, recorded and merged;
+  - a reply that asks a question back, a follow-up, a second reply, recorded
+    and merged;
   - a `decide_yourself` then merge;
   - a capability question from implement, paused and answered, then merged;
   - an abandonment;
@@ -394,37 +510,58 @@ AC-10 second sentence, AC-13)
 
 ## 4. Chain changes
 
-The spec 001 section 5 table, as amended. Rows not listed are unchanged.
+The spec 001 section 5 table, as amended. Rows not listed are unchanged. This
+table is the single source for the chain's transitions; the plan implements
+it and adds only the state fields each row sets. Where several rows match, the
+first wins.
 
 | From | Event | To |
 |---|---|---|
 | claimed | start, spec ok | plan |
 | claimed | start, spec missing or incomplete | spec (`write`) |
+| any agent stage | failed, postponed for quota | waiting, then the same stage (spec keeps its mode; a rescue stays a rescue and is not spent) |
+| any agent stage | failed, in a rescue run | escalate at once, no retry |
+| plan, implement, review | failed, retry used | escalate |
+| spec | failed, retry unused | spec, same mode, attempt 2 |
+| spec | failed, retry used | escalate (stuck: spec) |
+| question check | failed, retry unused | question check, attempt 2 |
+| question check | failed, retry used | escalate (stuck: the asking stage; verify: fix) |
 | plan | `spec_gap`, no gap answered yet | spec (`answer`) |
 | plan | `spec_gap` after an answered gap | escalate (stuck: plan) |
-| plan, implement, review, spec | failed, retry used | escalate |
-| question check | failed, retry used | escalate (stuck: the asking stage) |
-| any agent stage | failed, postponed for quota | waiting, then the same stage (spec keeps its mode) |
+| any agent stage run with a reply as input | result with a question (follow-up, AC-15) | paused, without the question check |
+| plan, implement, fix | result with an `escalation`, in decide mode | failed run |
+| plan, implement, fix | result with an `escalation` | question check |
 | implement, fix | scope violation, second time | escalate |
 | fix | failed | escalate |
-| review | `changes_requested`, fixes = 2 | escalate |
-| plan, implement, fix | result with an `escalation` | question check |
-| verify | checks pending for 6 hours | question check (kind `capability`, asking: verify) |
+| any route to fix | fixes = 2 | escalate (stuck: fix) |
+| verify | checks pending 6 hours, not yet re-run | re-run the pending checks; fix (workflow investigation); a new 6-hour window |
+| verify | checks pending 6 hours after the re-run | question check (kind `capability`, asking: verify) |
+| verify | checks green or failed after a reply | review or fix, the reply no longer an input |
 | review | `escalate`, kind `other` | escalate (stuck: fix, escalation as input) |
+| review | `escalate`, other kinds, in decide mode | failed run |
 | review | `escalate`, other kinds | question check |
 | review | findings with the security profile | fix (findings as input) |
 | review | `approve` | merge (no security hold) |
 | spec | `revised`, scope ok | spec track: verify, review (`spec` or `security` profile), merge |
 | spec | `revised`, scope violated | spec track: fix with the violations; a second violation escalates |
-| spec | `question` | question check |
-| merge, spec track | merged | delete `spec-<issue>`; plan, fresh stage counters |
+| spec | `question`, in decide mode | failed run |
+| spec | `question`, kind `other` | as `decide_yourself` from the check (counted) |
+| spec | `question`, other kinds | question check |
+| merge, spec track | merged, spec-present and UI design pass on `origin/main`, a parked issue PR | delete `spec-<issue>`; the parked PR restored; fix applying the answer, fresh stage counters |
+| merge, spec track | merged, both pass, no parked PR | delete `spec-<issue>`; plan, fresh stage counters |
+| merge, spec track | merged, spec-present fails on `origin/main` | delete `spec-<issue>`; escalate (stuck: spec, `write` mode with the reason) |
+| merge, spec track | merged, UI design missing on `origin/main` | delete `spec-<issue>`; `needs-design-stage`; released, ledger kept |
 | question check | `send` | paused |
-| question check | `decide_yourself`, first on the issue | the asking stage, decide mode (verify: escalate, stuck: fix) |
+| question check | `decide_yourself`, asking verify | escalate (stuck: fix, reasoning as input) |
+| question check | `decide_yourself`, first on the issue | the asking stage, decide mode |
 | question check | `decide_yourself`, second on the issue | escalate (stuck: the asking stage) |
 | paused | reply to a spec question | spec, same mode, with the answer |
-| paused | reply to a plan or implement product or technical question | spec (`record`) |
-| paused | reply to a review or fix product or technical question | fix, recording an ADR |
-| paused | reply to a capability question | the asking stage, with the answer |
+| paused | reply to a capability question | the asking stage, with the answer (verify: a new 6-hour window) |
+| paused | reply to a product question from plan or implement | spec (`record`) |
+| paused | reply to a product question from review or fix | issue PR parked; spec (`record`) |
+| paused | reply to a technical question from plan or implement | spec (`record`) |
+| paused | reply to a technical question from review or fix | fix, recording an ADR |
+| any stage but the ended ones | liveness expired | released; on the spec track the spec PR closed and `spec-<issue>` deleted |
 | escalate | stuck spec or spec track, spec-track rescue unused | rescue of the stuck stage |
 | escalate | stuck spec or spec track, spec-track rescue used | abandoned |
 | escalate | issue track, no rescue used | rescue of the stuck stage |
@@ -433,8 +570,8 @@ The spec 001 section 5 table, as amended. Rows not listed are unchanged.
 | escalate | issue track, spec revision used | abandoned |
 
 `escalate` is not a resting state: it is the transition rule the table names,
-applied immediately. A rescue run that fails escalates again at once, without
-the usual retry.
+applied immediately. Every transition into the spec stage sets the spec
+track.
 
 **Valid events** (AC-27). An event is valid in a stage only as follows; every
 other pair is invalid and throws:
@@ -455,14 +592,19 @@ other pair is invalid and throws:
 
 - `tools/scheduler/src/chain/`:
   - `types.ts`: new stages `spec`, `question-check`, `paused`, `abandoned`;
-    `needs-human` removed; the escalation counters, the history, the track,
-    the asking stage and the verify pending time in `ChainState`; the
-    `close_pr`, `delete_branch`, `finding` and `pause` actions.
+    `needs-human` removed; in `ChainState`, the escalation counters, the
+    history, the track, the asking stage, the answer with its question id and
+    kind, the record-answer flag, the parked issue PR, and the verify pending
+    time and re-run flag; the `close_pr`, `delete_branch`, `finding`, `pause`
+    and `rerun_checks` actions; `merge_result` carries the post-merge gate
+    result on the spec track.
   - `machine.ts`: the section 4 rows, the AC-6 constants, and the
     normalization of a stored chain state (AC-7).
   - `driver.ts`: rescue model selection from the state, PR close, the spec PR
-    sub-chain and its scope check, branch preparation, pause, the escalation
-    ledger and the questions log.
+    sub-chain and its scope check, branch preparation, the post-merge gates,
+    citation checks for review, pause, the pending event of a resume and the
+    pending actions of an abandonment, the escalation ledger and the
+    questions log.
 - `tools/scheduler/src/gates/`:
   - `automation-change.ts` and its tests removed;
   - `fix-loop.ts` and `ready.ts` no longer return a label;
@@ -478,54 +620,59 @@ other pair is invalid and throws:
   ahead of the shortlist (AC-15), reminders (AC-16), spec-start claims, and
   claims seeded from the escalation ledger.
 - `tools/scheduler/src/github/client.ts` and `github/types.ts`: list an issue's
-  comments with id, author and time; `comment` returns the new comment's id
-  and creation time; close a pull request; delete a branch; set an issue
-  body; a pull request's body.
+  comments with id, author and time; read one issue comment by id; `comment`
+  returns the new comment's id and creation time; close a pull request; delete
+  a branch; set an issue body; a pull request's body; re-run a workflow run.
 - `tools/scheduler/src/runner/worktree.ts`: check out a named branch from a
   base, and delete a local branch.
-- `tools/scheduler/src/runner/retry.ts`: the independent fallback (AC-26).
+- `tools/scheduler/src/runner/retry.ts`: the independent fallback and the
+  postpone after it (AC-26).
 - `tools/scheduler/src/config.ts`: `rescue_model`.
 - `tools/scheduler/src/state/`: paused records, the escalation ledger, the
-  questions log, and claim normalization on read.
+  questions log, and claim normalization on read; claims may carry a pending
+  event or pending actions.
 - `tools/scheduler/src/stages/definition.ts`, `src/stages/prompt.ts` and
   `src/types.ts`: stage names `spec` and `question-check`; `independent`;
   spec modes `write`, `answer`, `revise`, `decide` and `record` passed in the
-  stage input; the `escalation` field on plan, implement and fix results.
+  stage input; the `escalation` field on plan, implement and fix results;
+  the answered-questions input of review.
 - `tools/scheduler/test/`: the tests named in section 6.
 - `agents/stages/spec.md` (strong tier, Claude) and
   `agents/stages/question-check.md` (strong tier, pi with an OpenAI model,
-  `independent: true`, Claude fallback).
+  `independent: true`, Claude fallback; design sections 3 and 5 rules).
 - `agents/stages/plan.md`, `agents/stages/implement.md`,
   `agents/stages/fix.md` and `agents/stages/review.md`: the history, answer
-  and decide inputs; the `escalation` object and when to use it; plan's spec
-  questions go to the spec stage, not the maintainer.
+  and decide inputs; the `escalation` object and when to use it; follow-ups;
+  plan's spec questions go to the spec stage, not the maintainer; review's
+  answered-questions input.
 - `agents/profiles/spec/`: `profile.yaml`, `instructions.md`,
   `review-criteria.md` (AC-21).
 - `agents/profiles/security/review-criteria.md`: the rules of AC-10;
   `instructions.md`: "any finding blocks merge until the maintainer looks"
   replaced by "findings go to the fix loop".
-- `agents/sensitive-paths.txt`: add the charter's path and the two top
-  designs (this spec does not list the charter itself, so the scope gate keeps
-  it out of the diff).
+- `agents/sensitive-paths.txt`: add the charter's path, the two top designs
+  and `docs/design-tree.md` (this spec does not list the charter itself, so
+  the scope gate keeps it out of the diff).
 - `agents/scheduler.yaml`: `rescue_model`.
 - `schemas/scheduler/`:
   - `question.json`;
   - `spec-result.json`;
   - `question-check-result.json`;
-  - `paused.json`;
+  - `paused.json`, with the nonce;
   - `escalation-ledger.json`;
-  - `question-log-entry.json`;
+  - `question-log-entry.json`, with the question comment id;
   - `review-result.json`, `plan-result.json`, `implement-result.json` and
-    `fix-result.json` gain `escalation`;
+    `fix-result.json` gain `escalation`; `plan-result.json`'s `spec_gap` rule
+    applies only when a verdict is present;
+  - `usage-record.json`: the `stage` enum gains `spec` and `question-check`;
   - `stage-input.json` gains `history`, `question`, `answer`, `mode`,
-    `decide_input`, `spec_problem`;
-  - `claim.json` follows `ChainState`.
+    `decide_input`, `spec_problem`, `answered_questions`;
+  - `claim.json` follows `ChainState`, and gains the pending event and
+    pending actions.
 - `specs/001-*` to `specs/005-*`: `Parent:` line. Spec 001's status line gains
   "amended by spec 006". Its section 2 spec numbers for the shortlist,
   Telegram and filing agent are corrected to name design specs A and C.
-- `docs/delivery-system-design.md`:
-  - `Parent:` line and `## Children` section;
-  - the section 11 table moves the classification check from A to B.
+- `docs/delivery-system-design.md`: `Parent:` line and `## Children` section.
 - `docs/product-spec.md`: `Parent:` line and empty `## Children` section.
 - `docs/process-spec.md`:
   - a link to the charter at the top, and the charter in section 1's piece
@@ -551,7 +698,7 @@ other pair is invalid and throws:
   - the gates (AC-11, AC-19, AC-20, AC-21, AC-22, AC-23);
   - the design-tree check over the real repository (AC-24, AC-25);
   - the AC-10 file assertions;
-  - the stage prompt files carry the new inputs (AC-1, AC-14, AC-17);
+  - the stage prompt files carry the new inputs (AC-1, AC-14, AC-15, AC-17);
   - the AC-26 fallback against recorded pi and Claude streams;
   - the recorded end-to-end chains of AC-28.
 - After the service is restarted on the merged code, the first real issue
