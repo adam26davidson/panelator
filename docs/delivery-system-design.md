@@ -103,7 +103,7 @@ Replaces the `needs-human` rows of spec 001 section 5 and the gates in section
 
 | Situation (spec 001 today) | New behaviour |
 |---|---|
-| plan or implement failed twice; scope violated twice; fix loop exhausted (`needs-human`, AC-10, AC-13) | **Rescue:** one more attempt on the strongest model with the full history of attempts, results and review findings. If it fails: the PR is closed and its branch saved as a patch, and the issue is planned again from scratch. If re-planning also fails: the issue goes to the spec agent, on the theory that the spec is wrong. If the spec agent finds nothing to change, it may escalate as a large technical question; if the section 3 check sends that back as "decide it yourself", the spec agent must pick an approach and the chain runs once more on it. If that fails too, the issue is closed as abandoned with the full record, a finding is filed, and delivery reflection picks it up. *(author's call: the terminal state)* |
+| plan or implement failed twice; scope violated twice; fix loop exhausted (`needs-human`, AC-10, AC-13) | **Rescue:** one more attempt on the strongest model with the full history of attempts, results and review findings. If it fails: the PR is closed and its branch saved as a patch, and the issue is planned again from scratch. If re-planning also fails: the issue goes to the spec agent, on the theory that the spec is wrong. If the spec agent finds nothing to change, it may escalate as a large technical question; if the section 3 check sends that back as "decide it yourself", the spec agent must pick an approach and the chain runs once more on it. If that fails too, the issue is labelled `abandoned` with the full record and left open for spec C to re-triage, a finding is filed, and delivery reflection picks it up. *(author's call: the terminal state)* |
 | review returns `escalate` | The review result must carry a reason classified as one of section 3's kinds, or as "other". A section 3 kind goes to the maintainer; "other" becomes input to a rescue attempt. |
 | security finding on a sensitive path (AC-11, `security-review`) | Fix loop with the finding as input, then a fresh security review by an independent reviewer (section 6.3). Reaches the maintainer only if a finding raises a section 3 question. |
 | `needs-spec`, `needs-design` (AC-7, AC-8) | Work for the spec agent: write or complete the spec, or run the design stage to produce the design artifacts. |
@@ -132,13 +132,20 @@ not something a prompt can change.
   this document, may be changed by the system through a reviewed PR. Changes to
   the scheduler and `agents/` must keep the recorded end-to-end chain tests
   passing, and are reviewed by an independent reviewer (section 6.3).
+- **The maintainer's recorded decisions are protected.** Changing a statement
+  in this document that is not marked *(author's call)*, changing section 3
+  itself, or changing a recorded product decision in `product-spec.md` is a
+  section 3 question to the maintainer, not a reviewed PR. `docs/product-spec.md`
+  and this document are added to `agents/sensitive-paths.txt`, so the security
+  review enforces it (spec 006). *(author's call: the mechanism)*
 - process-spec section 5's "changes to the automation need a human-approved
-  spec, always" is replaced by the two points above.
+  spec, always" is replaced by the points above.
 
 **Firmware and the test board.** Firmware is tested on a real test board
-attached to the laptop (the HIL rig, process-spec 6.1). Promotion from beta to
-stable becomes automatic once the board's tests pass; process-spec 5's "one
-human release action" is removed. If a test bricks the board, recovery is a
+attached to the laptop (the HIL rig, process-spec 6.1). process-spec 5's "one
+human release action" is removed. Until spec G lands there is no promotion
+from beta to stable at all; once it lands, promotion is automatic when the
+board's tests pass, under G's criteria. If a test bricks the board, recovery is a
 physical action: the system tells the maintainer and pauses firmware work until
 the maintainer confirms the board is back. *(author's call: the pause)* The
 criteria for automatic promotion (which HIL tests, any soak time on beta) are
@@ -169,7 +176,7 @@ Initial roster:
 | Infra health | alarms, plus a periodic sweep | direct actions, findings (the ops-watcher slot of process-spec 4.4) |
 | Credential check | daily, and before known expiry dates | early Telegram warnings; automated renewals where possible |
 | Delivery reflection | weekly, or after N merges | a plan: bottlenecks and metric trends |
-| Charter reflection | weekly | a plan: the system against each charter clause, including whether new agents are needed |
+| Charter reflection | weekly | a plan: the system against each charter clause, including whether new agents are needed and whether the console (section 9) still gives the maintainer the visibility and control the charter asks for; and a review of every time the maintainer was contacted in the period, filing an issue to automate each recurring kind (the charter's "expand the scope of what can be automated") |
 | Meta-reflection | monthly | a plan: whether the metrics and the reflections themselves are working |
 | Action audit | periodically | findings about direct actions that went wrong |
 
@@ -189,6 +196,9 @@ below may be applied directly and are listed in the plan.
    definitions, specs, the process spec, the scheduler. Bigger directional
    changes (a new agent, a redesigned stage, a new metric) carry a design
    write-up in the PR, and review judges the design as well as the code.
+   A PR that adds an agent, a parameter or a metric includes its console
+   exposure (section 9), or files an issue for it, so the console keeps up
+   with the system. *(author's call)*
 3. **Ask the maintainer.** Section 3.
 
 Guards on level 1 *(author's calls)*:
@@ -217,8 +227,9 @@ on the last point)*
 ## 7. Measurement
 
 - **Raw events, derived metrics.** Every run, stage, merge, CI result, review,
-  finding, direct action, question and answer, and AWS cost record is stored as
-  a raw event and never discarded. A metric is a query over those events, so a
+  finding, direct action, question and answer, queue and shortlist wait time,
+  time paused waiting on the maintainer, concurrency slot occupancy, and AWS
+  cost record is stored as a raw event and never discarded. A metric is a query over those events, so a
   new metric can be computed back over the whole history. This replaces
   process-spec 7's "raw events in the backend's Postgres": the delivery
   system's data lives in its own store, separate from the product's backend.
@@ -317,6 +328,8 @@ every screen is designed and reviewed at all three sizes.
   most work on the system as the charter allows; replaces process-spec 4.5's
   fixed 2:1); agent schedules (auto); concurrency slots (auto);
   `first_contact_needs_approval` (locked, on). The system may add parameters.
+  The parameter store (auto and locked, enforced in code) and the shortlist's
+  use of the ratio belong to spec C; the console shows and sets them.
 - **Hosting and access** *(author's calls)*: hosted in the delivery system's
   own AWS account, counted against its cap. Nothing connects in to the laptop:
   the scheduler pushes state to the console, and changes made in the console
@@ -374,7 +387,7 @@ Rules:
   Reflection flags designs with children missing a spec and specs with no
   implementation. *(author's call: findings, not automatic rewrites)*
 
-This document's own children are specs A to G below; E is expected to become
+This document's own children are specs A to G below (F split into F1 and F2); E is expected to become
 a sub-design (design stage, console) when it is written. The existing specs
 001 to 005 get `Parent: docs/delivery-system-design.md` as part of B.
 
@@ -387,20 +400,24 @@ pipeline, reaching the maintainer only for section 3 questions.
 
 Order *(author's call)*: B first, because until it lands the old gates still
 make every scheduler PR wait for the maintainer's `validated` label and stop
-on security findings. Until A exists, B's questions for the maintainer go to
-the service log and the existing notify interface. B itself changes
-`tools/scheduler/`, so under today's gates its issue needs the maintainer's
-`validated` label once, the last time that gate applies. Then A, and the rest in
-table order (each depends on the ones before):
+on security findings. Until A exists, a question for the maintainer is posted
+as an issue comment that @-mentions the maintainer, the 24-hour reminder
+likewise, and the existing notify interface logs both (spec 006). B itself
+changes `tools/scheduler/`, so under today's gates its issue needs the
+maintainer's `validated` label once, the last time that gate applies. Then A,
+and the rest in table order (each depends on the ones before). F is split so
+that the AWS account and cap enforcement exist before E hosts the console in
+that account. *(author's call: the split)*
 
 | Spec | Name | Covers |
 |---|---|---|
-| B | Chain without human stops | section 4, section 5, the spec agent, the design hierarchy of section 10 and its gate checks, process-spec, spec 001 and `specs/README.md` amendments, `docs/charter.md` on the sensitive list |
-| A | Telegram channel | long-poll service, questions with options, resume-on-reply, reminders, the section 3 classification check |
-| C | Agent registry and direct actions | section 6: definition format, triggers, scheduler support, action log, locks enforced in code, action audit |
-| D | Event store, metrics and reflection | section 7, the three reflection agents, plans as issues |
-| E | Design stage and console | the design stage (design tools, visual review, three screen sizes), then the console of section 9 |
-| F | Beyond GitHub | section 8: the delivery-system AWS account, budget enforcement and forecasting, credential store and wrappers, funds and first-contact requests, infra health and credential check agents |
+| B | Chain without human stops | section 4, section 5, the spec agent, the section 3 classification check (question check), the design hierarchy of section 10 and its gate checks, process-spec, spec 001 and `specs/README.md` amendments, `docs/charter.md` on the sensitive list |
+| A | Telegram channel | long-poll service, questions with options, resume-on-reply, reminders |
+| C | Agent registry and direct actions | section 6: definition format, triggers, scheduler support, action log, locks enforced in code, action audit; the parameter store (auto and locked, enforced in code) and applying the system-vs-product work ratio in the shortlist (replacing the fixed 2:1); re-triaging abandoned issues (until C, they stay open labelled `abandoned`) |
+| D | Event store, metrics and reflection | section 7, the three reflection agents, plans as issues: issues filed from a plan are authored by the App and labelled `validated`, so the shortlist works them |
+| F1 | Delivery-system AWS account and cap | section 8: the delivery-system AWS account, AWS Budgets enforcement, the scheduler's running estimate, daily forecasting |
+| E | Design stage and console | the design stage (design tools, visual review, three screen sizes), then the console of section 9, hosted in F1's account; re-evaluating the issues spec 006 parked with `needs-design-stage` and removing the label |
+| F2 | Reach beyond GitHub | section 8: credential store and wrappers, funds and first-contact requests, infra health and credential check agents |
 | G | Test board and automatic stable promotion | section 5 firmware: HIL tests on the real board, promotion criteria, the bricked-board pause |
 
 The findings filer (spec 001's out-of-scope list calls it "spec 004"; that
@@ -417,7 +434,8 @@ are stale and are corrected as part of B.
 - `specs/001-scheduler-core/spec.md`: AC-7 to AC-13, the section 5 table, and
   section 8 rows for spec present, UI design present, automation change,
   ready, scope, sensitive path and fix loop.
-- `agents/sensitive-paths.txt`: add `docs/charter.md`.
+- `agents/sensitive-paths.txt`: add `docs/charter.md`, `docs/product-spec.md`
+  and this document.
 - `specs/README.md`: spec approval wording, the `Parent:` line, and the design hierarchy rules of section 10.
 - `docs/product-spec.md` and this document: a children list each.
 
