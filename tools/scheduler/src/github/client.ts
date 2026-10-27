@@ -1,8 +1,9 @@
 import type { Octokit } from "octokit";
 import type { IssueData, LabelEvent } from "../types.ts";
-import type { CheckRun, CheckSummary, PullRequestInfo } from "./types.ts";
+import type { CheckRun, CheckSummary, IssueComment, PullRequestInfo } from "./types.ts";
 
 type Rec = Record<string, unknown>;
+const toComment = (c: Rec): IssueComment => ({ id: Number(c.id), author: String(rec(c.user).login ?? ""), at: String(c.created_at), body: String(c.body ?? "") });
 const rec = (x: unknown): Rec => (typeof x === "object" && x !== null ? (x as Rec) : {});
 
 export class GitHubClient {
@@ -64,8 +65,54 @@ export class GitHubClient {
     }
   }
 
-  async comment(issue: number, body: string): Promise<void> {
-    await this.octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", { ...this.base, issue_number: issue, body });
+  async comment(issue: number, body: string): Promise<{ id: number; created_at: string }> {
+    const { data } = await this.octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/comments", { ...this.base, issue_number: issue, body });
+    return { id: Number(data.id), created_at: String(data.created_at) };
+  }
+
+  async listComments(issue: number): Promise<IssueComment[]> {
+    const raw = (await this.octokit.paginate("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", { ...this.base, issue_number: issue, per_page: 100 })) as Rec[];
+    return raw.map(toComment);
+  }
+
+  async issueComment(id: number): Promise<IssueComment | null> {
+    try {
+      const { data } = await this.octokit.request("GET /repos/{owner}/{repo}/issues/comments/{comment_id}", { ...this.base, comment_id: id });
+      return toComment(data as Rec);
+    } catch (e) {
+      if ((e as { status?: number }).status === 404) return null;
+      throw e;
+    }
+  }
+
+  async closePullRequest(n: number): Promise<void> {
+    await this.octokit.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", { ...this.base, pull_number: n, state: "closed" });
+  }
+
+  /** A branch that is already gone (404) or not a ref (422) is not an error. */
+  async deleteBranch(branch: string): Promise<void> {
+    try {
+      await this.octokit.request("DELETE /repos/{owner}/{repo}/git/refs/heads/{+branch}", { ...this.base, branch });
+    } catch (e) {
+      const status = (e as { status?: number }).status;
+      if (status !== 404 && status !== 422) throw e;
+    }
+  }
+
+  async setIssueBody(issue: number, body: string): Promise<void> {
+    await this.octokit.request("PATCH /repos/{owner}/{repo}/issues/{issue_number}", { ...this.base, issue_number: issue, body });
+  }
+
+  /** False when GitHub will not re-run the check (a 4xx), true once the re-request is accepted. */
+  async rerequestCheckRun(id: number): Promise<boolean> {
+    try {
+      await this.octokit.request("POST /repos/{owner}/{repo}/check-runs/{check_run_id}/rerequest", { ...this.base, check_run_id: id });
+      return true;
+    } catch (e) {
+      const status = (e as { status?: number }).status;
+      if (status !== undefined && status >= 400 && status < 500) return false;
+      throw e;
+    }
   }
 
   async issueLabels(issue: number): Promise<string[]> {
@@ -80,7 +127,7 @@ export class GitHubClient {
 
   async pullRequest(n: number): Promise<PullRequestInfo> {
     const { data } = await this.octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", { ...this.base, pull_number: n });
-    return { number: data.number, head_sha: data.head.sha, base_ref: data.base.ref, head_ref: data.head.ref, url: data.html_url, mergeable: data.mergeable ?? null, mergeable_state: String(data.mergeable_state ?? ""), merged: Boolean(data.merged), state: data.state as "open" | "closed" };
+    return { number: data.number, head_sha: data.head.sha, base_ref: data.base.ref, head_ref: data.head.ref, url: data.html_url, body: String(data.body ?? ""), mergeable: data.mergeable ?? null, mergeable_state: String(data.mergeable_state ?? ""), merged: Boolean(data.merged), state: data.state as "open" | "closed" };
   }
 
   /** `required` empty means every check run on the sha must succeed; a required name not yet reported is pending. */

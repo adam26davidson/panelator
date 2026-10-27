@@ -5,6 +5,7 @@ export interface PullRequestInfo {
   base_ref: string;
   head_ref: string;
   url: string;
+  body: string;
   mergeable: boolean | null;
   mergeable_state: string;
   merged: boolean;
@@ -22,4 +23,11 @@ export interface CheckSummary {
   status: "green" | "failed" | "pending";
   runs: CheckRun[];
   failed: { name: string; id: number }[];
+}
+
+export interface IssueComment {
+  id: number;
+  author: string;
+  at: string;
+  body: string;
 }

@@ -91,6 +91,21 @@ export async function discardUncommitted(worktree: string): Promise<void> {
   await git(worktree, "clean", "-fd");
 }
 
+/** Puts the worktree on `branch`, created or reset to `base`; used to start a spec branch or re-enter an issue branch. */
+export async function checkoutBranch(worktree: string, branch: string, base: string): Promise<void> {
+  await git(worktree, "checkout", "-q", "-B", branch, base);
+}
+
+/** D4: forced, because `spec-N` holds commits that were never merged (closed PRs, abandonment). A missing branch is ignored. */
+export async function deleteLocalBranch(worktree: string, branch: string): Promise<void> {
+  try {
+    await git(worktree, "branch", "-D", branch);
+  } catch (e) {
+    const err = e as { stderr?: string };
+    if (!/not found/.test(err.stderr ?? "")) throw e;
+  }
+}
+
 /** C1: points the issue branch at base before a stage with no PR (plan, first implement). Save a patch first. */
 export async function resetToBase(worktree: string, base = "origin/main"): Promise<void> {
   await git(worktree, "reset", "-q", "--hard", base);

@@ -20,6 +20,8 @@ describe("statePaths", () => {
     for (const d of [p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees]) expect(statSync(d).isDirectory()).toBe(true);
     expect(p.findingsQueue).toBe(join(p.root, "findings", "queue.jsonl"));
     expect(p.token).toBe(join(p.root, "token.json"));
+    for (const d of [p.paused, p.escalations, join(p.root, "questions")]) expect(statSync(d).isDirectory()).toBe(true);
+    expect(p.questionsLog).toBe(join(p.root, "questions", "log.jsonl"));
   });
 });
 
@@ -37,6 +39,31 @@ describe("claims", () => {
     expect(t.last_activity_at > c.last_activity_at).toBe(true);
     await removeClaim(p, 7);
     expect(await readClaim(p, 7)).toBeNull();
+  });
+  it("reads a pre-006 claim, normalised, and can rewrite it", async () => {
+    const p = fresh();
+    await ensureStateDirs(p);
+    const { track: _t, rescues: _r, specRescues: _a, replans: _b, specRevisions: _c, specAnswers: _d, decideReturns: _e, history: _h, ...old } = initialChainState(7);
+    const raw = { issue: 7, slot: 0, state: { ...old, securityFinding: null }, worktree: "/w/7", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null };
+    writeFileSync(join(p.claims, "7.json"), JSON.stringify(raw));
+    for (const got of [await readClaim(p, 7), (await listClaims(p))[0]]) {
+      expect(got?.state.track).toBe("issue");
+      expect(got?.state.rescues).toBe(0);
+      expect(got?.state.history).toEqual([]);
+      expect(got?.state && "securityFinding" in got.state).toBe(false);
+    }
+    await writeClaim(p, (await readClaim(p, 7))!);
+  });
+  it("round-trips pendingEvent and pendingActions", async () => {
+    const p = fresh();
+    await ensureStateDirs(p);
+    const c = {
+      issue: 7, slot: 0, state: initialChainState(7), worktree: "/w/7", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null,
+      pendingEvent: { type: "answered" as const, answer: "A", questionId: 100 },
+      pendingActions: [{ type: "wait" as const, seconds: 5 }],
+    };
+    await writeClaim(p, c);
+    expect(await readClaim(p, 7)).toEqual(c);
   });
   it("rejects an invalid claim", async () => {
     const p = fresh();

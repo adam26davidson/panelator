@@ -303,6 +303,41 @@
         "string",
         "null"
       ]
+    },
+    "pendingEvent": {
+      "type": "object",
+      "required": [
+        "type",
+        "answer",
+        "questionId"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "answered"
+        },
+        "answer": {
+          "type": "string"
+        },
+        "questionId": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "pendingActions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          }
+        }
+      }
     }
   }
 }

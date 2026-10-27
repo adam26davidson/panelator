@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export interface StatePaths {
   root: string;
@@ -13,6 +13,9 @@ export interface StatePaths {
   log: string;
   serviceLog: string;
   worktrees: string;
+  paused: string;
+  escalations: string;
+  questionsLog: string;
 }
 
 export function statePaths(root: string): StatePaths {
@@ -28,9 +31,12 @@ export function statePaths(root: string): StatePaths {
     log: join(root, "log"),
     serviceLog: join(root, "log", "service.jsonl"),
     worktrees: join(root, "worktrees"),
+    paused: join(root, "paused"),
+    escalations: join(root, "escalations"),
+    questionsLog: join(root, "questions", "log.jsonl"),
   };
 }
 
 export async function ensureStateDirs(p: StatePaths): Promise<void> {
-  for (const d of [p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees]) await mkdir(d, { recursive: true });
+  for (const d of [p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog)]) await mkdir(d, { recursive: true });
 }

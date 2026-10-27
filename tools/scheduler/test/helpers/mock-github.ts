@@ -14,7 +14,7 @@ export function mockGitHub(routes: Route[]): { fetch: typeof fetch; calls: Call[
       const m = r.path.exec(url.pathname);
       if (m && r.method === method) {
         const res = r.reply(m, body, url);
-        const response = new Response(JSON.stringify(res.body), { status: res.status ?? 200, headers: { "content-type": "application/json", ...(res.headers ?? {}) } });
+        const response = new Response(res.status === 204 ? null : JSON.stringify(res.body), { status: res.status ?? 200, headers: { "content-type": "application/json", ...(res.headers ?? {}) } });
         Object.defineProperty(response, "url", { value: url.href });
         return response;
       }

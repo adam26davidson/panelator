@@ -105,7 +105,7 @@ describe("pull requests, checks, merge (AC-14)", () => {
       { method: "GET", path: /^\/repos\/o\/r\/pulls\/9$/, reply: () => ({ body: pr }) },
       { method: "PUT", path: /^\/repos\/o\/r\/pulls\/9\/merge$/, reply: () => ({ body: { merged: true, message: "Pull Request successfully merged", sha: "m" } }) },
     ]);
-    expect(await c.pullRequest(9)).toEqual({ number: 9, head_sha: "a".repeat(40), base_ref: "main", head_ref: "issue-12", url: pr.html_url, mergeable: true, mergeable_state: "clean", merged: false, state: "open" });
+    expect(await c.pullRequest(9)).toEqual({ number: 9, head_sha: "a".repeat(40), base_ref: "main", head_ref: "issue-12", url: pr.html_url, body: "", mergeable: true, mergeable_state: "clean", merged: false, state: "open" });
     expect(await c.mergePullRequest(9, "a".repeat(40))).toEqual({ merged: true, message: "Pull Request successfully merged" });
     expect(gh.calls.find((x) => x.method === "PUT")?.body).toEqual({ merge_method: "squash", sha: "a".repeat(40) });
   });
@@ -138,5 +138,65 @@ describe("pull requests, checks, merge (AC-14)", () => {
     const excerpt = await c.jobLogExcerpt(2, 50);
     expect(excerpt.split("\n")).toHaveLength(50);
     expect(excerpt.endsWith("line 299")).toBe(true);
+  });
+});
+
+describe("spec 006 calls", () => {
+  const cm = (id: number, login: string, body: string) => ({ id, user: { login }, created_at: "2026-10-20T00:00:00Z", body });
+  it("comment returns the id and created_at", async () => {
+    const { c } = client([{ method: "POST", path: /^\/repos\/o\/r\/issues\/4\/comments$/, reply: () => ({ status: 201, body: { id: 55, created_at: "2026-10-20T00:00:00Z" } }) }]);
+    expect(await c.comment(4, "hi")).toEqual({ id: 55, created_at: "2026-10-20T00:00:00Z" });
+  });
+  it("listComments follows pages and maps fields", async () => {
+    const pages = [[cm(1, "a", "one")], [cm(2, "b", "two")]];
+    const { c, gh } = client([{
+      method: "GET", path: /^\/repos\/o\/r\/issues\/4\/comments$/,
+      reply: (_m, _b, url) => { const page = Number(url.searchParams.get("page") ?? "1"); return { body: pages[page - 1], headers: pageLink(url, page, 2) }; },
+    }]);
+    expect(await c.listComments(4)).toEqual([
+      { id: 1, author: "a", at: "2026-10-20T00:00:00Z", body: "one" },
+      { id: 2, author: "b", at: "2026-10-20T00:00:00Z", body: "two" },
+    ]);
+    expect(gh.calls[0].url).toContain("per_page=100");
+  });
+  it("issueComment maps a comment and returns null on 404", async () => {
+    const { c } = client([
+      { method: "GET", path: /^\/repos\/o\/r\/issues\/comments\/7$/, reply: () => ({ body: cm(7, "a", "x") }) },
+      { method: "GET", path: /^\/repos\/o\/r\/issues\/comments\/8$/, reply: () => ({ status: 404, body: { message: "Not Found" } }) },
+    ]);
+    expect(await c.issueComment(7)).toEqual({ id: 7, author: "a", at: "2026-10-20T00:00:00Z", body: "x" });
+    expect(await c.issueComment(8)).toBeNull();
+  });
+  it("closes a PR, sets an issue body, and deletes a branch tolerating 404 and 422", async () => {
+    const { c, gh } = client([
+      { method: "PATCH", path: /^\/repos\/o\/r\/pulls\/9$/, reply: () => ({ body: {} }) },
+      { method: "PATCH", path: /^\/repos\/o\/r\/issues\/4$/, reply: () => ({ body: {} }) },
+      { method: "DELETE", path: /^\/repos\/o\/r\/git\/refs\/heads\/spec-4$/, reply: () => ({ status: 204, body: null }) },
+      { method: "DELETE", path: /^\/repos\/o\/r\/git\/refs\/heads\/gone$/, reply: () => ({ status: 422, body: { message: "Reference does not exist" } }) },
+      { method: "DELETE", path: /^\/repos\/o\/r\/git\/refs\/heads\/missing$/, reply: () => ({ status: 404, body: { message: "Not Found" } }) },
+    ]);
+    await c.closePullRequest(9);
+    await c.setIssueBody(4, "new body");
+    await c.deleteBranch("spec-4");
+    await c.deleteBranch("gone");
+    await c.deleteBranch("missing");
+    expect(gh.unmatched).toEqual([]);
+    expect(gh.calls.filter((x) => x.method === "DELETE").map((x) => x.url)).toContain("/repos/o/r/git/refs/heads/spec-4");
+    expect(gh.calls.find((x) => x.url.endsWith("/pulls/9"))).toMatchObject({ method: "PATCH", body: { state: "closed" } });
+    expect(gh.calls.find((x) => x.url.endsWith("/issues/4"))).toMatchObject({ method: "PATCH", body: { body: "new body" } });
+  });
+  it("rerequestCheckRun is true when accepted and false on a 4xx", async () => {
+    const { c, gh } = client([
+      { method: "POST", path: /^\/repos\/o\/r\/check-runs\/1\/rerequest$/, reply: () => ({ status: 201, body: {} }) },
+      { method: "POST", path: /^\/repos\/o\/r\/check-runs\/2\/rerequest$/, reply: () => ({ status: 422, body: { message: "no" } }) },
+    ]);
+    expect(await c.rerequestCheckRun(1)).toBe(true);
+    expect(await c.rerequestCheckRun(2)).toBe(false);
+    expect(gh.calls[0].method).toBe("POST");
+  });
+  it("pullRequest maps the body", async () => {
+    const pr = { number: 9, base: { ref: "main" }, head: { ref: "issue-12", sha: "a".repeat(40) }, html_url: "u", body: "Closes #12", mergeable: true, mergeable_state: "clean", merged: false, state: "open" };
+    const { c } = client([{ method: "GET", path: /^\/repos\/o\/r\/pulls\/9$/, reply: () => ({ body: pr }) }]);
+    expect((await c.pullRequest(9)).body).toBe("Closes #12");
   });
 });

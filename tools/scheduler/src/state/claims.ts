@@ -1,6 +1,7 @@
 import { readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ChainState } from "../chain/types.ts";
+import { normalizeChainState } from "../chain/machine.ts";
+import type { Action, ChainEvent, ChainState } from "../chain/types.ts";
 import { validate } from "../schema/validate.ts";
 import type { StatePaths } from "./paths.ts";
 
@@ -12,6 +13,15 @@ export interface Claim {
   started_at: string;
   last_activity_at: string;
   run_id: string | null;
+  /** Spec 006: an answer routed to the machine but not yet applied (only `answered`), and the actions it produced, kept so a crash resumes them. */
+  pendingEvent?: Extract<ChainEvent, { type: "answered" }>;
+  pendingActions?: Action[];
+}
+
+/** Pre-006 claims carry `securityFinding` and lack the new fields; fill them on read. */
+function parse(text: string): Claim {
+  const c = JSON.parse(text) as Claim;
+  return { ...c, state: normalizeChainState(c.state) };
 }
 
 const file = (p: StatePaths, issue: number) => join(p.claims, `${issue}.json`);
@@ -26,7 +36,7 @@ export async function writeClaim(p: StatePaths, claim: Claim): Promise<void> {
 
 export async function readClaim(p: StatePaths, issue: number): Promise<Claim | null> {
   try {
-    return JSON.parse(await readFile(file(p, issue), "utf8")) as Claim;
+    return parse(await readFile(file(p, issue), "utf8"));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw e;
@@ -36,7 +46,7 @@ export async function readClaim(p: StatePaths, issue: number): Promise<Claim | n
 export async function listClaims(p: StatePaths): Promise<Claim[]> {
   const names = (await readdir(p.claims)).filter((n) => /^\d+\.json$/.test(n));
   const out: Claim[] = [];
-  for (const n of names) out.push(JSON.parse(await readFile(join(p.claims, n), "utf8")) as Claim);
+  for (const n of names) out.push(parse(await readFile(join(p.claims, n), "utf8")));
   return out.sort((a, b) => a.issue - b.issue);
 }
 

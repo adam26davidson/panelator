@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { linkProfileSkills } from "../src/runner/skills.ts";
-import { commitsPatch, diffFilesAgainstBase, discardUncommitted, ensureWorktree, rebaseOntoMain, removeWorktree, resetToBase, syncToRemote, uncommittedPatch } from "../src/runner/worktree.ts";
+import { checkoutBranch, commitsPatch, deleteLocalBranch, diffFilesAgainstBase, discardUncommitted, ensureWorktree, rebaseOntoMain, removeWorktree, resetToBase, syncToRemote, uncommittedPatch } from "../src/runner/worktree.ts";
 import { git, repoPair } from "./helpers/repo-pair.ts";
 
 describe("worktrees (AC-16)", () => {
@@ -252,5 +252,22 @@ describe("linkProfileSkills (AC-26)", () => {
     writeFileSync(join(real, "SKILL.md"), "tracked\n");
     await expect(linkProfileSkills(w2.path, "claude", profile)).rejects.toThrow(real);
     expect(readFileSync(join(real, "SKILL.md"), "utf8")).toBe("tracked\n");
+  });
+});
+
+describe("branch helpers (spec 006)", () => {
+  it("checkoutBranch resets issue-N to the base and deleteLocalBranch force-deletes an unmerged branch", async () => {
+    const { repo, worktrees } = repoPair();
+    const w = await ensureWorktree(repo, worktrees, 7);
+    git(w.path, "checkout", "-q", "-b", "spec-7");
+    writeFileSync(join(w.path, "s.txt"), "s\n");
+    git(w.path, "add", "s.txt");
+    git(w.path, "commit", "-q", "-m", "spec");
+    await checkoutBranch(w.path, "issue-7", "origin/main");
+    expect(git(w.path, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("issue-7");
+    expect(git(w.path, "rev-parse", "HEAD").trim()).toBe(git(w.path, "rev-parse", "origin/main").trim());
+    await deleteLocalBranch(w.path, "spec-7");
+    expect(git(w.path, "branch", "--list", "spec-7").trim()).toBe("");
+    await deleteLocalBranch(w.path, "spec-7");
   });
 });
