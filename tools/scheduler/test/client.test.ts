@@ -194,6 +194,15 @@ describe("spec 006 calls", () => {
     expect(await c.rerequestCheckRun(2)).toBe(false);
     expect(gh.calls[0].method).toBe("POST");
   });
+  it("rerequestCheckRun is false only for 404, 409 and 422, and rethrows any other error", async () => {
+    const at = (id: number, status: number): Route => ({ method: "POST", path: new RegExp(`^/repos/o/r/check-runs/${id}/rerequest$`), reply: () => ({ status, body: { message: "x" } }) });
+    const { c } = client([at(4, 404), at(9, 409), at(22, 422), at(3, 403), at(1, 401)]);
+    expect(await c.rerequestCheckRun(4)).toBe(false);
+    expect(await c.rerequestCheckRun(9)).toBe(false);
+    expect(await c.rerequestCheckRun(22)).toBe(false);
+    await expect(c.rerequestCheckRun(3)).rejects.toMatchObject({ status: 403 });
+    await expect(c.rerequestCheckRun(1)).rejects.toMatchObject({ status: 401 });
+  }, 20_000); // octokit spaces write requests about a second apart
   it("pullRequest maps the body", async () => {
     const pr = { number: 9, base: { ref: "main" }, head: { ref: "issue-12", sha: "a".repeat(40) }, html_url: "u", body: "Closes #12", mergeable: true, mergeable_state: "clean", merged: false, state: "open" };
     const { c } = client([{ method: "GET", path: /^\/repos\/o\/r\/pulls\/9$/, reply: () => ({ body: pr }) }]);

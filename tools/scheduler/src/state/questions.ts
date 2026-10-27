@@ -33,7 +33,12 @@ export async function answeredEntry(p: StatePaths, questionCommentId: number): P
   }
   for (const line of text.split("\n")) {
     if (!line) continue;
-    const e = JSON.parse(line) as QuestionLogEntry;
+    let e: QuestionLogEntry;
+    try {
+      e = JSON.parse(line) as QuestionLogEntry;
+    } catch {
+      continue; // a line torn by a crash mid-append verifies nothing
+    }
     if (e.event === "answered" && e.question_comment_id === questionCommentId) return e;
   }
   return null;

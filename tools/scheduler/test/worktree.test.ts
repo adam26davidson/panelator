@@ -270,4 +270,17 @@ describe("branch helpers (spec 006)", () => {
     expect(git(w.path, "branch", "--list", "spec-7").trim()).toBe("");
     await deleteLocalBranch(w.path, "spec-7");
   });
+  it("a branch from checkoutBranch tracks nothing, and the spec prompt's `git push -u origin HEAD` publishes it under its own name", async () => {
+    const { repo, worktrees, origin } = repoPair();
+    const w = await ensureWorktree(repo, worktrees, 7);
+    await checkoutBranch(w.path, "spec-7", "origin/main");
+    expect(() => git(w.path, "rev-parse", "--abbrev-ref", "spec-7@{upstream}")).toThrow();
+    writeFileSync(join(w.path, "s.txt"), "s\n");
+    git(w.path, "add", "s.txt");
+    git(w.path, "commit", "-q", "-m", "spec");
+    git(w.path, "push", "-q", "-u", "origin", "HEAD");
+    expect(git(origin, "rev-parse", "refs/heads/spec-7").trim()).toBe(git(w.path, "rev-parse", "HEAD").trim());
+    expect(git(origin, "rev-parse", "refs/heads/main").trim()).toBe(git(repo, "rev-parse", "main").trim());
+    expect(git(w.path, "rev-parse", "--abbrev-ref", "spec-7@{upstream}").trim()).toBe("origin/spec-7");
+  });
 });

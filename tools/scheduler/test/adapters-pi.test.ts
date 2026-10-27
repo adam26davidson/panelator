@@ -45,6 +45,12 @@ describe("piAdapter.buildCommand (AC-19)", () => {
       expect(only.slice(only.indexOf("--tools"), only.indexOf("--tools") + 2)).toEqual(["--tools", "read,grep,find"]);
     }
   });
+  it("runs the question check read-only, like plan and review (spec 006)", () => {
+    const { argv } = piAdapter.buildCommand({ ...run, stage: "question-check", profile: null });
+    expect(argv.slice(argv.indexOf("--tools"), argv.indexOf("--tools") + 2)).toEqual(["--tools", "read,grep,find"]);
+    const withProfile = piAdapter.buildCommand({ ...run, stage: "question-check", profile: { ...run.profile!, tools: ["Read", "Edit", "Write", "Bash"] } }).argv;
+    expect(withProfile[withProfile.indexOf("--tools") + 1]).toBe("read");
+  });
   it("passes read,grep,find for plan and review with no profile (AC-3)", () => {
     for (const stage of ["plan", "review"] as const) {
       const { argv } = piAdapter.buildCommand({ ...run, stage, profile: null });

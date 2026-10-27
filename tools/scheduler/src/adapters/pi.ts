@@ -7,7 +7,7 @@ export interface PiStageRun extends StageRun {
   extensions?: string[];
 }
 
-/** I5: tools plan and review never get, whatever the profile allows. */
+/** I5: tools plan, review and the question check never get, whatever the profile allows. */
 const WRITE_TOOLS = ["edit", "write", "bash"];
 
 /** Claude Code tool names (as profiles list them) to pi's. */
@@ -25,7 +25,7 @@ export function piToolNames(tools: string[]): string[] {
 function buildCommand(run: PiStageRun): Command {
   const argv = ["pi", "--mode", "json", "--model", run.model, "--session-id", run.sessionId, "--approve"];
   if (run.effort) argv.push("--thinking", run.effort);
-  const readOnly = run.stage === "plan" || run.stage === "review";
+  const readOnly = run.stage === "plan" || run.stage === "review" || run.stage === "question-check";
   let tools: string[] = [];
   if (run.profile) {
     tools = piToolNames(run.profile.tools);

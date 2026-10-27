@@ -1,5 +1,5 @@
 import { mkdtempSync } from "node:fs";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -113,6 +113,15 @@ describe("questions log", () => {
     expect((await answeredEntry(p, 100))?.reply_comment_id).toBe(101);
     expect(await answeredEntry(p, 200)).toBeNull();
     expect(await answeredEntry(p, 999)).toBeNull();
+  });
+  it("skips an unparsable (torn) line and still finds a later answered entry", async () => {
+    const p = fresh();
+    await ensureStateDirs(p);
+    await appendQuestionLog(p, { issue: 7, at: "2026-10-20T00:00:00Z", event: "sent", asking_stage: "plan", question_comment_id: 100 });
+    appendFileSync(p.questionsLog, '{"issue":7,"at":"2026-10-20T00:30:00Z","ev\n');
+    await appendQuestionLog(p, { issue: 7, at: "2026-10-20T01:00:00Z", event: "answered", asking_stage: "plan", question_comment_id: 100, reply_comment_id: 101, answer: "A" });
+    expect((await answeredEntry(p, 100))?.answer).toBe("A");
+    expect(await answeredEntry(p, 5)).toBeNull();
   });
   it("returns null when there is no log, and rejects an invalid entry", async () => {
     const p = fresh();

@@ -29,8 +29,8 @@ function buildCommand(run: ClaudeStageRun): Command {
   ];
   if (run.effort) argv.push("--effort", run.effort);
   if (run.fallbackModel) argv.push("--fallback-model", run.fallbackModel);
-  // I5: plan and review only read, whatever the profile allows; the result file is their one write.
-  const readOnly = run.stage === "plan" || run.stage === "review";
+  // I5: plan, review and the question check only read, whatever the profile allows; the result file is their one write.
+  const readOnly = run.stage === "plan" || run.stage === "review" || run.stage === "question-check";
   const tools = !readOnly && run.profile && run.profile.tools.length ? run.profile.tools : ["Read", "Glob", "Grep"];
   // Absolute-path permission rule: the // prefix replaces the leading slash (Edit(//tmp/x) means /tmp/x). Claude Code
   // matches file-path rules for Edit and Read only; an Edit rule also covers the Write tool, while a Write(path) rule

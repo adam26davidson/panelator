@@ -103,14 +103,15 @@ export class GitHubClient {
     await this.octokit.request("PATCH /repos/{owner}/{repo}/issues/{issue_number}", { ...this.base, issue_number: issue, body });
   }
 
-  /** False when GitHub will not re-run the check (a 4xx), true once the re-request is accepted. */
+  /** False when GitHub refuses to re-run the check (404 gone, 409 or 422 not re-runnable), true once accepted; any other error is thrown. */
   async rerequestCheckRun(id: number): Promise<boolean> {
     try {
-      await this.octokit.request("POST /repos/{owner}/{repo}/check-runs/{check_run_id}/rerequest", { ...this.base, check_run_id: id });
+      // No client retry: a 409 or 422 will not change on a second try, and the caller logs any error.
+      await this.octokit.request("POST /repos/{owner}/{repo}/check-runs/{check_run_id}/rerequest", { ...this.base, check_run_id: id, request: { retries: 0 } });
       return true;
     } catch (e) {
       const status = (e as { status?: number }).status;
-      if (status !== undefined && status >= 400 && status < 500) return false;
+      if (status === 404 || status === 409 || status === 422) return false;
       throw e;
     }
   }
