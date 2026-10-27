@@ -226,7 +226,7 @@ research.
 |---|---|
 | Rework rate (fix cycles per PR) | which change classes earn more autonomy |
 | Spec deviation (review findings about scope or missed criteria) | spec template quality |
-| Spec churn (edits after approval) | whether grilling missed something |
+| Spec churn (edits after merge) | whether grilling missed something |
 | Time to green per PR | tooling and CI investment |
 | Cost per merged PR, by model and stage | model tiering |
 | Product vs. machinery ratio of merged PRs | the section 5 guard (predecessor measured two thirds machinery) |

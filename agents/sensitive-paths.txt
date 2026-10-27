@@ -14,3 +14,11 @@ docs/charter.md
 docs/product-spec.md
 docs/delivery-system-design.md
 docs/design-tree.md
+# the specs that define the charter's enforcement (final review C1)
+specs/001-scheduler-core/spec.md
+specs/006-no-human-stops/spec.md
+# the test wiring: what pnpm test runs, including the recorded chain tests (final review C11)
+AGENTS.md
+package.json
+pnpm-workspace.yaml
+**/vitest.config.*

@@ -19,7 +19,7 @@ token prototype (`tokens*.html` or `*-prototype.html`) plus a
 `<screen>.png` for each named screen. The issue that carries a spec links it
 with a body line `Spec: specs/NNN-slug/spec.md`.
 
-A spec derived from an approved design needs no maintainer approval of its
+A spec derived from its parent design needs no maintainer approval of its
 own (delivery-system design section 11, spec 006). Every spec carries a
 `Parent:` line naming its parent design or top design, and that parent lists
 the spec under its `## Children` heading; the spec-present gate and the

@@ -1,6 +1,7 @@
 # 001. Scheduler core and harness adapters
 
-Status: approved by the maintainer 2026-10-12; implementation plans written
+Status: written 2026-10-12 and approved by the maintainer under the process of
+the time (spec 006 removed spec approval); implementation plans written
 2026-10-12 in [plans/](plans/) (1-core, 2-runs, 3-service), not yet executed; amended by spec 006
 Class: tooling. Domain: automation (sensitive path, process-spec section 5).
 Parent: docs/delivery-system-design.md
@@ -19,11 +20,11 @@ the first entry under the `specs/NNN-feature/` layout it settles.
 A deterministic scheduler, `tools/scheduler`, that runs the implementation
 chain of the lifecycle on the maintainer's laptop with no model in its
 coordination loop. It watches GitHub, ranks and claims validated bot-authored
-issues that carry an approved spec, and moves each through plan, implement,
-verify, review and merge, starting every agent stage as its own headless
-session in Claude Code or pi through one adapter per harness. Every rule the
-process spec says must be enforced "in the script, not in a prompt" is a
-tested function in this package.
+issues that carry a spec on main that passes spec-present, and moves each
+through plan, implement, verify, review and merge, starting every agent stage
+as its own headless session in Claude Code or pi through one adapter per
+harness. Every rule the process spec says must be enforced "in the script, not
+in a prompt" is a tested function in this package.
 
 Decisions this spec records, made 2026-10-03 to 2026-10-09:
 

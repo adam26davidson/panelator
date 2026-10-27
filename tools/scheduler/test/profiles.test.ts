@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentsDir } from "../src/config.ts";
@@ -23,6 +23,14 @@ describe("profiles", () => {
     const p = resolveProfile(agentsDir, "spec");
     expect(p.reviewCriteria?.length).toBeGreaterThan(0);
     expect(p.reviewCriteria).toMatch(/maintainer answer, question #/);
+  });
+  it("gives every profile a committed skills directory, so the skills link never dangles (final review T-minor 6)", () => {
+    for (const name of listProfiles(agentsDir)) {
+      const dir = resolveProfile(agentsDir, name).skillsDir;
+      expect(existsSync(dir) && statSync(dir).isDirectory(), name).toBe(true);
+      // git keeps no empty directory: the .gitkeep is what makes it committed.
+      expect(existsSync(join(dir, ".gitkeep")), name).toBe(true);
+    }
   });
   it("throws on an unknown profile", () => {
     expect(() => resolveProfile(agentsDir, "nope")).toThrow(/unknown profile/);
@@ -54,8 +62,33 @@ describe("the charter and the maintainer's recorded decisions are protected (AC-
   it("holds automation changes to the gates, bounds and label rules of specs 001 and 006, except as a merged spec states", () => {
     expect(criteria).toMatch(/do not weaken a gate, a bound, or a label rule of specs 001 and 006,\s+except as a merged spec states\./);
   });
+  it("never lets a merged spec's exception weaken what enforces criteria 6 to 9 without a verified answer (final review C1a)", () => {
+    const c5 = criteria.slice(criteria.indexOf("\n5. "), criteria.indexOf("\n6. "));
+    expect(c5).toMatch(/That exception never covers what enforces criteria 6 to 9/);
+    for (const name of ["isSensitive", "pickProfile", "CHARTER_REVERT_LINE", "tools/scheduler/src/gates/spec-scope.ts", "tools/scheduler/src/gates/sensitive.ts", "agents/sensitive-paths.txt"]) {
+      expect(c5).toContain(`\`${name}\``);
+    }
+    expect(c5).toMatch(/verified\s+maintainer answer/);
+  });
   it("makes removing the sensitive entries or weakening these criteria a finding", () => {
     expect(criteria).toMatch(/^\d+\. .*`agents\/sensitive-paths\.txt`.*finding/m);
+  });
+  it("protects specs 001 and 006 and the enforcing code under criterion 9 (final review C1b)", () => {
+    const c9 = criteria.slice(criteria.indexOf("\n9. "));
+    for (const p of ["specs/001-scheduler-core/spec.md", "specs/006-no-human-stops/spec.md"]) expect(c9).toContain(`\`${p}\``);
+    expect(c9).toMatch(/the code criterion 5 names/);
+    const g = readSensitiveGlobs(agentsDir);
+    expect(isSensitive(["specs/001-scheduler-core/spec.md", "specs/006-no-human-stops/spec.md", "specs/002-x/spec.md"], g)).toEqual(["specs/001-scheduler-core/spec.md", "specs/006-no-human-stops/spec.md"]);
+  });
+  it("makes the repository's test wiring sensitive, so the recorded chain tests cannot be dropped unreviewed (final review C11)", () => {
+    const g = readSensitiveGlobs(agentsDir);
+    const wiring = ["AGENTS.md", "package.json", "pnpm-workspace.yaml", "vitest.config.ts", "tools/scheduler/vitest.config.mts"];
+    expect(isSensitive(wiring, g)).toEqual(wiring);
+    expect(isSensitive(["web/package.json", "docs/AGENTS.md.bak"], g)).toEqual([]);
+  });
+  it("has the spec review refuse a spec that plans to change the charter, a protected decision or their enforcement (final review C1c)", () => {
+    const spec = resolveProfile(agentsDir, "spec").reviewCriteria!;
+    expect(spec).toMatch(/plans no change to `docs\/charter\.md`, to a protected maintainer decision without a\s+verified maintainer answer, or to how either is enforced/);
   });
   it("sends a finding back to the fix loop rather than to the maintainer", () => {
     const p = resolveProfile(agentsDir, "security");

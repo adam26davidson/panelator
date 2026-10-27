@@ -255,6 +255,24 @@ AC-10 second sentence, AC-13)
   `agents/sensitive-paths.txt`, or removes or weakens these rules in the
   security criteria, then that is a finding too. A test asserts that both
   files contain these entries.
+
+  **What enforces the protection is protected too.** The security criterion
+  that lets a merged spec change a gate, a bound or a label rule does not
+  cover anything that enforces the charter rule or the protected decisions:
+  `isSensitive`, the driver's selection of the security review, the charter
+  revert line of the fix input, the charter rule of the spec-PR scope gate,
+  and the sensitive-path list. Weakening one is a finding unless the PR cites
+  a verified maintainer answer that asks for it. Specs 001 and 006 are
+  sensitive paths; a change to either, or to that code, that weakens the
+  enforcement is a finding on the same terms. The spec review (AC-21)
+  refuses a spec that plans a change to the charter, to a protected decision
+  without a verified answer, or to how either is enforced.
+
+  **The test wiring is sensitive.** `AGENTS.md`, the root `package.json`,
+  `pnpm-workspace.yaml` and every `vitest.config.*` are sensitive paths, so
+  a change to what `pnpm test` runs, the recorded end-to-end chains of
+  AC-28 included, is reviewed by the security review; dropping, skipping or
+  narrowing those tests is a finding.
 - AC-11. **The automation-change gate is gone.** Given a bot-authored issue with
   `validated` set by the App, whose spec lists `tools/scheduler/` or
   `agents/`, when shortlisted, then it is eligible. The automation-change gate
@@ -492,7 +510,9 @@ AC-10 second sentence, AC-13)
   criteria: the spec fits its parent design and the issue body; it has the
   spec field set; it does not decide a section 3 question itself; it changes
   or removes no text marked as a recorded answer unless it cites a verified
-  answer to a newer question (AC-10).
+  answer to a newer question (AC-10); it plans no change to the charter, to
+  a protected decision without a verified answer, or to how either is
+  enforced (AC-10).
 - AC-22. **The spec PR's own diff is gated.** Given a spec stage `revised`
   result, or a fix on a spec PR, then the scheduler checks the PR's diff
   against AC-21's scope. A violation is handled like implement's: one fix with
@@ -719,13 +739,17 @@ other pair is invalid and throws:
   plan's spec questions go to the spec stage, not the maintainer; review's
   answered-questions input.
 - `agents/profiles/spec/`: `profile.yaml`, `instructions.md`,
-  `review-criteria.md` (AC-21).
-- `agents/profiles/security/review-criteria.md`: the rules of AC-10;
+  `review-criteria.md` (AC-21), and an empty `skills/` directory, as the
+  security profile has, so the skills link never dangles.
+- `agents/profiles/security/review-criteria.md`: the rules of AC-10,
+  including the protection of what enforces them and of the test wiring;
   `instructions.md`: "any finding blocks merge until the maintainer looks"
-  replaced by "findings go to the fix loop".
+  replaced by "findings go to the fix loop", and the security review runs
+  after the normal review (AC-9).
 - `agents/sensitive-paths.txt`: add the charter's path, the two top designs
   and `docs/design-tree.md` (this spec does not list the charter itself, so
-  the scope gate keeps it out of the diff).
+  the scope gate keeps it out of the diff); specs 001 and 006; and the test
+  wiring of AC-10.
 - `agents/scheduler.yaml`: `rescue_model`.
 - `schemas/scheduler/`:
   - `question.json`, with the optional `follow_up` (requiring
