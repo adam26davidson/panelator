@@ -2,15 +2,307 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "claim.json",
   "type": "object",
-  "required": ["issue", "slot", "state", "worktree", "started_at", "last_activity_at", "run_id"],
+  "required": [
+    "issue",
+    "slot",
+    "state",
+    "worktree",
+    "started_at",
+    "last_activity_at",
+    "run_id"
+  ],
   "additionalProperties": false,
   "properties": {
-    "issue": { "type": "integer", "minimum": 1 },
-    "slot": { "type": "integer", "minimum": 0 },
-    "state": { "type": "object" },
-    "worktree": { "type": "string" },
-    "started_at": { "type": "string", "format": "date-time" },
-    "last_activity_at": { "type": "string", "format": "date-time" },
-    "run_id": { "type": ["string", "null"] }
+    "issue": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "slot": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "state": {
+      "type": "object",
+      "description": "ChainState (tools/scheduler/src/chain/types.ts). Fields added by spec 006 are optional so a pre-006 claim stays readable; it is validated after normalizeChainState fills them.",
+      "required": [
+        "issue",
+        "stage",
+        "attempt",
+        "fixes",
+        "scopeViolations",
+        "planFailures",
+        "implementFailures",
+        "sensitive",
+        "pr",
+        "plan",
+        "pendingFixInput",
+        "postponedUntil",
+        "resumeStage",
+        "conflictPending"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "issue": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stage": {
+          "enum": [
+            "claimed",
+            "plan",
+            "implement",
+            "verify",
+            "review",
+            "fix",
+            "merge",
+            "spec",
+            "question-check",
+            "done",
+            "released",
+            "waiting",
+            "paused",
+            "abandoned"
+          ]
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fixes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scopeViolations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "planFailures": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "implementFailures": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sensitive": {
+          "type": "boolean"
+        },
+        "pr": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "number",
+                "head_sha"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "number": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "head_sha": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "plan": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "pendingFixInput": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "postponedUntil": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resumeStage": {
+          "enum": [
+            "plan",
+            "implement",
+            "review",
+            "fix",
+            "spec",
+            "question-check",
+            null
+          ]
+        },
+        "conflictPending": {
+          "type": "boolean"
+        },
+        "track": {
+          "enum": [
+            "issue",
+            "spec"
+          ]
+        },
+        "rescues": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "specRescues": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "replans": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "specRevisions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "specAnswers": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decideReturns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "history": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        },
+        "rescueRun": {
+          "type": "boolean"
+        },
+        "specMode": {
+          "enum": [
+            "write",
+            "answer",
+            "revise",
+            "decide",
+            "record",
+            null
+          ]
+        },
+        "specProblem": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "question": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "question.json"
+            }
+          ]
+        },
+        "askingStage": {
+          "enum": [
+            "plan",
+            "implement",
+            "review",
+            "fix",
+            "spec",
+            "verify",
+            null
+          ]
+        },
+        "answer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "answerQuestionId": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "answerKind": {
+          "enum": [
+            "product",
+            "technical",
+            "capability",
+            "other",
+            null
+          ]
+        },
+        "recordAnswer": {
+          "type": "boolean"
+        },
+        "decideInput": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parkedPr": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "number",
+                "head_sha"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "number": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "head_sha": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "pendingSince": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "checksRerun": {
+          "type": "boolean"
+        }
+      }
+    },
+    "worktree": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_activity_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "run_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
   }
 }

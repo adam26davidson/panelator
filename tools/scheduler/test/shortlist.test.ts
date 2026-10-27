@@ -53,11 +53,10 @@ describe("selectEligible", () => {
     expect(r.decisions.filter((d) => d.issue === 5)).toEqual([]);
     expect(r.decisions.filter((d) => d.issue === 6)).toEqual([]);
   });
-  it("skips an issue labelled security-review like blocked: neither eligible nor decided (AC-11)", () => {
+  it("no longer skips an issue labelled security-review: no label blocks a security finding (spec 006 AC-9)", () => {
     const sec = issue(7, { labels: ["validated", "class:product", "security-review"] });
     const r = selectEligible([sec], ctx);
-    expect(r.eligible).toEqual([]);
-    expect(r.decisions).toEqual([]);
+    expect(r.eligible.map((i) => i.number)).toEqual([7]);
   });
   it("makes a bot-validated issue whose spec lists tools/scheduler/ eligible: no automation gate (AC-11)", () => {
     const auto = good.replace("- `schemas/thing.json`", "- `tools/scheduler/`\n- `agents/`");

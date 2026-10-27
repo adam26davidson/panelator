@@ -1,4 +1,4 @@
-import { CLAIM_LABEL, SECURITY_REVIEW_LABEL } from "../chain/machine.ts";
+import { ABANDONED_LABEL, CLAIM_LABEL } from "../chain/machine.ts";
 import type { Config } from "../config.ts";
 import {
   authorityGate, specPresentGate, uiDesignGate, validatedGate, VALIDATED_LABEL, type GateResult,
@@ -25,14 +25,13 @@ export interface Decision {
 
 const SKIP_PREFIX = "needs-";
 const BLOCKED = "blocked";
-const ABANDONED = "abandoned";
 
 export function selectEligible(issues: IssueData[], ctx: SelectContext): { eligible: IssueData[]; decisions: Decision[] } {
   const eligible: IssueData[] = [];
   const decisions: Decision[] = [];
   for (const issue of issues) {
     if (ctx.claimed.has(issue.number)) continue;
-    if (issue.labels.includes(CLAIM_LABEL) || issue.labels.includes(BLOCKED) || issue.labels.includes(ABANDONED) || issue.labels.includes(SECURITY_REVIEW_LABEL) || issue.labels.some((l) => l.startsWith(SKIP_PREFIX))) continue;
+    if (issue.labels.includes(CLAIM_LABEL) || issue.labels.includes(BLOCKED) || issue.labels.includes(ABANDONED_LABEL) || issue.labels.some((l) => l.startsWith(SKIP_PREFIX))) continue;
 
     const steps: [string, () => GateResult][] = [
       ["authority", () => authorityGate(issue, ctx.appBot, ctx.maintainer, VALIDATED_LABEL)],

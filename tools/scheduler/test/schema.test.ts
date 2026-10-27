@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { initialChainState } from "../src/chain/machine.ts";
 import { validate } from "../src/schema/validate.ts";
 
 const finding = {
@@ -89,13 +90,14 @@ describe("result schemas", () => {
     expect(rec("nope")).toBe(false);
   });
 
-  it("validates a claim record", () => {
-    expect(
-      validate("claim", {
-        issue: 7, slot: 0, state: { stage: "plan" }, worktree: "/tmp/wt", started_at: "2026-10-12T00:00:00Z",
-        last_activity_at: "2026-10-12T00:00:00Z", run_id: null,
-      }).ok,
-    ).toBe(true);
+  it("validates a claim record and its chain state (spec 006 C12)", () => {
+    const claim = (state: unknown) => validate("claim", {
+      issue: 7, slot: 0, state, worktree: "/tmp/wt", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null,
+    }).ok;
+    expect(claim({ ...initialChainState(7), stage: "plan" })).toBe(true);
+    expect(claim({ stage: "plan" })).toBe(false);
+    expect(claim({ ...initialChainState(7), stage: "needs-human" })).toBe(false);
+    expect(claim({ ...initialChainState(7), history: ["x".repeat(4001)] })).toBe(false);
   });
 
   it("reports unknown schema names", () => {

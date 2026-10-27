@@ -105,6 +105,12 @@ function conflicting(pair: ReturnType<typeof repoPair>, worktree: string): void 
   git(pair.repo, "push", "-q", "origin", "main");
 }
 
+async function steps(deps: DriverDeps, claim: Claim, n: number): Promise<Claim> {
+  let c = claim;
+  for (let i = 0; i < n; i++) c = (await step(deps, c)).claim;
+  return c;
+}
+
 describe("driveChain", () => {
   it("runs a full chain to done, applying labels and recording a merge (AC-1, AC-3, AC-14)", async () => {
     const { deps, claim, gh, adapter, paths, sha } = await setup((sha) => ({ plan: [plan], implement: [impl(sha)], review: [approve] }));
@@ -121,16 +127,7 @@ describe("driveChain", () => {
     expect(reviewInput.ci).toBe(`All required checks passed for ${sha}.\ntest: success`);
   }, 60_000);
 
-  it("posts questions, labels needs-clarification and releases on spec_gap (AC-9)", async () => {
-    const { deps, claim, gh, notifications, paths } = await setup(() => ({ plan: [{ verdict: "spec_gap", domain: "backend", tasks: [], questions: ["Which port?"] }] }));
-    const final = await driveChain(deps, claim, () => false);
-    expect(final.state.stage).toBe("released");
-    expect(gh.calls.filter((c) => c.url.endsWith("/comments"))).toHaveLength(1);
-    expect(gh.calls.find((c) => c.url.endsWith("/comments"))?.body).toMatchObject({ body: expect.stringContaining("Which port?") });
-    expect(gh.calls.find((c) => c.method === "POST" && c.url.endsWith("/labels"))?.body).toEqual({ labels: ["needs-clarification"] });
-    expect(notifications).toEqual([expect.objectContaining({ issue: 7, gate: "ready", label: "needs-clarification" })]);
-    expect(await listClaims(paths)).toEqual([]);
-  }, 60_000);
+  it.todo("spec 006 Task 8/9: a spec_gap goes to the spec stage in answer mode, no needs-clarification label (AC-19)");
 
   it("waits on pending checks and starts fix with the failing log (AC-14)", async () => {
     const { deps, claim, sha } = await setup((sha) => ({ plan: [plan], implement: [impl(sha)] }), (sha) => ghRoutes(sha, { checks: [{ id: 1, name: "test", status: "in_progress", conclusion: null }] }));
@@ -142,13 +139,16 @@ describe("driveChain", () => {
     expect(s.claim.state.pendingFixInput).toMatch(/check failed/);
   }, 60_000);
 
-  it("retries a failed plan once, then needs-human with a notification", async () => {
-    const { deps, claim, notifications, adapter } = await setup(() => ({ plan: [] }));
-    const final = await driveChain(deps, claim, () => false);
+  it("retries a failed plan once, then escalates to a rescue plan with no label or notification (spec 006 AC-1)", async () => {
+    const { deps, claim, notifications, adapter, gh } = await setup(() => ({ plan: [] }));
+    const c = await steps(deps, claim, 3);
     expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1"]);
-    expect(final.state.stage).toBe("needs-human");
-    expect(notifications[0]).toMatchObject({ gate: "plan", label: "needs-human" });
+    expect(c.state).toMatchObject({ stage: "plan", attempt: 1, rescues: 1, rescueRun: true });
+    expect(c.state.history.at(-1)).toMatch(/^plan: failed twice/);
+    expect(notifications).toEqual([]);
+    expect(gh.calls.some((call) => call.method === "POST" && call.url.endsWith("/labels"))).toBe(false);
   }, 60_000);
+  it.todo("spec 006 Task 8: the rescue runs on the rescue model, and the path goes on to re-plan, spec revision and abandonment (AC-1 to AC-5)");
 
   it("stops between stages when asked to stop (AC-31)", async () => {
     const { deps, claim } = await setup((sha) => ({ plan: [plan], implement: [impl(sha)], review: [approve] }));
@@ -157,7 +157,7 @@ describe("driveChain", () => {
     expect(r.state.stage).toBe("implement");
   }, 60_000);
 
-  it("refuses an implement result whose head_sha is not the worktree HEAD and PR head, retrying then needs-human (AC-10, AC-11)", async () => {
+  it("refuses an implement result whose head_sha is not the worktree HEAD and PR head, retrying then escalating (AC-10, AC-11; spec 006 AC-1)", async () => {
     const bad = { pr_number: 9, head_sha: "a".repeat(40), tasks_done: ["T1"] };
     const { deps, claim, gh, adapter, notifications } = await setup(() => ({ plan: [plan], implement: [bad, { ...bad }] }));
     let c = (await step(deps, claim)).claim;
@@ -168,24 +168,24 @@ describe("driveChain", () => {
     expect(c.state.stage).toBe("implement");
     expect(c.state.attempt).toBe(2);
     expect(c.state.pr).toBeNull();
-    const final = await driveChain(deps, c, () => false);
-    expect(final.state.stage).toBe("needs-human");
+    c = (await step(deps, c)).claim;
+    expect(c.state).toMatchObject({ stage: "implement", rescues: 1, rescueRun: true, pr: null });
+    expect(c.state.history).toContain("implement attempt 2 failed: result: pr mismatch");
     expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "implement:claude-sonnet-5-5", "implement:claude-sonnet-5-5"]);
-    expect(notifications[0]).toMatchObject({ gate: "implement", label: "needs-human", text: expect.stringContaining("result: pr mismatch") });
+    expect(notifications).toEqual([]);
     expect(gh.calls.find((call) => call.method === "PUT")).toBeUndefined();
   }, 60_000);
 
-  it("refuses to merge while the issue carries security-review, ending in needs-human (AC-11)", async () => {
-    const { deps, claim, gh, notifications, paths } = await setup(
+  it("merges although the issue carries security-review: no label refuses a merge (spec 006 AC-9)", async () => {
+    const { deps, claim, gh, notifications, paths, sha } = await setup(
       (sha) => ({ plan: [plan], implement: [impl(sha)], review: [approve] }),
       (sha) => ghRoutes(sha, { issueLabels: ["security-review"] }),
     );
     const final = await driveChain(deps, claim, () => false);
-    expect(final.state.stage).toBe("needs-human");
-    expect(final.state.securityFinding).toBe(true);
-    expect(gh.calls.find((c) => c.method === "PUT")).toBeUndefined();
-    expect(gh.calls.filter((c) => c.method === "POST" && c.url.endsWith("/labels")).map((c) => c.body)).toContainEqual({ labels: ["security-review", "needs-human"] });
-    expect(notifications).toEqual([expect.objectContaining({ gate: "sensitive-path", label: "needs-human" })]);
+    expect(final.state.stage).toBe("done");
+    expect(gh.calls.find((c) => c.method === "PUT")?.body).toEqual({ merge_method: "squash", sha });
+    expect(gh.calls.some((c) => c.method === "GET" && c.url.endsWith("/issues/9"))).toBe(false);
+    expect(notifications).toEqual([]);
     expect(await listClaims(paths)).toEqual([]);
   }, 60_000);
 
@@ -338,12 +338,12 @@ describe("driveChain", () => {
     expect(readFileSync(join(other, "local.txt"), "utf8")).toBe("local only\n");
   }, 60_000);
 
-  it("refuses an implement result whose PR is not issue-7 into main (I1, AC-10)", async () => {
-    const { deps, claim, notifications, gh } = await setup((sha) => ({ plan: [plan], implement: [impl(sha), impl(sha)] }), (sha) => ghRoutes(sha, { headRef: "other" }));
-    const final = await driveChain(deps, claim, () => false);
-    expect(final.state.stage).toBe("needs-human");
-    expect(notifications[0]).toMatchObject({ gate: "implement", text: expect.stringContaining("result: pr mismatch") });
-    expect(gh.calls.find((c) => c.method === "PUT")).toBeUndefined();
+  it("refuses an implement result whose PR is not issue-7 into main (I1, AC-10; spec 006 AC-1)", async () => {
+    const { deps, claim, gh } = await setup((sha) => ({ plan: [plan], implement: [impl(sha), impl(sha)] }), (sha) => ghRoutes(sha, { headRef: "other" }));
+    const c = await steps(deps, claim, 4);
+    expect(c.state).toMatchObject({ stage: "implement", rescues: 1, rescueRun: true, pr: null });
+    expect(c.state.history).toContain("implement attempt 1 failed: result: pr mismatch");
+    expect(gh.calls.find((call) => call.method === "PUT")).toBeUndefined();
   }, 60_000);
 
   it("waits without running anything while the claim's stage scope is still active (I2)", async () => {
@@ -386,12 +386,13 @@ describe("driveChain", () => {
     expect(readdirSync(paths.runs)).toContain("7-plan-1-20261012T120000");
   }, 60_000);
 
-  it("fails a plan whose domain names a profile that does not exist, retrying once then needs-human (I4)", async () => {
+  it("fails a plan whose domain names a profile that does not exist, retrying once then escalating (I4; spec 006 AC-1)", async () => {
     const firmware = { ...plan, domain: "firmware" };
     const { deps, claim, adapter, notifications } = await setup(() => ({ plan: [firmware, { ...firmware }] }));
-    const final = await driveChain(deps, claim, () => false);
+    const c = await steps(deps, claim, 3);
     expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1"]);
-    expect(final.state.stage).toBe("needs-human");
-    expect(notifications[0]).toMatchObject({ gate: "plan", text: expect.stringContaining("profile not available: firmware") });
+    expect(c.state).toMatchObject({ stage: "plan", rescues: 1, rescueRun: true });
+    expect(c.state.history.at(-1)).toContain("profile not available: firmware");
+    expect(notifications).toEqual([]);
   }, 60_000);
 });

@@ -105,9 +105,9 @@ describe("uiDesignGate (AC-8)", () => {
 });
 
 describe("readyGate (AC-9)", () => {
-  it("labels needs-clarification on spec_gap with the questions in the reason", () => {
+  it("ignores spec_gap without a label, with the questions in the reason (spec 006 AC-19)", () => {
     const r = readyGate({ verdict: "spec_gap", domain: "backend", tasks: [], questions: ["Which port?", "Which db?"] });
-    expect(r).toMatchObject({ ok: false, label: "needs-clarification", reason: expect.stringContaining("Which db?") });
+    expect(r).toEqual({ ok: false, action: "ignore", reason: "The plan stage found gaps in the spec:\n1. Which port?\n2. Which db?" });
   });
   it("passes ready", () => {
     expect(readyGate({ verdict: "ready", domain: "backend", tasks: [] })).toEqual({ ok: true });
@@ -190,10 +190,10 @@ describe("specScopeGate (AC-21, AC-22)", () => {
 });
 
 describe("fixLoopGate (AC-13)", () => {
-  it("passes 0 and 1, labels needs-human at 2", () => {
+  it("passes 0 and 1, ignores at 2 without a label (spec 006 AC-1)", () => {
     expect(fixLoopGate(0).ok).toBe(true);
     expect(fixLoopGate(1).ok).toBe(true);
-    expect(fixLoopGate(2)).toMatchObject({ ok: false, label: "needs-human" });
+    expect(fixLoopGate(2)).toEqual({ ok: false, action: "ignore", reason: "fix loop limit reached (2 fixes)" });
   });
 });
 

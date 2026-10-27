@@ -20,7 +20,7 @@ import type { StatePaths } from "../state/paths.ts";
 import { newRunId } from "../state/runs.ts";
 import { classOf } from "../shortlist/rank.ts";
 import type { AgentStageName, FixResult, Harness, ImplementResult, Profile, StageDefinition } from "../types.ts";
-import { POSTPONE_WAIT_S, SECURITY_REVIEW_LABEL, transition } from "./machine.ts";
+import { POSTPONE_WAIT_S, transition } from "./machine.ts";
 import type { Action, ChainEvent, ChainState } from "./types.ts";
 
 const execFileP = promisify(execFile);
@@ -48,7 +48,7 @@ export interface DriverDeps {
 
 export type StepStatus = "continue" | "waiting" | "ended";
 const AGENT_STAGES: AgentStageName[] = ["plan", "implement", "review", "fix"];
-const ENDED: ChainState["stage"][] = ["done", "released", "needs-human"];
+const ENDED: ChainState["stage"][] = ["done", "released", "abandoned", "paused"];
 /** C1: prepended to the fix input when the fix stage has to resolve a rebase conflict itself. */
 export const CONFLICT_FIX_LINE = "Rebase this branch onto origin/main and resolve the conflicts before addressing the items below.";
 const stageUnit = (runId: string) => `panelator-stage-${runId}`;
@@ -234,18 +234,16 @@ async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> 
   if (summary.status === "failed") {
     const first = summary.failed[0];
     const log = await deps.gh.jobLogExcerpt(first.id).catch(() => `(no log for ${first.name})`);
-    return { type: "checks", status: "failed", log: `${first.name}\n${log}`, sensitive };
+    return { type: "checks", status: "failed", log: `${first.name}\n${log}`, sensitive, at: deps.now().toISOString() };
   }
-  return { type: "checks", status: summary.status, sensitive };
+  return { type: "checks", status: summary.status, sensitive, at: deps.now().toISOString() };
 }
 
 async function mergeEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> {
   const pr = claim.state.pr;
   if (!pr) throw new Error(`merge without a PR (issue ${claim.issue})`);
-  // AC-11: a security-review label on the issue or on the PR (PR labels are issue labels on its number) refuses the merge.
+  // The issue's labels give the merge record its class; no label refuses the merge (spec 006 AC-9).
   const labels = await deps.gh.issueLabels(claim.issue);
-  const prLabels = await deps.gh.issueLabels(pr.number);
-  if (labels.includes(SECURITY_REVIEW_LABEL) || prLabels.includes(SECURITY_REVIEW_LABEL)) return { type: "merge_blocked", reason: "security-review label present" };
   const info = await deps.gh.pullRequest(pr.number);
   // Already merged (a crash between the merge PUT and writeClaim): record it and finish without merging again.
   if (!info.merged) {
@@ -298,6 +296,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         status = "waiting";
         break;
       default:
+        // close_pr, delete_branch, finding, pause, rerun_checks: applied from spec 006 Task 8.
         break;
     }
   }
