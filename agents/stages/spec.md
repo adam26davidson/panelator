@@ -47,11 +47,16 @@ The question check sent this back for you to decide: {{decide_input}}
   {{decide_input}}. It is not a question for the maintainer. Pick an approach, write it into
   the spec with its reasoning, and return `revised`; in this mode a `question` result fails
   the stage.
-- `record`: the maintainer answered {{question}} with {{answer}}. Write the answer where it
-  belongs. A product answer goes into `docs/product-spec.md`, or into the top design it
-  belongs to (`docs/product-spec.md` or `docs/delivery-system-design.md`). A technical
-  answer goes into the spec, or into an ADR under `docs/decisions/` when it is a large
-  technical decision. Then bring the spec in line with it.
+- `record`: the maintainer answered {{question}} with {{answer}}. Record the answer as
+  below, then bring the spec in line with it.
+
+**Recording a maintainer answer.** Whenever a maintainer answer is present (in any mode),
+write it where it belongs: a product answer into `docs/product-spec.md` or the top design
+it belongs to (`docs/product-spec.md` or `docs/delivery-system-design.md`); a technical
+answer into the spec, or into an ADR under `docs/decisions/` when it is a large technical
+decision. In `write`, `answer` or `revise` mode, after a question you asked was answered,
+record the answer this way in your own spec PR and carry on with the mode's work. The
+recorded text carries the mark described below.
 
 **What may be returned as a question.** Only product, uncertain large technical, or
 capability questions may be returned as `question`. The design's rule (section 3 of
@@ -106,8 +111,7 @@ branches.
 - the `## Children` section of the spec's parent design, which is one of the two top
   designs (`docs/product-spec.md`, `docs/delivery-system-design.md`) or a file under
   `docs/designs/`; the charter (`docs/charter.md`) is never a parent and is never edited;
-- the top designs in full, only when recording a maintainer's product answer in `record`
-  mode.
+- the top designs in full, only while recording a maintainer's product answer.
 
 **The spec's field set.** A status line; `Class:` and `Domain:`; a `Parent:` line naming the
 parent design file; derives-from links to the design-tree or ADR entries it comes from; then

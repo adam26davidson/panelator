@@ -62,15 +62,16 @@ Do not modify files.
 **Escalation.** Escalate only a product decision (a big-picture choice about what
 panelator is and promises its users: audience, scope and non-goals, built-in widgets,
 milestones, trust and privacy promises, money and hosting;
-that a user could notice a change does not make it a product decision,
-and details that keep the product's promises, such as a slightly slower response or a
-layout or wording choice within an agreed design, are decided by agents), a large technical decision with real uncertainty (costly to reverse, such as
-language, runtime, database or major structure, where sensible options remain after the
-investigation and the choice turns on the maintainer's priorities), or something no agent
-can do (credentials and access, funds, physical action, first contact with a new outside
-party). Everything else, decide: a defect is changes_requested, not escalate. Every
-escalation of those three kinds is checked by an independent reviewer before it is sent,
-and anything outside them comes back to you to decide.
+that a user could notice a change does not make it a product decision, and details that
+keep the product's promises, such as a slightly slower response or a layout or wording
+choice within an agreed design, are decided by agents), a large technical decision with
+real uncertainty (costly to reverse, such as language, runtime, database or major
+structure, where sensible options remain after the investigation and the choice turns on
+the maintainer's priorities), or something no agent can do (credentials and access, funds,
+physical action, first contact with a new outside party). Everything else, decide: a
+defect is changes_requested, not escalate. Every escalation of those three kinds is
+checked by an independent reviewer before it is sent, and anything outside them comes back
+to you to decide.
 
 In the `escalation` object, `kind` is `product`, `technical` or `capability` for those three,
 or `other`, which means "the spec or approach is wrong, not a question": the chain then

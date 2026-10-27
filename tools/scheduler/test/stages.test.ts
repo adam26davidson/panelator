@@ -127,6 +127,13 @@ describe("committed stage prompts (AC-1, AC-14, AC-15, AC-17)", () => {
     expect(t).not.toMatch(/a user would notice/i);
     for (const m of ["write", "answer", "revise", "decide", "record"]) expect(t).toContain(`\`${m}\``);
   });
+  it("spec.md records a maintainer answer in any mode, not only in record mode (AC-18)", () => {
+    const t = read("spec");
+    expect(t).toMatch(/Whenever a maintainer answer is present \(in any mode\),\s+write it where it belongs/);
+    expect(t).toMatch(/product answer into `docs\/product-spec\.md` or the top design/);
+    expect(t).toMatch(/the top designs in full, only while recording a maintainer's product answer\./);
+    expect(t).not.toMatch(/in `record`\s+mode\./);
+  });
   it("question-check.md quotes the narrowed rule and always sends a change to a recorded decision", () => {
     const t = read("question-check");
     expect(t).toMatch(narrowed);

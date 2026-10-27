@@ -52,16 +52,17 @@ where addressed lists the indices of the items you resolved.
 **Escalation.** Escalate only a product decision (a big-picture choice about what
 panelator is and promises its users: audience, scope and non-goals, built-in widgets,
 milestones, trust and privacy promises, money and hosting;
-that a user could notice a change does not make it a product decision,
-and details that keep the product's promises, such as a slightly slower response or a
-layout or wording choice within an agreed design, are decided by agents), a large technical decision with real uncertainty (costly to reverse, such as
-language, runtime, database or major structure, where sensible options remain after your
-own investigation and the choice turns on the maintainer's priorities), or something no
-agent can do (credentials and access, funds, physical action, first contact with a new
-outside party). Everything else, decide: a large decision with one clearly right answer is
-yours, recorded as an ADR in `docs/decisions/` with its reasoning. Every escalation is
-checked by an independent reviewer before it is sent, and anything outside those three
-kinds comes back to you to decide.
+that a user could notice a change does not make it a product decision, and details that
+keep the product's promises, such as a slightly slower response or a layout or wording
+choice within an agreed design, are decided by agents), a large technical decision with
+real uncertainty (costly to reverse, such as language, runtime, database or major
+structure, where sensible options remain after your own investigation and the choice turns
+on the maintainer's priorities), or something no agent can do (credentials and access,
+funds, physical action, first contact with a new outside party). Everything else, decide:
+a large decision with one clearly right answer is yours, recorded as an ADR in
+`docs/decisions/` with its reasoning. Every escalation is checked by an independent
+reviewer before it is sent, and anything outside those three kinds comes back to you to
+decide.
 
 To escalate, write a result holding only the optional `escalation` object and `findings`:
 { "escalation": { "kind": "product" | "technical" | "capability", "question": "...", "options": [{ "label": "...", "cost": "..." }], "recommendation": "..." }, "findings": [] }
