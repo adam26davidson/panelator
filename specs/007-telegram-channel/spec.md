@@ -9,7 +9,8 @@ sections 3 ("What a question looks like", "What happens while it waits"), 8
 ("Telegram"), 11 (row A) and 13; [process-spec](../../docs/process-spec.md)
 section 6.3; [design-tree](../../docs/design-tree.md) R8.Q1; amends
 [006-no-human-stops](../006-no-human-stops/spec.md) AC-13, AC-15 and AC-16
-(the issue-comment channel it called interim).
+(the issue-comment channel it called interim) and the `paused` rows of its
+section 4 (every reply first goes to the asking session, AC-13).
 
 What the maintainer decided (grilling, 2026-10-18 to 2026-10-20), kept as it
 is here: questions reach the maintainer on Telegram; the system wakes and
@@ -30,9 +31,12 @@ conversation, keeping the issue as the record:
 - A question for the maintainer (spec 006 AC-13) is sent to the maintainer's
   Telegram chat with reply buttons for its options; free text always works.
 - A reply resumes the session of the stage that asked, in the same worktree,
-  with its context (Claude Code `--resume`, pi's session id), and the
-  conversation continues in the same Telegram thread: an acknowledgement
-  within seconds, then the stage's follow-up question or its conclusion.
+  with its context (Claude Code `--resume`, pi's session id), for every kind
+  of question, and the conversation continues in the same Telegram thread:
+  an acknowledgement within seconds, then the asking session's follow-up
+  question or its settled decision. Only when the decision is settled does
+  the chain move on by the spec 006 section 4 row (record the decision,
+  continue the stage).
 - The 24-hour reminder goes over Telegram.
 - The issue stays the record: the question comment, the maintainer's answer
   (posted to the issue by the bot) and the recorded decision (spec 006 AC-18)
@@ -184,9 +188,11 @@ credentials file of AC-1 is present and valid at service start.
   new question is sent as a reply to the maintainer's last message in the
   thread, with buttons when it has options, and the issue comment is posted
   as the record, as in AC-5. Given the resumed stage returns anything else,
-  then the bot replies in the thread with one line: for a spec stage, "Done:
-  recorded in <PR link>"; for any other stage, "Done: continuing with your
-  answer"; for a failed run, "The <stage> run failed; the chain retries"
+  then the bot replies in the thread with one line: for a settled
+  conversation turn (AC-13), "Settled: <one-line decision>; recording it
+  next" (or "Settled: continuing with your answer" when no record is
+  needed); for a spec stage, "Done: recorded in <PR link>"; for any other
+  stage, "Done: continuing with your answer"; for a failed run, "The <stage> run failed; the chain retries"
   (the retry rules of spec 006 are unchanged). No agent text other than a
   question is forwarded to Telegram.
 - AC-11. **The reminder goes over Telegram.** Given Telegram on and a
@@ -206,27 +212,48 @@ credentials file of AC-1 is present and valid at service start.
   harness, model and session id, and its worktree. The question check's
   session is never recorded (it is independent and does not resume). Given a
   question from verify (spec 006 AC-17), then `session` is null.
-- AC-13. **The reply resumes that session when the chain returns to the
-  asking stage.** Given a reply whose spec 006 section 4 row runs the asking
-  stage again (a spec question; a capability question; a technical question
-  asked by fix) and a recorded `session`, then the stage runs as a
-  continuation of that session: the Claude adapter builds
-  `claude -p <reply prompt> --resume <session id>` without `--session-id`,
-  the pi adapter reopens the session by its id (the plan confirms the flag
-  against the installed pi), and the same worktree is used. The reply prompt
-  is short: the answer with its `Question #<id>: ` prefix (both answers for
-  a follow-up), the mode the stage is in, and the new run's result path,
-  which the run's permissions allow as for any run. The run has the stage
-  definition's bounds afresh and its own run id and usage record, which
-  names the resumed session id. Given the row runs a different stage
-  (`record` mode after a product or technical question from plan,
-  implement or review; a fix after a review's technical question), then it
-  runs fresh, as spec 006 says.
+- AC-13. **Every reply goes first to the session that asked.** Given a
+  reply to a question with a recorded `session` (AC-12), then the chain does
+  not take the spec 006 section 4 `paused` row yet. The asking stage runs as
+  a continuation of that session in the same worktree: the Claude adapter
+  builds `claude -p <reply prompt> --resume <session id>` without
+  `--session-id`, and the pi adapter reopens the session by its id (the plan
+  confirms the flag against the installed pi). The reply prompt is short: the
+  answer with its `Question #<id>: ` prefix (all unspent answers, with the
+  earlier follow-ups, for a follow-up), the mode the stage is in, and the new
+  run's result path, which the run's permissions allow as for any run. The
+  run has the stage definition's bounds afresh and its own run id and usage
+  record, which names the resumed session id. Two cases:
+  - The row of spec 006 section 4 runs the asking stage again (a spec
+    question; a capability question; a technical question asked by fix). The
+    resumed session simply does its work with the answer. Its normal result
+    ends the conversation, or it returns a follow-up (AC-10).
+  - The row runs a different stage (`record` mode after a product or
+    technical question from plan, implement or review; a fix after a
+    review's technical question). The resumed session is in a
+    **conversation turn**: it may read but changes nothing in the worktree,
+    and it answers the maintainer's reply, using what it learned in the run
+    that asked. It returns a follow-up question (spec 006 AC-15 rules, sent
+    as AC-10 says), or `{ "conversation": "settled", "decision": "<the
+    decision in the maintainer's terms, with its reasons>" }` once the
+    maintainer's reply is a decision it needs no more from. On `settled`,
+    and only then, the spec 006 section 4 row applies: the stage it names
+    runs fresh with the question, every reply, and the settled decision as
+    input (the decision is context for the record, never a substitute for
+    the maintainer's words, which stay the cited answer), and spec 006
+    AC-18 records it. A conversation turn is not a failed run and counts
+    toward no bound; a turn that returns anything else, or leaves a change
+    in the worktree, is a failed run: the change is reverted and the chain
+    retries the turn once, then treats the reply as settled with no
+    decision text.
+
+  Given the question has no `session` (verify's, AC-12), then the spec 006
+  row applies at once, as it does with Telegram off.
 - AC-14. **A session that cannot be resumed falls back to a fresh one.**
   Given the resume fails before any agent turn (the harness exits with an
   error naming the session, or no init event appears), then one fresh
-  session runs with the spec 006 input (the question and the reply) in the
-  same attempt; this fallback is logged in the run record and is not a
+  session runs in the same attempt, in the same mode (work or conversation
+  turn), with the spec 006 input (the question and the reply); this fallback is logged in the run record and is not a
   failed run. Given the resume fails after an agent turn, then it is a
   failed run as today. Given the recorded session's harness is not the
   stage's current harness (a fallback model answered the original run), then
@@ -234,7 +261,8 @@ credentials file of AC-1 is present and valid at service start.
 - AC-15. **Decide mode and the bounds are unchanged.** A resumed run is
   judged, bounded and counted exactly as a fresh run of the stage: the
   result schema, the follow-up rules, decide mode, the retry and escalation
-  counts of spec 006. The recorded end-to-end chains of spec 006 AC-28 that
+  counts of spec 006. A conversation turn (AC-13) never runs in decide mode:
+  a stage that was sent back to decide asked no question. The recorded end-to-end chains of spec 006 AC-28 that
   answer a question pass unchanged with Telegram off.
 
 ## 4. Design notes (agent's calls)
@@ -247,6 +275,16 @@ credentials file of AC-1 is present and valid at service start.
   own state and an IPC path to wake the loop; a held-open request inside the
   process is a few hundred lines and is not a poll inside a tick. It is
   cheap to split out later; no ADR.
+- **The asking session always answers first.** The maintainer decided that a
+  reply resumes the session that asked, with its context, and that a
+  decision can be a short conversation. Spec 006 left the product and
+  technical questions to a fresh `record` stage that knows only the question
+  and the reply; a maintainer's pushback ("why not the second layout?") then
+  meets an agent without the investigation behind the question. So the
+  resumed asking session carries the conversation and decides when it is
+  settled; the record stage and the rest of the chain are as spec 006 has
+  them. The cost is one extra run per answered question (a short one,
+  context already loaded).
 - **Both channels answer.** A comment on the issue keeps resuming the work
   (AC-8) because the record's reply path costs nothing to keep and the
   maintainer at the desk may answer there.
@@ -275,7 +313,12 @@ credentials file of AC-1 is present and valid at service start.
 - `tools/scheduler/src/chain/driver.ts`: `completePause` sends the Telegram
   message after the comment and records its id (AC-5, AC-6); the pause
   records the asking run's session (AC-12); the resume passes `resume` to
-  the runner when AC-13 applies and posts nothing itself.
+  the runner, and runs the conversation turn of AC-13 before the section 4
+  `paused` row; it posts nothing itself.
+- `tools/scheduler/src/chain/machine.ts`: the conversation turn as an event
+  before the `paused` rows (`settled` goes to the row, a follow-up pauses
+  again); the plan, implement, review, fix and spec result schemas under
+  `schemas/scheduler/` gain the optional `conversation` result.
 - `tools/scheduler/src/chain/question.ts`: the comment variant of AC-5.
 - `tools/scheduler/src/adapters/types.ts`: `StageRun.resume?: { sessionId }`;
   `claude.ts`, `pi.ts`, `fake.ts`: the resumed command (AC-13); the fake
@@ -294,9 +337,10 @@ credentials file of AC-1 is present and valid at service start.
   the `telegram-check` command (AC-4).
 - `schemas/scheduler/paused.json`, `question-log-entry.json`,
   `usage-record.json`: the new optional fields above.
-- `agents/stages/plan.md`, `implement.md`, `fix.md`, `spec.md`: one
-  paragraph saying a resumed session continues from where it asked, with
-  the reply as the next message, and writes its result to the new path.
+- `agents/stages/plan.md`, `implement.md`, `review.md`, `fix.md`, `spec.md`:
+  one paragraph saying a resumed session continues from where it asked, with
+  the reply as the next message, and writes its result to the new path; and
+  what a conversation turn is (read-only, answer, follow-up or `settled`).
 - `tools/scheduler/test/`: `telegram.test.ts` (client, poller, offset,
   matching, formats, against the fake server), `adapters-claude.test.ts` and
   `adapters-pi.test.ts` (the resumed command), `run.test.ts` (AC-14),
@@ -317,6 +361,11 @@ paths, so the security review runs on the PR as spec 006 AC-9 says.
   Telegram server) for:
   - a question sent to Telegram, answered by a button, the asking session
     resumed with `--resume`, the answer recorded and merged;
+  - a product question from plan, answered by a pushback ("why not the
+    second one?"): the plan session resumed as a conversation turn, its
+    reply in the thread, a second reply, `settled`, then the fresh `record`
+    stage with the settled decision as input, merged, plan after it; the
+    same for a technical question from review (settled, then fix);
   - a question answered by free text while two questions are open: the
     list, the choice, the resume;
   - a follow-up conversation: reply, follow-up in the thread, second reply,
