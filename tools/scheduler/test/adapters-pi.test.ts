@@ -78,6 +78,9 @@ describe("piAdapter.judge (AC-20)", () => {
   it("failed when the last assistant message is in error state even though exit is 0", async () => {
     expect(piAdapter.judge(await fx("pi-error-exit0.jsonl"), 0, false)).toMatchObject({ outcome: "failed", reason: expect.stringContaining("not supported"), apiErrorStatus: 400 });
   });
+  it("failed with apiErrorStatus 429 on a rate-limit error (AC-26)", async () => {
+    expect(piAdapter.judge(await fx("pi-429.jsonl"), 0, false)).toMatchObject({ outcome: "failed", apiErrorStatus: 429 });
+  });
   it("failed without agent_end", async () => {
     const ev = (await fx("pi-success.jsonl")).slice(0, 5);
     expect(piAdapter.judge(ev, 0, false)).toMatchObject({ outcome: "failed", reason: "no agent_end event" });

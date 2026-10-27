@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { retryDecision } from "../src/runner/retry.ts";
+import { afterFallback, retryDecision } from "../src/runner/retry.ts";
 import type { StageDefinition } from "../src/types.ts";
 
 const base: StageDefinition = {
@@ -21,5 +21,25 @@ describe("retryDecision (AC-25)", () => {
   });
   it("postpones a strong-tier stage instead of downgrading", () => {
     expect(retryDecision({ ...base, name: "review", tier: "strong", fallback: undefined }, j429, 0, 1)).toEqual({ kind: "postpone" });
+  });
+});
+
+describe("independent strong-tier stages (AC-26)", () => {
+  const check: StageDefinition = { ...base, name: "question-check", harness: "pi", model: "openai/gpt-6.1-sol", fallback: "claude-fable-5-1", tier: "strong", independent: true };
+  it("fall back on 429 regardless of tier and cost", () => {
+    expect(retryDecision(check, j429, 99, 1)).toEqual({ kind: "fallback", model: "claude-fable-5-1", harness: "claude" });
+  });
+  it("a non-independent strong stage still postpones", () => {
+    expect(retryDecision({ ...check, independent: false }, j429, 99, 1)).toEqual({ kind: "postpone" });
+    expect(retryDecision({ ...check, independent: undefined }, j429, 0, 1)).toEqual({ kind: "postpone" });
+  });
+  it("other failures of an independent stage do not fall back", () => {
+    expect(retryDecision(check, { ...j429, apiErrorStatus: 500 }, 0, 1)).toEqual({ kind: "none" });
+  });
+  it("afterFallback postpones a strong stage whose fallback run hit 429, and does nothing otherwise", () => {
+    expect(afterFallback(check, j429)).toEqual({ kind: "postpone" });
+    expect(afterFallback(check, { ...j429, apiErrorStatus: 500 })).toEqual({ kind: "none" });
+    expect(afterFallback(check, { outcome: "ok", reason: null, apiErrorStatus: null, finalText: "x" })).toEqual({ kind: "none" });
+    expect(afterFallback(base, j429)).toEqual({ kind: "none" });
   });
 });

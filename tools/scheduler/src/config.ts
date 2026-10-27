@@ -12,6 +12,8 @@ export interface Config {
   slots: number;
   liveness_hours: number;
   retry_cost_limit_usd: number;
+  /** the strongest model, used for rescue attempts (spec 006 AC-1) */
+  rescue_model: string;
   notify_rate_limit_hours: number;
   /** check-run names the verify stage waits on; [] means every check run on the head SHA */
   required_checks: string[];
@@ -62,6 +64,7 @@ export function loadConfig(path: string): Config {
     slots: num("slots", 1),
     liveness_hours: num("liveness_hours", 2),
     retry_cost_limit_usd: num("retry_cost_limit_usd", 1),
+    rescue_model: typeof raw.rescue_model === "string" && raw.rescue_model ? raw.rescue_model : "claude-fable-5-1",
     notify_rate_limit_hours: num("notify_rate_limit_hours", 4),
     required_checks: Array.isArray(raw.required_checks) ? (raw.required_checks as string[]) : [],
     state_dir: expandHome(String(raw.state_dir ?? "~/.local/state/panelator-scheduler")),

@@ -4,7 +4,7 @@ import { listProfiles, readSensitiveGlobs, resolveProfile } from "../src/profile
 
 describe("profiles", () => {
   it("lists the committed v0 profiles", () => {
-    expect(listProfiles(agentsDir)).toEqual(["backend", "security"]);
+    expect(listProfiles(agentsDir)).toEqual(["backend", "security", "spec"]);
   });
   it("resolves backend with its skills dir, instructions and tools", () => {
     const p = resolveProfile(agentsDir, "backend");
@@ -15,6 +15,11 @@ describe("profiles", () => {
   it("resolves security with review criteria", () => {
     const p = resolveProfile(agentsDir, "security");
     expect(p.reviewCriteria).toMatch(/sensitive/i);
+  });
+  it("resolves spec with its review criteria (AC-21)", () => {
+    const p = resolveProfile(agentsDir, "spec");
+    expect(p.reviewCriteria?.length).toBeGreaterThan(0);
+    expect(p.reviewCriteria).toMatch(/maintainer answer, question #/);
   });
   it("throws on an unknown profile", () => {
     expect(() => resolveProfile(agentsDir, "nope")).toThrow(/unknown profile/);

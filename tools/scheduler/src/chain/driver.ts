@@ -217,6 +217,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
     return { type: "stage_ok", stage: "plan", result };
   }
   if (stage === "review") return { type: "stage_ok", stage: "review", result, security };
+  if (stage !== "implement" && stage !== "fix") throw new Error("spec 006 Task 8");
   if (!(await prBound(deps, claim, stage, result))) return { type: "stage_failed", stage, reason: "result: pr mismatch" };
   const diff = await diffFilesAgainstBase(claim.worktree);
   const scope = state.plan ? scopeGate(diff, state.plan, parseSpec(specText), sensitiveGlobs) : { ok: true as const };

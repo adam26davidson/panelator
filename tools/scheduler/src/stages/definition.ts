@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { isBounds, type AgentStageName, type StageDefinition } from "../types.ts";
 
-const STAGES: AgentStageName[] = ["plan", "implement", "review", "fix"];
+const STAGES: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "question-check"];
 
 export function splitFrontmatter(markdown: string): { frontmatter: string; body: string } {
   const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(markdown);
@@ -31,13 +31,16 @@ export function parseStageDefinition(markdown: string): StageDefinition {
   const worktree = req("worktree");
   if (worktree !== "issue" && worktree !== "fresh") throw new Error("stage definition: worktree must be issue or fresh");
   const fallback = typeof fm.fallback === "string" ? fm.fallback : undefined;
-  if (fallback && tier === "strong") throw new Error("stage definition: a strong-tier stage may not name a fallback (AC-25)");
+  if (fm.independent !== undefined && typeof fm.independent !== "boolean") throw new Error("stage definition: independent must be a boolean");
+  const independent = fm.independent === true;
+  if (fallback && tier === "strong" && !independent) throw new Error("stage definition: a strong-tier stage may not name a fallback unless independent (AC-25, AC-26)");
   return {
     name: name as AgentStageName,
     kind: "agent",
     harness,
     model: req("model"),
     fallback,
+    independent,
     tier,
     effort: typeof fm.effort === "string" ? fm.effort : undefined,
     bounds: fm.bounds,

@@ -1,6 +1,6 @@
 export type Harness = "claude" | "pi" | "fake";
 export type Tier = "strong" | "standard";
-export type AgentStageName = "plan" | "implement" | "review" | "fix";
+export type AgentStageName = "plan" | "implement" | "review" | "fix" | "spec" | "question-check";
 export type StageName = AgentStageName | "verify" | "merge";
 
 export interface Bounds {
@@ -25,6 +25,8 @@ export interface StageDefinition {
   harness: Exclude<Harness, "fake">;
   model: string;
   fallback?: string;
+  /** AC-26: an independent stage may name a fallback even on the strong tier. */
+  independent?: boolean;
   tier: Tier;
   effort?: string;
   bounds: Bounds;

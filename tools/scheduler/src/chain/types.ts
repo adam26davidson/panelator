@@ -2,7 +2,7 @@ import type { ScopeResult } from "../gates/scope.ts";
 import type { AgentStageName, FixResult, ImplementResult, PlanResult, ReviewResult } from "../types.ts";
 
 export type ChainStage =
-  | "claimed" | "plan" | "implement" | "verify" | "review" | "fix" | "merge"
+  | "claimed" | "plan" | "implement" | "verify" | "review" | "fix" | "merge" | "spec" | "question-check"
   | "done" | "released" | "needs-human" | "waiting";
 
 export interface ChainState {
