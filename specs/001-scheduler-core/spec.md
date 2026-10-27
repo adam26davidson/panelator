@@ -252,7 +252,7 @@ table is the specification.
 | fix | result valid | verify |
 | merge | merged | done: claim released, issue closed by the PR, worktree removed |
 | merge | not mergeable | fix (rebase/conflict as input) |
-| any | bounds hit, liveness expired | released or `needs-human` per the row above |
+| Superseded by spec 006: any | bounds hit, liveness expired | released or `needs-human` per the row above |
 
 Stage order and the fix bound are configuration of the chain module, not of
 stage definitions, so a prompt cannot change them.

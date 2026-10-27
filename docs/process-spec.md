@@ -112,8 +112,8 @@ so validation happens **before** anything becomes an issue.
 The shortlist script works only issues authored by the pipeline's bot account
 (grilling output and filing-agent output). Everything else on the public
 tracker (community, maintainer typing directly into GitHub, Renovate, CI
-reporters, future producers) is ignored until a human or the filing agent marks
-it. This is enforced in the script, not in a prompt.
+reporters, future producers) is ignored until the maintainer or the filing agent
+marks it (intake authority, not a merge gate). This is enforced in the script, not in a prompt.
 
 ### 4.4 Reserved: ops as a producer
 
@@ -250,10 +250,12 @@ flowchart TD
         FQ --> FA[Filing agent<br/>independent investigation]
         FA -->|not an issue| X[Discard with reason]
         FA -->|issue| I
-        FA -->|design flaw| ESC[Strongest-model review<br/>proposal with options]
+        FA -->|design flaw| QC{Question check<br/>design section 3}
         FA -->|security| SEC[Private vulnerability report<br/>+ Telegram]
+        QC -->|belongs to maintainer| ESC[Strongest-model review<br/>proposal with options]
         ESC -->|Telegram| M
-        ESC --> ADR[ADR in docs/decisions]
+        QC -->|decide yourself| ADR[ADR in docs/decisions]
+        M --> ADR
         C[Community / direct / tooling issues] -.->|ignored until marked| I
     end
 
@@ -262,16 +264,17 @@ flowchart TD
     EV[Events: issue, label,<br/>CI, merge, finding] --> SCH
     WD[Watchdog timer] -.-> SCH
 
-    SCH --> SP[Spec approved?]
-    SP -->|no| G
-    SP -->|yes| PL[Plan agent]
+    SCH --> SP{Spec present?}
+    SP -->|no, or spec gap| SPS[Spec stage<br/>agent, spec 006]
+    SPS --> PL[Plan agent]
+    SP -->|yes| PL
     PL --> IMP[Worker in worktree → PR]
     IMP --> CI[CI + golden pixel + HIL]
     CI -->|fail| FIX[Fix agent]
     FIX --> CI
     CI -->|pass| REV[Review agent<br/>spec + standards]
     REV -->|sensitive path| SR[Security review]
-    SR -->|findings| M
+    SR -->|findings| FIX
     REV -->|findings| FIX
     REV -->|approved| MRG[Squash merge]
     SR -->|clean| MRG
@@ -279,7 +282,7 @@ flowchart TD
     MRG --> DB[Backend: canary → prod<br/>auto rollback]
     MRG --> DW[Web app deploy]
     MRG --> FB[Firmware → beta channel]
-    FB -->|human| FS[Firmware → stable]
+    FB -->|after spec G, automatic| FS[Firmware → stable]
 
     DB --> OBS[Telemetry + metrics]
     DW --> OBS
@@ -329,5 +332,5 @@ from **open questions**, so that innovation in the thinking run is deliberate.
 ### 9.3 Thinking run
 
 A grilling session over the open questions, where novel methods are proposed
-and stress-tested. Design decisions are the maintainer's. Nothing is built
+and stress-tested. Design decisions are the maintainer's, as narrowed to the questions of design section 3. Nothing is built
 until both runs land.
