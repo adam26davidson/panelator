@@ -153,7 +153,12 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   let parsed: unknown = null;
   let resultErrors: string[] = [];
   if (spawned !== null && judgement.outcome !== "timeout" && judgement.outcome !== "bounds") {
-    const raw = await readFile(resultPath, "utf8").catch(() => null);
+    let raw = await readFile(resultPath, "utf8").catch(() => null);
+    // T1: a read-only stage on a harness that gives it no write tool returns its result in the final text.
+    if (raw === null && judgement.finalText && ctx.adapter.resultInText?.(req.def.name)) {
+      raw = lastJsonObject(judgement.finalText);
+      if (raw !== null) await writeFile(resultPath, raw);
+    }
     if (raw === null) resultErrors = ["result file missing"];
     else {
       try {
@@ -192,6 +197,25 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   await writeFile(join(dir, "outcome.json"), JSON.stringify(persisted, null, 2));
 
   return { runId, outcome: judgement.outcome, reason, result, resultErrors, judgement, usage, findings, eventsPath, malformed, ioErrors: ioMessages };
+}
+
+/**
+ * The last JSON object in `text` (T1): the longest parseable span from a `{` to the last `}`, so prose before it and
+ * a closing code fence after it are ignored. Null when there is none.
+ */
+export function lastJsonObject(text: string): string | null {
+  const end = text.lastIndexOf("}");
+  if (end < 0) return null;
+  for (let i = text.indexOf("{"); i >= 0 && i < end; i = text.indexOf("{", i + 1)) {
+    const span = text.slice(i, end + 1);
+    try {
+      const v: unknown = JSON.parse(span);
+      if (typeof v === "object" && v !== null && !Array.isArray(v)) return span;
+    } catch {
+      // not a JSON object from here; try the next brace
+    }
+  }
+  return null;
 }
 
 /** Ends a write stream and waits for it to settle, whether it finishes or errors. */

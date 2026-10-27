@@ -121,6 +121,8 @@ spec, the designs or the code points to the answer.
 
 Write the JSON result to {{result_path}}:
 { "verdict": "send" | "decide_yourself", "reasoning": "...", "findings": [] }
+If you have no tool that can write files, give the result instead as the last thing in your
+final message: the JSON object alone, with nothing after it. The scheduler reads it from there.
 
 `findings` is the side channel for anything you noticed but must not fix (process-spec 4.2).
 Every entry is an object, never a string, with exactly these fields:

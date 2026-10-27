@@ -58,6 +58,8 @@ and why. The optional `escalation` object is present only when the verdict is es
 escalate requires it. The result has exactly these five fields and no others; notes belong in a
 `declined_to_judge` entry or in a finding's `evidence`, never in extra properties.
 Do not modify files.
+If you have no tool that can write files, give the result instead as the last thing in your
+final message: the JSON object alone, with nothing after it. The scheduler reads it from there.
 
 **Escalation.** Escalate only a product decision (a big-picture choice about what
 panelator is and promises its users: audience, scope and non-goals, built-in widgets,

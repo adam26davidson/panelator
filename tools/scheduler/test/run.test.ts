@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { fakeAdapter } from "../src/adapters/fake.ts";
-import { runStage, type RunnerContext, type StageRequest } from "../src/runner/run.ts";
+import { piAdapter } from "../src/adapters/pi.ts";
+import { lastJsonObject, runStage, type RunnerContext, type StageRequest } from "../src/runner/run.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import type { StageDefinition } from "../src/types.ts";
 
@@ -166,5 +167,66 @@ describe("runStage", () => {
     req.harness = "pi";
     await expect(runStage(ctx, req)).rejects.toThrow(/harness mismatch/);
     expect(readdirSync(paths.runs)).toEqual([]);
+  });
+});
+
+describe("a read-only stage on pi delivers its result in the final text (final review T1)", () => {
+  const checkDef: StageDefinition = {
+    ...planDef, name: "question-check", harness: "pi", model: "openai/gpt-6.1-sol", output: "question-check-result", prompt: "Check {{issue}}\nWrite {{result_path}}",
+  };
+  const verdict = { verdict: "decide_yourself", reasoning: "the spec settles it", findings: [] };
+
+  /** The recorded pi stream with its final assistant text replaced by `text`, replayed with no result file written. */
+  function piSetup(stage: StageDefinition, text: string) {
+    const { paths, ctx, req, root } = setup({});
+    const stream = readFileSync(join(import.meta.dirname, "fixtures", "streams", "pi-success.jsonl"), "utf8")
+      .replaceAll('{"type":"text","text":"pong"}', JSON.stringify({ type: "text", text }));
+    const eventsFile = join(root, "pi-events.jsonl");
+    writeFileSync(eventsFile, stream);
+    ctx.adapter = { ...piAdapter, buildCommand: (run) => ({ argv: [process.execPath, script, eventsFile, run.resultPath, "0", "0"], env: {} }) };
+    req.def = stage;
+    return { paths, ctx, req };
+  }
+
+  it("question-check: the JSON object at the end of the final message is the result", async () => {
+    const { paths, ctx, req } = piSetup(checkDef, `I read the spec.\n\n\`\`\`json\n${JSON.stringify(verdict, null, 2)}\n\`\`\``);
+    await ensureStateDirs(paths);
+    const out = await runStage(ctx, req);
+    expect(out.outcome).toBe("ok");
+    expect(out.result).toEqual(verdict);
+    expect(JSON.parse(readFileSync(join(paths.runs, out.runId, "result.json"), "utf8"))).toEqual(verdict);
+  });
+  it("plan and review on pi take their result the same way", async () => {
+    for (const def of [planDef, { ...planDef, name: "review" as const, output: "review-result" }]) {
+      const result = def.name === "plan" ? { verdict: "ready", domain: "backend", tasks: [] } : { verdict: "approve", findings_on_pr: [], declined_to_judge: [] };
+      const { paths, ctx, req } = piSetup(def, `{"note": "draft"} then the result: ${JSON.stringify(result)}`);
+      await ensureStateDirs(paths);
+      const out = await runStage(ctx, req);
+      expect(out.outcome).toBe("ok");
+      expect(out.result).toEqual(result);
+    }
+  });
+  it("a final text with no JSON object still fails as a missing result", async () => {
+    const { paths, ctx, req } = piSetup(checkDef, "I could not decide.");
+    await ensureStateDirs(paths);
+    const out = await runStage(ctx, req);
+    expect(out.outcome).toBe("failed");
+    expect(out.resultErrors).toEqual(["result file missing"]);
+  });
+  it("a writing stage on pi (implement) does not take its result from the text", async () => {
+    const { paths, ctx, req } = piSetup({ ...planDef, name: "implement", output: "implement-result" }, JSON.stringify({ pr_number: 1, head_sha: "a".repeat(40), tasks_done: [] }));
+    await ensureStateDirs(paths);
+    const out = await runStage(ctx, req);
+    expect(out.outcome).toBe("failed");
+    expect(out.resultErrors).toEqual(["result file missing"]);
+  });
+});
+
+describe("lastJsonObject (final review T1)", () => {
+  it("finds the last object, skipping prose, nested braces and fences", () => {
+    expect(lastJsonObject('text {"a": {"b": 1}} more')).toBe('{"a": {"b": 1}}');
+    expect(lastJsonObject("no json here")).toBeNull();
+    expect(lastJsonObject("[1, 2]")).toBeNull();
+    expect(lastJsonObject('a { broken } then {"ok": true}\n```')).toBe('{"ok": true}');
   });
 });

@@ -42,6 +42,8 @@ list precise questions; the spec stage answers them. Do not guess past a gap in 
 Write the JSON result to {{result_path}} with the shape
 { "verdict": "ready" | "spec_gap", "domain": "...", "tasks": [{ "id": "T1", "description": "...", "files": ["..."] }], "questions": ["..."], "findings": [] }
 and nothing else. Do not modify files in the repository.
+If you have no tool that can write files, give the result instead as the last thing in your
+final message: the JSON object alone, with nothing after it. The scheduler reads it from there.
 
 **Escalation.** A spec gap goes to the spec stage, not to the maintainer. Escalate only a
 product decision (a big-picture choice about what panelator is and promises its users:

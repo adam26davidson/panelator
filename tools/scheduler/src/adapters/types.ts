@@ -45,6 +45,11 @@ export interface Adapter {
   usage(events: unknown[]): Usage;
   /** True for a record that ends one agent turn; the runner counts these against bounds.max_turns. */
   isTurnEnd?(event: unknown): boolean;
+  /**
+   * True for a stage whose run has no tool that writes files on this harness: when its result file is missing, the
+   * runner takes the result from the last JSON object in the final assistant text instead (final review T1).
+   */
+  resultInText?(stage: AgentStageName): boolean;
 }
 
 export type { RunOutcome };

@@ -476,7 +476,10 @@ AC-10 second sentence, AC-13)
   fallback run also fails with a quota or rate-limit error, then the stage is
   postponed, as any strong-tier stage is (spec 001 AC-25). The usage record
   names the model that produced the result, and accepts the `spec` and
-  `question-check` stage names.
+  `question-check` stage names. On pi, plan, review and the question check
+  run with read-only tools only, so none can write its result file: given
+  the file is missing, the scheduler takes the result from the last JSON
+  object in the run's final assistant message, validated like a file.
 
 **No human stop is left**
 

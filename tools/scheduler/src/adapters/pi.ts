@@ -1,3 +1,4 @@
+import type { AgentStageName } from "../types.ts";
 import type { Adapter, Command, Judgement, StageRun, Usage } from "./types.ts";
 
 type Rec = Record<string, unknown>;
@@ -22,10 +23,13 @@ export function piToolNames(tools: string[]): string[] {
   return [...new Set(mapped)];
 }
 
+/** Stages that run read-only on pi: no tool can write their result file, so it comes back in the final text (T1). */
+const READ_ONLY_STAGES: AgentStageName[] = ["plan", "review", "question-check"];
+
 function buildCommand(run: PiStageRun): Command {
   const argv = ["pi", "--mode", "json", "--model", run.model, "--session-id", run.sessionId, "--approve"];
   if (run.effort) argv.push("--thinking", run.effort);
-  const readOnly = run.stage === "plan" || run.stage === "review" || run.stage === "question-check";
+  const readOnly = READ_ONLY_STAGES.includes(run.stage);
   let tools: string[] = [];
   if (run.profile) {
     tools = piToolNames(run.profile.tools);
@@ -93,4 +97,6 @@ function usage(events: unknown[]): Usage {
   return u;
 }
 
-export const piAdapter: Adapter = { harness: "pi", buildCommand, judge, usage, isTurnEnd: (e) => rec(e).type === "turn_end" };
+export const piAdapter: Adapter = {
+  harness: "pi", buildCommand, judge, usage, isTurnEnd: (e) => rec(e).type === "turn_end", resultInText: (stage) => READ_ONLY_STAGES.includes(stage),
+};
