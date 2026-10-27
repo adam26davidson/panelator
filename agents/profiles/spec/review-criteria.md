@@ -14,6 +14,8 @@
 6. The PR changes or removes no text marked `(maintainer answer, question #<id>)` unless it cites an id that
    the review input's cited-answers list marks verified and that is newer than the marked one (AC-10, AC-18).
 7. The spec plans no change to `docs/charter.md`, to a protected maintainer decision without a
-   verified maintainer answer, or to how either is enforced (the sensitive paths, the security review
-   criteria, and the code security criterion 5 names). The protected decisions are those of security
+   verified maintainer answer, or to how either is enforced: the sensitive paths, the security review
+   criteria and instructions, and whatever decides that a sensitive diff gets the security review, that
+   both reviews must approve, and that a sensitive path must be listed in the spec (security criterion 5
+   names the current code). The protected decisions are those of security
    criterion 7; a verified answer is one the review input's cited-answers list marks verified.

@@ -65,7 +65,11 @@ describe("the charter and the maintainer's recorded decisions are protected (AC-
   it("never lets a merged spec's exception weaken what enforces criteria 6 to 9 without a verified answer (final review C1a)", () => {
     const c5 = criteria.slice(criteria.indexOf("\n5. "), criteria.indexOf("\n6. "));
     expect(c5).toMatch(/That exception never covers what enforces criteria 6 to 9/);
-    for (const name of ["isSensitive", "pickProfile", "CHARTER_REVERT_LINE", "tools/scheduler/src/gates/spec-scope.ts", "tools/scheduler/src/gates/sensitive.ts", "agents/sensitive-paths.txt"]) {
+    expect(c5.replace(/\s+/g, " ")).toContain("whatever decides that a sensitive diff gets the security review, that both reviews must approve before a merge, and that a sensitive path must be listed in the spec");
+    for (const name of [
+      "isSensitive", "pickProfile", "securityPass", "CHARTER_REVERT_LINE", "tools/scheduler/src/gates/spec-scope.ts", "tools/scheduler/src/gates/sensitive.ts",
+      "tools/scheduler/src/gates/scope.ts", "tools/scheduler/src/chain/machine.ts", "agents/profiles/security/instructions.md", "agents/sensitive-paths.txt",
+    ]) {
       expect(c5).toContain(`\`${name}\``);
     }
     expect(c5).toMatch(/verified\s+maintainer answer/);
@@ -76,7 +80,7 @@ describe("the charter and the maintainer's recorded decisions are protected (AC-
   it("protects specs 001 and 006 and the enforcing code under criterion 9 (final review C1b)", () => {
     const c9 = criteria.slice(criteria.indexOf("\n9. "));
     for (const p of ["specs/001-scheduler-core/spec.md", "specs/006-no-human-stops/spec.md"]) expect(c9).toContain(`\`${p}\``);
-    expect(c9).toMatch(/the code criterion 5 names/);
+    expect(c9.replace(/\s+/g, " ")).toContain("whatever decides that a sensitive diff gets the security review, that both reviews must approve, and that a sensitive path must be listed in the spec");
     const g = readSensitiveGlobs(agentsDir);
     expect(isSensitive(["specs/001-scheduler-core/spec.md", "specs/006-no-human-stops/spec.md", "specs/002-x/spec.md"], g)).toEqual(["specs/001-scheduler-core/spec.md", "specs/006-no-human-stops/spec.md"]);
   });
@@ -89,6 +93,7 @@ describe("the charter and the maintainer's recorded decisions are protected (AC-
   it("has the spec review refuse a spec that plans to change the charter, a protected decision or their enforcement (final review C1c)", () => {
     const spec = resolveProfile(agentsDir, "spec").reviewCriteria!;
     expect(spec).toMatch(/plans no change to `docs\/charter\.md`, to a protected maintainer decision without a\s+verified maintainer answer, or to how either is enforced/);
+    expect(spec.replace(/\s+/g, " ")).toContain("whatever decides that a sensitive diff gets the security review, that both reviews must approve, and that a sensitive path must be listed in the spec");
   });
   it("sends a finding back to the fix loop rather than to the maintainer", () => {
     const p = resolveProfile(agentsDir, "security");
