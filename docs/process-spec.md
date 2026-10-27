@@ -7,6 +7,11 @@ wait on the research run (section 9). Rationale and alternatives are in
 This repo is developed mostly by AI agents. This document says how, and where
 the human is.
 
+Above this document: [charter.md](charter.md), which wins where the two
+conflict. The delivery-system design
+([delivery-system-design.md](delivery-system-design.md)) and spec 006
+supersede the parts of this document marked below.
+
 ## 1. Six separate pieces
 
 These travel together under "AI-driven repo" and are kept apart on purpose,
@@ -14,6 +19,7 @@ because they have different owners and change at different speeds.
 
 | Piece | What it is | Status |
 |---|---|---|
+| Charter | The root: the goals and limits of the delivery system, changed only by the maintainer | [charter.md](charter.md) |
 | A. Product | The LED system itself | [product-spec.md](product-spec.md) |
 | B. Repo internals | Structure, conventions, docs and specs layout, enforcement tooling | Tooling settled; docs/specs shape open (9) |
 | C. Feature lifecycle | What happens end to end when a change is requested | Stages and gates settled; mechanics open (9) |
@@ -24,17 +30,18 @@ because they have different owners and change at different speeds.
 C is a design we own regardless of harness. D is a procurement decision we can
 revisit.
 
-## 2. Goal state and the autonomy ladder
+## 2. Goal state
 
-Goal: the project runs itself, including triaging and shipping requests, with
-the maintainer as reviewer of last resort. That is reached by a ladder, not a
-switch: a class of change (dependency bumps, widget fixes, ...) earns more
-autonomy when the measurements in section 7 show low rework and low escape rate
-for that class.
+Goal, from the [charter](charter.md): an agentic system that delivers
+autonomously, with no human gate on the path to `main`. The maintainer is
+reached only for the questions of delivery-system design section 3: product
+decisions (in the narrowed sense that section defines), large technical
+decisions with real uncertainty, and what agents cannot do (physical actions,
+credentials and access, funds, first contact with an outside party).
 
-v0 position on the ladder: the maintainer is in the loop at **one** gate,
-requirements grilling. Everything else is agent-run, with the release safety
-rules in section 5.
+How a question is checked before it is sent, and how it is asked, are in
+design section 3 and spec 006 (the question check stage). Release safety
+rules that bound this autonomy are in section 5.
 
 ## 3. Lifecycle stages and artifacts
 
@@ -43,7 +50,7 @@ rules in section 5.
 | Intake | GitHub issue | see section 4 |
 | Triage | labels, dedupe, change class (product / bug / tooling / dependency) | agent |
 | Grilling | design tree as issue comments | maintainer + agent |
-| Spec | markdown in `specs/` with acceptance criteria and out-of-scope | agent drafts; maintainer approves |
+| Spec | markdown in `specs/` with acceptance criteria and out-of-scope | agent drafts; checked by an agent against the grilling record (spec 006) |
 | Plan | ordered tasks with file-level scope | agent |
 | Implement | a PR per plan, in a worktree | agent |
 | Verify | CI, golden pixel tests, HIL when firmware changes | automated |
@@ -86,16 +93,19 @@ so validation happens **before** anything becomes an issue.
    design. Outcomes:
    - **not an issue**: recorded with reason, discarded;
    - **issue**: filed, validated, enters the shortlist;
-   - **possible design flaw**: escalated.
-3. **Escalation**: a review session on the strongest available model produces
-   a short proposal with options. It reaches the maintainer on Telegram. The
-   maintainer decides in chat, which may itself become a grilling session that
-   yields a spec. Whatever is decided is recorded as an ADR in
+   - **possible design flaw**: becomes a question (step 3).
+3. **Escalation**: a possible design flaw becomes a question that goes
+   through the design section 3 check (spec 006). It reaches the maintainer
+   only when that check sends it; otherwise the agents decide and record the
+   decision as an ADR in `docs/decisions/`. When it is sent, a review session
+   on the strongest available model produces a short proposal with options,
+   and whatever the maintainer decides is recorded as an ADR in
    `docs/decisions/`. The in-flight task that surfaced the flaw continues as
    specced unless the flaw blocks it.
 4. **Security findings** are classified separately and routed to GitHub private
    vulnerability reporting plus a Telegram alert. Never the public tracker.
-   Fixes go through the sensitive-path review (section 5).
+   Fixes go through the sensitive-path review (section 5), and findings from
+   that review go to the fix loop (spec 006).
 
 ### 4.3 Issue authority
 
@@ -114,6 +124,10 @@ producer. Not implemented in v0; the slot is reserved and must not be lost.
 
 ### 4.5 Prioritisation
 
+> Superseded by the delivery-system design section 9: the work ratio is a
+> console parameter; the parameter store and the shortlist's use of it belong
+> to spec C.
+
 One shortlist for both tracks. A maintainer-set priority label always wins.
 Otherwise a 2:1 feature-to-debt ratio. The ratio is itself a metric so debt
 accumulation is visible.
@@ -125,17 +139,16 @@ their data, so autonomy is bounded by:
 
 - Backend deploys to production automatically behind a canary with automatic
   rollback on error rate. Web app deploys automatically.
-- Firmware publishes to the **beta** channel automatically. Promotion to
-  **stable** is the one human release action, until the HIL rig and the
-  escape-rate metric justify automating it. Bricking a stranger's board is the
+- Firmware publishes to the **beta** channel automatically. No promotion from
+  beta to stable until spec G lands; then promotion is automatic, under G's
+  criteria (design section 5). Bricking a stranger's board is the
   system's one irreversible failure.
 - **Sensitive paths**: auth, the WASM sandbox host, provisioning, the relay,
   and the automation itself. Changes there require a dedicated security review
-  by the review agent; anything it flags blocks merge until the maintainer
-  looks.
-- Changes to the automation need a human-approved spec, always. The pipeline
-  does not modify its own rules unsupervised (this is where drift came from in
-  the predecessor system).
+  by the review agent; its findings go to the fix loop (spec 006).
+- Changes to the automation go through normal review. Only the charter is
+  locked, and the maintainer's recorded decisions are protected as design
+  section 5 defines them (spec 006).
 
 ## 6. Agent runtime
 
@@ -202,6 +215,9 @@ comparison of pi, Claude Code, Codex CLI and OpenCode) are superseded by that
 decision; the comparison was not run.
 
 ## 7. Measurement (piece E)
+
+> Superseded by the delivery-system design section 7: storage and the metric
+> set belong to spec D.
 
 Candidate metrics, each tied to the decision it drives. Final set open pending
 research.

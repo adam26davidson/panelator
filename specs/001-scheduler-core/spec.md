@@ -1,7 +1,7 @@
 # 001. Scheduler core and harness adapters
 
 Status: approved by the maintainer 2026-10-12; implementation plans written
-2026-10-12 in [plans/](plans/) (1-core, 2-runs, 3-service), not yet executed
+2026-10-12 in [plans/](plans/) (1-core, 2-runs, 3-service), not yet executed; amended by spec 006
 Class: tooling. Domain: automation (sensitive path, process-spec section 5).
 Parent: docs/delivery-system-design.md
 Derives from: [process-spec](../../docs/process-spec.md) sections 3, 4.3, 5,
@@ -42,9 +42,9 @@ Each is its own spec; this one defines only the interface it needs.
 
 - Intake: grilling sessions, spec drafting, the design artifacts of a feature
   (section 10 defines what a spec must contain; producing it is intake).
-- The shortlist and authority script beyond the stub in section 7 (spec 002).
-- The Telegram bot (spec 003). The core emits notifications to an interface.
-- The findings queue consumer and filing agent (spec 004). The core appends
+- The shortlist and authority script beyond the stub in section 7 (a later spec).
+- The Telegram bot (design spec A). The core emits notifications to an interface.
+- The findings queue consumer and filing agent (design spec C). The core appends
   records to the queue.
 - The design systems for the web app and the panel, and the `web-ui` and
   `widget` profile skills (their own specs; section 9 defines what a profile
@@ -86,29 +86,29 @@ fake harness and a mocked GitHub API unless marked (real).
   label added by the maintainer, when shortlisted, then it is eligible; given
   the same issue without `validated`, then it is ignored and no comment is
   posted.
-- AC-7. Given a bot-authored issue whose linked spec is missing from `main`,
+- AC-7. Superseded by spec 006: Given a bot-authored issue whose linked spec is missing from `main`,
   or whose Open decisions section is non-empty, when shortlisted, then the
   issue receives `needs-spec` with a comment naming the missing part and is
   not claimed.
-- AC-8. Given a spec with domain `web-ui` and an empty `design/` directory,
+- AC-8. Superseded by spec 006: Given a spec with domain `web-ui` and an empty `design/` directory,
   when shortlisted, then the issue receives `needs-design` and is not claimed.
-- AC-9. Given a plan result of `spec_gap` with questions, when the plan stage
+- AC-9. Superseded by spec 006: Given a plan result of `spec_gap` with questions, when the plan stage
   ends, then the questions are posted as one issue comment, the issue
   receives `needs-clarification`, the claim is released, and no implement
   stage starts.
-- AC-10. Given an implement result whose diff touches a file outside the
+- AC-10. Superseded by spec 006: Given an implement result whose diff touches a file outside the
   plan's file scope (lockfiles and `schemas/` excepted), when scope is
   checked, then the chain goes to fix with the violation listed; given it
   happens again on the same issue, then the issue receives `needs-human`.
-- AC-11. Given a diff touching a path on the sensitive list, when review is
+- AC-11. Superseded by spec 006: Given a diff touching a path on the sensitive list, when review is
   started, then it runs with the `security` review profile; given that review
   returns any finding, then the PR is labelled `security-review` and
   `needs-human`, and merge does not run even if a later review approves.
-- AC-12. Given an issue whose spec changes `tools/scheduler/` or `agents/`
+- AC-12. Superseded by spec 006: Given an issue whose spec changes `tools/scheduler/` or `agents/`
   and whose `validated` label was added by the App bot, when shortlisted,
   then it is ignored; given the label was added by the maintainer, then it is
   eligible.
-- AC-13. Given review returns `changes_requested` for the third time on one
+- AC-13. Superseded by spec 006: Given review returns `changes_requested` for the third time on one
   issue, when the result is processed, then the issue receives `needs-human`
   and no fix stage starts.
 - AC-14. Given a PR whose required checks are not all green on the head SHA,
@@ -237,18 +237,18 @@ table is the specification.
 |---|---|---|
 | claimed | start | plan |
 | plan | `ready` | implement |
-| plan | `spec_gap` | released, `needs-clarification` |
-| plan | failed | retry once, then released, `needs-human` |
+| Superseded by spec 006: plan | `spec_gap` | released, `needs-clarification` |
+| Superseded by spec 006: plan | failed | retry once, then released, `needs-human` |
 | implement | result valid, scope ok | verify |
-| implement | scope violation | fix (violation as input); second time `needs-human` |
-| implement | failed | retry once, then `needs-human` |
+| Superseded by spec 006: implement | scope violation | fix (violation as input); second time `needs-human` |
+| Superseded by spec 006: implement | failed | retry once, then `needs-human` |
 | verify | all required checks green | review |
 | verify | a check failed | fix (log excerpt as input) |
 | verify | pending | verify (wait, re-poll) |
 | review | `approve`, no security finding | merge |
 | review | `changes_requested`, fixes < 2 | fix |
-| review | `changes_requested`, fixes = 2 | `needs-human` |
-| review | `escalate`, or security finding | `needs-human` |
+| Superseded by spec 006: review | `changes_requested`, fixes = 2 | `needs-human` |
+| Superseded by spec 006: review | `escalate`, or security finding | `needs-human` |
 | fix | result valid | verify |
 | merge | merged | done: claim released, issue closed by the PR, worktree removed |
 | merge | not mergeable | fix (rebase/conflict as input) |
@@ -325,14 +325,14 @@ notification.
 |---|---|---|---|
 | Authority | shortlist | author is the App, or `validated` set by the maintainer | ignored |
 | Validated | shortlist | `validated` present | ignored |
-| Spec present | shortlist | linked `specs/NNN-*/spec.md` on `main` has every required section (section 10) and empty Open decisions | `needs-spec` |
-| UI design present | shortlist | domain `web-ui` or `widget` → `design/` has a story or token prototype and a PNG per screen named in the spec | `needs-design` |
-| Automation change | shortlist | spec touches `tools/scheduler/` or `agents/` → `validated` set by the maintainer | ignored |
-| Ready | plan result | `ready` | `needs-clarification`, released |
-| Scope | implement, fix | diff ⊆ plan file scope ∪ lockfiles ∪ `schemas/`; sensitive paths only if the spec lists them | fix; then `needs-human` |
-| Sensitive path | before review | touched path matches the list → `security` review profile; any finding blocks | `needs-human`, `security-review` |
+| Superseded by spec 006: Spec present | shortlist | linked `specs/NNN-*/spec.md` on `main` has every required section (section 10) and empty Open decisions | `needs-spec` |
+| Superseded by spec 006: UI design present | shortlist | domain `web-ui` or `widget` → `design/` has a story or token prototype and a PNG per screen named in the spec | `needs-design` |
+| Superseded by spec 006: Automation change | shortlist | spec touches `tools/scheduler/` or `agents/` → `validated` set by the maintainer | ignored |
+| Superseded by spec 006: Ready | plan result | `ready` | `needs-clarification`, released |
+| Superseded by spec 006: Scope | implement, fix | diff ⊆ plan file scope ∪ lockfiles ∪ `schemas/`; sensitive paths only if the spec lists them | fix; then `needs-human` |
+| Superseded by spec 006: Sensitive path | before review | touched path matches the list → `security` review profile; any finding blocks | `needs-human`, `security-review` |
 | Verify | before review, merge | required checks green on head SHA; HIL if `firmware/` changed; mergeable | fix or wait |
-| Fix loop | each `changes_requested` | fixes ≤ 2 | `needs-human` |
+| Superseded by spec 006: Fix loop | each `changes_requested` | fixes ≤ 2 | `needs-human` |
 | Bounds | every run | timeout, turns, cost; stream shows no error; result validates | failed |
 | Liveness | every poll | claim with no run and no activity for 2 h | released, patch saved |
 | Freshness | before each stage | worktree on current `main`; scheduler at `origin/main` | rebase; self-update |

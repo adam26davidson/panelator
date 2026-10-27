@@ -9,11 +9,11 @@ Run the service from a dedicated clone of the repository, checked out on `main` 
 
 The scheduler acts as a GitHub App installed on the repository with the permissions of spec section 12: issues, pull requests and contents (write), checks and actions (read), metadata (read), plus repository security advisories (write) once spec 004 lands. Set `app.id`, `app.installation_id`, `app.private_key_path` and `app.bot_login` in `agents/scheduler.yaml`; `repo`, `maintainer`, `slots`, `poll_interval_s`, `required_checks` and `state_dir` live in the same file. A missing App id, an unreadable private key, a checkout that is not on `main` or an origin that is not https makes the scheduler log a `config-error` record and exit 78, which the unit does not restart.
 
-These labels must exist in the repository: `validated`, `in-progress`, `needs-spec`, `needs-design`, `needs-clarification`, `needs-human`, `security-review`, `blocked`, `priority`, `class:product`, `class:bug`, `class:tooling`, `class:dependency`. Enable branch protection on `main` requiring the `test` check, so a PR the scheduler merges has passed CI.
+These labels must exist in the repository: `validated`, `in-progress`, `needs-decision`, `abandoned`, `needs-design-stage`, `blocked`, `priority`, `class:product`, `class:bug`, `class:tooling`, `class:dependency`. The old `needs-spec`, `needs-design`, `needs-clarification`, `needs-human` and `security-review` labels are no longer applied (spec 006). Enable branch protection on `main` requiring the `test` check, so a PR the scheduler merges has passed CI.
 
 The first run is `node tools/scheduler/bin/scheduler.ts --check-auth`, which prints the bot login and token expiry, then `--once`, which runs one tick and waits for the chains it started. Only then enable the service.
 
-A security finding labels the issue and its PR `security-review` and parks the issue as `needs-human`. To let the chain merge again, remove `security-review` from both the issue and the PR.
+Security findings go to the fix loop and nothing waits for a human to clear a label; see spec 006 (`specs/006-no-human-stops/spec.md`) for the escalation path, the question flow and the labels.
 
 Wiping the state directory forgets every claim but leaves their `in-progress` labels on GitHub; remove those by hand, or the issues are never picked up again.
 
