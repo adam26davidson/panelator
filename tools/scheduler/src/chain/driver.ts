@@ -275,6 +275,34 @@ function botIdentity(deps: DriverDeps): { name: string; email: string } {
 }
 
 /**
+ * T2: with no PR bound, the chain's branch must not exist on origin: a failed attempt (an implement or spec run that
+ * pushed but failed before reporting its PR, a retry, a re-plan, a re-claim after a release) may have left it there,
+ * with an open PR, and the next push or `gh pr create` would collide with it. Its commits are saved as a patch, any
+ * open PR from it is closed with a comment, and the branch is deleted on GitHub.
+ */
+async function dropStaleRemoteBranch(deps: DriverDeps, claim: Claim, branch: string): Promise<void> {
+  const ref = `refs/heads/${branch}`;
+  const listed = (await gitOut(claim.worktree, "ls-remote", "--heads", "origin", ref)).trim();
+  if (!listed) return;
+  const tracking = `refs/remotes/origin/${branch}`;
+  await gitOut(claim.worktree, "fetch", "-q", "origin", `+${ref}:${tracking}`);
+  const commits = await commitsPatch(claim.worktree, "origin/main", tracking).catch(() => "");
+  const saved = await savePatch(deps.paths, claim.issue, commits, deps.now(), "stale-branch");
+  const prs = await deps.gh.openPullRequestsFrom(branch).catch((e) => {
+    // Deleting the head branch closes its PRs on GitHub anyway; only the comment is lost.
+    deps.log({ kind: "warn", issue: claim.issue, msg: `open PRs from ${branch}: ${(e as Error).message}` });
+    return [] as number[];
+  });
+  for (const pr of prs) {
+    await deps.gh.comment(pr, `Closed by the scheduler: this PR is from a failed attempt at issue #${claim.issue}, which starts again from origin/main. Its commits are saved as a patch.`);
+    await deps.gh.closePullRequest(pr);
+  }
+  await deps.gh.deleteBranch(branch);
+  await gitOut(claim.worktree, "update-ref", "-d", tracking).catch(() => "");
+  deps.log({ kind: "stale-branch-dropped", issue: claim.issue, branch, prs, patch: saved });
+}
+
+/**
  * Fetch, keep any leftovers as a patch, then put the worktree where the next step must see it: with no PR, the
  * chain's branch (`issue-<n>` or `spec-<n>`) fresh from origin/main (C1, AC-21); with a PR, that PR's branch at its
  * remote head (R1), so the diffs the gates judge (sensitivity, scope) are of the commit GitHub holds. Commits the
@@ -296,6 +324,7 @@ async function syncWorktree(deps: DriverDeps, claim: Claim): Promise<void> {
       const saved = await savePatch(deps.paths, claim.issue, commits, deps.now(), "commits");
       deps.log({ kind: "recovered-commits", issue: claim.issue, patch: saved, base: "origin/main" });
     }
+    await dropStaleRemoteBranch(deps, claim, branch);
     await checkoutBranch(claim.worktree, branch, "origin/main");
     return;
   }

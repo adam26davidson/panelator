@@ -417,6 +417,13 @@ AC-10 second sentence, AC-13)
   `spec-<issue>` is deleted, so the next claim starts the spec work again from
   `origin/main`.
 
+  **A branch left by a failed attempt.** Given a stage is about to run with
+  no PR bound (on either track: a retry, a rescue, a re-plan, a revision, or
+  a claim after a release) and the chain's branch (`issue-<issue>` or
+  `spec-<issue>`) exists on origin, then before the stage runs its commits
+  are saved as a patch, every open PR from it is closed with a comment, and
+  the branch is deleted on GitHub, so the stage's push and PR start clean.
+
   **Scope.** The scope check of AC-22 holds the spec PR to:
   - the spec's directory;
   - `docs/designs/`;
@@ -624,8 +631,8 @@ other pair is invalid and throws:
   claims seeded from the escalation ledger.
 - `tools/scheduler/src/github/client.ts` and `github/types.ts`: list an issue's
   comments with id, author and time; read one issue comment by id; `comment`
-  returns the new comment's id and creation time; close a pull request; delete
-  a branch; set an issue body; a pull request's body; re-run a workflow run.
+  returns the new comment's id and creation time; close a pull request; list
+  the open pull requests from a branch; delete a branch; set an issue body; a pull request's body; re-run a workflow run.
 - `tools/scheduler/src/runner/worktree.ts`: check out a named branch from a
   base, and delete a local branch.
 - `tools/scheduler/src/runner/retry.ts`: the independent fallback and the

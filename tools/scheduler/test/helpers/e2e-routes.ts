@@ -131,6 +131,12 @@ export async function chainWorld(opts: { files: Record<string, string>; issueBod
       },
     },
     {
+      method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: (_m, _b, url) => {
+        const head = url.searchParams.get("head")?.replace(/^o:/, "");
+        return { body: [...prs.values()].filter((pr) => pr.state === "open" && pr.head === head).map((pr) => ({ number: pr.number })) };
+      },
+    },
+    {
       method: "GET", path: /^\/repos\/o\/r\/pulls\/(\d+)$/, reply: (m) => {
         const pr = prs.get(Number(m[1]));
         if (!pr) return { status: 404, body: { message: "Not Found" } };

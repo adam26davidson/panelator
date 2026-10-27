@@ -594,6 +594,73 @@ describe("driver: PR binding (spec 006)", () => {
   }, 60_000);
 });
 
+describe("driver: a branch left on origin by a failed attempt (final review T2)", () => {
+  /** Pushes a commit to issue-7 on origin from a scratch clone, as an implement that failed after its push would. */
+  function leaveStaleBranch(pair: ReturnType<typeof repoPair>): void {
+    const scratch = join(pair.root, "stale-clone");
+    git(pair.root, "clone", "-q", pair.origin, scratch);
+    git(scratch, "checkout", "-q", "-b", "issue-7");
+    writeFileSync(join(scratch, "stale.txt"), "stale attempt\n");
+    git(scratch, "add", "stale.txt");
+    git(scratch, "commit", "-q", "-m", "stale attempt");
+    git(scratch, "push", "-q", "origin", "issue-7");
+  }
+  const originHas = (pair: ReturnType<typeof repoPair>, branch: string) => git(pair.origin, "branch", "--list", branch).trim() !== "";
+
+  it("saves the stale branch as a patch, closes its open PR with a comment and deletes it before a stage with no PR runs", async () => {
+    let pair!: ReturnType<typeof repoPair>;
+    const routes = (sha: string): Route[] => [
+      { method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: (_m, _b, url) => ({ body: url.searchParams.get("head") === "o:issue-7" && url.searchParams.get("state") === "open" ? [{ number: 9 }] : [] }) },
+      { method: "DELETE", path: /^\/repos\/o\/r\/git\/refs\/heads\/(.+)$/, reply: (m) => { git(pair.origin, "update-ref", "-d", `refs/heads/${decodeURIComponent(m[1])}`); return { status: 204, body: null }; } },
+      ...ghRoutes(sha),
+    ];
+    const t = await setup(() => ({ implement: [] }), routes, (p) => { pair = p; leaveStaleBranch(p); });
+    const { deps, claim, gh, paths, adapter } = t;
+    const c = at(claim, { stage: "implement", plan: plan as never });
+    await writeClaim(paths, c);
+    await step(deps, c);
+    expect(adapter.heads).toEqual(["issue-7"]);
+    expect(git(claim.worktree, "rev-parse", "HEAD").trim()).toBe(git(pair.repo, "rev-parse", "origin/main").trim());
+    expect(originHas(pair, "issue-7")).toBe(false);
+    const writes = gh.calls.filter((call) => call.method !== "GET").map((call) => `${call.method} ${call.url}`);
+    const close = writes.indexOf("PATCH /repos/o/r/pulls/9");
+    expect(writes.indexOf("POST /repos/o/r/issues/9/comments")).toBeLessThan(close);
+    expect(close).toBeLessThan(writes.indexOf("DELETE /repos/o/r/git/refs/heads/issue-7"));
+    expect(gh.calls.find((call) => call.method === "PATCH" && call.url === "/repos/o/r/pulls/9")?.body).toEqual({ state: "closed" });
+    const saved = readdirSync(paths.patches).filter((f) => f.includes("stale-branch"));
+    expect(saved).toHaveLength(1);
+    expect(readFileSync(join(paths.patches, saved[0]), "utf8")).toContain("stale attempt");
+  }, 60_000);
+
+  it("asks GitHub nothing when origin has no such branch", async () => {
+    const { deps, claim, gh, paths } = await setup(() => ({ implement: [] }));
+    const c = at(claim, { stage: "implement", plan: plan as never });
+    await writeClaim(paths, c);
+    await step(deps, c);
+    expect(gh.calls.some((call) => call.url.startsWith("/repos/o/r/pulls?") || call.url.includes("/git/refs/heads/"))).toBe(false);
+  }, 60_000);
+
+  it("drops a stale spec-7 the same way before the spec stage runs (re-claim after a release)", async () => {
+    let pair!: ReturnType<typeof repoPair>;
+    const routes = (sha: string): Route[] => [
+      { method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: () => ({ body: [] }) },
+      { method: "DELETE", path: /^\/repos\/o\/r\/git\/refs\/heads\/(.+)$/, reply: (m) => { git(pair.origin, "update-ref", "-d", `refs/heads/${decodeURIComponent(m[1])}`); return { status: 204, body: null }; } },
+      ...ghRoutes(sha),
+    ];
+    const t = await setup(() => ({ spec: [] }), routes, (p) => {
+      pair = p;
+      const scratch = join(p.root, "stale-spec");
+      git(p.root, "clone", "-q", p.origin, scratch);
+      git(scratch, "push", "-q", "origin", "HEAD:refs/heads/spec-7");
+    });
+    const c = at(t.claim, { stage: "spec", track: "spec", specMode: "write" });
+    await writeClaim(t.paths, c);
+    await step(t.deps, c);
+    expect(t.adapter.heads).toEqual(["spec-7"]);
+    expect(originHas(pair, "spec-7")).toBe(false);
+  }, 60_000);
+});
+
 describe("driver: rate limits (spec 006 AC-26)", () => {
   it("postpones a question check whose primary and fallback runs both hit a 429, with a usage record for each", async () => {
     const { deps, claim, paths } = await setup(() => ({}));

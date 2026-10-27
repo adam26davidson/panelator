@@ -89,6 +89,12 @@ export class GitHubClient {
     await this.octokit.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", { ...this.base, pull_number: n, state: "closed" });
   }
 
+  /** The numbers of the open pull requests whose head is `branch` in this repository (final review T2). */
+  async openPullRequestsFrom(branch: string): Promise<number[]> {
+    const { data } = await this.octokit.request("GET /repos/{owner}/{repo}/pulls", { ...this.base, head: `${this.owner}:${branch}`, state: "open", per_page: 100 });
+    return (data as { number: number }[]).map((p) => p.number);
+  }
+
   /** A branch that is already gone (404) or not a ref (422) is not an error. */
   async deleteBranch(branch: string): Promise<void> {
     try {

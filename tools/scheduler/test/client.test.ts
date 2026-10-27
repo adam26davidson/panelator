@@ -185,6 +185,14 @@ describe("spec 006 calls", () => {
     expect(gh.calls.find((x) => x.url.endsWith("/pulls/9"))).toMatchObject({ method: "PATCH", body: { state: "closed" } });
     expect(gh.calls.find((x) => x.url.endsWith("/issues/4"))).toMatchObject({ method: "PATCH", body: { body: "new body" } });
   });
+  it("lists the open PRs whose head is a branch of this repository (final review T2)", async () => {
+    const { c, gh } = client([
+      { method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: () => ({ body: [{ number: 9 }, { number: 12 }] }) },
+    ]);
+    expect(await c.openPullRequestsFrom("issue-7")).toEqual([9, 12]);
+    const url = new URL(`https://x${gh.calls[0].url}`);
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({ head: "o:issue-7", state: "open" });
+  });
   it("rerequestCheckRun is true when accepted and false on a 4xx", async () => {
     const { c, gh } = client([
       { method: "POST", path: /^\/repos\/o\/r\/check-runs\/1\/rerequest$/, reply: () => ({ status: 201, body: {} }) },
