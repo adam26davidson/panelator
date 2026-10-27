@@ -51,6 +51,9 @@ describe("the charter and the maintainer's recorded decisions are protected (AC-
     for (const p of PROTECTED.slice(1)) expect(criteria).toContain(`\`${p}\``);
     for (const re of [/author's call/, /section 11/, /section 12/, /Children/, /maintainer answer, question #/, /verified/]) expect(criteria).toMatch(re);
   });
+  it("holds automation changes to the gates, bounds and label rules of specs 001 and 006, except as a merged spec states", () => {
+    expect(criteria).toMatch(/do not weaken a gate, a bound, or a label rule of specs 001 and 006,\s+except as a merged spec states\./);
+  });
   it("makes removing the sensitive entries or weakening these criteria a finding", () => {
     expect(criteria).toMatch(/^\d+\. .*`agents\/sensitive-paths\.txt`.*finding/m);
   });

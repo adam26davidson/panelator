@@ -1,4 +1,4 @@
-import { dirname } from "node:path";
+import { posix } from "node:path";
 import { stripChildren } from "../spec/parse.ts";
 import { ROOT, TOP_DESIGNS } from "./design-tree.ts";
 import type { ScopeResult } from "./scope.ts";
@@ -20,7 +20,8 @@ export function specScopeGate(
   parentAfter: string,
   recordsProductAnswer = false,
 ): ScopeResult {
-  const specDir = dirname(specPath) + "/";
+  const specDir = posix.dirname(specPath) + "/";
+  parentPath = parentPath === null ? null : posix.normalize(parentPath);
   const parentIsDesign = parentPath !== null && (TOP_DESIGNS.includes(parentPath) || parentPath.startsWith(DESIGNS));
   const violations: string[] = [];
   if (parentPath === null) violations.push(`${specPath}: no Parent line`);
@@ -28,13 +29,14 @@ export function specScopeGate(
 
   for (const f of diffFiles) {
     if (f === parentPath && !parentIsDesign) continue; // already reported above
+    // The charter and the top designs are decided before any prefix allow, so an unvalidated spec path cannot widen them.
     if (f === ROOT) violations.push(`${f}: the charter is never changed by a spec PR`);
-    else if (f.startsWith(specDir) || f.startsWith(DESIGNS) || f.startsWith(DECISIONS)) continue;
     else if (TOP_DESIGNS.includes(f)) {
       if (recordsProductAnswer) continue;
       if (f === parentPath && stripChildren(parentBefore) === stripChildren(parentAfter)) continue;
       violations.push(f === parentPath ? `${f}: changes outside its Children section` : `${f}: outside spec PR scope`);
-    } else violations.push(`${f}: outside spec PR scope`);
+    } else if (f.startsWith(specDir) || f.startsWith(DESIGNS) || f.startsWith(DECISIONS)) continue;
+    else violations.push(`${f}: outside spec PR scope`);
   }
   return violations.length ? { ok: false, violations } : { ok: true };
 }

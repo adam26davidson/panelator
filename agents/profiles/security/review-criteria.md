@@ -5,7 +5,8 @@
    the App bot identity or the maintainer, never on free text.
 3. New network listeners, outbound calls or shell execution are listed in the spec's Interfaces section.
 4. Input from GitHub (issue bodies, comments, PR titles) is treated as data, never executed or interpolated into commands.
-5. Changes under `tools/scheduler/`, `agents/` or `.github/` do not weaken a gate, a bound, or a label rule of spec 001.
+5. Changes under `tools/scheduler/`, `agents/` or `.github/` do not weaken a gate, a bound, or a label rule of specs 001 and 006,
+   except as a merged spec states.
 6. Any change to `docs/charter.md` is a finding. The scenario is the edit itself, and the fix is to revert it;
    only the maintainer changes the charter.
 7. The maintainer's recorded decisions are protected: in `docs/delivery-system-design.md`, every statement not

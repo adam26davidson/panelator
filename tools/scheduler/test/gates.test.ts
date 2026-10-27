@@ -170,6 +170,13 @@ describe("specScopeGate (AC-21, AC-22)", () => {
     expect(specScopeGate([SPEC], SPEC, "docs/top.md", before, before)).toMatchObject({ ok: false, violations: ["docs/top.md: not a design"] });
     expect(specScopeGate([SPEC], SPEC, null, before, before)).toMatchObject({ ok: false });
   });
+  it("normalises the parent path, so a path escaping docs/designs/ is not a design (review minor B)", () => {
+    expect(specScopeGate([SPEC], SPEC, "docs/designs/../charter.md", before, before)).toEqual({ ok: false, violations: ["docs/charter.md: not a design"] });
+  });
+  it("holds the charter and top designs even when the spec path's directory would contain them (review minor A)", () => {
+    expect(specScopeGate(["docs/charter.md", TOP], "docs/spec.md", TOP, before, aboveChildren).ok).toBe(false);
+    expect(specScopeGate(["docs/charter.md", TOP], "docs/spec.md", TOP, before, aboveChildren)).toMatchObject({ violations: [expect.stringMatching(/^docs\/charter\.md: /), `${TOP}: changes outside its Children section`] });
+  });
   it("fails the charter and files outside the allowed set", () => {
     expect(specScopeGate(["docs/charter.md"], SPEC, TOP, before, before)).toMatchObject({ ok: false, violations: [expect.stringMatching(/^docs\/charter\.md: /)] });
     expect(specScopeGate(["tools/scheduler/src/x.ts"], SPEC, TOP, before, before)).toMatchObject({ ok: false, violations: [expect.stringMatching(/^tools\/scheduler\/src\/x\.ts: /)] });
