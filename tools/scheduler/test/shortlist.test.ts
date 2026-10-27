@@ -46,12 +46,25 @@ describe("selectEligible", () => {
     const blocked = issue(5, { labels: ["validated", "blocked"] });
     const needs = issue(6, { labels: ["validated", "needs-human"] });
     const r = selectEligible([ok, noLabel, badSpec, claimed, blocked, needs], { ...ctx, claimed: new Set([4]) });
-    expect(r.eligible.map((i) => i.number)).toEqual([1]);
-    expect(r.decisions.find((d) => d.issue === 3)).toMatchObject({ gate: "spec-present", result: { ok: false, label: "needs-spec" } });
+    expect(r.eligible.map((i) => i.number)).toEqual([1, 3]);
+    expect(r.decisions.find((d) => d.issue === 3)).toMatchObject({ gate: "spec-present", result: { ok: false, action: "ignore" } });
     expect(r.decisions.find((d) => d.issue === 2)).toMatchObject({ gate: "validated", result: { action: "ignore" } });
     expect(r.decisions.filter((d) => d.issue === 4)).toEqual([]);
     expect(r.decisions.filter((d) => d.issue === 5)).toEqual([]);
     expect(r.decisions.filter((d) => d.issue === 6)).toEqual([]);
+  });
+  it("makes an issue whose spec is missing eligible, with the reason in specProblems (spec 006 AC-19)", () => {
+    const r = selectEligible([issue(1), issue(3, { body: "Spec: specs/999-none/spec.md" })], ctx);
+    expect(r.eligible.map((i) => i.number)).toEqual([1, 3]);
+    expect(r.specProblems.get(3)).toMatch(/not found on main/);
+    expect(r.specProblems.has(1)).toBe(false);
+    expect(r.decisions.filter((d) => d.issue === 3)).toEqual([{ issue: 3, gate: "spec-present", result: { ok: false, action: "ignore", reason: expect.stringMatching(/not found on main/) } }]);
+  });
+  it("does not make an issue with a paused record eligible, even without needs-decision (AC-13)", () => {
+    // The loop passes paused-record issues in `claimed`.
+    const r = selectEligible([issue(1), issue(2)], { ...ctx, claimed: new Set([2]) });
+    expect(r.eligible.map((i) => i.number)).toEqual([1]);
+    expect(r.decisions.filter((d) => d.issue === 2)).toEqual([]);
   });
   it("no longer skips an issue labelled security-review: no label blocks a security finding (spec 006 AC-9)", () => {
     const sec = issue(7, { labels: ["validated", "class:product", "security-review"] });

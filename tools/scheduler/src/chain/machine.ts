@@ -23,7 +23,8 @@ const ABANDON_COMMENT_HISTORY_MAX = 50_000;
 /** AC-14: a spec question of kind `other` is answered by the scheduler as if the check had said decide_yourself. */
 const KIND_OTHER_REASONING = "kind other is not a question for the maintainer";
 /** The ended stages (AC-27): nothing runs and liveness does not apply. */
-const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused"];
+/** Stages a chain does not leave by itself; `liveness_expired` is invalid in them. */
+export const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused"];
 
 export type LedgerCounts = Pick<ChainState, "rescues" | "specRescues" | "replans" | "specRevisions" | "specAnswers" | "decideReturns" | "history">;
 

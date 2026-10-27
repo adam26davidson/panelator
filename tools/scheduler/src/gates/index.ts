@@ -1,7 +1,7 @@
 export * from "./types.ts";
 export { authorityGate, latestLabelActor } from "./authority.ts";
 export { validatedGate, VALIDATED_LABEL } from "./validated.ts";
-export { specPresentGate, NEEDS_SPEC } from "./spec-present.ts";
+export { specPresentGate } from "./spec-present.ts";
 export { uiDesignGate, NEEDS_DESIGN_STAGE } from "./ui-design.ts";
 export { readyGate } from "./ready.ts";
 export { scopeGate, type ScopeResult } from "./scope.ts";

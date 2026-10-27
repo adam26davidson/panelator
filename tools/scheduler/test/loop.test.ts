@@ -11,7 +11,14 @@ import { loadStageDefinitions } from "../src/stages/definition.ts";
 import { listClaims, writeClaim } from "../src/state/claims.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import { writeToken } from "../src/state/token.ts";
-import { initialChainState } from "../src/chain/machine.ts";
+import { initialChainState, ledgerOf } from "../src/chain/machine.ts";
+import { step } from "../src/chain/driver.ts";
+import { questionMarker } from "../src/chain/question.ts";
+import { writeLedger } from "../src/state/ledger.ts";
+import { listPaused, writePaused, type PausedRecord } from "../src/state/paused.ts";
+import { appendQuestionLog } from "../src/state/questions.ts";
+import type { Claim } from "../src/state/claims.ts";
+import type { Question } from "../src/types.ts";
 import type { Notification } from "../src/notify/types.ts";
 import { mockGitHub, pageLink, type Route } from "./helpers/mock-github.ts";
 import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
@@ -20,20 +27,23 @@ const spec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-b
 const BOT = { login: "panelator-pipeline[bot]", type: "Bot" };
 const issue = (n: number, labels = ["validated", "class:product"]) => ({ number: n, title: `i${n}`, body: "Spec: specs/010-thing/spec.md", user: BOT, labels: labels.map((name) => ({ name })), created_at: `2026-10-0${n}T00:00:00Z`, updated_at: "2026-10-12T00:00:00Z" });
 
-function routes(issues: unknown[], labelsNow: Record<number, string[]> = {}): Route[] {
+function routes(issues: unknown[], labelsNow: Record<number, string[]> = {}, comments: Record<number, unknown[]> = {}): Route[] {
+  let commentId = 900;
   return [
+    { method: "GET", path: /^\/repos\/o\/r\/issues\/(\d+)\/comments$/, reply: (m, _b, url) => ({ body: comments[Number(m[1])] ?? [], headers: pageLink(url, 1, 1) }) },
     { method: "GET", path: /^\/repos\/o\/r\/issues$/, reply: (_m, _b, url) => ({ body: issues, headers: pageLink(url, 1, 1) }) },
     { method: "POST", path: /^\/graphql$/, reply: () => ({ body: { data: { repository: { issues: { totalCount: issues.length } } } } }) },
     { method: "GET", path: /^\/repos\/o\/r\/issues\/\d+\/timeline$/, reply: () => ({ body: [] }) },
     { method: "GET", path: /^\/repos\/o\/r\/issues\/(\d+)$/, reply: (m) => ({ body: { ...issue(Number(m[1])), labels: (labelsNow[Number(m[1])] ?? ["validated", "in-progress"]).map((name) => ({ name })) } }) },
     { method: "POST", path: /^\/repos\/o\/r\/issues\/\d+\/labels$/, reply: () => ({ body: [] }) },
     { method: "DELETE", path: /^\/repos\/o\/r\/issues\/\d+\/labels\/[^/]+$/, reply: () => ({ body: {} }) },
-    { method: "POST", path: /^\/repos\/o\/r\/issues\/\d+\/comments$/, reply: () => ({ status: 201, body: {} }) },
+    { method: "POST", path: /^\/repos\/o\/r\/issues\/\d+\/comments$/, reply: () => ({ status: 201, body: { id: ++commentId, created_at: "2026-10-12T12:00:00Z" } }) },
   ];
 }
 
-async function setup(rs: Route[], slots = 1, drive?: NonNullable<ConstructorParameters<typeof Scheduler>[1]>["driveChain"]) {
-  const pair = repoPair(withTopDesign({ "a.txt": "a\n", "specs/010-thing/spec.md": spec }, "specs/010-thing/spec.md"));
+type Drive = NonNullable<ConstructorParameters<typeof Scheduler>[1]>["driveChain"];
+async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
+  const pair = repoPair(withTopDesign({ "a.txt": "a\n", "specs/010-thing/spec.md": specFile }, "specs/010-thing/spec.md"));
   const paths = statePaths(join(pair.root, "state"));
   await ensureStateDirs(paths);
   const gh = mockGitHub(rs);
@@ -75,18 +85,47 @@ describe("Scheduler.tick", () => {
     expect((await s.tick()).claimed).toEqual([1, 2]);
   }, 30_000);
 
-  it("labels needs-spec and notifies for an issue whose spec is missing (AC-7)", async () => {
+  it("claims an issue whose spec is missing, to start at the spec stage, with no label but in-progress (spec 006 AC-19)", async () => {
     const bad = { ...issue(4), body: "Spec: specs/999-none/spec.md" };
-    const { s, gh, notifications } = await setup(routes([bad]));
+    const { s, gh, paths, notifications } = await setup(routes([bad]));
+    const t = await s.tick();
+    expect(t.claimed).toEqual([4]);
+    const [c] = await listClaims(paths);
+    expect(c.state.specProblem).toMatch(/not found on main/);
+    expect(gh.calls.filter((c) => c.method === "POST" && c.url.endsWith("/labels")).map((c) => c.body)).toEqual([{ labels: ["in-progress"] }]);
+    expect(gh.calls.find((c) => c.method === "POST" && c.url.endsWith("/comments"))).toBeUndefined();
+    expect(notifications).toEqual([]);
+  }, 30_000);
+
+  it("seeds a new claim from the issue's escalation ledger (spec 006 AC-7)", async () => {
+    const { s, paths } = await setup(routes([issue(7)]));
+    await writeLedger(paths, 7, ledgerOf({ ...initialChainState(7), rescues: 1, history: ["plan failed"] }));
+    expect((await s.tick()).claimed).toEqual([7]);
+    const [c] = await listClaims(paths);
+    expect(c.state.rescues).toBe(1);
+    expect(c.state.history).toEqual(["plan failed"]);
+  }, 30_000);
+
+  it("labels a UI issue without design artifacts needs-design-stage once, with its comment and one notification (spec 006 AC-20)", async () => {
+    const ui = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-webui.md"), "utf8");
+    const rs = routes([issue(4)]);
+    const { s, gh, notifications, paths } = await setup(rs, 1, undefined, ui);
+    const t = await s.tick();
+    expect(t.claimed).toEqual([]);
+    expect(await listClaims(paths)).toEqual([]);
+    expect(gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues/4/labels").map((c) => c.body)).toEqual([{ labels: ["needs-design-stage"] }]);
+    expect(gh.calls.filter((c) => c.url === "/repos/o/r/issues/4/comments").map((c) => c.body)).toEqual([{ body: expect.stringContaining("spec E will provide the design stage") }]);
+    expect(notifications).toEqual([expect.objectContaining({ issue: 4, label: "needs-design-stage" })]);
+    rs[1] = { method: "GET", path: /^\/repos\/o\/r\/issues$/, reply: (_m, _b, url) => ({ body: [issue(4, ["validated", "class:product", "needs-design-stage"])], headers: pageLink(url, 1, 1) }) };
+    gh.calls.length = 0;
     await s.tick();
-    expect(gh.calls.find((c) => c.method === "POST" && c.url === "/repos/o/r/issues/4/labels")?.body).toEqual({ labels: ["needs-spec"] });
-    expect(gh.calls.find((c) => c.url === "/repos/o/r/issues/4/comments")?.body).toMatchObject({ body: expect.stringContaining("not found on main") });
-    expect(notifications).toEqual([expect.objectContaining({ issue: 4, label: "needs-spec" })]);
+    expect(gh.calls.filter((c) => c.method === "POST")).toEqual([expect.objectContaining({ url: "/graphql" })]);
+    expect(notifications).toHaveLength(1);
   }, 30_000);
 
   it("does not claim when the issue list is incomplete (review focus 1)", async () => {
     const rs = routes([issue(1)]);
-    rs[1] = { method: "POST", path: /^\/graphql$/, reply: () => ({ body: { data: { repository: { issues: { totalCount: 3 } } } } }) };
+    rs[2] = { method: "POST", path: /^\/graphql$/, reply: () => ({ body: { data: { repository: { issues: { totalCount: 3 } } } } }) };
     const { s } = await setup(rs);
     const t = await s.tick();
     expect(t.claimed).toEqual([]);
@@ -189,6 +228,222 @@ describe("Scheduler.tick", () => {
     await writeToken(paths, { token: "ghs_x", expires_at: new Date(deps.now().getTime() + 2 * 60_000).toISOString() });
     await s.tick();
     expect(refreshes).toBe(1);
+  }, 30_000);
+});
+
+const Q: Question = { kind: "technical", question: "Which store?", options: [{ label: "a", cost: "cheap" }, { label: "b", cost: "dear" }], recommendation: "a" };
+const ME = "adam26davidson";
+const BOT_LOGIN = "panelator-pipeline[bot]";
+const comment = (id: number, login: string, at: string, body: string) => ({ id, user: { login }, created_at: at, body });
+const pausedState = () => ({ ...initialChainState(7), stage: "paused" as const, askingStage: "plan" as const, question: Q, rescues: 1 });
+const record = (over: Partial<PausedRecord> = {}): PausedRecord => ({
+  issue: 7, phase: "paused", state: pausedState(), question: Q, asking_stage: "plan", nonce: "nonce-7",
+  question_comment_id: 500, asked_at: "2026-10-12T08:00:00Z", reminded: false, answer: null, reply_comment_id: null, ...over,
+});
+const waiting = (labels = ["validated", "class:product", "needs-decision"]) => issue(7, labels);
+/** The real first step of the chain, so a resume's `answered` event is applied as the driver applies it. */
+const firstStep: Drive = async (d, claim) => (await step(d, claim)).claim;
+const settle = () => new Promise((r) => setTimeout(r, 100));
+const logLines = (paths: { questionsLog: string }) => { try { return readFileSync(paths.questionsLog, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
+const labelCalls = (gh: { calls: { method: string; url: string; body: unknown }[] }, n: number) =>
+  gh.calls.filter((c) => c.url.startsWith(`/repos/o/r/issues/${n}/labels`)).map((c) => (c.method === "POST" ? `+${(c.body as { labels: string[] }).labels.join(",")}` : `-${decodeURIComponent(c.url.split("/").pop()!)}`));
+
+describe("Scheduler.tick: paused issues (spec 006)", () => {
+  it("resumes a paused issue on the maintainer's reply, ahead of a priority issue (AC-15, AC-18)", async () => {
+    const rs = routes([waiting(), issue(8, ["validated", "class:product", "priority"])], {}, { 7: [comment(500, BOT_LOGIN, "2026-10-12T08:00:00Z", "q"), comment(501, ME, "2026-10-12T09:00:00Z", "Use the file store.")] });
+    const { s, gh, paths, deps } = await setup(rs, 1, firstStep);
+    await writePaused(paths, record());
+    const t = await s.tick();
+    await settle();
+    expect(t.claimed).toEqual([7]);
+    expect((await listClaims(paths)).map((c) => c.issue)).toEqual([7]);
+    expect(labelCalls(gh, 7)).toEqual(["+in-progress", "-needs-decision"]);
+    expect(labelCalls(gh, 8)).toEqual([]);
+    const [c] = await listClaims(paths);
+    expect(c.pendingEvent).toBeUndefined();
+    // A technical answer asked by plan is recorded by the spec stage in record mode (AC-18).
+    expect(c.state).toMatchObject({ stage: "spec", specMode: "record", answer: "Use the file store.", answerQuestionId: 500, rescues: 1 });
+    expect(await listPaused(paths)).toEqual([]);
+    const answered = logLines(paths).filter((e) => e.event === "answered");
+    expect(answered).toEqual([{ issue: 7, at: deps.now().toISOString(), event: "answered", asking_stage: "plan", question_comment_id: 500, reply_comment_id: 501, answer: "Use the file store.", question: Q }]);
+  }, 30_000);
+
+  it("does not resume on a maintainer comment older than the question (review focus 1)", async () => {
+    const rs = routes([waiting()], {}, { 7: [comment(499, ME, "2026-10-12T09:00:00Z", "earlier"), comment(500, BOT_LOGIN, "2026-10-12T08:00:00Z", "q")] });
+    const { s, paths, gh } = await setup(rs, 1, firstStep);
+    await writePaused(paths, record());
+    const t = await s.tick();
+    expect(t.claimed).toEqual([]);
+    expect(await listClaims(paths)).toEqual([]);
+    expect(await listPaused(paths)).toHaveLength(1);
+    expect(labelCalls(gh, 7)).toEqual([]);
+  }, 30_000);
+
+  it("does not claim an issue with a paused record that lacks needs-decision (AC-13)", async () => {
+    const { s, paths } = await setup(routes([waiting(["validated", "class:product"])]));
+    await writePaused(paths, record());
+    expect((await s.tick()).claimed).toEqual([]);
+    expect(await listClaims(paths)).toEqual([]);
+  }, 30_000);
+
+  it("completes a crash mid-pause by adopting the question comment that carries the record's nonce (AC-13, review focus 8)", async () => {
+    const rs = routes([waiting(["validated", "class:product", "in-progress"])], {}, { 7: [comment(640, BOT_LOGIN, "2026-10-12T11:00:00Z", `### Question\n\n${questionMarker("nonce-7")}`)] });
+    const { s, paths, gh, notifications } = await setup(rs);
+    await writePaused(paths, record({ phase: "pausing", question_comment_id: null, asked_at: null }));
+    await s.tick();
+    expect(gh.calls.filter((c) => c.method === "POST" && c.url.endsWith("/comments"))).toEqual([]);
+    expect(await listPaused(paths)).toEqual([expect.objectContaining({ phase: "paused", question_comment_id: 640, asked_at: "2026-10-12T11:00:00Z" })]);
+    expect(labelCalls(gh, 7)).toEqual(["+needs-decision", "-in-progress"]);
+    expect(notifications.map((n) => n.gate)).toEqual(["question"]);
+    expect(logLines(paths).map((e) => [e.event, e.question_comment_id])).toEqual([["sent", 640]]);
+  }, 30_000);
+
+  it("posts a new question when only an earlier question with another nonce is on the issue (AC-13)", async () => {
+    const rs = routes([waiting()], {}, { 7: [comment(300, BOT_LOGIN, "2026-10-11T11:00:00Z", `### Question\n\n${questionMarker("old-nonce")}`)] });
+    const { s, paths, gh } = await setup(rs);
+    await writePaused(paths, record({ phase: "pausing", question_comment_id: null, asked_at: null }));
+    await s.tick();
+    const posted = gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues/7/comments");
+    expect(posted).toHaveLength(1);
+    expect((posted[0].body as { body: string }).body.endsWith(questionMarker("nonce-7"))).toBe(true);
+    const [r] = await listPaused(paths);
+    expect(r).toMatchObject({ phase: "paused", question_comment_id: 901 });
+  }, 30_000);
+
+  it("removes the claim a crash mid-pause left on disk, without resuming it (review focus 8)", async () => {
+    const { s, paths, pair, started, deps } = await setup(routes([waiting()]));
+    await writePaused(paths, record({ phase: "pausing" }));
+    await writeClaim(paths, { issue: 7, slot: 0, state: pausedState(), worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: "2026-10-01T00:00:00Z", run_id: null });
+    const t = await s.tick();
+    await settle();
+    expect(started).toEqual([]);
+    expect(t.released).toEqual([]);
+    expect(await listClaims(paths)).toEqual([]);
+    expect(await listPaused(paths)).toEqual([expect.objectContaining({ phase: "paused" })]);
+  }, 30_000);
+
+  it("removes a claim left on disk next to a record already paused", async () => {
+    const { s, paths, pair, started, deps } = await setup(routes([waiting()]));
+    await writePaused(paths, record());
+    await writeClaim(paths, { issue: 7, slot: 0, state: pausedState(), worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    await s.tick();
+    await settle();
+    expect(started).toEqual([]);
+    expect(await listClaims(paths)).toEqual([]);
+    expect(await listPaused(paths)).toHaveLength(1);
+  }, 30_000);
+
+  it("finishes a crash mid-resume with no second claim write and no second answered line (AC-15, review focus 8)", async () => {
+    const seen: Claim[] = [];
+    const drive: Drive = async (d, claim) => { seen.push(claim); return firstStep(d, claim, () => false); };
+    const { s, paths, pair, gh } = await setup(routes([waiting(["validated", "class:product", "needs-decision", "in-progress"])]), 1, drive);
+    await writePaused(paths, record({ phase: "resuming", answer: "Use the file store.", reply_comment_id: 501 }));
+    const wt = join(pair.worktrees, "issue-7");
+    git(pair.repo, "worktree", "add", "-q", "-B", "issue-7", wt, "origin/main");
+    await writeClaim(paths, { issue: 7, slot: 0, state: pausedState(), worktree: wt, started_at: "2026-10-01T00:00:00Z", last_activity_at: "2026-10-01T00:00:00Z", run_id: null, pendingEvent: { type: "answered", answer: "Use the file store.", questionId: 500 } });
+    await appendQuestionLog(paths, { issue: 7, at: "2026-10-12T11:00:00Z", event: "answered", asking_stage: "plan", question_comment_id: 500, reply_comment_id: 501, answer: "Use the file store.", question: Q });
+    const t = await s.tick();
+    await settle();
+    expect(t.claimed).toEqual([7]);
+    expect(seen.map((c) => c.started_at)).toEqual(["2026-10-01T00:00:00Z"]);
+    expect(logLines(paths).filter((e) => e.event === "answered")).toHaveLength(1);
+    expect(labelCalls(gh, 7)).toEqual(["+in-progress", "-needs-decision"]);
+    expect(await listPaused(paths)).toEqual([]);
+    const [c] = await listClaims(paths);
+    expect(c.pendingEvent).toBeUndefined();
+    expect(c.state).toMatchObject({ stage: "spec", answer: "Use the file store." });
+  }, 30_000);
+
+  it("logs answered on a resume a crash left before its log line (AC-15)", async () => {
+    const { s, paths } = await setup(routes([waiting()]), 1, firstStep);
+    await writePaused(paths, record({ phase: "resuming", answer: "Use the file store.", reply_comment_id: 501 }));
+    await s.tick();
+    await settle();
+    expect(logLines(paths).filter((e) => e.event === "answered")).toEqual([expect.objectContaining({ question_comment_id: 500, reply_comment_id: 501, question: Q })]);
+    expect((await listClaims(paths))[0].state.stage).toBe("spec");
+  }, 30_000);
+
+  it("leaves a resume the record holds when no slot is free, and retries it next tick", async () => {
+    const rs = routes([waiting()], {}, { 7: [comment(501, ME, "2026-10-12T09:00:00Z", "Use the file store.")] });
+    let hold: () => void = () => {};
+    const drive: Drive = async (_d, claim) => { await new Promise<void>((r) => { hold = r; }); return claim; };
+    const { s, paths, pair, deps } = await setup(rs, 1, drive);
+    await writeClaim(paths, { issue: 3, slot: 0, state: { ...initialChainState(3), stage: "verify" }, worktree: join(pair.worktrees, "issue-3"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    await writePaused(paths, record());
+    await s.tick();
+    expect(await listPaused(paths)).toEqual([expect.objectContaining({ phase: "paused" })]);
+    expect((await listClaims(paths)).map((c) => c.issue)).toEqual([3]);
+    await (await import("node:fs/promises")).unlink(join(paths.claims, "3.json"));
+    hold();
+    await settle();
+    expect((await s.tick()).claimed).toEqual([7]);
+    hold();
+  }, 30_000);
+
+  it("does not expire or delete a claim carrying the answered event after the record is gone (review focus 8)", async () => {
+    const { s, paths, pair, started } = await setup(routes([], { 7: ["validated", "class:product"] }), 1, firstStep);
+    const wt = join(pair.worktrees, "issue-7");
+    git(pair.repo, "worktree", "add", "-q", "-B", "issue-7", wt, "origin/main");
+    await writeClaim(paths, { issue: 7, slot: 0, state: pausedState(), worktree: wt, started_at: "2026-10-01T00:00:00Z", last_activity_at: "2026-10-01T00:00:00Z", run_id: null, pendingEvent: { type: "answered", answer: "Use the file store.", questionId: 500 } });
+    const t = await s.tick();
+    await settle();
+    expect(t.released).toEqual([]);
+    const [c] = await listClaims(paths);
+    expect(c.pendingEvent).toBeUndefined();
+    expect(c.state).toMatchObject({ stage: "spec", answer: "Use the file store." });
+    expect(started).toEqual([]);
+  }, 30_000);
+
+  it("does not expire or delete a claim carrying pending actions, by liveness or by MAX_CHAIN_FAILURES", async () => {
+    let calls = 0;
+    const { s, paths, pair } = await setup(routes([], { 7: ["validated", "class:product"] }), 1, async () => { calls++; throw new Error("boom"); });
+    await writeClaim(paths, {
+      issue: 7, slot: 0, state: { ...initialChainState(7), stage: "abandoned" }, worktree: join(pair.worktrees, "issue-7"), started_at: "2026-10-01T00:00:00Z", last_activity_at: "2026-10-01T00:00:00Z", run_id: null,
+      pendingActions: [{ type: "comment", text: "abandoned" }],
+    });
+    for (let i = 0; i < MAX_CHAIN_FAILURES + 1; i++) {
+      const t = await s.tick();
+      expect(t.released).toEqual([]);
+      await settle();
+    }
+    expect(calls).toBe(MAX_CHAIN_FAILURES + 1);
+    expect((await listClaims(paths)).map((c) => c.issue)).toEqual([7]);
+  }, 30_000);
+
+  it("never expires a claim in stage paused or abandoned, whose liveness_expired is invalid", async () => {
+    const { s, paths, pair, gh } = await setup(routes([]), 2, async (_d, c) => c);
+    for (const [n, stage] of [[5, "paused"], [6, "abandoned"]] as const) {
+      await writeClaim(paths, { issue: n, slot: 0, state: { ...initialChainState(n), stage }, worktree: join(pair.worktrees, `issue-${n}`), started_at: "2026-10-01T00:00:00Z", last_activity_at: "2026-10-01T00:00:00Z", run_id: null });
+    }
+    const t = await s.tick();
+    expect(t.errors).toEqual([]);
+    expect(t.released).toEqual([]);
+    expect(gh.calls.filter((c) => c.method === "POST" && c.url.endsWith("/comments"))).toEqual([]);
+  }, 30_000);
+
+  it("sends one reminder after 24 hours: the reminded mark first, one comment, one notification (AC-16, C15)", async () => {
+    const { s, paths, gh, notifications } = await setup(routes([waiting()]));
+    await writePaused(paths, record({ asked_at: "2026-10-11T11:00:00Z" }));
+    await s.tick();
+    const posted = gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues/7/comments");
+    expect(posted.map((c) => (c.body as { body: string }).body)).toEqual(["@adam26davidson Still waiting on your answer: Which store?"]);
+    expect(notifications).toEqual([{ issue: 7, gate: "question-reminder", label: "needs-decision", text: "@adam26davidson Still waiting on your answer: Which store?" }]);
+    expect((await listPaused(paths))[0].reminded).toBe(true);
+    expect(logLines(paths).map((e) => e.event)).toEqual(["reminded"]);
+    await s.tick();
+    expect(gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues/7/comments")).toHaveLength(1);
+    expect(notifications).toHaveLength(1);
+  }, 30_000);
+
+  it("drops the record of a paused issue that is no longer open, claiming nothing (AC-15, review focus 5)", async () => {
+    const { s, paths } = await setup(routes([]));
+    await writePaused(paths, record({ phase: "resuming", answer: "x", reply_comment_id: 501 }));
+    const t = await s.tick();
+    expect(t.claimed).toEqual([]);
+    expect(await listPaused(paths)).toEqual([]);
+    expect(await listClaims(paths)).toEqual([]);
+    expect(readFileSync(paths.serviceLog, "utf8")).toContain('"kind":"paused-dropped"');
+    expect(logLines(paths)).toEqual([]);
   }, 30_000);
 });
 

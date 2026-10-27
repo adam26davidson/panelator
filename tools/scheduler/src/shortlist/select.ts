@@ -26,9 +26,17 @@ export interface Decision {
 const SKIP_PREFIX = "needs-";
 const BLOCKED = "blocked";
 
-export function selectEligible(issues: IssueData[], ctx: SelectContext): { eligible: IssueData[]; decisions: Decision[] } {
+export interface Selection {
+  eligible: IssueData[];
+  decisions: Decision[];
+  /** AC-19: the spec-present failure of each eligible issue whose spec is missing or incomplete; its chain starts at the spec stage. */
+  specProblems: Map<number, string>;
+}
+
+export function selectEligible(issues: IssueData[], ctx: SelectContext): Selection {
   const eligible: IssueData[] = [];
   const decisions: Decision[] = [];
+  const specProblems = new Map<number, string>();
   for (const issue of issues) {
     if (ctx.claimed.has(issue.number)) continue;
     if (issue.labels.includes(CLAIM_LABEL) || issue.labels.includes(BLOCKED) || issue.labels.includes(ABANDONED_LABEL) || issue.labels.some((l) => l.startsWith(SKIP_PREFIX))) continue;
@@ -44,6 +52,10 @@ export function selectEligible(issues: IssueData[], ctx: SelectContext): { eligi
       const result = run();
       if (!result.ok) {
         decisions.push({ issue: issue.number, gate, result });
+        if (gate === "spec-present" && result.action === "ignore") {
+          specProblems.set(issue.number, result.reason);
+          eligible.push(issue);
+        }
         failed = true;
         break;
       }
@@ -53,7 +65,7 @@ export function selectEligible(issues: IssueData[], ctx: SelectContext): { eligi
       eligible.push(issue);
     }
   }
-  return { eligible, decisions };
+  return { eligible, decisions, specProblems };
 }
 
 function specText(issue: IssueData, ctx: SelectContext): string | null {

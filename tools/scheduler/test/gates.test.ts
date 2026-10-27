@@ -59,29 +59,29 @@ describe("specPresentGate (AC-7, AC-23)", () => {
   const top = "# Top\n\n## Children\n\n- `specs/010-thing/spec.md`\n";
   const read = (files: Record<string, string>) => (p: string) => files[p] ?? null;
   const withTop = read({ "docs/top.md": top });
-  it("labels needs-spec when the body has no link", () => {
+  it("fails without a label when the body has no link: the spec stage takes it (spec 006 AC-19)", () => {
     const r = specPresentGate(issue({ body: "hi" }), null, withTop);
-    expect(r).toMatchObject({ ok: false, action: "label", label: "needs-spec" });
+    expect(r).toEqual({ ok: false, action: "ignore", reason: expect.stringMatching(/no `Spec:/) });
   });
-  it("labels needs-spec naming the missing part when the file is absent on main", () => {
+  it("names the missing file when it is absent on main, with no label (AC-19)", () => {
     const r = specPresentGate(issue(), null, withTop);
-    expect(r).toMatchObject({ ok: false, label: "needs-spec", reason: expect.stringMatching(/not found on main/) });
+    expect(r).toEqual({ ok: false, action: "ignore", reason: expect.stringMatching(/not found on main/) });
   });
-  it("labels needs-spec naming open decisions", () => {
+  it("names open decisions, with no label (AC-19)", () => {
     const r = specPresentGate(issue(), fx("open-decisions.md"), withTop);
-    expect(r).toMatchObject({ ok: false, label: "needs-spec", reason: expect.stringMatching(/Open decisions/) });
+    expect(r).toMatchObject({ ok: false, action: "ignore", reason: expect.stringMatching(/Open decisions/) });
   });
   it("fails a spec without a Parent line", () => {
     const r = specPresentGate(issue(), fx("good-backend.md").replace(/^Parent:.*\n/m, ""), withTop);
-    expect(r).toMatchObject({ ok: false, label: "needs-spec", reason: expect.stringMatching(/Parent/) });
+    expect(r).toMatchObject({ ok: false, action: "ignore", reason: expect.stringMatching(/Parent/) });
   });
   it("fails a spec whose parent does not exist on main", () => {
     const r = specPresentGate(issue(), fx("good-backend.md"), read({}));
-    expect(r).toMatchObject({ ok: false, label: "needs-spec", reason: expect.stringMatching(/Parent docs\/top\.md/) });
+    expect(r).toMatchObject({ ok: false, action: "ignore", reason: expect.stringMatching(/Parent docs\/top\.md/) });
   });
   it("fails a spec whose parent's Children omit it", () => {
     const r = specPresentGate(issue(), fx("good-backend.md"), read({ "docs/top.md": "# Top\n\n## Children\n\n- `specs/011-other/spec.md`\n" }));
-    expect(r).toMatchObject({ ok: false, label: "needs-spec", reason: expect.stringMatching(/Parent docs\/top\.md.*Children/) });
+    expect(r).toMatchObject({ ok: false, action: "ignore", reason: expect.stringMatching(/Parent docs\/top\.md.*Children/) });
   });
   it("passes a complete spec whose parent lists it", () => {
     expect(specPresentGate(issue(), fx("good-backend.md"), withTop)).toEqual({ ok: true });

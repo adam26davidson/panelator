@@ -36,7 +36,7 @@ import type {
   AgentStageName, FixOutcome, Harness, ImplementOutcome, ImplementResult, IssueData, PlanOutcome, Profile, SpecResult, StageDefinition,
 } from "../types.ts";
 import { CLAIM_LABEL, NEEDS_DECISION_LABEL, POSTPONE_WAIT_S, branchOf, ledgerOf, transition } from "./machine.ts";
-import { formatQuestion, questionBody } from "./question.ts";
+import { formatQuestion, questionBody, questionMarker } from "./question.ts";
 import type { Action, ChainEvent, ChainState } from "./types.ts";
 
 const execFileP = promisify(execFile);
@@ -550,15 +550,31 @@ async function pauseIssue(deps: DriverDeps, claim: Claim, a: Extract<Action, { t
     question_comment_id: null, asked_at: null, reminded: false, answer: null, reply_comment_id: null,
   };
   await writePaused(deps.paths, rec);
-  const posted = await deps.gh.comment(claim.issue, formatQuestion(a.question, deps.cfg.maintainer, rec.nonce));
-  const asked: PausedRecord = { ...rec, question_comment_id: posted.id, asked_at: posted.created_at };
-  await writePaused(deps.paths, asked);
-  await deps.gh.addLabels(claim.issue, [NEEDS_DECISION_LABEL]);
-  await deps.gh.removeLabel(claim.issue, CLAIM_LABEL);
-  await deps.notifier.notify({ issue: claim.issue, gate: "question", label: NEEDS_DECISION_LABEL, text: `Issue #${claim.issue} has a question for the maintainer (${a.question.kind}): ${a.question.question}` });
-  await appendQuestionLog(deps.paths, { issue: claim.issue, at: deps.now().toISOString(), event: "sent", asking_stage: a.asking, question_comment_id: posted.id });
+  await completePause(deps, rec);
+}
+
+/**
+ * AC-13 from the question comment on, for a record in phase `pausing`: the driver's pause, and the service loop's
+ * completion of one a crash interrupted. With `adoptBy`, a comment by that login carrying the record's nonce is adopted
+ * instead of posting a second question; a question comment with another nonce never is.
+ */
+export async function completePause(deps: DriverDeps, rec: PausedRecord, adoptBy?: string): Promise<void> {
+  let asked = rec;
+  let questionId = rec.question_comment_id;
+  if (questionId === null) {
+    const marker = questionMarker(rec.nonce);
+    const ours = adoptBy === undefined ? undefined : (await deps.gh.listComments(rec.issue)).find((c) => c.author === adoptBy && c.body.includes(marker));
+    const posted = ours ? { id: ours.id, created_at: ours.at } : await deps.gh.comment(rec.issue, formatQuestion(rec.question, deps.cfg.maintainer, rec.nonce));
+    questionId = posted.id;
+    asked = { ...rec, question_comment_id: posted.id, asked_at: posted.created_at };
+    await writePaused(deps.paths, asked);
+  }
+  await deps.gh.addLabels(rec.issue, [NEEDS_DECISION_LABEL]);
+  await deps.gh.removeLabel(rec.issue, CLAIM_LABEL);
+  await deps.notifier.notify({ issue: rec.issue, gate: "question", label: NEEDS_DECISION_LABEL, text: `Issue #${rec.issue} has a question for the maintainer (${rec.question.kind}): ${rec.question.question}` });
+  await appendQuestionLog(deps.paths, { issue: rec.issue, at: deps.now().toISOString(), event: "sent", asking_stage: rec.asking_stage, question_comment_id: questionId });
   await writePaused(deps.paths, { ...asked, phase: "paused" });
-  await removeClaim(deps.paths, claim.issue);
+  await removeClaim(deps.paths, rec.issue);
 }
 
 /** AC-17: re-run, once, each pending required check that has a run; a refusal or a missing run is logged (the fix input names them). */
