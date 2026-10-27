@@ -1,7 +1,7 @@
 import { CLAIM_LABEL, SECURITY_REVIEW_LABEL } from "../chain/machine.ts";
 import type { Config } from "../config.ts";
 import {
-  authorityGate, automationChangeGate, specPresentGate, uiDesignGate, validatedGate, VALIDATED_LABEL, type GateResult,
+  authorityGate, specPresentGate, uiDesignGate, validatedGate, VALIDATED_LABEL, type GateResult,
 } from "../gates/index.ts";
 import { specPathFromIssueBody } from "../spec/link.ts";
 import { parseSpec } from "../spec/parse.ts";
@@ -12,6 +12,7 @@ export interface SelectContext {
   maintainer: string;
   labels: Config["labels"];
   claimed: Set<number>;
+  /** Reads any repo-relative file on main (specs and their parent designs); null when absent. */
   readSpec: (path: string) => string | null;
   listDesign: (specPath: string) => string[];
 }
@@ -24,20 +25,20 @@ export interface Decision {
 
 const SKIP_PREFIX = "needs-";
 const BLOCKED = "blocked";
+const ABANDONED = "abandoned";
 
 export function selectEligible(issues: IssueData[], ctx: SelectContext): { eligible: IssueData[]; decisions: Decision[] } {
   const eligible: IssueData[] = [];
   const decisions: Decision[] = [];
   for (const issue of issues) {
     if (ctx.claimed.has(issue.number)) continue;
-    if (issue.labels.includes(CLAIM_LABEL) || issue.labels.includes(BLOCKED) || issue.labels.includes(SECURITY_REVIEW_LABEL) || issue.labels.some((l) => l.startsWith(SKIP_PREFIX))) continue;
+    if (issue.labels.includes(CLAIM_LABEL) || issue.labels.includes(BLOCKED) || issue.labels.includes(ABANDONED) || issue.labels.includes(SECURITY_REVIEW_LABEL) || issue.labels.some((l) => l.startsWith(SKIP_PREFIX))) continue;
 
     const steps: [string, () => GateResult][] = [
       ["authority", () => authorityGate(issue, ctx.appBot, ctx.maintainer, VALIDATED_LABEL)],
       ["validated", () => validatedGate(issue, VALIDATED_LABEL)],
-      ["spec-present", () => specPresentGate(issue, specText(issue, ctx))],
+      ["spec-present", () => specPresentGate(issue, specText(issue, ctx), ctx.readSpec)],
       ["ui-design", () => uiDesignGate(parsedSpec(issue, ctx), ctx.listDesign(specPathFromIssueBody(issue.body) ?? ""))],
-      ["automation-change", () => automationChangeGate(issue, parsedSpec(issue, ctx), ctx.maintainer, VALIDATED_LABEL)],
     ];
     let failed = false;
     for (const [gate, run] of steps) {

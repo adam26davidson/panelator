@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  authorityGate, automationChangeGate, fixLoopGate, isSensitive, latestLabelActor, livenessGate,
-  readyGate, scopeGate, specPresentGate, uiDesignGate, validatedGate,
+  authorityGate, fixLoopGate, isSensitive, latestLabelActor, livenessGate,
+  readyGate, scopeGate, specPresentGate, specScopeGate, uiDesignGate, validatedGate,
 } from "../src/gates/index.ts";
 import { parseSpec } from "../src/spec/parse.ts";
 import type { IssueData, LabelEvent, PlanResult } from "../src/types.ts";
@@ -55,21 +55,36 @@ describe("validatedGate (AC-6)", () => {
   });
 });
 
-describe("specPresentGate (AC-7)", () => {
+describe("specPresentGate (AC-7, AC-23)", () => {
+  const top = "# Top\n\n## Children\n\n- `specs/010-thing/spec.md`\n";
+  const read = (files: Record<string, string>) => (p: string) => files[p] ?? null;
+  const withTop = read({ "docs/top.md": top });
   it("labels needs-spec when the body has no link", () => {
-    const r = specPresentGate(issue({ body: "hi" }), null);
+    const r = specPresentGate(issue({ body: "hi" }), null, withTop);
     expect(r).toMatchObject({ ok: false, action: "label", label: "needs-spec" });
   });
   it("labels needs-spec naming the missing part when the file is absent on main", () => {
-    const r = specPresentGate(issue(), null);
+    const r = specPresentGate(issue(), null, withTop);
     expect(r).toMatchObject({ ok: false, label: "needs-spec", reason: expect.stringMatching(/not found on main/) });
   });
   it("labels needs-spec naming open decisions", () => {
-    const r = specPresentGate(issue(), fx("open-decisions.md"));
+    const r = specPresentGate(issue(), fx("open-decisions.md"), withTop);
     expect(r).toMatchObject({ ok: false, label: "needs-spec", reason: expect.stringMatching(/Open decisions/) });
   });
-  it("passes a complete spec", () => {
-    expect(specPresentGate(issue(), fx("good-backend.md"))).toEqual({ ok: true });
+  it("fails a spec without a Parent line", () => {
+    const r = specPresentGate(issue(), fx("good-backend.md").replace(/^Parent:.*\n/m, ""), withTop);
+    expect(r).toMatchObject({ ok: false, label: "needs-spec", reason: expect.stringMatching(/Parent/) });
+  });
+  it("fails a spec whose parent does not exist on main", () => {
+    const r = specPresentGate(issue(), fx("good-backend.md"), read({}));
+    expect(r).toMatchObject({ ok: false, label: "needs-spec", reason: expect.stringMatching(/Parent docs\/top\.md/) });
+  });
+  it("fails a spec whose parent's Children omit it", () => {
+    const r = specPresentGate(issue(), fx("good-backend.md"), read({ "docs/top.md": "# Top\n\n## Children\n\n- `specs/011-other/spec.md`\n" }));
+    expect(r).toMatchObject({ ok: false, label: "needs-spec", reason: expect.stringMatching(/Parent docs\/top\.md.*Children/) });
+  });
+  it("passes a complete spec whose parent lists it", () => {
+    expect(specPresentGate(issue(), fx("good-backend.md"), withTop)).toEqual({ ok: true });
   });
 });
 
@@ -78,36 +93,14 @@ describe("uiDesignGate (AC-8)", () => {
   it("passes a non-UI domain with no design dir", () => {
     expect(uiDesignGate(parseSpec(fx("good-backend.md")), [])).toEqual({ ok: true });
   });
-  it("labels needs-design on an empty design dir", () => {
-    expect(uiDesignGate(web, [])).toMatchObject({ ok: false, label: "needs-design" });
+  it("labels needs-design-stage on an empty design dir, naming spec E (AC-20)", () => {
+    expect(uiDesignGate(web, [])).toMatchObject({ ok: false, action: "label", label: "needs-design-stage" });
+    expect(uiDesignGate(web, [])).toMatchObject({ reason: expect.stringMatching(/^spec E will provide the design stage: /) });
   });
   it("requires a story or token prototype and a PNG per screen", () => {
     expect(uiDesignGate(web, ["editor.stories.tsx", "editor-empty.png"])).toMatchObject({ ok: false, reason: expect.stringMatching(/editor-populated\.png/) });
     expect(uiDesignGate(web, ["editor-empty.png", "editor-populated.png"])).toMatchObject({ ok: false, reason: expect.stringMatching(/story or token prototype/) });
     expect(uiDesignGate(web, ["tokens.html", "editor-empty.png", "editor-populated.png"])).toEqual({ ok: true });
-  });
-});
-
-describe("automationChangeGate (AC-12)", () => {
-  const spec001 = parseSpec(readFileSync(join(import.meta.dirname, "..", "..", "..", "specs", "001-scheduler-core", "spec.md"), "utf8"));
-  it("ignores when validated was set by the bot", () => {
-    expect(automationChangeGate(issue(), spec001, ME, "validated")).toMatchObject({ ok: false, action: "ignore" });
-  });
-  it("passes when validated was set by the maintainer", () => {
-    expect(automationChangeGate(issue({ labelEvents: [ev("validated", ME, "labeled", "1")] }), spec001, ME, "validated")).toEqual({ ok: true });
-  });
-  it("passes a non-automation spec regardless", () => {
-    expect(automationChangeGate(issue(), parseSpec(fx("good-backend.md")), ME, "validated")).toEqual({ ok: true });
-  });
-  it("detects a spec listing a parent directory of the automation paths", () => {
-    const s = parseSpec(fx("good-backend.md").replace("- `schemas/thing.json`", "- `tools/`"));
-    expect(automationChangeGate(issue(), s, ME, "validated")).toMatchObject({ ok: false, action: "ignore" });
-    expect(automationChangeGate(issue({ labelEvents: [ev("validated", ME, "labeled", "1")] }), s, ME, "validated")).toEqual({ ok: true });
-  });
-  it("treats a spec listing .github/ workflows as an automation change", () => {
-    const s = parseSpec(fx("good-backend.md").replace("- `schemas/thing.json`", "- `.github/workflows/ci.yml`"));
-    expect(automationChangeGate(issue(), s, ME, "validated")).toMatchObject({ ok: false, action: "ignore" });
-    expect(automationChangeGate(issue({ labelEvents: [ev("validated", ME, "labeled", "1")] }), s, ME, "validated")).toEqual({ ok: true });
   });
 });
 
@@ -142,8 +135,50 @@ describe("scopeGate (AC-10) and isSensitive (AC-11)", () => {
     const p: PlanResult = { ...plan, tasks: [{ id: "T1", description: "d", files: ["tools/scheduler/src/"] }] };
     expect(scopeGate(["tools/scheduler/src/x.ts"], p, parseSpec(fx("good-backend.md").replace("- `schemas/thing.json`", "- `tools/scheduler/`")), globs)).toEqual({ ok: true });
   });
+  it("allows extra prefixes like plan scope (AC-18)", () => {
+    expect(scopeGate(["docs/decisions/0007-x.md"], plan, spec, globs, ["docs/decisions/"])).toEqual({ ok: true });
+    expect(scopeGate(["docs/decisions/0007-x.md"], plan, spec, globs)).toEqual({ ok: false, violations: ["docs/decisions/0007-x.md: outside plan file scope"] });
+  });
   it("isSensitive returns the matching paths", () => {
     expect(isSensitive(["web/a.ts", "tools/scheduler/src/x.ts"], globs)).toEqual(["tools/scheduler/src/x.ts"]);
+  });
+});
+
+describe("specScopeGate (AC-21, AC-22)", () => {
+  const SPEC = "specs/010-x/spec.md";
+  const TOP = "docs/product-spec.md";
+  const before = "# Product\n\nDecision one.\n\n## Children\n\n- `specs/009-y/spec.md`\n\n## Notes\n\nTail.\n";
+  const childrenOnly = before.replace("- `specs/009-y/spec.md`\n", "- `specs/009-y/spec.md`\n- `specs/010-x/spec.md`\n");
+  const aboveChildren = childrenOnly.replace("Decision one.", "Decision two.");
+  const diff = [SPEC, "docs/designs/a.md", "docs/decisions/0007-x.md", TOP];
+  it("allows the spec dir, docs/designs, docs/decisions and a Children-only change to a top-design parent", () => {
+    expect(specScopeGate(diff, SPEC, TOP, before, childrenOnly)).toEqual({ ok: true });
+    expect(specScopeGate(["specs/010-x/design/a.png", "docs/delivery-system-design.md"], SPEC, "docs/delivery-system-design.md", before, childrenOnly)).toEqual({ ok: true });
+  });
+  it("fails a top-design parent changed outside its Children section", () => {
+    expect(specScopeGate(diff, SPEC, TOP, before, aboveChildren)).toEqual({ ok: false, violations: [`${TOP}: changes outside its Children section`] });
+  });
+  it("allows a parent under docs/designs/ in full", () => {
+    expect(specScopeGate(["docs/designs/a.md"], SPEC, "docs/designs/a.md", before, aboveChildren)).toEqual({ ok: true });
+  });
+  it("fails the charter as parent, even for a Children-only change", () => {
+    const r = specScopeGate([SPEC, "docs/charter.md"], SPEC, "docs/charter.md", before, childrenOnly);
+    expect(r).toMatchObject({ ok: false, violations: expect.arrayContaining(["docs/charter.md: not a design"]) });
+  });
+  it("fails a parent that is not a design even when the diff touches only the spec (C5)", () => {
+    expect(specScopeGate([SPEC], SPEC, "docs/charter.md", before, before)).toMatchObject({ ok: false, violations: ["docs/charter.md: not a design"] });
+    expect(specScopeGate([SPEC], SPEC, "docs/top.md", before, before)).toMatchObject({ ok: false, violations: ["docs/top.md: not a design"] });
+    expect(specScopeGate([SPEC], SPEC, null, before, before)).toMatchObject({ ok: false });
+  });
+  it("fails the charter and files outside the allowed set", () => {
+    expect(specScopeGate(["docs/charter.md"], SPEC, TOP, before, before)).toMatchObject({ ok: false, violations: [expect.stringMatching(/^docs\/charter\.md: /)] });
+    expect(specScopeGate(["tools/scheduler/src/x.ts"], SPEC, TOP, before, before)).toMatchObject({ ok: false, violations: [expect.stringMatching(/^tools\/scheduler\/src\/x\.ts: /)] });
+  });
+  it("allows a top design in full only while recording a product answer, never the charter", () => {
+    expect(specScopeGate([SPEC, TOP], SPEC, TOP, before, aboveChildren).ok).toBe(false);
+    expect(specScopeGate([SPEC, TOP], SPEC, TOP, before, aboveChildren, true)).toEqual({ ok: true });
+    expect(specScopeGate([SPEC, "docs/delivery-system-design.md"], SPEC, TOP, before, before, true)).toEqual({ ok: true });
+    expect(specScopeGate(["docs/charter.md"], SPEC, TOP, before, before, true).ok).toBe(false);
   });
 });
 

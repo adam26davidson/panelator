@@ -10,8 +10,9 @@ function inScope(file: string, scope: string[]): boolean {
 
 export type ScopeResult = { ok: true } | { ok: false; violations: string[] };
 
-export function scopeGate(diffFiles: string[], plan: PlanResult, spec: ParsedSpec, sensitiveGlobs: string[]): ScopeResult {
-  const scope = plan.tasks.flatMap((t) => t.files);
+/** `extraAllowed` entries are allowed like plan scope (AC-18: a fix recording an answer passes `docs/decisions/`). */
+export function scopeGate(diffFiles: string[], plan: PlanResult, spec: ParsedSpec, sensitiveGlobs: string[], extraAllowed: string[] = []): ScopeResult {
+  const scope = [...plan.tasks.flatMap((t) => t.files), ...extraAllowed];
   const violations: string[] = [];
   for (const f of diffFiles) {
     const allowed = ALWAYS_ALLOWED.some((re) => re.test(f));

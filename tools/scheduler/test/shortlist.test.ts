@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { rankIssues } from "../src/shortlist/rank.ts";
 import { selectEligible } from "../src/shortlist/select.ts";
+import { withTopDesign } from "./helpers/repo-pair.ts";
 import type { IssueData } from "../src/types.ts";
 
 const BOT = "panelator-pipeline[bot]";
@@ -34,7 +35,7 @@ describe("rankIssues", () => {
 describe("selectEligible", () => {
   const ctx = {
     appBot: BOT, maintainer: ME, labels, claimed: new Set<number>(),
-    readSpec: (p: string) => (p === "specs/010-thing/spec.md" ? good : null),
+    readSpec: (p: string) => withTopDesign({ "specs/010-thing/spec.md": good }, "specs/010-thing/spec.md")[p] ?? null,
     listDesign: () => [],
   };
   it("returns eligible issues and a decision per failed gate", () => {
@@ -55,6 +56,17 @@ describe("selectEligible", () => {
   it("skips an issue labelled security-review like blocked: neither eligible nor decided (AC-11)", () => {
     const sec = issue(7, { labels: ["validated", "class:product", "security-review"] });
     const r = selectEligible([sec], ctx);
+    expect(r.eligible).toEqual([]);
+    expect(r.decisions).toEqual([]);
+  });
+  it("makes a bot-validated issue whose spec lists tools/scheduler/ eligible: no automation gate (AC-11)", () => {
+    const auto = good.replace("- `schemas/thing.json`", "- `tools/scheduler/`\n- `agents/`");
+    const r = selectEligible([issue(1)], { ...ctx, readSpec: (p: string) => withTopDesign({ "specs/010-thing/spec.md": auto }, "specs/010-thing/spec.md")[p] ?? null });
+    expect(r.eligible.map((i) => i.number)).toEqual([1]);
+    expect(r.decisions).toEqual([{ issue: 1, gate: "eligible", result: { ok: true } }]);
+  });
+  it("skips issues labelled needs-decision, needs-design-stage or abandoned: neither eligible nor decided", () => {
+    const r = selectEligible(["needs-decision", "needs-design-stage", "abandoned"].map((l, i) => issue(i + 1, { labels: ["validated", "class:product", l] })), ctx);
     expect(r.eligible).toEqual([]);
     expect(r.decisions).toEqual([]);
   });

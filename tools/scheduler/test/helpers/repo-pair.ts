@@ -24,3 +24,8 @@ export function repoPair(files: Record<string, string> = { "a.txt": "a\n" }) {
   git(repo, "push", "-q", "origin", "main");
   return { root, origin, repo, worktrees: join(root, "worktrees") };
 }
+
+/** `files` plus a `docs/top.md` whose `## Children` lists `specPath`, the parent the spec fixtures name (AC-23). */
+export function withTopDesign(files: Record<string, string>, specPath: string): Record<string, string> {
+  return { ...files, "docs/top.md": `# Top design\n\n## Children\n\n- \`${specPath}\`\n` };
+}

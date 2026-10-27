@@ -14,7 +14,7 @@ import { writeToken } from "../src/state/token.ts";
 import { initialChainState } from "../src/chain/machine.ts";
 import type { Notification } from "../src/notify/types.ts";
 import { mockGitHub, pageLink, type Route } from "./helpers/mock-github.ts";
-import { git, repoPair } from "./helpers/repo-pair.ts";
+import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
 
 const spec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
 const BOT = { login: "panelator-pipeline[bot]", type: "Bot" };
@@ -33,7 +33,7 @@ function routes(issues: unknown[], labelsNow: Record<number, string[]> = {}): Ro
 }
 
 async function setup(rs: Route[], slots = 1, drive?: NonNullable<ConstructorParameters<typeof Scheduler>[1]>["driveChain"]) {
-  const pair = repoPair({ "a.txt": "a\n", "specs/010-thing/spec.md": spec });
+  const pair = repoPair(withTopDesign({ "a.txt": "a\n", "specs/010-thing/spec.md": spec }, "specs/010-thing/spec.md"));
   const paths = statePaths(join(pair.root, "state"));
   await ensureStateDirs(paths);
   const gh = mockGitHub(rs);

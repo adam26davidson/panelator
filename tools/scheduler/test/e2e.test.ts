@@ -13,7 +13,7 @@ import { listClaims } from "../src/state/claims.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import type { Notification } from "../src/notify/types.ts";
 import { mockGitHub, pageLink, type Route } from "./helpers/mock-github.ts";
-import { git, repoPair } from "./helpers/repo-pair.ts";
+import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
 
 const script = join(import.meta.dirname, "fixtures", "stage-script.ts");
 const events = join(import.meta.dirname, "fixtures", "streams", "claude-success.jsonl");
@@ -38,7 +38,7 @@ function scripted(results: Record<string, unknown[]>): Adapter & { ran: string[]
 
 describe("end to end: one issue through the whole chain with the fake adapter and a mocked GitHub", () => {
   it("claims, plans, implements, verifies, reviews, merges, and leaves the records (AC-1, AC-3, AC-24, AC-29 shape)", async () => {
-    const pair = repoPair({ "a.txt": "a\n", "specs/010-thing/spec.md": spec });
+    const pair = repoPair(withTopDesign({ "a.txt": "a\n", "specs/010-thing/spec.md": spec }, "specs/010-thing/spec.md"));
     // PR binding compares head_sha with the issue worktree HEAD, which the loop creates from origin/main
     const SHA = git(pair.repo, "rev-parse", "origin/main").trim();
     const paths = statePaths(join(pair.root, "state"));

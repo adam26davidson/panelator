@@ -3,6 +3,7 @@
 Status: approved by the maintainer 2026-10-12
 Class: product. Domain: web-ui.
 Derives from: [design-tree](../../docs/design-tree.md) R4.
+Parent: docs/top.md
 
 ## 1. Goal
 

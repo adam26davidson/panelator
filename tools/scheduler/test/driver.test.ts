@@ -13,7 +13,7 @@ import { listClaims, readClaim, writeClaim, type Claim } from "../src/state/clai
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import type { Notification } from "../src/notify/types.ts";
 import { mockGitHub, type Route } from "./helpers/mock-github.ts";
-import { git, repoPair } from "./helpers/repo-pair.ts";
+import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
 
 const script = join(import.meta.dirname, "fixtures", "stage-script.ts");
 const events = join(import.meta.dirname, "fixtures", "streams", "claude-success.jsonl");
@@ -57,7 +57,7 @@ async function setup(
   routes: (sha: string) => Route[] = (sha) => ghRoutes(sha),
   prepare: (pair: ReturnType<typeof repoPair>, worktree: string) => void = () => {},
 ) {
-  const pair = repoPair({ "a.txt": "a\n", "specs/010-thing/spec.md": spec });
+  const pair = repoPair(withTopDesign({ "a.txt": "a\n", "specs/010-thing/spec.md": spec }, "specs/010-thing/spec.md"));
   const paths = statePaths(join(pair.root, "state"));
   await ensureStateDirs(paths);
   const wt = await ensureWorktree(pair.repo, pair.worktrees, 7);

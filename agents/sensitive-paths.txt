@@ -9,3 +9,8 @@ firmware/**/wasm/**
 tools/scheduler/
 agents/
 .github/
+# the charter and the maintainer's recorded decisions (spec 006 AC-10)
+docs/charter.md
+docs/product-spec.md
+docs/delivery-system-design.md
+docs/design-tree.md
