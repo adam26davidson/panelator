@@ -8,6 +8,7 @@ and 8. It is broken into specs in section 11. Calls the maintainer made are
 stated plainly. Calls made by the design author and not discussed with the
 maintainer are marked *(author's call)*; the builder may revisit those with a
 reason.
+Parent: docs/charter.md
 
 ## 1. Intent
 
@@ -475,3 +476,12 @@ are stale and are corrected as part of B.
   state is pushed and changes pulled.
 - The precise rescue, re-plan and spec-revision bounds.
 - Promotion criteria for firmware stable.
+
+## Children
+
+- `specs/001-scheduler-core/spec.md`
+- `specs/002-pipeline-smoke-run/spec.md`
+- `specs/003-stage-scope-runtime-max/spec.md`
+- `specs/004-pi-tool-names/spec.md`
+- `specs/005-keep-unpushed-commits/spec.md`
+- `specs/006-no-human-stops/spec.md`

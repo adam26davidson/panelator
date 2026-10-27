@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { specPathFromIssueBody } from "../src/spec/link.ts";
-import { parseSpec } from "../src/spec/parse.ts";
+import { parseChildren, parseSpec, stripChildren } from "../src/spec/parse.ts";
 
 const fx = (n: string) => readFileSync(join(import.meta.dirname, "fixtures", "specs", n), "utf8");
 
@@ -53,5 +53,30 @@ describe("parseSpec", () => {
     expect(s.class).toBe("tooling");
     expect(s.missing).toEqual([]);
     expect(s.listedPaths).toContain("tools/scheduler/");
+  });
+});
+
+describe("Parent and Children links", () => {
+  it("parses the Parent line", () => {
+    expect(parseSpec("Status: x\nParent: docs/a.md\nClass: tooling. Domain: backend.\n").parent).toBe("docs/a.md");
+  });
+  it("leaves parent null and does not report it missing", () => {
+    const s = parseSpec("Status: x\n");
+    expect(s.parent).toBeNull();
+    expect(s.missing).not.toContain("Parent line");
+  });
+  it("parseChildren reads backticked and bare bullets", () => {
+    const t = "Intro\n## Children\n- `specs/010-a/spec.md`\n- specs/011-b/spec.md\nprose\n## Other\n- `x/y.md`\n";
+    expect(parseChildren(t)).toEqual(["specs/010-a/spec.md", "specs/011-b/spec.md"]);
+  });
+  it("parseChildren accepts a numbered heading and returns [] when empty", () => {
+    expect(parseChildren("## 12. Children\n")).toEqual([]);
+  });
+  it("parseChildren returns null without the heading", () => {
+    expect(parseChildren("## Goal\n- `a/b.md`\n")).toBeNull();
+  });
+  it("stripChildren removes the Children section only", () => {
+    const t = "## Goal\ng\n## Children\n- `a/b.md`\n## Verification\nv\n";
+    expect(stripChildren(t)).toBe("## Goal\ng\n## Verification\nv\n");
   });
 });

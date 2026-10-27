@@ -3,6 +3,7 @@
 Status: approved by the maintainer 2026-10-12; implementation plans written
 2026-10-12 in [plans/](plans/) (1-core, 2-runs, 3-service), not yet executed
 Class: tooling. Domain: automation (sensitive path, process-spec section 5).
+Parent: docs/delivery-system-design.md
 Derives from: [process-spec](../../docs/process-spec.md) sections 3, 4.3, 5,
 6.1 to 6.6; [design-tree](../../docs/design-tree.md) R6 to R9;
 [ADR 0001](../../docs/decisions/0001-harness-per-model-vendor.md);

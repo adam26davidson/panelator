@@ -2,6 +2,7 @@
 
 Status: approved by the maintainer 2026-10-16.
 Class: tooling. Domain: backend.
+Parent: docs/delivery-system-design.md
 Derives from: [001-scheduler-core](../001-scheduler-core/spec.md) section 16
 (AC-29, the first hand-run); [process-spec](../../docs/process-spec.md)
 section 6.

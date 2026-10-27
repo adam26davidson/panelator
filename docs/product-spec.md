@@ -3,6 +3,7 @@
 Status: v0 requirements, settled 2026-10-02 in a requirements grilling session.
 Every decision below has its question, alternatives and rationale recorded in
 [design-tree.md](design-tree.md). Change a decision there first, then here.
+Parent: docs/charter.md
 
 ## 1. What panelator is
 
@@ -349,3 +350,5 @@ dev-logs/            Dated measured findings
 ```
 
 The predecessor repo `char-matrix-dashboard` is frozen with a pointer here.
+
+## Children

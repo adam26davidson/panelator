@@ -10,6 +10,7 @@ export type RequiredSection =
 export interface ParsedSpec {
   status: string | null;
   class: string | null;
+  parent: string | null;
   domain: string | null;
   derivesFrom: boolean;
   sections: Record<RequiredSection, boolean>;
@@ -65,6 +66,7 @@ export function parseSpec(text: string): ParsedSpec {
   const status = firstMatch(text, /^Status:\s*(.+)$/m);
   const cls = firstMatch(text, /^Class:\s*([a-z-]+)/m);
   const domain = firstMatch(text, /Domain:\s*([a-z-]+)/m);
+  const parent = firstMatch(text, /^Parent:\s*(\S+)$/m);
   const derivesFrom = /^Derives from:/m.test(text);
 
   const open = body("open-decisions").replace(/\s+/g, " ").trim().toLowerCase();
@@ -102,6 +104,7 @@ export function parseSpec(text: string): ParsedSpec {
   return {
     status,
     class: cls,
+    parent,
     domain,
     derivesFrom,
     sections: {
@@ -118,4 +121,37 @@ export function parseSpec(text: string): ParsedSpec {
     listedPaths,
     missing,
   };
+}
+
+const CHILDREN_HEADING = /^##\s+(?:\d+\.\s*)?children\s*$/i;
+const ANY_H2 = /^##\s/;
+
+/** Line range [start, end) of the `## Children` section, heading included; null when absent. */
+function findChildrenSection(lines: string[]): [number, number] | null {
+  const start = lines.findIndex((l) => CHILDREN_HEADING.test(l));
+  if (start < 0) return null;
+  let end = start + 1;
+  while (end < lines.length && !ANY_H2.test(lines[end])) end++;
+  return [start, end];
+}
+
+/** The repo-relative paths on `- ` bullets under `## Children`; null when the heading is absent. */
+export function parseChildren(text: string): string[] | null {
+  const lines = text.split("\n");
+  const range = findChildrenSection(lines);
+  if (!range) return null;
+  const out: string[] = [];
+  for (const line of lines.slice(range[0] + 1, range[1])) {
+    const m = /^-\s+(?:`([^`\s]+)`|(\S+))/.exec(line);
+    if (m) out.push(m[1] ?? m[2]);
+  }
+  return out;
+}
+
+/** The text with the `## Children` section removed. */
+export function stripChildren(text: string): string {
+  const lines = text.split("\n");
+  const range = findChildrenSection(lines);
+  if (!range) return text;
+  return [...lines.slice(0, range[0]), ...lines.slice(range[1])].join("\n");
 }

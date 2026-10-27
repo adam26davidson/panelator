@@ -2,6 +2,7 @@
 
 Status: approved by the maintainer 2026-10-16.
 Class: tooling. Domain: backend.
+Parent: docs/delivery-system-design.md
 Derives from: [001-scheduler-core](../001-scheduler-core/spec.md) sections
 12 and 13 (AC-18, AC-19); [ADR 0001](../../docs/decisions/0001-harness-per-model-vendor.md);
 the branch review's residual R3.
