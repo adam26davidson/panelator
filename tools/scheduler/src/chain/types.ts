@@ -1,6 +1,6 @@
 import type { ScopeResult } from "../gates/scope.ts";
 import type {
-  AgentStageName, AskingStage, Finding, FixResult, ImplementResult, PlanResult, Question, QuestionCheckResult, ReviewResult, SpecMode, SpecResult,
+  AgentStageName, AskingStage, Finding, FixOutcome, ImplementOutcome, PlanOutcome, PlanResult, Question, QuestionCheckResult, ReviewResult, SpecMode, SpecResult,
 } from "../types.ts";
 
 export type ChainStage =
@@ -52,11 +52,13 @@ export interface ChainState {
 
 export type ChainEvent =
   | { type: "start" }
-  | { type: "stage_ok"; stage: "plan"; result: PlanResult }
-  | { type: "stage_ok"; stage: "implement"; result: ImplementResult; scope: ScopeResult }
-  | { type: "stage_ok"; stage: "fix"; result: FixResult; scope: ScopeResult }
+  /** C14: a result with an `escalation` need not carry the stage's other fields, and its event carries no `scope` (AC-17). */
+  | { type: "stage_ok"; stage: "plan"; result: PlanOutcome }
+  | { type: "stage_ok"; stage: "implement"; result: ImplementOutcome; scope?: ScopeResult }
+  | { type: "stage_ok"; stage: "fix"; result: FixOutcome; scope?: ScopeResult }
   | { type: "stage_ok"; stage: "review"; result: ReviewResult; security: boolean }
-  | { type: "stage_ok"; stage: "spec"; result: SpecResult; scope: ScopeResult }
+  /** `scope`: the spec PR's scope check (AC-22), required for `revised`, absent for `question`. */
+  | { type: "stage_ok"; stage: "spec"; result: SpecResult; scope?: ScopeResult }
   | { type: "stage_ok"; stage: "question-check"; result: QuestionCheckResult }
   | { type: "stage_failed"; stage: AgentStageName; reason: string; postpone?: boolean }
   /** `at`: when the checks were read; `pending`: the required checks still pending or missing. */

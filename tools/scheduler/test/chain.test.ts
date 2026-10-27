@@ -3,10 +3,11 @@ import {
   branchOf, HISTORY_ENTRY_MAX, HISTORY_MAX_ENTRIES, initialChainState, ledgerOf, MAX_DECIDE_RETURNS, MAX_REPLANS, MAX_RESCUES,
   MAX_SPEC_ANSWERS, MAX_SPEC_REVISIONS, normalizeChainState, transition, VERIFY_PENDING_MAX_H, type LedgerCounts,
 } from "../src/chain/machine.ts";
-import type { Action, ChainState } from "../src/chain/types.ts";
+import type { Action, ChainEvent, ChainStage, ChainState } from "../src/chain/types.ts";
 import { MAX_FIXES } from "../src/gates/index.ts";
 import { validate } from "../src/schema/validate.ts";
-import type { ImplementResult, PlanResult, Question, ReviewResult } from "../src/types.ts";
+import { formatQuestion, questionBody, questionMarker } from "../src/chain/question.ts";
+import type { AgentStageName, ImplementResult, PlanResult, Question, ReviewResult, SpecResult } from "../src/types.ts";
 
 const plan: PlanResult = { verdict: "ready", domain: "backend", tasks: [{ id: "T1", description: "d", files: ["a.ts"] }] };
 const impl: ImplementResult = { pr_number: 3, head_sha: "b".repeat(40), tasks_done: ["T1"] };
@@ -15,6 +16,13 @@ const changes: ReviewResult = { verdict: "changes_requested", findings_on_pr: [{
 const pr3 = { number: 3, head_sha: "b".repeat(40) };
 const AT = "2026-10-27T00:00:00Z";
 const fixOk = (sha: string) => ({ type: "stage_ok" as const, stage: "fix" as const, result: { head_sha: sha, addressed: [0] }, scope: { ok: true as const } });
+const q: Question = { kind: "technical", question: "Which cache?", options: [{ label: "lru", cost: "memory" }, { label: "none", cost: "latency" }], recommendation: "lru" };
+const qProduct: Question = { ...q, kind: "product", question: "Ship widget X?" };
+const qCapability: Question = { ...q, kind: "capability", question: "No GPU on this runner" };
+const qOther: Question = { ...q, kind: "other", question: "The suite cannot run here" };
+const revised: SpecResult = { verdict: "revised", spec_path: "specs/010-x/spec.md", pr_number: 8, head_sha: "f".repeat(40) };
+const pr8 = { number: 8, head_sha: "f".repeat(40) };
+const plusH = (h: number) => new Date(Date.parse(AT) + h * 3_600_000).toISOString();
 
 function at(stage: ChainState["stage"], over: Partial<ChainState> = {}): ChainState {
   return { ...initialChainState(1), stage, ...over };
@@ -46,11 +54,17 @@ describe("chain: happy path", () => {
 });
 
 describe("chain: plan outcomes", () => {
-  it("spec_gap escalates with a rescue plan, no label (C2 stopgap until spec 006 Task 6; AC-19)", () => {
-    const r = transition(at("plan"), { type: "stage_ok", stage: "plan", result: { verdict: "spec_gap", domain: "backend", tasks: [], questions: ["Q1", "Q2"] } });
-    expect(r.actions).toEqual([{ type: "run_stage", stage: "plan", attempt: 1 }]);
-    expect(r.state).toMatchObject({ stage: "plan", rescues: 1, rescueRun: true });
-    expect(r.state.history.at(-1)).toMatch(/^plan: spec gap: [\s\S]*Q2/);
+  it("spec_gap goes to the spec stage in answer mode once; the second escalates (AC-1, AC-19)", () => {
+    const gap = { type: "stage_ok" as const, stage: "plan" as const, result: { verdict: "spec_gap" as const, domain: "backend", tasks: [], questions: ["Q1", "Q2"] } };
+    const r1 = transition(at("plan"), gap);
+    expect(r1.actions).toEqual([{ type: "run_stage", stage: "spec", attempt: 1 }]);
+    expect(r1.state).toMatchObject({ stage: "spec", specMode: "answer", track: "spec", specAnswers: 1, rescues: 0 });
+    expect(r1.state.specProblem).toMatch(/gaps in the spec:\n1\. Q1\n2\. Q2/);
+    expect(r1.actions.some((a) => a.type === "label")).toBe(false);
+    const r2 = transition(at("plan", { specAnswers: 1 }), gap);
+    expect(r2.actions).toEqual([{ type: "run_stage", stage: "plan", attempt: 1 }]);
+    expect(r2.state).toMatchObject({ stage: "plan", track: "issue", rescues: 1, rescueRun: true, specAnswers: 1 });
+    expect(r2.state.history.at(-1)).toMatch(/^plan: spec gap after an answered gap: [\s\S]*Q2/);
   });
   it("retries a failed plan once at attempt 2", () => {
     const r = transition(at("plan"), { type: "stage_failed", stage: "plan", reason: "timeout" });
@@ -239,6 +253,23 @@ describe("chain: escalation path (AC-1 to AC-6)", () => {
     expect(text).toContain("fix: failed: boom");
     expect(text).toMatch(/earlier entries omitted/);
   });
+  it("the abandonment cap measures the rendered entries, with their prefix and indented lines (AC-5)", () => {
+    // Each entry is 4000 characters of which 2000 are newlines; rendered, each newline gains a three-space indent.
+    const history = Array.from({ length: 20 }, () => "a\n".repeat(HISTORY_ENTRY_MAX / 2));
+    const r = transition(at("fix", { rescues: 1, replans: 1, specRevisions: 1, history }), { type: "stage_failed", stage: "fix", reason: "boom" });
+    const text = (r.actions.find((a) => a.type === "comment") as { text: string }).text;
+    expect(text.length).toBeLessThan(60_000);
+    expect(text).toContain("fix: failed: boom");
+    expect(text).toMatch(/\(\d+ earlier entries omitted\)/);
+  });
+  it("a close_pr comment carries at most HISTORY_ENTRY_MAX characters of the reason (AC-2)", () => {
+    const s = at("implement", { rescueRun: true, rescues: 1, pr: pr3 });
+    const r = transition(s, { type: "stage_failed", stage: "implement", reason: "x".repeat(10_000) });
+    const close = r.actions[0] as Extract<Action, { type: "close_pr" }>;
+    expect(close.type).toBe("close_pr");
+    expect(close.comment.startsWith("Closed by the scheduler to re-plan: rescue run failed: xxx")).toBe(true);
+    expect(close.comment.length).toBe("Closed by the scheduler to re-plan: ".length + HISTORY_ENTRY_MAX);
+  });
   it("abandonment closes a parked issue PR too (AC-5)", () => {
     const s = at("fix", { track: "spec", specRescues: 1, pr: { number: 12, head_sha: "c".repeat(40) }, parkedPr: { number: 9, head_sha: "d".repeat(40) } });
     const r = transition(s, { type: "stage_failed", stage: "fix", reason: "x" });
@@ -277,6 +308,14 @@ describe("chain: ledger and claim state (AC-7)", () => {
     expect(r.state).toMatchObject({ replans: 1, rescues: 1, rescueRun: false });
     expect(r.state.history[0]).toBe("plan: failed twice: old");
     expect(r.actions).toEqual([{ type: "run_stage", stage: "plan", attempt: 1 }]);
+  });
+  it("a seeded ledger's history is trimmed to the last HISTORY_MAX_ENTRIES entries, each capped (AC-7)", () => {
+    const long: LedgerCounts = { ...ledger, history: Array.from({ length: 25 }, (_, i) => `e${i}`.padEnd(HISTORY_ENTRY_MAX + 10, "z")) };
+    const s = initialChainState(1, null, long);
+    expect(s.history).toHaveLength(HISTORY_MAX_ENTRIES);
+    expect(s.history[0].startsWith("e5z")).toBe(true);
+    expect(s.history.at(-1)!.startsWith("e24z")).toBe(true);
+    expect(s.history.every((e) => e.length === HISTORY_ENTRY_MAX)).toBe(true);
   });
   it("initialChainState keeps a spec problem and defaults every new field", () => {
     expect(initialChainState(4, "spec missing")).toMatchObject({
@@ -392,6 +431,25 @@ describe("chain: merge, rebase, liveness, postpone", () => {
     expect(without.actions[0]).toEqual({ type: "delete_branch", branch: "spec-1" });
     expect(types(without.actions)).toEqual(["delete_branch", "comment", "label", "notify", "release"]);
   });
+  it("liveness on the spec track also closes a parked issue PR (AC-21, AC-18)", () => {
+    const r = transition(at("review", { track: "spec", pr: { number: 12, head_sha: "c".repeat(40) }, parkedPr: pr3 }), { type: "liveness_expired" });
+    expect(r.actions.slice(0, 2)).toEqual([
+      { type: "close_pr", pr: 12, branch: "spec-1", comment: expect.any(String) },
+      { type: "close_pr", pr: 3, branch: "issue-1", comment: expect.any(String) },
+    ]);
+    expect(types(r.actions)).toEqual(["close_pr", "close_pr", "comment", "label", "notify", "release"]);
+    expect(r.state).toMatchObject({ stage: "released", pr: null, parkedPr: null });
+    const noSpecPr = transition(at("spec", { track: "spec", parkedPr: pr3 }), { type: "liveness_expired" });
+    expect(noSpecPr.actions.slice(0, 2)).toEqual([
+      { type: "delete_branch", branch: "spec-1" },
+      { type: "close_pr", pr: 3, branch: "issue-1", comment: expect.any(String) },
+    ]);
+  });
+  it("liveness_expired is invalid in the ended stages (AC-27)", () => {
+    for (const stage of ["done", "released", "abandoned", "paused"] as const) {
+      expect(() => transition(at(stage, { question: q, askingStage: "plan" }), { type: "liveness_expired" })).toThrow(/^invalid event liveness_expired /);
+    }
+  });
   it("postponed strong-tier stage waits with the claim held and resumes the same stage (AC-25)", () => {
     const r1 = transition(at("review"), { type: "stage_failed", stage: "review", reason: "429", postpone: true });
     expect(r1.state.stage).toBe("waiting");
@@ -408,5 +466,487 @@ describe("chain: merge, rebase, liveness, postpone", () => {
   });
   it("throws on an event that is invalid for the stage", () => {
     expect(() => transition(at("plan"), { type: "merge_result", status: "merged" })).toThrow(/invalid/);
+  });
+});
+
+const specOk = (result: SpecResult, scope: { ok: true } | { ok: false; violations: string[] } = { ok: true }) => ({ type: "stage_ok" as const, stage: "spec" as const, result, scope });
+const checkSays = (verdict: "send" | "decide_yourself", reasoning = "r") => ({ type: "stage_ok" as const, stage: "question-check" as const, result: { verdict, reasoning } });
+const answered = (answer = "use lru", questionId = 5) => ({ type: "answered" as const, answer, questionId });
+const reviewEscalates = (escalation: Question) => ({ type: "stage_ok" as const, stage: "review" as const, result: { ...approve, verdict: "escalate" as const, escalation }, security: false });
+
+describe("chain: spec stage and spec track (AC-4, AC-19, AC-21, AC-22)", () => {
+  it("a claimed issue with a spec problem starts at the spec stage in write mode on the spec track (AC-19, AC-21)", () => {
+    const r = transition(initialChainState(1, "specs/010-x/spec.md not found on main"), { type: "start" });
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "spec", attempt: 1 }]);
+    expect(r.state).toMatchObject({ specMode: "write", track: "spec" });
+    expect(branchOf(r.state)).toBe("spec-1");
+  });
+  it("a claimed issue without a spec problem starts at plan on the issue track", () => {
+    const r = transition(initialChainState(1), { type: "start" });
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "plan", attempt: 1 }]);
+    expect(r.state.track).toBe("issue");
+  });
+  it("every transition into the spec stage sets the spec track (AC-21, review focus 12)", () => {
+    const cases: [string, ChainState, Parameters<typeof transition>[1], string][] = [
+      ["claimed start", initialChainState(1, "spec missing"), { type: "start" }, "write"],
+      ["plan spec_gap", at("plan"), { type: "stage_ok", stage: "plan", result: { verdict: "spec_gap", domain: "backend", tasks: [], questions: ["Q"] } }, "answer"],
+      ["escalate revise", at("implement", { rescues: 1, replans: 1, implementFailures: 1 }), { type: "stage_failed", stage: "implement", reason: "x" }, "revise"],
+      ["answered from plan", at("paused", { question: q, askingStage: "plan" }), answered(), "record"],
+      ["answered from review (product)", at("paused", { question: qProduct, askingStage: "review", pr: pr3 }), answered(), "record"],
+      ["decide_yourself for spec", at("question-check", { question: q, askingStage: "spec", specMode: "answer" }), checkSays("decide_yourself"), "decide"],
+      ["spec-track rescue of spec", at("spec", { attempt: 2, specMode: "answer" }), { type: "stage_failed", stage: "spec", reason: "x" }, "answer"],
+      ["waiting resume", at("waiting", { resumeStage: "spec", specMode: "record" }), { type: "start" }, "record"],
+      ["spec-present failure after merge", at("merge", { track: "spec", pr: pr8 }), { type: "merge_result", status: "merged", specGate: { ok: false, gate: "spec-present", reason: "no Parent" } }, "write"],
+    ];
+    for (const [name, state, event, mode] of cases) {
+      const r = transition(state, event);
+      expect(r.state.stage, name).toBe("spec");
+      expect(r.state.track, name).toBe("spec");
+      expect(r.state.specMode, name).toBe(mode);
+      expect(branchOf(r.state), name).toBe("spec-1");
+      expect(r.actions.at(-1), name).toMatchObject({ type: "run_stage", stage: "spec" });
+    }
+  });
+  it("a revised spec goes through verify on the spec track, then back to plan after merge (AC-4)", () => {
+    let r = transition(at("spec", { specMode: "revise", track: "spec" }), specOk(revised));
+    expect(r.state).toMatchObject({ track: "spec", stage: "verify", pr: { number: 8 }, specMode: null, fixes: 0, scopeViolations: 0 });
+    expect(r.actions).toEqual([{ type: "verify" }]);
+    r = transition({ ...r.state, stage: "merge" }, { type: "merge_result", status: "merged", specGate: { ok: true } });
+    expect(r.state).toMatchObject({ track: "issue", stage: "plan", pr: null, plan: null, specProblem: null, specMode: null });
+    expect(r.actions).toEqual([{ type: "delete_branch", branch: "spec-1" }, { type: "run_stage", stage: "plan", attempt: 1 }]);
+  });
+  it("a spec-track merge resets the stage counters and is not the end of the chain (AC-4)", () => {
+    const s = at("merge", { track: "spec", pr: pr8, fixes: 2, scopeViolations: 1, planFailures: 1, implementFailures: 1, specProblem: "gap", answerQuestionId: 5, answerKind: "technical" });
+    const r = transition(s, { type: "merge_result", status: "merged", specGate: { ok: true } });
+    expect(r.state).toMatchObject({ fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, specProblem: null, answer: null, answerQuestionId: null, answerKind: null });
+    expect(r.actions.some((a) => a.type === "done" || a.type === "label")).toBe(false);
+  });
+  it("after a spec-track merge, a spec-present failure reruns the spec stage within bounds and a UI failure parks the issue (AC-4)", () => {
+    const failed = { type: "merge_result" as const, status: "merged" as const, specGate: { ok: false as const, gate: "spec-present" as const, reason: "spec lacks a Parent: line" } };
+    const r1 = transition(at("merge", { track: "spec", pr: pr8 }), failed);
+    expect(r1.actions).toEqual([{ type: "delete_branch", branch: "spec-1" }, { type: "run_stage", stage: "spec", attempt: 1 }]);
+    expect(r1.state).toMatchObject({ stage: "spec", specMode: "write", specProblem: "spec lacks a Parent: line", rescueRun: true, specRescues: 1, pr: null, track: "spec" });
+    expect(r1.state.history.at(-1)).toBe("spec: spec-present failed after merge: spec lacks a Parent: line");
+    const r2 = transition(at("merge", { track: "spec", pr: pr8, specRescues: 1 }), failed);
+    expect(r2.state.stage).toBe("abandoned");
+    expect(types(r2.actions)).toEqual(["delete_branch", "comment", "label", "finding", "notify", "done"]);
+
+    const ui = transition(at("merge", { track: "spec", pr: pr8 }), { type: "merge_result", status: "merged", specGate: { ok: false, gate: "ui-design", reason: "spec E will provide the design stage: no design/" } });
+    expect(ui.state).toMatchObject({ stage: "released", pr: null });
+    expect(types(ui.actions)).toEqual(["delete_branch", "comment", "label", "notify", "release"]);
+    expect((ui.actions[1] as { text: string }).text).toContain("no design/");
+    expect(ui.actions[2]).toEqual({ type: "label", add: ["needs-design-stage"], remove: ["in-progress"] });
+    expect(ui.actions.at(-1)).toEqual({ type: "release", reason: expect.any(String), savePatch: false });
+    expect(ui.actions.some((a) => a.type === "finding")).toBe(false);
+  });
+  it("a merged record PR restores the parked issue PR and runs a fix (AC-18)", () => {
+    const s = at("merge", { track: "spec", pr: pr8, parkedPr: pr3, fixes: 1, answerQuestionId: 5, answerKind: "product", specProblem: null });
+    const r = transition(s, { type: "merge_result", status: "merged", specGate: { ok: true } });
+    expect(r.actions).toEqual([
+      { type: "delete_branch", branch: "spec-1" },
+      { type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining("question #5") },
+    ]);
+    expect(r.state).toMatchObject({ stage: "fix", track: "issue", pr: pr3, parkedPr: null, fixes: 0, answerQuestionId: null, answerKind: null });
+    expect(r.state.pendingFixInput).toBe(
+      "Apply the maintainer's decision to question #5, now recorded on main. Read it in the spec and the top designs, then change this PR to follow it.",
+    );
+    expect(branchOf(r.state)).toBe("issue-1");
+  });
+  it("a spec PR scope violation goes to one fix, the second escalates (AC-22)", () => {
+    const r1 = transition(at("spec", { track: "spec", specMode: "write" }), specOk(revised, { ok: false, violations: ["web/x.ts: outside the spec PR's scope"] }));
+    expect(r1.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining("web/x.ts") }]);
+    expect(r1.state).toMatchObject({ stage: "fix", track: "spec", pr: pr8, scopeViolations: 1 });
+    expect(r1.state.history.at(-1)).toContain("web/x.ts");
+    const r2 = transition(r1.state, { type: "stage_ok", stage: "fix", result: { head_sha: "c".repeat(40), addressed: [0] }, scope: { ok: false, violations: ["docs/charter.md: charter"] } });
+    expect(r2.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining("docs/charter.md") }]);
+    expect(r2.state).toMatchObject({ specRescues: 1, rescues: 0, rescueRun: true, track: "spec" });
+  });
+  it("a postponed spec stage resumes in the same mode on the spec track", () => {
+    const w = transition(at("spec", { track: "spec", specMode: "answer", attempt: 2, rescueRun: true, specRescues: 1 }), { type: "stage_failed", stage: "spec", reason: "429", postpone: true });
+    expect(w.state).toMatchObject({ stage: "waiting", resumeStage: "spec", specMode: "answer" });
+    const r = transition(w.state, { type: "start" });
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "spec", attempt: 2 }]);
+    expect(r.state).toMatchObject({ stage: "spec", track: "spec", specMode: "answer", rescueRun: true, specRescues: 1 });
+  });
+});
+
+describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
+  it("a review escalation of kind technical goes to the question check (AC-8, AC-12)", () => {
+    const r = transition(at("review", { pr: pr3 }), reviewEscalates(q));
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "question-check", attempt: 1 }]);
+    expect(r.state).toMatchObject({ stage: "question-check", question: q, askingStage: "review", rescues: 0, history: [] });
+  });
+  it("an implement result with a capability escalation goes to the question check (AC-17)", () => {
+    const r = transition(at("implement", { plan }), { type: "stage_ok", stage: "implement", result: { escalation: qCapability } });
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "question-check", attempt: 1 }]);
+    expect(r.state).toMatchObject({ stage: "question-check", question: qCapability, askingStage: "implement", pr: null, implementFailures: 0, scopeViolations: 0 });
+    const p = transition(at("plan"), { type: "stage_ok", stage: "plan", result: { escalation: qProduct } });
+    expect(p.state).toMatchObject({ stage: "question-check", askingStage: "plan", plan: null });
+    const f = transition(at("fix", { pr: pr3, fixes: 1, pendingFixInput: "fix it" }), { type: "stage_ok", stage: "fix", result: { escalation: q } });
+    expect(f.state).toMatchObject({ stage: "question-check", askingStage: "fix", fixes: 1, pr: pr3, pendingFixInput: "fix it" });
+  });
+  it("a spec question of kind technical goes to the question check, keeping the spec track and mode", () => {
+    const r = transition(at("spec", { track: "spec", specMode: "write" }), specOk({ verdict: "question", question: q }));
+    expect(r.state).toMatchObject({ stage: "question-check", askingStage: "spec", question: q, track: "spec", specMode: "write" });
+  });
+  it("checks pending six hours re-run and investigate first, then ask (AC-17)", () => {
+    const pending = (at: string) => ({ type: "checks" as const, status: "pending" as const, sensitive: false, at, pending: ["ci/test", "ci/lint"] });
+    let r = transition(at("verify", { pr: pr3 }), pending(AT));
+    expect(r.actions).toEqual([{ type: "wait", seconds: 60 }]);
+    expect(r.state.pendingSince).toBe(AT);
+    r = transition(r.state, pending(plusH(5.99)));
+    expect(r.actions).toEqual([{ type: "wait", seconds: 60 }]);
+    expect(r.state.pendingSince).toBe(AT);
+    r = transition(r.state, pending(plusH(6)));
+    expect(r.actions).toEqual([
+      { type: "rerun_checks", sha: pr3.head_sha },
+      { type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.any(String) },
+    ]);
+    expect(r.state.pendingFixInput).toBe(
+      `Required checks ci/test, ci/lint have been pending for 6 hours on ${pr3.head_sha}; the scheduler has re-run those it could. Investigate why they never report: the workflow files and triggers that should produce them, and whether each check has a run. Fix the cause if it is in this repository; otherwise change nothing and say so.`,
+    );
+    expect(r.state).toMatchObject({ stage: "fix", checksRerun: true, pendingSince: null });
+    // The fix ran; verify starts a new window.
+    const t1 = plusH(10);
+    r = transition({ ...r.state, stage: "verify" }, pending(t1));
+    expect(r.state.pendingSince).toBe(t1);
+    r = transition(r.state, pending(plusH(16)));
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "question-check", attempt: 1 }]);
+    expect(r.state).toMatchObject({ stage: "question-check", askingStage: "verify", pendingSince: null });
+    expect(r.state.question?.kind).toBe("capability");
+    expect(r.state.question?.question).toContain("A required check never reported on PR #3");
+    expect(r.state.question?.options.map((o) => o.label)).toEqual(["fixed, re-check", "drop the check from `required_checks`"]);
+    expect(r.state.question?.options.every((o) => o.cost.length > 0)).toBe(true);
+    expect(r.state.question?.recommendation.length).toBeGreaterThan(0);
+  });
+  it("green and failed checks clear the pending window and the re-run flag", () => {
+    const s = at("verify", { pr: pr3, pendingSince: AT, checksRerun: true });
+    const g = transition(s, { type: "checks", status: "green", sensitive: false, at: plusH(1) });
+    expect(g.state).toMatchObject({ stage: "review", pendingSince: null, checksRerun: false });
+    const f = transition(s, { type: "checks", status: "failed", log: "FAIL", sensitive: false, at: plusH(1) });
+    expect(f.state).toMatchObject({ stage: "fix", pendingSince: null, checksRerun: false });
+  });
+  it("send pauses with a single pause action (AC-13)", () => {
+    const r = transition(at("question-check", { question: q, askingStage: "spec", track: "spec" }), checkSays("send"));
+    expect(r.actions).toEqual([{ type: "pause", question: q, asking: "spec" }]);
+    expect(r.state.stage).toBe("paused");
+    expect(r.state).toMatchObject({ question: q, askingStage: "spec", decideReturns: 0 });
+  });
+  it("a question from a stage resumed with a reply is a follow-up: paused at once, nothing counted (AC-15)", () => {
+    const s = at("implement", { answer: "tell me more", answerQuestionId: 5, answerKind: "capability", plan });
+    const r = transition(s, { type: "stage_ok", stage: "implement", result: { escalation: qCapability } });
+    expect(r.actions).toEqual([{ type: "pause", question: qCapability, asking: "implement" }]);
+    expect(r.state).toMatchObject({ stage: "paused", question: qCapability, askingStage: "implement", decideReturns: 0, implementFailures: 0, rescues: 0, fixes: 0 });
+    expect(r.state.history).toEqual([]);
+    const rv = transition(at("review", { pr: pr3, answer: "a" }), reviewEscalates(q));
+    expect(rv.actions).toEqual([{ type: "pause", question: q, asking: "review" }]);
+    const sp = transition(at("spec", { track: "spec", specMode: "answer", answer: "a" }), specOk({ verdict: "question", question: qProduct }));
+    expect(sp.actions).toEqual([{ type: "pause", question: qProduct, asking: "spec" }]);
+    expect(sp.state).toMatchObject({ track: "spec", specMode: "answer" });
+  });
+  it("decide_yourself reruns the asker in decide mode; the second one escalates (AC-14)", () => {
+    const r1 = transition(at("question-check", { question: q, askingStage: "implement", plan }), checkSays("decide_yourself", "pick lru"));
+    expect(r1.actions).toEqual([{ type: "run_stage", stage: "implement", attempt: 1 }]);
+    expect(r1.state).toMatchObject({ stage: "implement", decideInput: "pick lru", decideReturns: 1, question: null });
+    const ok = transition(r1.state, { type: "stage_ok", stage: "implement", result: impl, scope: { ok: true } });
+    expect(ok.state).toMatchObject({ stage: "verify", decideInput: null });
+    const r2 = transition(at("question-check", { question: q, askingStage: "implement", decideReturns: 1 }), checkSays("decide_yourself", "again"));
+    expect(r2.actions).toEqual([{ type: "run_stage", stage: "implement", attempt: 1 }]);
+    expect(r2.state).toMatchObject({ decideReturns: 2, rescues: 1, rescueRun: true, decideInput: null });
+    expect(r2.state.history.at(-1)).toBe("implement: decide_yourself: again");
+    const rv = transition(at("question-check", { question: q, askingStage: "review", sensitive: true, pr: pr3 }), checkSays("decide_yourself", "decide"));
+    expect(rv.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1, profile: "security" }]);
+    const fx = transition(at("question-check", { question: q, askingStage: "fix", pr: pr3, pendingFixInput: "fix it" }), checkSays("decide_yourself", "decide"));
+    expect(fx.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: "fix it" }]);
+    expect(fx.state.decideInput).toBe("decide");
+  });
+  it("decide_yourself for the spec stage reruns it in decide mode on the spec track (AC-14)", () => {
+    const r = transition(at("question-check", { question: q, askingStage: "spec", track: "spec", specMode: "write" }), checkSays("decide_yourself", "decide it"));
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "spec", attempt: 1 }]);
+    expect(r.state).toMatchObject({ stage: "spec", specMode: "decide", decideInput: "decide it", track: "spec", decideReturns: 1 });
+    const ok = transition(r.state, specOk(revised));
+    expect(ok.state).toMatchObject({ stage: "verify", decideInput: null, specMode: null });
+  });
+  it("decide_yourself for verify escalates with a rescue fix (AC-14)", () => {
+    const r = transition(at("question-check", { question: qCapability, askingStage: "verify", pr: pr3 }), checkSays("decide_yourself", "drop the check yourself"));
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining("drop the check yourself") }]);
+    expect(r.state).toMatchObject({ stage: "fix", rescues: 1, rescueRun: true, decideReturns: 1, decideInput: null });
+    expect(r.state.history.at(-1)).toBe("fix: decide_yourself: drop the check yourself");
+  });
+  it("a question in decide mode counts as a failed run (AC-14)", () => {
+    const rv = transition(at("review", { pr: pr3, decideInput: "decide" }), reviewEscalates(q));
+    expect(rv.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 2 }]);
+    expect(rv.state.history).toEqual(["review attempt 1 failed: escalated in decide mode"]);
+    expect(rv.state.decideInput).toBe("decide");
+    const im = transition(at("implement", { decideInput: "decide" }), { type: "stage_ok", stage: "implement", result: { escalation: q } });
+    expect(im.actions).toEqual([{ type: "run_stage", stage: "implement", attempt: 2 }]);
+    expect(im.state).toMatchObject({ implementFailures: 1, decideInput: "decide" });
+    const fx = transition(at("fix", { pr: pr3, decideInput: "decide", pendingFixInput: "fix it" }), { type: "stage_ok", stage: "fix", result: { escalation: q } });
+    expect(fx.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: "fix it" }]);
+    expect(fx.state).toMatchObject({ rescues: 1, rescueRun: true });
+    for (const kind of [qProduct, qOther]) {
+      const sp = transition(at("spec", { track: "spec", specMode: "decide", decideInput: "decide" }), specOk({ verdict: "question", question: kind }));
+      expect(sp.actions).toEqual([{ type: "run_stage", stage: "spec", attempt: 2 }]);
+      expect(sp.state).toMatchObject({ specMode: "decide", decideReturns: 0 });
+      expect(sp.state.history).toEqual(["spec attempt 1 failed: escalated in decide mode"]);
+    }
+    // A failed run inside a rescue escalates at once.
+    const rescued = transition(at("plan", { decideInput: "decide", rescueRun: true, rescues: 1 }), { type: "stage_ok", stage: "plan", result: { escalation: q } });
+    expect(rescued.state).toMatchObject({ replans: 1, stage: "plan" });
+  });
+  it("a spec question of kind other counts as a decide_yourself (AC-14)", () => {
+    const r1 = transition(at("spec", { track: "spec", specMode: "write" }), specOk({ verdict: "question", question: qOther }));
+    expect(r1.actions).toEqual([{ type: "run_stage", stage: "spec", attempt: 1 }]);
+    expect(r1.state).toMatchObject({ stage: "spec", specMode: "decide", decideInput: "kind other is not a question for the maintainer", decideReturns: 1, track: "spec" });
+    const r2 = transition(at("spec", { track: "spec", specMode: "write", decideReturns: 1 }), specOk({ verdict: "question", question: qOther }));
+    expect(r2.actions).toEqual([{ type: "run_stage", stage: "spec", attempt: 1 }]);
+    expect(r2.state).toMatchObject({ decideReturns: 2, specRescues: 1, rescueRun: true, specMode: "write" });
+    expect(r2.state.history.at(-1)).toBe("spec: decide_yourself: kind other is not a question for the maintainer");
+  });
+  it("a review escalation of kind other stays a bound hit even with a reply as input (AC-8)", () => {
+    const r = transition(at("review", { pr: pr3, answer: "a", decideInput: "d" }), reviewEscalates(qOther));
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining("The suite cannot run here") }]);
+    expect(r.state).toMatchObject({ rescues: 1, rescueRun: true, decideInput: null });
+  });
+  it("a failing question check retries once, then escalates the asking stage (AC-12)", () => {
+    const s = at("question-check", { question: q, askingStage: "plan" });
+    const r1 = transition(s, { type: "stage_failed", stage: "question-check", reason: "timeout" });
+    expect(r1.actions).toEqual([{ type: "run_stage", stage: "question-check", attempt: 2 }]);
+    expect(r1.state).toMatchObject({ question: q, askingStage: "plan", rescues: 0 });
+    const r2 = transition(r1.state, { type: "stage_failed", stage: "question-check", reason: "timeout" });
+    expect(r2.actions).toEqual([{ type: "run_stage", stage: "plan", attempt: 1 }]);
+    expect(r2.state).toMatchObject({ stage: "plan", rescues: 1, rescueRun: true });
+    expect(r2.state.history.at(-1)).toBe("plan: question check failed twice: timeout");
+    const v = transition(at("question-check", { question: qCapability, askingStage: "verify", attempt: 2, pr: pr3 }), { type: "stage_failed", stage: "question-check", reason: "timeout" });
+    expect(v.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining("timeout") }]);
+    expect(v.state).toMatchObject({ rescues: 1, rescueRun: true });
+    const sp = transition(at("question-check", { question: q, askingStage: "spec", attempt: 2, track: "spec", specMode: "answer" }), { type: "stage_failed", stage: "question-check", reason: "t" });
+    expect(sp.state).toMatchObject({ stage: "spec", specRescues: 1, specMode: "answer", track: "spec" });
+  });
+});
+
+describe("chain: answers (AC-18)", () => {
+  it("answers route by asking stage and kind (AC-18)", () => {
+    const sp = transition(at("paused", { question: qProduct, askingStage: "spec", track: "spec", specMode: "answer" }), answered());
+    expect(sp.actions).toEqual([{ type: "run_stage", stage: "spec", attempt: 1 }]);
+    expect(sp.state).toMatchObject({ specMode: "answer", answer: "use lru", answerQuestionId: 5, answerKind: "product", question: null });
+
+    for (const [question, asking] of [[q, "plan"], [qProduct, "plan"], [q, "implement"], [qProduct, "implement"]] as const) {
+      const r = transition(at("paused", { question, askingStage: asking }), answered());
+      expect(r.actions).toEqual([{ type: "run_stage", stage: "spec", attempt: 1 }]);
+      expect(r.state).toMatchObject({ stage: "spec", specMode: "record", track: "spec", parkedPr: null, answerKind: question.kind });
+    }
+
+    const rp = transition(at("paused", { question: qProduct, askingStage: "review", pr: pr3 }), answered());
+    expect(rp.state).toMatchObject({ stage: "spec", specMode: "record", track: "spec", parkedPr: pr3, pr: null, answerKind: "product" });
+    const fp = transition(at("paused", { question: qProduct, askingStage: "fix", pr: pr3 }), answered());
+    expect(fp.state).toMatchObject({ stage: "spec", specMode: "record", parkedPr: pr3, pr: null });
+
+    const rt = transition(at("paused", { question: q, askingStage: "review", pr: pr3 }), answered());
+    expect(rt.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.any(String) }]);
+    expect(rt.state).toMatchObject({ stage: "fix", recordAnswer: true, pr: pr3, track: "issue" });
+    expect(rt.state.pendingFixInput).toBe(
+      "Record the maintainer's decision as an ADR under docs/decisions/, marked (maintainer answer, question #5), then apply it:\nWhich cache?\nAnswer: use lru",
+    );
+
+    const vc = transition(at("paused", { question: qCapability, askingStage: "verify", pr: pr3, pendingSince: AT, checksRerun: true }), answered("re-check now"));
+    expect(vc.actions).toEqual([{ type: "verify" }]);
+    expect(vc.state).toMatchObject({ stage: "verify", pendingSince: null, recordAnswer: false, answer: "re-check now", answerKind: "capability" });
+
+    const ic = transition(at("paused", { question: qCapability, askingStage: "implement", plan }), answered());
+    expect(ic.actions).toEqual([{ type: "run_stage", stage: "implement", attempt: 1 }]);
+    expect(ic.state).toMatchObject({ recordAnswer: false, answer: "use lru", track: "issue" });
+    const fc = transition(at("paused", { question: qCapability, askingStage: "fix", pr: pr3, pendingFixInput: "fix it" }), answered());
+    expect(fc.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: "fix it" }]);
+    const rc = transition(at("paused", { question: qCapability, askingStage: "review", pr: pr3, sensitive: true }), answered());
+    expect(rc.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1, profile: "security" }]);
+  });
+  it("on the spec track a review or fix decision is recorded by a fix on the spec PR, never by parking it", () => {
+    for (const question of [q, qProduct]) {
+      const r = transition(at("paused", { question, askingStage: "review", track: "spec", pr: pr8 }), answered());
+      expect(r.state).toMatchObject({ stage: "fix", track: "spec", pr: pr8, parkedPr: null, recordAnswer: false, answerQuestionId: 5, answerKind: question.kind });
+      expect(r.state.pendingFixInput).toContain("(maintainer answer, question #5)");
+    }
+  });
+  it("an answer at the fix bound escalates (AC-18)", () => {
+    const r = transition(at("paused", { question: q, askingStage: "review", fixes: 2, rescues: 1, pr: pr3 }), answered());
+    expect(r.actions).toEqual([
+      { type: "close_pr", pr: 3, branch: "issue-1", comment: expect.any(String) },
+      { type: "run_stage", stage: "plan", attempt: 1 },
+    ]);
+    expect(r.state).toMatchObject({ stage: "plan", replans: 1, pr: null });
+  });
+  it("answer fields clear on the resumed stage's success, and when verify moves on (AC-18)", () => {
+    const answeredState = { answer: "a", answerQuestionId: 5, answerKind: "capability" as const };
+    const im = transition(at("implement", { ...answeredState, plan }), { type: "stage_ok", stage: "implement", result: impl, scope: { ok: true } });
+    expect(im.state).toMatchObject({ answer: null, answerQuestionId: null, answerKind: null });
+    const fx = transition(at("fix", { answer: "a", answerQuestionId: 5, answerKind: "technical", recordAnswer: true, pr: pr3 }), fixOk("c".repeat(40)));
+    expect(fx.state).toMatchObject({ answer: null, answerQuestionId: null, answerKind: null, recordAnswer: false });
+    for (const status of ["green", "failed"] as const) {
+      const v = transition(at("verify", { ...answeredState, pr: pr3 }), { type: "checks", status, sensitive: false, at: AT, log: "x" });
+      expect(v.state).toMatchObject({ answer: null, answerQuestionId: null, answerKind: null });
+    }
+    const pend = transition(at("verify", { ...answeredState, pr: pr3 }), { type: "checks", status: "pending", sensitive: false, at: AT });
+    expect(pend.state).toMatchObject({ answer: "a", answerQuestionId: 5 });
+    // On the spec track the spec stage's success clears the reply, but the question id and kind stay for the spec PR until it merges.
+    const sp = transition(at("spec", { track: "spec", specMode: "record", answer: "a", answerQuestionId: 5, answerKind: "product" }), specOk(revised));
+    expect(sp.state).toMatchObject({ answer: null, answerQuestionId: 5, answerKind: "product", specMode: null });
+    const spFix = transition({ ...sp.state, stage: "fix" }, fixOk("c".repeat(40)));
+    expect(spFix.state).toMatchObject({ answerQuestionId: 5, answerKind: "product" });
+  });
+});
+
+describe("chain: formatQuestion (AC-13)", () => {
+  it("formatQuestion: heading, mention, nonce last", () => {
+    const text = formatQuestion(q, "m", "n1");
+    const lines = text.split("\n");
+    expect(lines.slice(0, 2)).toEqual(["### Question for the maintainer", "@m"]);
+    expect(lines.at(-1)).toBe("<!-- panelator-question:n1 -->");
+    expect(lines).toContain("Which cache?");
+    expect(lines).toContain("1. lru — memory");
+    expect(lines).toContain("2. none — latency");
+    expect(lines).toContain("Recommendation: lru");
+    expect(lines).toContain("Reply in a comment on this issue; the scheduler resumes on your reply.");
+    expect(text.indexOf("Which cache?")).toBeLessThan(text.indexOf("1. lru"));
+    expect(text.indexOf("2. none")).toBeLessThan(text.indexOf("Recommendation:"));
+    expect(text.indexOf("Recommendation:")).toBeLessThan(text.indexOf("Reply in a comment"));
+    expect(text.match(/@/g)).toHaveLength(1);
+  });
+  it("formatQuestion is the question body followed by the marker (C9)", () => {
+    expect(formatQuestion(q, "m", "n1")).toBe(`${questionBody(q, "m")}\n\n${questionMarker("n1")}`);
+    expect(questionMarker("abc")).toBe("<!-- panelator-question:abc -->");
+  });
+});
+
+describe("chain: every event in every stage (AC-27)", () => {
+  const STAGES: ChainStage[] = [
+    "claimed", "plan", "implement", "verify", "review", "fix", "merge", "spec", "question-check", "done", "released", "waiting", "paused", "abandoned",
+  ];
+  const AGENT: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "question-check"];
+  const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused"];
+  const EVENTS_FAILED: ChainEvent[] = AGENT.flatMap((stage): ChainEvent[] => [
+    { type: "stage_failed", stage, reason: "boom" },
+    { type: "stage_failed", stage, reason: "429", postpone: true },
+  ]);
+  const scopeBad = { ok: false as const, violations: ["web/x.ts: outside scope"] };
+  const EVENTS: ChainEvent[] = [
+    { type: "start" },
+    { type: "stage_ok", stage: "plan", result: plan },
+    { type: "stage_ok", stage: "plan", result: { verdict: "spec_gap", domain: "backend", tasks: [], questions: ["Q"] } },
+    { type: "stage_ok", stage: "plan", result: { escalation: q } },
+    { type: "stage_ok", stage: "implement", result: impl, scope: { ok: true } },
+    { type: "stage_ok", stage: "implement", result: impl, scope: scopeBad },
+    { type: "stage_ok", stage: "implement", result: { escalation: qCapability } },
+    { type: "stage_ok", stage: "fix", result: { head_sha: "c".repeat(40), addressed: [0] }, scope: { ok: true } },
+    { type: "stage_ok", stage: "fix", result: { head_sha: "c".repeat(40), addressed: [0] }, scope: scopeBad },
+    { type: "stage_ok", stage: "fix", result: { escalation: qProduct } },
+    { type: "stage_ok", stage: "review", result: approve, security: false },
+    { type: "stage_ok", stage: "review", result: changes, security: true },
+    { type: "stage_ok", stage: "review", result: { ...approve, verdict: "escalate", escalation: q }, security: false },
+    { type: "stage_ok", stage: "review", result: { ...approve, verdict: "escalate", escalation: qOther }, security: false },
+    { type: "stage_ok", stage: "spec", result: revised, scope: { ok: true } },
+    { type: "stage_ok", stage: "spec", result: revised, scope: scopeBad },
+    { type: "stage_ok", stage: "spec", result: { verdict: "question", question: qProduct } },
+    { type: "stage_ok", stage: "spec", result: { verdict: "question", question: qOther } },
+    { type: "stage_ok", stage: "question-check", result: { verdict: "send", reasoning: "r" } },
+    { type: "stage_ok", stage: "question-check", result: { verdict: "decide_yourself", reasoning: "r" } },
+    ...EVENTS_FAILED,
+    { type: "checks", status: "green", sensitive: false, at: AT },
+    { type: "checks", status: "failed", log: "FAIL", sensitive: false, at: AT },
+    { type: "checks", status: "pending", sensitive: false, at: AT, pending: ["ci/test"] },
+    { type: "merge_result", status: "merged" },
+    { type: "merge_result", status: "merged", specGate: { ok: true } },
+    { type: "merge_result", status: "merged", specGate: { ok: false, gate: "spec-present", reason: "no Parent" } },
+    { type: "merge_result", status: "merged", specGate: { ok: false, gate: "ui-design", reason: "no design" } },
+    { type: "merge_result", status: "not_mergeable", detail: "conflict" },
+    { type: "head_moved", head_sha: "e".repeat(40) },
+    { type: "rebase_conflict", detail: "CONFLICT a.ts" },
+    answered(),
+    { type: "liveness_expired" },
+  ];
+
+  // Spec section 4, "Valid events", written out.
+  function VALID(stage: ChainStage, e: ChainEvent): boolean {
+    switch (e.type) {
+      case "start": return stage === "claimed" || stage === "waiting";
+      case "stage_ok":
+      case "stage_failed": return e.stage === stage;
+      case "checks": return stage === "verify";
+      case "merge_result":
+      case "head_moved": return stage === "merge";
+      case "rebase_conflict": return ["plan", "implement", "review", "fix", "verify", "merge"].includes(stage);
+      case "answered": return stage === "paused";
+      case "liveness_expired": return !ENDED.includes(stage);
+    }
+  }
+
+  // A state that makes each stage's transitions meaningful: a PR, a plan, a pending question, a saved spec mode, a stage to resume.
+  function fixture(stage: ChainStage, track: "issue" | "spec", variant: Partial<ChainState>): ChainState {
+    return at(stage, {
+      track, pr: track === "spec" ? pr8 : pr3, plan, specMode: "write", question: q, askingStage: "implement", resumeStage: "plan", pendingFixInput: "fix it",
+      ...variant,
+    });
+  }
+  // Ledger and history variants: a fresh issue, and one with every bound but abandonment used.
+  const VARIANTS: Partial<ChainState>[] = [
+    {},
+    { rescues: 1, specRescues: 1, replans: 1, specRevisions: 1, specAnswers: 1, decideReturns: 1, fixes: 2, attempt: 2, planFailures: 1, implementFailures: 1, scopeViolations: 1, rescueRun: true },
+    { answer: "a", answerQuestionId: 5, answerKind: "technical", decideInput: "d", parkedPr: pr3, pendingSince: AT, checksRerun: true, specProblem: "spec missing" },
+  ];
+
+  it("every event in every stage: valid pairs never throw, invalid pairs throw the invalid-event error, nothing waits on a human but paused (AC-27)", () => {
+    let valid = 0;
+    let invalidPairs = 0;
+    for (const stage of STAGES) {
+      for (const track of stage === "spec" ? (["spec"] as const) : (["issue", "spec"] as const)) {
+        for (const variant of VARIANTS) {
+          const state = fixture(stage, track, variant);
+          for (const event of EVENTS) {
+            const label = `${stage}/${track}/${JSON.stringify(variant)}: ${JSON.stringify(event)}`;
+            if (VALID(stage, event)) {
+              valid++;
+              let r: ReturnType<typeof transition> | undefined;
+              expect(() => { r = transition(state, event); }, label).not.toThrow();
+              expect(r!.state.stage as string, label).not.toBe("needs-human");
+              expect(STAGES, label).toContain(r!.state.stage);
+              const labels = r!.actions.filter((a): a is Extract<Action, { type: "label" }> => a.type === "label");
+              expect(labels.some((a) => a.add.includes("needs-human")), label).toBe(false);
+              if (r!.state.stage === "spec") expect(r!.state.track, label).toBe("spec");
+              // Nothing waits on a human but paused: only a pause action stops for the maintainer.
+              if (r!.state.stage === "paused") expect(r!.actions.map((a) => a.type), label).toEqual(["pause"]);
+            } else {
+              invalidPairs++;
+              let err: unknown = null;
+              try {
+                transition(state, event);
+              } catch (e) {
+                err = e;
+              }
+              expect(err, label).toBeInstanceOf(Error);
+              expect((err as Error).message, label).toMatch(/^invalid event /);
+            }
+          }
+        }
+      }
+    }
+    expect(valid).toBeGreaterThan(200);
+    expect(invalidPairs).toBeGreaterThan(valid);
+  });
+  it("a postponed stage_failed in a rescue run leaves rescueRun true and every counter unchanged (AC-27)", () => {
+    const counters = (s: ChainState) => ({
+      rescues: s.rescues, specRescues: s.specRescues, replans: s.replans, specRevisions: s.specRevisions, specAnswers: s.specAnswers, decideReturns: s.decideReturns,
+      fixes: s.fixes, planFailures: s.planFailures, implementFailures: s.implementFailures, scopeViolations: s.scopeViolations, attempt: s.attempt, history: s.history,
+    });
+    for (const stage of AGENT) {
+      const s = fixture(stage, stage === "spec" ? "spec" : "issue", { rescueRun: true, rescues: 1, specRescues: 1, fixes: 1, attempt: 2, history: ["h"] });
+      const r = transition(s, { type: "stage_failed", stage, reason: "429", postpone: true });
+      expect(r.state, stage).toMatchObject({ stage: "waiting", resumeStage: stage, rescueRun: true });
+      expect(counters(r.state), stage).toEqual(counters(s));
+      expect(r.actions, stage).toEqual([{ type: "wait", seconds: 1800 }]);
+    }
+  });
+  it("rebase_conflict is invalid in the spec stage and the question check", () => {
+    expect(() => transition(at("spec", { track: "spec" }), { type: "rebase_conflict", detail: "x" })).toThrow(/^invalid event rebase_conflict /);
+    expect(() => transition(at("question-check", { question: q, askingStage: "plan" }), { type: "rebase_conflict", detail: "x" })).toThrow(/^invalid event rebase_conflict /);
   });
 });
