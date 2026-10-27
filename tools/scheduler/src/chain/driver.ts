@@ -119,6 +119,30 @@ async function isAncestor(worktree: string, a: string, b: string): Promise<boole
   }
 }
 
+/**
+ * Whether every change `branch` makes since it left main is already on origin/main: true after a squash merge, which
+ * leaves the branch's commits off main's history while its content is there.
+ */
+async function changesOnMain(worktree: string, branch: string): Promise<boolean> {
+  const files = (await gitOut(worktree, "diff", "--name-only", "-z", `origin/main...${branch}`)).split("\0").filter(Boolean);
+  if (!files.length) return true;
+  try {
+    await gitOut(worktree, "diff", "--quiet", "origin/main", branch, "--", ...files);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Saves the worktree's uncommitted changes and its commits not on origin/main, each skipped when empty. */
+async function saveWorktreeWork(deps: DriverDeps, claim: Claim, kind: string): Promise<void> {
+  const leftovers = await uncommittedPatch(claim.worktree).catch(() => "");
+  const commits = await commitsPatch(claim.worktree, "origin/main").catch(() => "");
+  const u = await savePatch(deps.paths, claim.issue, leftovers, deps.now(), `${kind}-uncommitted`);
+  const c = await savePatch(deps.paths, claim.issue, commits, deps.now(), `${kind}-commits`);
+  if (u || c) deps.log({ kind: "worktree-saved", issue: claim.issue, uncommitted: u, commits: c });
+}
+
 /** The lines the PR adds (`origin/main...HEAD`), per file. */
 async function addedLinesByFile(worktree: string): Promise<Map<string, string[]>> {
   const out = await gitOut(worktree, "-c", "core.quotePath=false", "diff", "--unified=0", "--no-color", "origin/main...HEAD");
@@ -141,14 +165,15 @@ async function addedLines(worktree: string): Promise<string[]> {
 const ids = (lines: string[], re: RegExp): number[] => [...new Set(lines.flatMap((l) => [...l.matchAll(re)].map((m) => Number(m[1]))))].sort((a, b) => a - b);
 const oneLine = (text: string) => text.replace(/\s*\n\s*/g, " ").trim();
 
-/** AC-10, C7: every id the diff cites, verified only by an `answered` entry in the questions log. */
-async function answeredQuestions(deps: DriverDeps, worktree: string): Promise<string> {
+/** AC-10, C7: every id the diff cites, verified only by an `answered` entry in the questions log for this issue. */
+async function answeredQuestions(deps: DriverDeps, issue: number, worktree: string): Promise<string> {
   const cited = ids(await addedLines(worktree), CITED);
   if (!cited.length) return "(none)";
   const lines: string[] = [];
   for (const id of cited) {
     const e = await answeredEntry(deps.paths, id);
-    lines.push(e
+    const verified = e !== null && e.issue === issue;
+    lines.push(verified && e
       ? `#${id}: verified. Question: ${(e.question?.question ?? "(not logged)").split("\n")[0]}. Answer: ${oneLine(e.answer ?? "")}`
       : `#${id}: NOT verified; treat as no citation`);
   }
@@ -156,18 +181,25 @@ async function answeredQuestions(deps: DriverDeps, worktree: string): Promise<st
 }
 
 /** Task 6 ruling: an ADR an earlier fix recorded stays in scope on the issue PR when its added lines carry a verified mark. */
-async function verifiedDecisionFiles(deps: DriverDeps, worktree: string): Promise<string[]> {
+async function verifiedDecisionFiles(deps: DriverDeps, issue: number, worktree: string): Promise<string[]> {
   const out: string[] = [];
   for (const [file, lines] of await addedLinesByFile(worktree)) {
     if (!file.startsWith(DECISIONS)) continue;
     for (const id of ids(lines, MARKED)) {
-      if (await answeredEntry(deps.paths, id)) {
+      if ((await answeredEntry(deps.paths, id))?.issue === issue) {
         out.push(file);
         break;
       }
     }
   }
   return out;
+}
+
+/** A capability answer is not a decision and is not recorded (AC-18): only a product or technical answer needs its mark. */
+const answerToRecord = (s: ChainState): boolean => s.answerQuestionId !== null && (s.answerKind === "product" || s.answerKind === "technical");
+
+async function carriesMark(worktree: string, questionId: number): Promise<boolean> {
+  return (await addedLines(worktree)).some((l) => l.includes(answerMark(questionId)));
 }
 
 /** AC-18: a fix recording a technical answer adds a file under docs/decisions/ that carries the answer's mark. */
@@ -227,13 +259,14 @@ function pickProfile(deps: DriverDeps, def: StageDefinition, state: ChainState, 
 }
 
 /**
- * AC-10/AC-11: the result must name the commit the worktree is on, and the PR must be `bound.branch` into main at that
- * same commit (I1). Returns the PR when it is bound, else null.
+ * AC-10/AC-11: the result must name the commit the worktree is on, and the PR must be open, from `bound.branch` into
+ * main, at that same commit (I1). Returns the PR when it is bound, else null.
  */
 async function prBound(deps: DriverDeps, claim: Claim, bound: { prNumber: number; branch: string }, headSha: string): Promise<PullRequestInfo | null> {
   if (headSha !== (await worktreeHead(claim.worktree))) return null;
   const pr = await deps.gh.pullRequest(bound.prNumber);
-  return pr.head_sha === headSha && pr.base_ref === "main" && pr.head_ref === bound.branch ? pr : null;
+  // An open PR only: after a crash between a re-plan's close_pr and the claim write, a fix must not bind to the closed PR.
+  return pr.state === "open" && pr.head_sha === headSha && pr.base_ref === "main" && pr.head_ref === bound.branch ? pr : null;
 }
 
 /** The bot identity every commit the scheduler makes or rewrites carries (stage commits and rebases alike). */
@@ -323,7 +356,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   const security = stage === "review" && (state.sensitive || isSensitive(diffBefore, sensitiveGlobs).length > 0);
   const profile = pickProfile(deps, def, state, security);
   const ci = stage === "review" && state.pr ? await ciSummary(deps, state.pr.head_sha) : undefined;
-  const answered = stage === "review" ? await answeredQuestions(deps, claim.worktree) : undefined;
+  const answered = stage === "review" ? await answeredQuestions(deps, claim.issue, claim.worktree) : undefined;
   const input = await buildInput(deps, claim, issue.title, issue.body, specText, ci, answered);
 
   const attempt = state.attempt;
@@ -410,11 +443,15 @@ async function codeEvent(
   if (stage === "fix" && state.recordAnswer && (state.answerQuestionId === null || !(await recordsAnswer(claim.worktree, state.answerQuestionId)))) {
     return { type: "stage_failed", stage, reason: "result: answer not recorded under docs/decisions/" };
   }
+  // AC-18: a fix on a spec PR records a product or technical answer in that PR, carrying the mark.
+  if (stage === "fix" && state.track === "spec" && answerToRecord(state) && !(await carriesMark(claim.worktree, state.answerQuestionId!))) {
+    return { type: "stage_failed", stage, reason: "result: answer not marked" };
+  }
   const diff = await diffFilesAgainstBase(claim.worktree);
   let scope: ScopeResult = { ok: true };
   if (state.track === "spec") scope = await specTrackScope(deps, claim, diff, specPathFromIssueBody(issueBody));
   else if (state.plan) {
-    const extra = [...(stage === "fix" && state.recordAnswer ? [DECISIONS] : []), ...(await verifiedDecisionFiles(deps, claim.worktree))];
+    const extra = [...(stage === "fix" && state.recordAnswer ? [DECISIONS] : []), ...(await verifiedDecisionFiles(deps, claim.issue, claim.worktree))];
     scope = scopeGate(diff, state.plan, parseSpec(specText), sensitiveGlobs, extra);
   }
   return stage === "implement" ? { type: "stage_ok", stage, result: result as ImplementOutcome, scope } : { type: "stage_ok", stage, result: result as FixOutcome, scope };
@@ -432,9 +469,7 @@ async function specEvent(deps: DriverDeps, claim: Claim, issueBody: string, r: S
   const pr = r.pr_number === undefined || r.head_sha === undefined ? null : await prBound(deps, claim, { prNumber: r.pr_number, branch: `spec-${claim.issue}` }, r.head_sha);
   if (!pr) return failed("result: pr mismatch");
   if (CLOSING_KEYWORD.test(pr.body)) return failed("result: spec PR body closes an issue");
-  // A capability answer is not a decision and is not recorded (AC-18), so only a product or technical answer needs its mark.
-  const recorded = state.answerQuestionId !== null && (state.answerKind === "product" || state.answerKind === "technical");
-  if (recorded && !(await addedLines(claim.worktree)).some((l) => l.includes(answerMark(state.answerQuestionId!)))) return failed("result: answer not marked");
+  if (answerToRecord(state) && !(await carriesMark(claim.worktree, state.answerQuestionId!))) return failed("result: answer not marked");
   const scope = await specTrackScope(deps, claim, await diffFilesAgainstBase(claim.worktree), specPath);
   if (issueSpec === null) await deps.gh.setIssueBody(claim.issue, `${issueBody}\n\nSpec: ${specPath}`);
   return { type: "stage_ok", stage: "spec", result: r, scope };
@@ -573,8 +608,12 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         status = "ended";
         break;
       case "done":
-        // AC-7: an abandoned issue's ledger is archived, after its finding; a later claim starts with fresh counts.
-        if (claim.state.stage === "abandoned") await archiveLedger(deps.paths, claim.issue, deps.now());
+        if (claim.state.stage === "abandoned") {
+          // Spec 005: nothing the worktree removal discards goes unsaved (the last run's leftovers, commits never in a PR).
+          await saveWorktreeWork(deps, claim, "abandoned");
+          // AC-7: an abandoned issue's ledger is archived, after its finding; a later claim starts with fresh counts.
+          await archiveLedger(deps.paths, claim.issue, deps.now());
+        }
         await removeWorktree(deps.repoDir, claim.worktree).catch((e) => deps.log({ kind: "error", issue: claim.issue, error: `worktree remove: ${(e as Error).message}` }));
         await removeClaim(deps.paths, claim.issue);
         status = "ended";
@@ -598,10 +637,16 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
       }
       case "delete_branch": {
         // AC-4, AC-21: back on issue-<n> from origin/main, then the spec branch goes locally and on GitHub.
+        // Spec 005: unpushed or unmerged work on the branch is saved first; a branch whose changes are on main is not.
         const leftovers = await uncommittedPatch(claim.worktree).catch(() => "");
         if (leftovers.trim()) {
           await savePatch(deps.paths, claim.issue, leftovers, deps.now(), "uncommitted");
           await discardUncommitted(claim.worktree);
+        }
+        const local = `refs/heads/${a.branch}`;
+        if ((await refExists(claim.worktree, local)) && !(await changesOnMain(claim.worktree, local))) {
+          const saved = await savePatch(deps.paths, claim.issue, await commitsPatch(claim.worktree, "origin/main", local), deps.now(), "deleted-branch");
+          deps.log({ kind: "branch-saved", issue: claim.issue, branch: a.branch, patch: saved });
         }
         await checkoutBranch(claim.worktree, `issue-${claim.issue}`, "origin/main");
         await deleteLocalBranch(claim.worktree, a.branch);

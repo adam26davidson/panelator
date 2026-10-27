@@ -47,7 +47,7 @@ function scriptedAdapter(results: Record<string, Scripted[]>): Adapter & { ran: 
   };
 }
 
-interface PrOver { headRef?: string; head?: string | (() => string); body?: string; merged?: boolean; mergeable?: boolean }
+interface PrOver { headRef?: string; head?: string | (() => string); body?: string; merged?: boolean; mergeable?: boolean; state?: "open" | "closed" }
 interface RouteOver { checks?: unknown[]; mergeable?: boolean; merged?: boolean; issueLabels?: string[]; prHead?: string; headRef?: string; issueBody?: string; prs?: Record<number, PrOver> }
 
 function ghRoutes(sha: string, over: RouteOver = {}): Route[] {
@@ -66,7 +66,7 @@ function ghRoutes(sha: string, over: RouteOver = {}): Route[] {
       method: "GET", path: /^\/repos\/o\/r\/pulls\/(\d+)$/, reply: (m) => {
         const pr = prs[Number(m[1])] ?? {};
         const head = typeof pr.head === "function" ? pr.head() : pr.head ?? sha;
-        return { body: { number: Number(m[1]), base: { ref: "main" }, head: { ref: pr.headRef ?? "issue-7", sha: head }, html_url: "u", body: pr.body ?? "", mergeable: pr.mergeable ?? true, mergeable_state: "clean", merged: pr.merged ?? false, state: pr.merged ? "closed" : "open" } };
+        return { body: { number: Number(m[1]), base: { ref: "main" }, head: { ref: pr.headRef ?? "issue-7", sha: head }, html_url: "u", body: pr.body ?? "", mergeable: pr.mergeable ?? true, mergeable_state: "clean", merged: pr.merged ?? false, state: pr.state ?? (pr.merged ? "closed" : "open") } };
       },
     },
     { method: "PATCH", path: /^\/repos\/o\/r\/pulls\/\d+$/, reply: () => ({ body: {} }) },
@@ -456,9 +456,10 @@ const onSpec7 = (_pair: ReturnType<typeof repoPair>, wt: string) => {
 describe("driver: escalation (spec 006 AC-1 to AC-5, AC-7)", () => {
   it("runs the rescue on the rescue model with the history in its prompt, and mirrors the counts to the ledger (AC-1, AC-7)", async () => {
     const { deps, claim, adapter, paths } = await setup(() => ({ plan: [] }));
+    // The plan stage's own model is the configured rescue model, so a distinct id shows which one ran.
+    deps.cfg = { ...deps.cfg, rescue_model: "claude-rescue-test" };
     const c = await steps(deps, claim, 4);
-    expect(adapter.ran).toHaveLength(3);
-    expect(adapter.ran.at(-1)).toBe("plan:claude-fable-5-1");
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1", "plan:claude-rescue-test"]);
     expect(c.state.rescues).toBe(1);
     expect(JSON.parse(readFileSync(ledgerFile(paths), "utf8")).rescues).toBe(1);
     const rescue = readdirSync(paths.runs).find((d) => d.startsWith("7-plan-1-") && d.includes("-rescue"))!;
@@ -550,6 +551,23 @@ describe("driver: escalation (spec 006 AC-1 to AC-5, AC-7)", () => {
     expect(await readClaim(paths, 7)).toBeNull();
   }, 60_000);
 
+  it("saves the last run's uncommitted work and unpushed commits before an abandonment removes the worktree (spec 005)", async () => {
+    const lastRun = (run: StageRun) => {
+      commitIn(run.worktree, { "work.txt": "w\n" });
+      writeFileSync(join(run.worktree, "dirty.txt"), "d\n");
+      return undefined; // the run fails
+    };
+    const { deps, claim, paths } = await setup(() => ({ plan: [lastRun] }));
+    const c = at(claim, { stage: "plan", rescueRun: true, rescues: 1, replans: 1, specRevisions: 1 });
+    await writeClaim(paths, c);
+    const r = await step(deps, c);
+    expect(r.status).toBe("ended");
+    expect(existsSync(claim.worktree)).toBe(false);
+    const saved = (kind: string) => readdirSync(paths.patches).filter((f) => f.includes(kind)).map((f) => readFileSync(join(paths.patches, f), "utf8"));
+    expect(saved("abandoned-uncommitted")).toEqual([expect.stringContaining("dirty.txt")]);
+    expect(saved("abandoned-commits")).toEqual([expect.stringContaining("work.txt")]);
+  }, 60_000);
+
   it("applies a resumed issue's answered event as a transition: the fix bound re-plans, closing PR 9 (AC-15)", async () => {
     const { deps, claim, gh, paths, sha } = await setup(() => ({}));
     const c = at(claim, { stage: "paused", askingStage: "review", question: Q, fixes: 2, rescues: 1, pr: { number: 9, head_sha: sha }, plan: plan as never }, {
@@ -564,6 +582,15 @@ describe("driver: escalation (spec 006 AC-1 to AC-5, AC-7)", () => {
     expect(stored.pendingEvent).toBeUndefined();
     expect(stored.state.stage).toBe("plan");
     expect(r.claim.pendingEvent).toBeUndefined();
+  }, 60_000);
+});
+
+describe("driver: PR binding (spec 006)", () => {
+  it("does not bind a result to a closed PR (a crash after a re-plan's close_pr)", async () => {
+    const { deps, claim, paths, sha } = await setup((sha) => ({ implement: [impl(sha)] }), (sha) => ghRoutes(sha, { prs: { 9: { headRef: "issue-7", head: sha, state: "closed" } } }));
+    const c = at(claim, { stage: "implement", plan: plan as never });
+    await writeClaim(paths, c);
+    expect((await step(deps, c)).claim.state.history).toContain("implement attempt 1 failed: result: pr mismatch");
   }, 60_000);
 });
 
@@ -626,10 +653,12 @@ describe("driver: questions (spec 006 AC-12, AC-13, AC-17)", () => {
 
   it("lists the review's cited answers, verified only from the questions log (AC-10, C7)", async () => {
     const { deps, claim, paths, sha } = await setup(() => ({ review: [approve] }), undefined, (_pair, wt) => {
-      commitIn(wt, { "notes.md": "per (maintainer answer, question #101)\nsee question #102\nand question #103\n" });
+      commitIn(wt, { "notes.md": "per (maintainer answer, question #101)\nsee question #102\nand question #103\nand question #104\n" });
     });
     await appendQuestionLog(paths, { issue: 7, at: "2026-10-20T00:00:00Z", event: "answered", asking_stage: "plan", question_comment_id: 101, reply_comment_id: 111, answer: "use a\nplease", question: Q });
     await appendQuestionLog(paths, { issue: 7, at: "2026-10-20T00:00:00Z", event: "sent", asking_stage: "plan", question_comment_id: 102 });
+    // An answer to another issue's question verifies nothing here.
+    await appendQuestionLog(paths, { issue: 8, at: "2026-10-20T00:00:00Z", event: "answered", asking_stage: "plan", question_comment_id: 104, reply_comment_id: 114, answer: "other", question: Q });
     const c = at(claim, { stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } });
     await writeClaim(paths, c);
     await step(deps, c);
@@ -637,6 +666,7 @@ describe("driver: questions (spec 006 AC-12, AC-13, AC-17)", () => {
       "#101: verified. Question: Which store?. Answer: use a please",
       "#102: NOT verified; treat as no citation",
       "#103: NOT verified; treat as no citation",
+      "#104: NOT verified; treat as no citation",
     ].join("\n"));
   }, 60_000);
 });
@@ -666,15 +696,15 @@ describe("driver: recorded answers in a fix (spec 006 AC-18)", () => {
     expect((await step(cap.deps, c2)).claim.state.stage).toBe("verify");
   }, 60_000);
 
-  it("keeps an earlier ADR in scope on a later fix only while its mark is verified in the log (Task 6 ruling)", async () => {
-    for (const logged of [true, false]) {
+  it("keeps an earlier ADR in scope on a later fix only while its mark is verified in the log for this issue (Task 6 ruling)", async () => {
+    for (const logged of [7, 8, null]) {
       let wt = "";
       const { deps, claim, paths, sha } = await setup(() => ({ fix: [(run: StageRun) => adr(run.worktree)] }), (sha) => ghRoutes(sha, { prs: { 9: { head: () => head(wt) } } }), (_p, w) => { wt = w; });
-      if (logged) await appendQuestionLog(paths, { issue: 7, at: "2026-10-20T00:00:00Z", event: "answered", asking_stage: "review", question_comment_id: 555, reply_comment_id: 600, answer: "use a" });
+      if (logged) await appendQuestionLog(paths, { issue: logged, at: "2026-10-20T00:00:00Z", event: "answered", asking_stage: "review", question_comment_id: 555, reply_comment_id: 600, answer: "use a" });
       const c = at(claim, { stage: "fix", plan: plan as never, pr: { number: 9, head_sha: sha }, pendingFixInput: "Address the review." });
       await writeClaim(paths, c);
       const r = await step(deps, c);
-      if (logged) expect(r.claim.state.stage).toBe("verify");
+      if (logged === 7) expect(r.claim.state.stage).toBe("verify");
       else {
         expect(r.claim.state.stage).toBe("fix");
         expect(r.claim.state.pendingFixInput).toContain("docs/decisions/0001-store.md: outside plan file scope");
@@ -684,6 +714,13 @@ describe("driver: recorded answers in a fix (spec 006 AC-18)", () => {
 });
 
 describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
+  it("fails a spec-PR fix that records a product answer without its mark (AC-18)", async () => {
+    const { deps, claim, paths, sha } = await setup((sha) => ({ fix: [{ head_sha: sha, addressed: [] }] }), (sha) => ghRoutes(sha, { prs: { 12: { headRef: "spec-7", head: sha } } }), onSpec7);
+    const c = at(claim, { stage: "fix", track: "spec", pr: { number: 12, head_sha: sha }, answer: "keep it local", answerQuestionId: 555, answerKind: "product", pendingFixInput: "Record the decision." });
+    await writeClaim(paths, c);
+    expect((await step(deps, c)).claim.state.history).toContain("fix attempt 1 failed: result: answer not marked");
+  }, 60_000);
+
   it("runs the spec stage on spec-7 for a claim with a missing spec (review focus 12)", async () => {
     const { deps, claim, adapter, paths } = await setup(() => ({ spec: [] }));
     const c = { ...claim, state: initialChainState(7, "specs/010-thing/spec.md has no Parent: line") };
@@ -705,7 +742,12 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
   }, 60_000);
 
   it("after a spec-track merge deletes spec-7 locally and on GitHub, records no merge, and implements on issue-7 (AC-4, review focus 7)", async () => {
-    const { deps, claim, adapter, gh, paths, sha } = await setup(() => ({ plan: [plan], implement: [] }), (sha) => ghRoutes(sha, { prs: { 12: { headRef: "spec-7", head: sha } } }), onSpec7);
+    const { deps, claim, adapter, gh, paths, sha } = await setup(() => ({ plan: [plan], implement: [] }), (sha) => ghRoutes(sha, { prs: { 12: { headRef: "spec-7", head: sha } } }), (pair, wt) => {
+      onSpec7(pair, wt);
+      // The squash merge: the spec PR's content lands on main as a new commit.
+      commitIn(pair.repo, { "specs/010-thing/notes.md": "notes\n" }, "spec PR (squash)");
+      git(pair.repo, "push", "-q", "origin", "main");
+    });
     const c = at(claim, { stage: "merge", track: "spec", pr: { number: 12, head_sha: sha } });
     await writeClaim(paths, c);
     const r = await step(deps, c);
@@ -715,6 +757,7 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     expect(branchIn(claim.worktree)).toBe("issue-7");
     expect(git(claim.worktree, "branch", "--list", "spec-7").trim()).toBe("");
     expect(existsSync(join(paths.root, "merges.jsonl"))).toBe(false);
+    expect(readdirSync(paths.patches).filter((f) => f.includes("deleted-branch"))).toEqual([]);
     await steps(deps, r.claim, 2);
     expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "implement:claude-sonnet-5-5"]);
     expect(adapter.heads).toEqual(["issue-7", "issue-7"]);
@@ -829,6 +872,22 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     await writeClaim(plain.paths, c2);
     await step(plain.deps, c2);
     expect(inputOf(plain.paths, "7-review-").profile_instructions).toMatch(/^Spec profile\./);
+  }, 60_000);
+
+  it("saves spec-7's unpushed commits before a release without a spec PR deletes the branch (spec 005, AC-21)", async () => {
+    const { deps, claim, gh, paths } = await setup(() => ({}), undefined, (_p, wt) => {
+      git(wt, "checkout", "-q", "-b", "spec-7");
+      commitIn(wt, { "specs/010-thing/draft.md": "draft\n" });
+    });
+    const c = at(claim, { stage: "spec", track: "spec", specMode: "write" });
+    await writeClaim(paths, c);
+    const { state, actions } = transition(c.state, { type: "liveness_expired" });
+    await applyActions(deps, { ...c, state }, actions);
+    expect(writes(gh)).toContain("DELETE /repos/o/r/git/refs/heads/spec-7");
+    expect(git(claim.worktree, "branch", "--list", "spec-7").trim()).toBe("");
+    const saved = readdirSync(paths.patches).filter((f) => f.includes("deleted-branch"));
+    expect(saved).toHaveLength(1);
+    expect(readFileSync(join(paths.patches, saved[0]), "utf8")).toContain("draft.md");
   }, 60_000);
 
   it("a liveness release on the spec track closes spec PR 12 and deletes spec-7, and closes the parked issue PR too (AC-21)", async () => {

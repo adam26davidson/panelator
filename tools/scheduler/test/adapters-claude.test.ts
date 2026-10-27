@@ -46,6 +46,13 @@ describe("claudeAdapter.buildCommand (AC-18)", () => {
     const impl = claudeAdapter.buildCommand({ ...run, stage: "fix", profile: backend }).argv;
     expect(impl[impl.indexOf("--allowedTools") + 1]).toBe("Read,Edit,Write,Bash,Glob,Grep,Edit(//tmp/r.json)");
   });
+  it("gives the question check read-only tools, with a profile or without (spec 006)", () => {
+    const backend = { name: "backend", dir: "/a", skillsDir: "/a/skills", instructions: "", tools: ["Read", "Edit", "Write", "Bash"] };
+    for (const profile of [backend, null]) {
+      const { argv } = claudeAdapter.buildCommand({ ...run, stage: "question-check", profile });
+      expect(argv[argv.indexOf("--allowedTools") + 1]).toBe("Read,Glob,Grep,Edit(//tmp/r.json)");
+    }
+  });
   it("without a profile still allows reading and writing the result file outside the worktree (plan stage)", () => {
     const { argv } = claudeAdapter.buildCommand({ ...run, profile: null });
     expect(argv.slice(argv.indexOf("--allowedTools"), argv.indexOf("--allowedTools") + 2)).toEqual(["--allowedTools", "Read,Glob,Grep,Edit(//tmp/r.json)"]);
