@@ -568,7 +568,7 @@ describe("driver: escalation (spec 006 AC-1 to AC-5, AC-7)", () => {
     expect(saved("abandoned-commits")).toEqual([expect.stringContaining("work.txt")]);
   }, 60_000);
 
-  it("applies a resumed issue's answered event as a transition: the fix bound re-plans, closing PR 9 (AC-15)", async () => {
+  it("applies a resumed issue's answered event as a transition: the fix bound re-plans, closing PR 9, recording the answer first (AC-15, T4)", async () => {
     const { deps, claim, gh, paths, sha } = await setup(() => ({}));
     const c = at(claim, { stage: "paused", askingStage: "review", question: Q, fixes: 2, rescues: 1, pr: { number: 9, head_sha: sha }, plan: plan as never }, {
       pendingEvent: { type: "answered", answer: "use a", questionId: 555 },
@@ -580,7 +580,8 @@ describe("driver: escalation (spec 006 AC-1 to AC-5, AC-7)", () => {
     expect(JSON.parse(readFileSync(ledgerFile(paths), "utf8")).replans).toBe(1);
     const stored = (await readClaim(paths, 7))!;
     expect(stored.pendingEvent).toBeUndefined();
-    expect(stored.state.stage).toBe("plan");
+    expect(stored.state).toMatchObject({ stage: "spec", specMode: "record", track: "spec", answerQuestionIds: [555] });
+    expect(JSON.parse(readFileSync(ledgerFile(paths), "utf8")).pendingAnswer).toEqual({ ids: [555], kind: "technical", text: "Question #555: use a" });
     expect(r.claim.pendingEvent).toBeUndefined();
   }, 60_000);
 });
@@ -707,6 +708,32 @@ describe("driver: questions (spec 006 AC-12, AC-13, AC-17)", () => {
     expect(logEvents(paths)).toEqual(["asked", "checked", "sent"]);
   }, 60_000);
 
+  it("gives the question check the issue's answered questions and posts the check's wording (C8, C10)", async () => {
+    const worded = { kind: "technical", question: "Store a or b? The schema follows.", options: [{ label: "a", cost: "cheap" }], recommendation: "a" };
+    const { deps, claim, gh, paths } = await setup(() => ({ "question-check": [{ verdict: "send", reasoning: "real choice", question: worded }] }));
+    await appendQuestionLog(paths, { issue: 7, at: "2026-10-20T00:00:00Z", event: "answered", asking_stage: "plan", question_comment_id: 501, reply_comment_id: 502, answer: "keep it\nlocal", question: { ...Q, question: "Where does data live?" } });
+    await appendQuestionLog(paths, { issue: 8, at: "2026-10-20T00:00:00Z", event: "answered", asking_stage: "plan", question_comment_id: 601, reply_comment_id: 602, answer: "other issue" });
+    const c = at(claim, { stage: "question-check", question: Q, askingStage: "plan" });
+    await writeClaim(paths, c);
+    await step(deps, c);
+    expect(inputOf(paths, "7-question-check-").answered_questions).toBe("#501: Question: Where does data live? Answer: keep it local");
+    expect(readFileSync(join(paths.runs, readdirSync(paths.runs).find((d) => d.startsWith("7-question-check-"))!, "prompt.md"), "utf8")).toContain("#501: Question: Where does data live?");
+    const body = String((gh.calls.find((x) => x.url === "/repos/o/r/issues/7/comments")?.body as { body: string }).body);
+    expect(body).toContain("Store a or b? The schema follows.");
+    expect(body).not.toContain("Which store?");
+    expect(JSON.parse(readFileSync(join(paths.paused, "7.json"), "utf8")).question).toEqual(worded);
+  }, 60_000);
+
+  it("logs a follow-up as asked when it pauses without the check (T-minor 5)", async () => {
+    const fu = { ...Q, follow_up: true, reply_quote: "which store" };
+    const { deps, claim, paths } = await setup(() => ({ plan: [{ escalation: fu }] }));
+    const c = at(claim, { stage: "plan", answer: "Question #555: Which store do you mean?", answerQuestionId: 555, answerQuestionIds: [555], answerKind: "capability" });
+    await writeClaim(paths, c);
+    const r = await step(deps, c);
+    expect(r.status).toBe("ended");
+    expect(logEvents(paths)).toEqual(["asked", "sent"]);
+  }, 60_000);
+
   it("re-runs a check pending six hours, then runs a fix whose input names it (AC-17)", async () => {
     const { deps, claim, gh, paths, sha } = await setup(() => ({ fix: [] }), (sha) => ghRoutes(sha, { checks: [{ id: 42, name: "test", status: "queued", conclusion: null }] }));
     const c = at(claim, { stage: "verify", plan: plan as never, pr: { number: 9, head_sha: sha }, pendingSince: new Date(Date.now() - 7 * 3_600_000).toISOString() });
@@ -738,9 +765,18 @@ describe("driver: questions (spec 006 AC-12, AC-13, AC-17)", () => {
   }, 60_000);
 });
 
+let addedWt = "";
 describe("driver: recorded answers in a fix (spec 006 AC-18)", () => {
-  const recording = { recordAnswer: true, answerQuestionId: 555, answerKind: "technical" as const, answer: "use a", pendingFixInput: "Record the decision." };
+  const recording = { recordAnswer: true, answerQuestionId: 555, answerQuestionIds: [555], answerKind: "technical" as const, answer: "Question #555: use a", pendingFixInput: "Record the decision." };
   const adr = (wt: string) => ({ head_sha: commitIn(wt, { "docs/decisions/0001-store.md": "Use a. (maintainer answer, question #555)\n" }), addressed: [] });
+
+  it("accepts a recording fix whose ADR carries the mark of an earlier answer of the chain (T3)", async () => {
+    let wt = "";
+    const { deps, claim, paths, sha } = await setup(() => ({ fix: [(run: StageRun) => adr(run.worktree)] }), (sha) => ghRoutes(sha, { prs: { 9: { head: () => head(wt) } } }), (_p, w) => { wt = w; });
+    const c = at(claim, { stage: "fix", plan: plan as never, pr: { number: 9, head_sha: sha }, ...recording, answerQuestionId: 556, answerQuestionIds: [555, 556] });
+    await writeClaim(paths, c);
+    expect((await step(deps, c)).claim.state.stage).toBe("verify");
+  }, 60_000);
 
   it("fails a recording fix whose diff adds no marked file under docs/decisions/", async () => {
     const { deps, claim, paths, sha } = await setup((sha) => ({ fix: [{ head_sha: sha, addressed: [] }] }));
@@ -763,10 +799,17 @@ describe("driver: recorded answers in a fix (spec 006 AC-18)", () => {
     expect((await step(cap.deps, c2)).claim.state.stage).toBe("verify");
   }, 60_000);
 
-  it("keeps an earlier ADR in scope on a later fix only while its mark is verified in the log for this issue (Task 6 ruling)", async () => {
+  it("an ADR the PR adds is in scope (C6); an edit to an ADR on main is in scope only while its mark is verified for this issue (Task 6 ruling)", async () => {
+    const added = await setup(() => ({ fix: [(run: StageRun) => ({ head_sha: commitIn(run.worktree, { "docs/decisions/0002-own-call.md": "We chose b: one clearly right answer.\n" }), addressed: [] })] }),
+      (sha) => ghRoutes(sha, { prs: { 9: { head: () => head(addedWt) } } }), (_p, w) => { addedWt = w; });
+    const ca = at(added.claim, { stage: "fix", plan: plan as never, pr: { number: 9, head_sha: added.sha }, pendingFixInput: "Address the review." });
+    await writeClaim(added.paths, ca);
+    expect((await step(added.deps, ca)).claim.state.stage).toBe("verify");
+
+    const files = withTopDesign({ "a.txt": "a\n", "specs/010-thing/spec.md": spec, "docs/decisions/0001-store.md": "Use b.\n" }, "specs/010-thing/spec.md");
     for (const logged of [7, 8, null]) {
       let wt = "";
-      const { deps, claim, paths, sha } = await setup(() => ({ fix: [(run: StageRun) => adr(run.worktree)] }), (sha) => ghRoutes(sha, { prs: { 9: { head: () => head(wt) } } }), (_p, w) => { wt = w; });
+      const { deps, claim, paths, sha } = await setup(() => ({ fix: [(run: StageRun) => adr(run.worktree)] }), (sha) => ghRoutes(sha, { prs: { 9: { head: () => head(wt) } } }), (_p, w) => { wt = w; }, files);
       if (logged) await appendQuestionLog(paths, { issue: logged, at: "2026-10-20T00:00:00Z", event: "answered", asking_stage: "review", question_comment_id: 555, reply_comment_id: 600, answer: "use a" });
       const c = at(claim, { stage: "fix", plan: plan as never, pr: { number: 9, head_sha: sha }, pendingFixInput: "Address the review." });
       await writeClaim(paths, c);
@@ -783,7 +826,7 @@ describe("driver: recorded answers in a fix (spec 006 AC-18)", () => {
 describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
   it("fails a spec-PR fix that records a product answer without its mark (AC-18)", async () => {
     const { deps, claim, paths, sha } = await setup((sha) => ({ fix: [{ head_sha: sha, addressed: [] }] }), (sha) => ghRoutes(sha, { prs: { 12: { headRef: "spec-7", head: sha } } }), onSpec7);
-    const c = at(claim, { stage: "fix", track: "spec", pr: { number: 12, head_sha: sha }, answer: "keep it local", answerQuestionId: 555, answerKind: "product", pendingFixInput: "Record the decision." });
+    const c = at(claim, { stage: "fix", track: "spec", pr: { number: 12, head_sha: sha }, answer: "keep it local", answerQuestionId: 555, answerQuestionIds: [555], answerKind: "product", pendingFixInput: "Record the decision." });
     await writeClaim(paths, c);
     expect((await step(deps, c)).claim.state.history).toContain("fix attempt 1 failed: result: answer not marked");
   }, 60_000);
@@ -914,7 +957,7 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     let wt = "";
     const routes = { prs: { 12: { headRef: "spec-7", head: () => head(wt), body: "Refs #7" } } };
     const unmarked = await setup(() => ({ spec: [(run: StageRun) => revised(commitIn(run.worktree, { "specs/010-thing/spec.md": spec + "\nUse a.\n" })), (run: StageRun) => revised(commitIn(run.worktree, { "specs/010-thing/spec.md": spec + "\nUse a. (maintainer answer, question #555)\n" }))] }), (sha) => ghRoutes(sha, routes), (_p, w) => { wt = w; });
-    const c = at(unmarked.claim, { stage: "spec", track: "spec", specMode: "write", answer: "use a", answerQuestionId: 555, answerKind: "technical" });
+    const c = at(unmarked.claim, { stage: "spec", track: "spec", specMode: "write", answer: "use a", answerQuestionId: 555, answerQuestionIds: [555], answerKind: "technical" });
     await writeClaim(unmarked.paths, c);
     const r = await step(unmarked.deps, c);
     expect(r.claim.state.history).toContain("spec attempt 1 failed: result: answer not marked");
@@ -923,16 +966,24 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     expect(r2.claim.state.stage).not.toBe("spec");
   }, 60_000);
 
-  it("reviews a spec PR under the security profile when it touches a top design, else under the spec profile (AC-4, AC-21)", async () => {
-    const sensitive = await setup(() => ({ review: [approve] }), (sha) => ghRoutes(sha, { prs: { 12: { headRef: "spec-7", head: sha } } }), (_p, wt) => {
+  it("reviews a spec PR that touches a top design under the spec profile, then under the security profile; else under the spec profile only (AC-4, AC-21, C5)", async () => {
+    const sensitive = await setup(() => ({ review: [approve, approve] }), (sha) => ghRoutes(sha, { prs: { 12: { headRef: "spec-7", head: sha } } }), (_p, wt) => {
       git(wt, "checkout", "-q", "-b", "spec-7");
       commitIn(wt, { "docs/delivery-system-design.md": "# Design\n" });
       git(wt, "push", "-q", "-u", "origin", "spec-7");
     });
     const c = at(sensitive.claim, { stage: "review", track: "spec", pr: { number: 12, head_sha: sensitive.sha } });
     await writeClaim(sensitive.paths, c);
-    await step(sensitive.deps, c);
-    expect(inputOf(sensitive.paths, "7-review-").profile_instructions).toMatch(/^Security review profile\./);
+    const first = await step(sensitive.deps, c);
+    expect(inputOf(sensitive.paths, "7-review-").profile_instructions).toMatch(/^Spec profile\./);
+    expect(first.claim.state).toMatchObject({ stage: "review", securityPass: true });
+    const second = await step(sensitive.deps, first.claim);
+    const reviews = readdirSync(sensitive.paths.runs).filter((d) => d.startsWith("7-review-")).sort();
+    expect(reviews).toHaveLength(2);
+    const profiles = reviews.map((d) => JSON.parse(readFileSync(join(sensitive.paths.runs, d, "input.json"), "utf8")).profile_instructions as string);
+    expect(profiles.some((p) => p.startsWith("Security review profile."))).toBe(true);
+    expect(profiles.some((p) => p.startsWith("Spec profile."))).toBe(true);
+    expect(second.claim.state.stage).toBe("merge");
 
     const plain = await setup(() => ({ review: [approve] }), (sha) => ghRoutes(sha, { prs: { 12: { headRef: "spec-7", head: sha } } }), onSpec7);
     const c2 = at(plain.claim, { stage: "review", track: "spec", pr: { number: 12, head_sha: plain.sha } });

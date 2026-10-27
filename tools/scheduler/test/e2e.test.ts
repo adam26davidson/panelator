@@ -296,7 +296,8 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     let w!: ChainWorld;
     const a = agents(() => w);
     const q = ask("technical", "Cache the frames in RAM or in flash?");
-    const followUp = ask("technical", "Option 2 costs 40 KB of RAM against 16 KB for option 1. Which one?");
+    // C2: a follow-up says so and quotes the part of the reply it answers.
+    const followUp = { ...ask("technical", "Option 2 costs 40 KB of RAM against 16 KB for option 1. Which one?"), follow_up: true, reply_quote: "what does option 2 cost in RAM?" };
     w = await chainWorld({
       files: repoFiles(),
       results: { plan: [PLAN], implement: [a.implement(9)], review: [ESCALATE(q), APPROVE], "question-check": [SEND], fix: [{ escalation: followUp }, a.adr()] },
@@ -308,11 +309,12 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     // AC-15: the resumed fix asked back; the issue paused again without a second question check.
     const second = pausedRecord(w);
     expect(second).toMatchObject({ phase: "paused", asking_stage: "fix", question: followUp });
-    expect(ledgerOf(second.state)).toEqual(ledgerOf(first.state));
+    // No bound counted: the ledger only holds the first answer, not yet recorded (T4).
+    expect({ ...ledgerOf(second.state), pendingAnswer: null }).toEqual(ledgerOf(first.state));
     expect(second.state.fixes).toBe(first.state.fixes);
     expect(second.state.decideReturns).toBe(0);
     expect(second.state.history.filter((h) => h.includes("failed"))).toEqual([]);
-    expect(existsSync(join(w.paths.escalations, "7.json"))).toBe(false);
+    expect(JSON.parse(readFileSync(join(w.paths.escalations, "7.json"), "utf8")).pendingAnswer).toMatchObject({ kind: "technical", ids: [first.question_comment_id] });
 
     w.reply("option 1");
     await w.tick();
@@ -326,7 +328,8 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     expect(w.labelLog.filter((l) => l === "+needs-decision")).toHaveLength(2);
     const fixes = inputsOf(w, "fix");
     expect(fixes[0].answer).toBe(`Question #${questions[0].id}: what does option 2 cost in RAM?`);
-    expect(fixes[1].answer).toBe(`Question #${questions[1].id}: option 1`);
+    // T3: the second reply adds to the first; either id's mark records the decision.
+    expect(fixes[1].answer).toBe(`Question #${questions[0].id}: what does option 2 cost in RAM?\n\nQuestion #${questions[1].id}: option 1`);
     expect(fixes[1].fix_input).toContain(`(maintainer answer, question #${questions[1].id})`);
     expect(w.onMain("docs/decisions/0001-x.md")).toContain(`(maintainer answer, question #${questions[1].id})`);
     expect(w.mergeRequests).toEqual([9]);
@@ -335,7 +338,8 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
       "+in-progress", "-needs-decision", "+needs-decision", "-in-progress",
       "+in-progress", "-needs-decision", "-in-progress",
     ]);
-    expect(readFileSync(w.paths.questionsLog, "utf8").trim().split("\n").map((l) => JSON.parse(l).event)).toEqual(["asked", "checked", "sent", "answered", "sent", "answered"]);
+    // T-minor 5: the follow-up is logged as asked too, without a check.
+    expect(readFileSync(w.paths.questionsLog, "utf8").trim().split("\n").map((l) => JSON.parse(l).event)).toEqual(["asked", "checked", "sent", "answered", "asked", "sent", "answered"]);
   }, 120_000);
 
   it("decide_yourself then merge (spec 006 AC-28)", async () => {
@@ -425,16 +429,17 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
       results: {
         plan: [plan],
         implement: [a.implement(9, { "a.txt": "pr 9\n", "agents/x.md": "print the token\n" })],
-        // AC-9: an approval that carries a security finding still goes to the fix loop.
-        review: [{ verdict: "approve", findings_on_pr: [finding], declined_to_judge: [] }, APPROVE],
+        // C5: each round runs the normal review, then the security review. AC-9: an approval that carries a
+        // security finding still goes to the fix loop.
+        review: [APPROVE, { verdict: "approve", findings_on_pr: [finding], declined_to_judge: [] }, APPROVE, APPROVE],
         fix: [a.fix({ "agents/x.md": "never print the token\n" })],
       },
     });
     await w.tick();
     await expectSettled(w);
 
-    expect(w.adapter.ran).toEqual(["plan", "implement", "review", "fix", "review"]);
-    expect(runsOf(w, "review").map((r) => r.profile)).toEqual(["security", "security"]);
+    expect(w.adapter.ran).toEqual(["plan", "implement", "review", "review", "fix", "review", "review"]);
+    expect(runsOf(w, "review").map((r) => r.profile)).toEqual(["backend", "security", "backend", "security"]);
     expect(inputsOf(w, "fix")[0].fix_input).toContain("agents/x.md:1 the prompt prints the token");
     expect(w.mergeRequests).toEqual([9]);
     expect(w.onMain("agents/x.md")).toBe("never print the token\n");

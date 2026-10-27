@@ -110,6 +110,11 @@ Spec:
 
 History of earlier attempts: {{history}}
 
+Questions the maintainer has already answered on this issue (id, question, answer):
+{{answered_questions}}
+When one of these already settles the question, return `decide_yourself` and cite it in the
+`reasoning` as `question #<id>`, with what the answer said: the asking agent applies it.
+
 **How to judge.** Investigate before you judge: read the spec, the designs and the code the
 question touches. Return `send` only when the question is one of the three kinds above and
 the asking agent's own investigation, and yours, could not settle it: a product decision, a
@@ -119,8 +124,15 @@ change a recorded maintainer decision. Otherwise return `decide_yourself`, with 
 the asking agent can act on: why it is not a question for the maintainer, and what in the
 spec, the designs or the code points to the answer.
 
+**The question the maintainer reads.** On `send`, also return `question`: the question as
+you would put it to the maintainer, a short proposal in the strongest form you can give
+(design section 3, "What a question looks like"). `question` states the decision in a
+sentence or two, `options` gives each sensible choice with its cost, and `recommendation`
+says which you would pick and why. The scheduler posts your wording, not the asking agent's,
+and keeps the asking agent's kind. Leave `question` out on `decide_yourself`.
+
 Write the JSON result to {{result_path}}:
-{ "verdict": "send" | "decide_yourself", "reasoning": "...", "findings": [] }
+{ "verdict": "send" | "decide_yourself", "reasoning": "...", "question": { "kind": "product" | "technical" | "capability", "question": "...", "options": [{ "label": "...", "cost": "..." }], "recommendation": "..." }, "findings": [] }
 If you have no tool that can write files, give the result instead as the last thing in your
 final message: the JSON object alone, with nothing after it. The scheduler reads it from there.
 

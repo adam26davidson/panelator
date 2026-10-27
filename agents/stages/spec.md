@@ -45,8 +45,10 @@ The question check sent this back for you to decide: {{decide_input}}
   unbuildable, and fix it there.
 - `decide`: you asked a question, and the question check returned it with this reasoning:
   {{decide_input}}. It is not a question for the maintainer. Pick an approach, write it into
-  the spec with its reasoning, and return `revised`; in this mode a `question` result fails
-  the stage.
+  the spec with its reasoning, and return `revised`. Do not ask that question again, in any
+  wording: in this mode a `question` result fails the stage, unless it is a new blocker your
+  decision does not settle, marked `"new_blocker": true`, and a capability question or of a
+  different kind from the question sent back.
 - `record`: the maintainer answered {{question}} with {{answer}}. Record the answer as
   below, then bring the spec in line with it.
 
@@ -97,7 +99,10 @@ never change or remove it unless a newer maintainer answer tells you to, and the
 answer's id in the new mark.
 
 **Follow-up.** When the maintainer's answer is present but the reply asks for more detail or
-asks something back, do not guess: return `question` holding the follow-up.
+asks something back, do not guess: return `question` holding the follow-up, with
+`"follow_up": true` and `"reply_quote"` set to the words of the reply you are answering,
+copied exactly. Set `follow_up` only then: the issue pauses again at once, without the
+question check. Any other question, even with an answer present, is checked as usual.
 
 **Branch.** The worktree is already on branch `spec-<issue>`, created from `origin/main` by
 the scheduler. Commit there and push it (`git push -u origin HEAD`). Do not create or switch
@@ -131,7 +136,8 @@ Write the JSON result to {{result_path}}, in exactly one of these shapes:
 `spec_path` must equal the issue's `Spec:` line when it has one. In a question, `kind` names
 which of the three kinds it is, `options` gives each sensible choice with its cost, and
 `recommendation` says which you would pick and why. Kind `other` is not a question for the
-maintainer and is treated as "decide it yourself".
+maintainer and is treated as "decide it yourself". The `question` object may also carry
+`follow_up` with `reply_quote`, and `new_blocker`, as this prompt describes; no other fields.
 
 `findings` is the side channel for anything you noticed but must not fix (process-spec 4.2).
 Every entry is an object, never a string, with exactly these fields:

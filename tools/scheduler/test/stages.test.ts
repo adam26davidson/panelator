@@ -105,6 +105,37 @@ describe("committed stage prompts (AC-1, AC-14, AC-15, AC-17)", () => {
       expect(t).not.toMatch(/a user would notice/i);
     });
   }
+  for (const n of ["plan", "implement", "fix", "review", "spec"]) {
+    it(`${n}.md marks a follow-up with follow_up and reply_quote, and a decide-mode new blocker with new_blocker (C2, C3)`, () => {
+      const t = read(n);
+      expect(t).toMatch(/"follow_up": true` and `"reply_quote"`/);
+      expect(t).toMatch(/Any other question, even with an answer present, is\s+checked as\s+usual\./);
+      expect(t).toMatch(/"new_blocker": true/);
+      expect(t).toMatch(/capability question or of a\s+different kind from (the question|the one) sent\s+back/);
+      expect(t).not.toMatch(/you must not escalate/);
+    });
+  }
+  for (const n of ["plan", "implement", "fix"]) {
+    it(`${n}.md: in decide mode a large decision is written as an ADR in docs/decisions/ (C6)`, () => {
+      expect(read(n)).toMatch(/write it as an ADR in `docs\/decisions\/`/);
+    });
+  }
+  it("review.md makes a PR's own section 3 decision a finding and an escalation (C4)", () => {
+    const t = read("review");
+    expect(t).toContain("`rule:delivery-system-design §3`");
+    expect(t).toMatch(/of kind\s+`product` or `technical` whose question is the decision the PR made/);
+  });
+  it("question-check.md reads the issue's answered questions and words the question it sends (C8, C10)", () => {
+    const t = read("question-check");
+    expect(t).toContain("{{answered_questions}}");
+    expect(t).toMatch(/already settles the question, return `decide_yourself` and cite it/);
+    expect(t).toMatch(/On `send`, also return `question`/);
+  });
+  for (const n of ["plan", "review", "question-check"]) {
+    it(`${n}.md says how to return the result without a write tool (T1)`, () => {
+      expect(read(n)).toMatch(/If you have no tool that can write files, give the result instead as the last thing in your\s+final message/);
+    });
+  }
   it("review.md names all five result fields and the cited answers", () => {
     const t = read("review");
     for (const f of ["verdict", "findings_on_pr", "declined_to_judge", "escalation", "findings"]) expect(t).toContain(`"${f}"`);

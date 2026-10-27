@@ -13,8 +13,11 @@ export interface Claim {
   started_at: string;
   last_activity_at: string;
   run_id: string | null;
-  /** Spec 006: an answer routed to the machine but not yet applied (only `answered`), and the actions it produced, kept so a crash resumes them. */
-  pendingEvent?: Extract<ChainEvent, { type: "answered" }>;
+  /**
+   * Spec 006: an event routed to the machine but not yet applied (a resume's `answered`, or C7's `chain_error`), and the
+   * actions it produced, kept so a crash resumes them.
+   */
+  pendingEvent?: Extract<ChainEvent, { type: "answered" } | { type: "chain_error" }>;
   pendingActions?: Action[];
 }
 

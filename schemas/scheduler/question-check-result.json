@@ -18,6 +18,10 @@
       "type": "string",
       "minLength": 1
     },
+    "question": {
+      "$ref": "question.json",
+      "description": "C10: on send, the question as the check words it for the maintainer; it replaces the asking stage's wording."
+    },
     "findings": {
       "type": "array",
       "items": {

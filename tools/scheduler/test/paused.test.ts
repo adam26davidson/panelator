@@ -87,7 +87,7 @@ describe("escalation ledger", () => {
     await ensureStateDirs(p);
     expect(await readLedger(p, 7)).toBeNull();
     await writeLedger(p, 7, counts);
-    expect(await readLedger(p, 7)).toEqual(counts);
+    expect(await readLedger(p, 7)).toEqual({ ...counts, pendingAnswer: null, chainFailures: null, chainErrors: 0 });
     await archiveLedger(p, 7, new Date("2026-10-27T01:02:03Z"));
     expect(await readLedger(p, 7)).toBeNull();
     const { readdirSync } = await import("node:fs");

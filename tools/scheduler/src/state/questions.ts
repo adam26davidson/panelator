@@ -22,15 +22,16 @@ export async function appendQuestionLog(p: StatePaths, entry: QuestionLogEntry):
   await appendFile(p.questionsLog, JSON.stringify(entry) + "\n");
 }
 
-/** The `answered` line for a question comment, if any: the citation check and the resume's no-duplicate rule use it. */
-export async function answeredEntry(p: StatePaths, questionCommentId: number): Promise<QuestionLogEntry | null> {
+/** Every `answered` line of the log, oldest first. */
+async function answeredEntries(p: StatePaths): Promise<QuestionLogEntry[]> {
   let text: string;
   try {
     text = await readFile(p.questionsLog, "utf8");
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw e;
   }
+  const out: QuestionLogEntry[] = [];
   for (const line of text.split("\n")) {
     if (!line) continue;
     let e: QuestionLogEntry;
@@ -39,7 +40,17 @@ export async function answeredEntry(p: StatePaths, questionCommentId: number): P
     } catch {
       continue; // a line torn by a crash mid-append verifies nothing
     }
-    if (e.event === "answered" && e.question_comment_id === questionCommentId) return e;
+    if (e.event === "answered") out.push(e);
   }
-  return null;
+  return out;
+}
+
+/** The `answered` line for a question comment, if any: the citation check and the resume's no-duplicate rule use it. */
+export async function answeredEntry(p: StatePaths, questionCommentId: number): Promise<QuestionLogEntry | null> {
+  return (await answeredEntries(p)).find((e) => e.question_comment_id === questionCommentId) ?? null;
+}
+
+/** C8: the issue's answered questions, oldest first, for the question check. */
+export async function answeredForIssue(p: StatePaths, issue: number): Promise<QuestionLogEntry[]> {
+  return (await answeredEntries(p)).filter((e) => e.issue === issue);
 }

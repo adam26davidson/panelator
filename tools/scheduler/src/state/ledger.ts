@@ -1,21 +1,23 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { LedgerCounts } from "../chain/machine.ts";
+import { ledgerOf, type LedgerCounts } from "../chain/machine.ts";
 import { validate } from "../schema/validate.ts";
 import type { StatePaths } from "./paths.ts";
 
 const file = (p: StatePaths, issue: number) => join(p.escalations, `${issue}.json`);
 
+/** A ledger written before T4 and C7 reads with their fields defaulted. */
 export async function readLedger(p: StatePaths, issue: number): Promise<LedgerCounts | null> {
   try {
-    return JSON.parse(await readFile(file(p, issue), "utf8")) as LedgerCounts;
+    return ledgerOf(JSON.parse(await readFile(file(p, issue), "utf8")) as Parameters<typeof ledgerOf>[0]);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw e;
   }
 }
 
-export async function writeLedger(p: StatePaths, issue: number, counts: LedgerCounts): Promise<void> {
+export async function writeLedger(p: StatePaths, issue: number, input: Parameters<typeof ledgerOf>[0]): Promise<void> {
+  const counts = ledgerOf(input);
   const v = validate("escalation-ledger", counts);
   if (!v.ok) throw new Error(`invalid escalation ledger: ${v.errors.join("; ")}`);
   const tmp = file(p, issue) + ".tmp";

@@ -1,6 +1,7 @@
 import type { ScopeResult } from "../gates/scope.ts";
 import type {
-  AgentStageName, AskingStage, Finding, FixOutcome, ImplementOutcome, PlanOutcome, PlanResult, Question, QuestionCheckResult, ReviewResult, SpecMode, SpecResult,
+  AgentStageName, AskingStage, Finding, FixOutcome, ImplementOutcome, PendingAnswer, PlanOutcome, PlanResult, Question, QuestionCheckResult, ReviewResult, SpecMode,
+  SpecResult,
 } from "../types.ts";
 
 export type ChainStage =
@@ -39,9 +40,22 @@ export interface ChainState {
   specProblem: string | null;
   question: Question | null;
   askingStage: AskingStage | null;
+  /** The maintainer's replies not yet spent, each prefixed "Question #<id>: " (T3: a follow-up chain accumulates them). */
   answer: string | null;
+  /** The newest answered question; `answerQuestionIds` holds every id of the chain, and `answerKind` the strongest kind. */
   answerQuestionId: number | null;
+  answerQuestionIds: number[];
   answerKind: Question["kind"] | null;
+  /** T4: a product or technical answer not yet recorded on main; part of the ledger, so a release keeps it. */
+  pendingAnswer: PendingAnswer | null;
+  /** C3: the kind of the question the check sent back to decide, while decide mode lasts. */
+  decideKind: Question["kind"] | null;
+  /** C5: on a sensitive diff, review runs twice: the normal review, then (with this set) the security review. */
+  securityPass: boolean;
+  /** C7: the chain's consecutive driver errors, kept in the ledger so a restart does not reset them. */
+  chainFailures: { count: number; last: string } | null;
+  /** C7: releases for repeated chain errors on this issue (bounded like the escalation path). */
+  chainErrors: number;
   recordAnswer: boolean;
   decideInput: string | null;
   /** An issue PR parked while a spec PR records an answer (AC-18). */
@@ -56,7 +70,8 @@ export type ChainEvent =
   | { type: "stage_ok"; stage: "plan"; result: PlanOutcome }
   | { type: "stage_ok"; stage: "implement"; result: ImplementOutcome; scope?: ScopeResult }
   | { type: "stage_ok"; stage: "fix"; result: FixOutcome; scope?: ScopeResult }
-  | { type: "stage_ok"; stage: "review"; result: ReviewResult; security: boolean }
+  /** `security`: this run was the security review; `sensitive`: the reviewed diff touches a sensitive path (C5). */
+  | { type: "stage_ok"; stage: "review"; result: ReviewResult; security: boolean; sensitive?: boolean }
   /** `scope`: the spec PR's scope check (AC-22), required for `revised`, absent for `question`. */
   | { type: "stage_ok"; stage: "spec"; result: SpecResult; scope?: ScopeResult }
   | { type: "stage_ok"; stage: "question-check"; result: QuestionCheckResult }
@@ -69,7 +84,9 @@ export type ChainEvent =
   /** The PR head moved after verify and review; valid only in stage merge, which goes back to verify. */
   | { type: "head_moved"; head_sha: string }
   | { type: "answered"; answer: string; questionId: number }
-  | { type: "liveness_expired" };
+  | { type: "liveness_expired" }
+  /** C7: the driver failed MAX_CHAIN_FAILURES times in a row on this chain; `error` is the last error. */
+  | { type: "chain_error"; error: string };
 
 export type Action =
   | { type: "run_stage"; stage: AgentStageName; attempt: number; fixInput?: string; profile?: "security" }

@@ -104,7 +104,8 @@ AC-10 second sentence, AC-13)
 - AC-4. **A merged spec PR is checked again, then the work goes on.** Given
   the spec stage returns `revised` with a PR, then that PR goes through the
   scope check of AC-22, verify, review and merge. Review uses the `spec`
-  profile, or the `security` profile when the diff touches a sensitive path.
+  profile; when the diff touches a sensitive path, the `security` review
+  follows it (AC-9).
   The PR has its own fix counter, bounded like the issue's fix loop. After the
   merge:
   - `spec-<issue>` is deleted in the worktree and on GitHub;
@@ -152,6 +153,8 @@ AC-10 second sentence, AC-13)
   - one answered spec gap (`MAX_SPEC_ANSWERS`); a `spec_gap` after it is a
     bound hit;
   - one `decide_yourself` return;
+  - one release for repeated chain errors (`MAX_CHAIN_ERRORS`, AC-7); the
+    next is a bound hit that abandons the issue;
   - six hours of pending required checks (`VERIFY_PENDING_MAX_H`), before the
     re-run of AC-17 and again after it.
 
@@ -171,6 +174,26 @@ AC-10 second sentence, AC-13)
   without the new fields), when it is read, then it loads with defaults and
   its chain continues.
 
+  **An answer not yet recorded survives a release.** Given a product or
+  technical answer (AC-18) that is not yet on `main`, then the ledger holds
+  it (the answered question ids, the kind and the reply text) until the PR
+  that records it merges. Given such an issue is released (liveness, or
+  repeated chain errors) and claimed again, or re-planned, then the chain
+  does not start at plan: the spec stage runs in `record` mode with that
+  answer (or in `write` mode with it, when the spec is missing), and its spec
+  PR must carry the mark; plan runs after it merges.
+
+  **Repeated chain errors.** Given the scheduler's driver fails on a chain
+  three times in a row (`MAX_CHAIN_FAILURES`), then the claim is released
+  with an issue comment quoting the last error (with no @-mention), one
+  finding, a history entry and one notification, and the release is counted
+  in the ledger (AC-6); the next such release abandons the issue (AC-5). The
+  consecutive failure count and the last error are kept in the claim and the
+  ledger, so a restart does not reset them. A claim that carries work the
+  driver must finish (a resume's `answered` event or an abandonment's
+  actions) is never released; when it has failed three times in a row, one
+  notification says so.
+
 **Review escalation and security** (replaces AC-11)
 
 - AC-8. **An escalation must say why.** Given a review result with verdict
@@ -180,16 +203,18 @@ AC-10 second sentence, AC-13)
   - `options`: each with a label and a cost;
   - `recommendation`.
 
-  Given kind `other`, the chain treats it as a bound hit with the fix stage as
-  the stuck stage and the escalation as input (a rescue fix, and the path
-  continues as in AC-2 to AC-5). Given any other kind, the question goes to the
-  question check (AC-12).
+  Given kind `other` (and not a follow-up, AC-15), the chain treats it as a
+  bound hit with the fix stage as the stuck stage and the escalation as input
+  (a rescue fix, and the path continues as in AC-2 to AC-5). Given any other
+  kind, the question goes to the question check (AC-12).
 - AC-9. **Security findings go to the fix loop.** Given a diff touching a
-  sensitive path, when review runs with the `security` profile and returns
-  findings, then:
+  sensitive path, then review runs twice in sequence: the normal review
+  (the domain profile, or the `spec` profile on a spec PR), and, after its
+  approval, the review with the `security` profile. The security review does
+  not replace the normal one. Given either returns findings, then:
   - a fix stage runs with those findings as input;
-  - after verify, a fresh review runs again with the `security` profile;
-  - an approval with no findings merges.
+  - after verify, both reviews run again, fresh, in the same order;
+  - the PR merges only when both approve with no findings.
 
   No `security-review` or `needs-human` label is applied. `merge_blocked` and
   the `securityFinding` hold on merge are removed.
@@ -249,10 +274,18 @@ AC-10 second sentence, AC-13)
   - the design's section 5 rule that a request to change a recorded
     maintainer decision (AC-10) is a question for the maintainer;
   - the spec;
-  - the history.
+  - the history;
+  - the questions already answered on the issue, each with its question
+    comment id, question and answer, from `questions/log.jsonl`. When one
+    already settles the question, the check returns `decide_yourself`
+    citing it.
 
   It returns `send` or `decide_yourself`, with reasoning. A question that asks
-  to change a recorded maintainer decision is always `send`. Given the check
+  to change a recorded maintainer decision is always `send`. With `send` it
+  may return a `question` (AC-8's shape): the question as the strong-tier
+  check words it, which is what the maintainer is sent (its question, options
+  and recommendation); the asking stage's kind is kept, since it routes the
+  answer. Given the check
   fails, it is retried once (the fallback of AC-26 applies first); a second
   failure is a bound hit for the stage that asked (AC-1).
 - AC-13. **A sent question pauses the issue.** Given `send`, then, in this
@@ -276,12 +309,15 @@ AC-10 second sentence, AC-13)
   nonce, never an earlier question's comment.
 - AC-14. **Anything else is sent back to decide.** Given `decide_yourself`, then
   the stage that asked runs again with the check's reasoning as input, and
-  must decide:
+  must decide the question it was sent back with:
   - a spec stage in `decide` mode must return `revised`;
   - a review must return `approve` or `changes_requested`;
   - a plan, implement or fix result must not carry an `escalation`.
 
-  Any other result counts as a failed run. Given the asking stage is verify
+  The one exception is a new blocker the decision does not settle: a
+  question marked `new_blocker: true` that is of kind `capability` or of a
+  different kind from the question sent back goes to the question check as
+  usual. Any other result counts as a failed run. Given the asking stage is verify
   (AC-17), `decide_yourself` is a bound hit with the fix stage as the stuck
   stage and the reasoning as its input. A spec stage `question` of kind
   `other` is not sent to the check: it counts as a `decide_yourself` with the
@@ -313,10 +349,17 @@ AC-10 second sentence, AC-13)
   maintainer closes has its record dropped.
 
   **Follow-ups.** Given a stage that runs with the maintainer's reply as input
-  returns a question instead of a decision (for example because the reply
-  asked for more detail, or asked a question back), then it is a follow-up:
-  the chain pauses again at once (AC-13), without the question check. A
-  follow-up is not a failed run and counts toward no bound.
+  returns a question marked `follow_up: true` whose `reply_quote` is found in
+  that reply (the reply asked for more detail, or asked a question back, and
+  the question answers it), then it is a follow-up: the chain pauses again at
+  once (AC-13), without the question check, and the question is logged as
+  `asked`. A follow-up is not a failed run and counts toward no bound. Any
+  other question from a stage with a reply as input goes to the question
+  check as usual (AC-12). Given the follow-up is answered, then the second
+  reply adds to the first: the stage gets both, each prefixed with its
+  question id; every answered id of the chain is kept; the strongest kind
+  (product, then technical, then capability) routes the answer as AC-18
+  says; and the mark of any of those ids records it.
 - AC-16. **One reminder, no timeout.** Given a question unanswered for 24
   hours, then one reminder is sent: an issue comment that @-mentions the
   maintainer, and one notification. No second reminder is sent. The issue is
@@ -336,9 +379,13 @@ AC-10 second sentence, AC-13)
     that should produce them;
   - verify starts a new six-hour window.
 
-  Given the checks are still pending at the end of that window, then the
-  chain raises a question of kind `capability` ("a required check never
-  reported"), with verify as the asking stage, through the question check.
+  The fix input also says that a check found obsolete is reported as a
+  finding naming its `required_checks` entry, for agents to remove in their
+  own reviewed PR. Given the checks are still pending at the end of that
+  window, then the chain raises a question of kind `capability` ("a required
+  check never reported"), with verify as the asking stage, through the
+  question check. Its only option is the one agents cannot take: the
+  maintainer fixes the cause outside the repository.
 - AC-18. **Answers are recorded before the chain continues.** Every recorded
   answer is marked where it is written with
   `(maintainer answer, question #<question comment id>)`. Given the
@@ -364,7 +411,11 @@ AC-10 second sentence, AC-13)
     failed run. Verify and a fresh review follow.
 
   A spec PR that records an answer and whose diff does not carry the mark is
-  a failed run. Given an answer to a `capability` question, the asking stage
+  a failed run. On an issue PR, an ADR the diff adds under `docs/decisions/`
+  is always in the plan's scope: an agent records its own large decision
+  there (design section 3, item 2). An edit to an existing ADR is in scope
+  only for a fix recording an answer, or when its added lines carry a
+  verified mark. Given an answer to a `capability` question, the asking stage
   runs again with the answer as input (verify starts its six-hour window
   again); it is not a decision, so nothing beyond the log is recorded and no
   ADR is required. The answer stays an input only until the stage it resumed
@@ -413,7 +464,7 @@ AC-10 second sentence, AC-13)
   pushes it, and does not create or switch branches. The PR body refers to the
   issue as `Refs #<issue>`; a spec PR whose body contains a closing keyword
   for any issue is a failed run. Given a claim on the spec track is released
-  (liveness, or repeated chain failures), then its spec PR is closed and
+  (liveness, or repeated chain errors, AC-7), then its spec PR is closed and
   `spec-<issue>` is deleted, so the next claim starts the spec work again from
   `origin/main`.
 
@@ -435,8 +486,9 @@ AC-10 second sentence, AC-13)
     product answer (AC-18). Both are sensitive, so the security review checks
     the citation (AC-10).
 
-  **Review.** Review of a spec PR uses the `spec` profile, unless the diff
-  touches a sensitive path, when the `security` profile wins. The `spec`
+  **Review.** Review of a spec PR uses the `spec` profile; when the diff
+  touches a sensitive path, the `security` review runs after it and both
+  must approve (AC-9). The `spec`
   criteria: the spec fits its parent design and the issue body; it has the
   spec field set; it does not decide a section 3 question itself; it changes
   or removes no text marked as a recorded answer unless it cites a verified
@@ -527,6 +579,7 @@ first wins.
 
 | From | Event | To |
 |---|---|---|
+| claimed | start, an answer not yet recorded (AC-7) | spec (`record`, or `write` when the spec is missing), with the answer |
 | claimed | start, spec ok | plan |
 | claimed | start, spec missing or incomplete | spec (`write`) |
 | any agent stage | failed, postponed for quota | waiting, then the same stage (spec keeps its mode; a rescue stays a rescue and is not spent) |
@@ -538,7 +591,8 @@ first wins.
 | question check | failed, retry used | escalate (stuck: the asking stage; verify: fix) |
 | plan | `spec_gap`, no gap answered yet | spec (`answer`) |
 | plan | `spec_gap` after an answered gap | escalate (stuck: plan) |
-| any agent stage run with a reply as input | result with a question (follow-up, AC-15) | paused, without the question check |
+| any agent stage run with a reply as input | result with a question marked `follow_up` quoting the reply (AC-15) | paused, without the question check |
+| plan, implement, fix | result with an `escalation`, in decide mode, a new blocker (AC-14) | question check |
 | plan, implement, fix | result with an `escalation`, in decide mode | failed run |
 | plan, implement, fix | result with an `escalation` | question check |
 | implement, fix | scope violation, second time | escalate |
@@ -548,12 +602,15 @@ first wins.
 | verify | checks pending 6 hours after the re-run | question check (kind `capability`, asking: verify) |
 | verify | checks green or failed after a reply | review or fix, the reply no longer an input |
 | review | `escalate`, kind `other` | escalate (stuck: fix, escalation as input) |
+| review | `escalate`, other kinds, in decide mode, a new blocker | question check |
 | review | `escalate`, other kinds, in decide mode | failed run |
 | review | `escalate`, other kinds | question check |
-| review | findings with the security profile | fix (findings as input) |
+| review | findings, sensitive diff (either review) | fix (findings as input); after verify both reviews again |
+| review | `approve`, sensitive diff, normal review | review with the `security` profile |
 | review | `approve` | merge (no security hold) |
 | spec | `revised`, scope ok | spec track: verify, review (`spec` or `security` profile), merge |
 | spec | `revised`, scope violated | spec track: fix with the violations; a second violation escalates |
+| spec | `question`, in decide mode, a new blocker | question check |
 | spec | `question`, in decide mode | failed run |
 | spec | `question`, kind `other` | as `decide_yourself` from the check (counted) |
 | spec | `question`, other kinds | question check |
@@ -561,20 +618,24 @@ first wins.
 | merge, spec track | merged, both pass, no parked PR | delete `spec-<issue>`; plan, fresh stage counters |
 | merge, spec track | merged, spec-present fails on `origin/main` | delete `spec-<issue>`; escalate (stuck: spec, `write` mode with the reason) |
 | merge, spec track | merged, UI design missing on `origin/main` | delete `spec-<issue>`; `needs-design-stage`; released, ledger kept |
-| question check | `send` | paused |
+| question check | `send` | paused, with the check's wording of the question |
 | question check | `decide_yourself`, asking verify | escalate (stuck: fix, reasoning as input) |
 | question check | `decide_yourself`, first on the issue | the asking stage, decide mode |
 | question check | `decide_yourself`, second on the issue | escalate (stuck: the asking stage) |
+| paused | any reply | the reply added to any answer not yet spent (AC-15); the strongest kind routes the rows below |
 | paused | reply to a spec question | spec, same mode, with the answer |
 | paused | reply to a capability question | the asking stage, with the answer (verify: a new 6-hour window) |
 | paused | reply to a product question from plan or implement | spec (`record`) |
 | paused | reply to a product question from review or fix | issue PR parked; spec (`record`) |
 | paused | reply to a technical question from plan or implement | spec (`record`) |
 | paused | reply to a technical question from review or fix | fix, recording an ADR |
-| any stage but the ended ones | liveness expired | released; on the spec track the spec PR closed and `spec-<issue>` deleted |
+| any stage but the ended ones | liveness expired | released; on the spec track the spec PR closed and `spec-<issue>` deleted; an unrecorded answer kept in the ledger |
+| any stage but the ended ones | chain error, no chain-error release used (AC-7) | released as on liveness, with the error, a finding and a history entry |
+| any stage but the ended ones | chain error, chain-error release used | abandoned |
 | escalate | stuck spec or spec track, spec-track rescue unused | rescue of the stuck stage |
 | escalate | stuck spec or spec track, spec-track rescue used | abandoned |
 | escalate | issue track, no rescue used | rescue of the stuck stage |
+| escalate | issue track, rescue used, no re-plan used, an answer not yet recorded | re-plan: spec (`record`) with the answer, then plan |
 | escalate | issue track, rescue used, no re-plan used | re-plan |
 | escalate | issue track, re-plan used, no spec revision used | spec (`revise`) |
 | escalate | issue track, spec revision used | abandoned |
@@ -595,17 +656,19 @@ other pair is invalid and throws:
   `merge` (the scheduler does not rebase for the spec stage or the question
   check);
 - `answered`: `paused`;
-- `liveness_expired`: every stage except `done`, `released`, `abandoned` and
-  `paused`.
+- `liveness_expired` and `chain_error`: every stage except `done`,
+  `released`, `abandoned` and `paused`.
 
 ## 5. Interfaces and files
 
 - `tools/scheduler/src/chain/`:
   - `types.ts`: new stages `spec`, `question-check`, `paused`, `abandoned`;
     `needs-human` removed; in `ChainState`, the escalation counters, the
-    history, the track, the asking stage, the answer with its question id and
-    kind, the record-answer flag, the parked issue PR, and the verify pending
-    time and re-run flag; the `close_pr`, `delete_branch`, `finding`, `pause`
+    history, the track, the asking stage, the answer with its question ids and
+    kind, the answer not yet recorded, the record-answer flag, the decided
+    question's kind, the security-review pass, the chain-error counts, the
+    parked issue PR, and the verify pending time and re-run flag; the
+    `chain_error` event; the `close_pr`, `delete_branch`, `finding`, `pause`
     and `rerun_checks` actions; `merge_result` carries the post-merge gate
     result on the spec track.
   - `machine.ts`: the section 4 rows, the AC-6 constants, and the
@@ -665,11 +728,13 @@ other pair is invalid and throws:
   the scope gate keeps it out of the diff).
 - `agents/scheduler.yaml`: `rescue_model`.
 - `schemas/scheduler/`:
-  - `question.json`;
+  - `question.json`, with the optional `follow_up` (requiring
+    `reply_quote`) and `new_blocker`;
   - `spec-result.json`;
-  - `question-check-result.json`;
+  - `question-check-result.json`, with the optional `question` of `send`;
   - `paused.json`, with the nonce;
-  - `escalation-ledger.json`;
+  - `escalation-ledger.json`, with the answer not yet recorded and the
+    chain-error counts;
   - `question-log-entry.json`, with the question comment id;
   - `review-result.json`, `plan-result.json`, `implement-result.json` and
     `fix-result.json` gain `escalation`; `plan-result.json`'s `spec_gap` rule

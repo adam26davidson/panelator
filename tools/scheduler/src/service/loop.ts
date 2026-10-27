@@ -1,12 +1,12 @@
-import { applyActions, completePause, driveChain as defaultDriveChain, type DriverDeps } from "../chain/driver.ts";
-import { CLAIM_LABEL, ENDED, NEEDS_DECISION_LABEL, initialChainState, transition } from "../chain/machine.ts";
+import { applyActions, completePause, driveChain as defaultDriveChain, step, type DriverDeps } from "../chain/driver.ts";
+import { CLAIM_LABEL, ENDED, NEEDS_DECISION_LABEL, initialChainState, ledgerOf, transition } from "../chain/machine.ts";
 import { livenessGate } from "../gates/index.ts";
 import { ensureWorktree, uncommittedPatch } from "../runner/worktree.ts";
 import { buildSelectContext } from "../shortlist/fetch.ts";
 import { rankIssues } from "../shortlist/rank.ts";
 import { selectEligible } from "../shortlist/select.ts";
 import { listClaims, readClaim, removeClaim, writeClaim, type Claim } from "../state/claims.ts";
-import { readLedger } from "../state/ledger.ts";
+import { readLedger, writeLedger } from "../state/ledger.ts";
 import { listPaused, pausedDecision, removePaused, writePaused, type PausedRecord } from "../state/paused.ts";
 import { answeredEntry, appendQuestionLog } from "../state/questions.ts";
 import { recentMerges } from "../state/merges.ts";
@@ -40,7 +40,10 @@ export interface TickInfo {
   restartPending: boolean;
 }
 
-/** Ruling 7b: a chain whose driveChain rejects this many times in a row is released instead of resumed. */
+/**
+ * Ruling 7b, C7: a chain whose driveChain rejects this many times in a row gets a `chain_error` event (a release with the
+ * error, then abandonment); a claim carrying pending work that fails this often is reported once.
+ */
 export const MAX_CHAIN_FAILURES = 3;
 
 type DriveFn = (deps: DriverDeps, claim: Claim, isStopping: () => boolean) => Promise<Claim>;
@@ -58,7 +61,6 @@ export class Scheduler {
   #stopReason = "";
   #ticking = false;
   #restartPending = false;
-  #failures = new Map<number, number>();
 
   constructor(deps: SchedulerDeps, opts: { driveChain?: DriveFn } = {}) {
     this.#deps = deps;
@@ -79,13 +81,12 @@ export class Scheduler {
     const d = this.#deps;
     d.inhibitor.acquire();
     const p = this.#drive(d, claim, () => this.#stopping)
-      .then(() => {
-        this.#failures.delete(claim.issue);
-      })
-      .catch((e) => {
+      .then(() => this.#countFailure(claim.issue, null))
+      .catch(async (e) => {
         d.log({ kind: "error", issue: claim.issue, error: (e as Error).message });
-        this.#failures.set(claim.issue, (this.#failures.get(claim.issue) ?? 0) + 1);
+        await this.#countFailure(claim.issue, (e as Error).message);
       })
+      .catch((e) => d.log({ kind: "error", issue: claim.issue, error: `failure count: ${(e as Error).message}` }))
       .finally(() => {
         this.#active.delete(claim.issue);
         if (this.#active.size === 0) {
@@ -95,6 +96,36 @@ export class Scheduler {
         }
       });
     this.#active.set(claim.issue, p);
+  }
+
+  /**
+   * C7: the consecutive driver errors live in the claim's state and the ledger, so a restart keeps them. `error` null
+   * (a drive that returned) resets them. A claim carrying pending work is never expired; it is reported once instead.
+   */
+  async #countFailure(issue: number, error: string | null): Promise<void> {
+    const d = this.#deps;
+    const claim = await readClaim(d.paths, issue);
+    if (!claim) return;
+    const before = claim.state.chainFailures;
+    if (error === null && before === null) return;
+    const chainFailures = error === null ? null : { count: (before?.count ?? 0) + 1, last: error };
+    const state = { ...claim.state, chainFailures };
+    await writeClaim(d.paths, { ...claim, state });
+    await writeLedger(d.paths, issue, ledgerOf(state));
+    if (chainFailures?.count === MAX_CHAIN_FAILURES && carriesPending(claim)) {
+      const text = `Issue #${issue}: the scheduler failed ${MAX_CHAIN_FAILURES} times in a row finishing work it must not drop (${claim.pendingEvent ? `the ${claim.pendingEvent.type} event` : "an abandonment"}); it keeps retrying. Last error: ${error}`;
+      d.serviceLog.write({ kind: "pending-work-failing", issue, failures: chainFailures.count, error });
+      await d.notifier.notify({ issue, gate: "chain_error", label: "", text });
+    }
+  }
+
+  /** C7: the chain's `chain_error` event, written into the claim first so a crash finishes it, then applied by the driver. */
+  async #chainError(claim: Claim): Promise<void> {
+    const d = this.#deps;
+    const error = claim.state.chainFailures?.last ?? "unknown error";
+    const pending: Claim = { ...claim, state: { ...claim.state, chainFailures: null }, pendingEvent: { type: "chain_error", error } };
+    await writeClaim(d.paths, pending);
+    await step(d, pending);
   }
 
   async #liveness(claim: Claim, errors: string[]): Promise<boolean> {
@@ -229,11 +260,15 @@ export class Scheduler {
 
       for (const claim of await listClaims(d.paths)) {
         if (this.#active.has(claim.issue) || pausedIssues.has(claim.issue)) continue;
-        const failures = this.#failures.get(claim.issue) ?? 0;
+        const failures = claim.state.chainFailures?.count ?? 0;
         if (failures >= MAX_CHAIN_FAILURES && expirable(claim)) {
-          await this.#expire(claim);
-          this.#failures.delete(claim.issue);
-          d.serviceLog.write({ kind: "chain-abandoned", issue: claim.issue, failures });
+          d.serviceLog.write({ kind: "chain-error", issue: claim.issue, failures, error: claim.state.chainFailures?.last });
+          try {
+            await this.#chainError(claim);
+          } catch (e) {
+            // The claim holds the event now; the driver applies it on a later tick.
+            info.errors.push(`chain error ${claim.issue}: ${(e as Error).message}`);
+          }
           info.released.push(claim.issue);
           continue;
         }

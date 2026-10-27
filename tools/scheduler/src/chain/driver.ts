@@ -29,7 +29,7 @@ import { appendMerge } from "../state/merges.ts";
 import { writePaused, type PausedRecord } from "../state/paused.ts";
 import { savePatch } from "../state/patches.ts";
 import type { StatePaths } from "../state/paths.ts";
-import { answeredEntry, appendQuestionLog } from "../state/questions.ts";
+import { answeredEntry, answeredForIssue, appendQuestionLog } from "../state/questions.ts";
 import { newRunId, runDir } from "../state/runs.ts";
 import { classOf } from "../shortlist/rank.ts";
 import type {
@@ -196,20 +196,32 @@ async function verifiedDecisionFiles(deps: DriverDeps, issue: number, worktree: 
 }
 
 /** A capability answer is not a decision and is not recorded (AC-18): only a product or technical answer needs its mark. */
-const answerToRecord = (s: ChainState): boolean => s.answerQuestionId !== null && (s.answerKind === "product" || s.answerKind === "technical");
+const answerToRecord = (s: ChainState): boolean => s.answerQuestionIds.length > 0 && (s.answerKind === "product" || s.answerKind === "technical");
 
-async function carriesMark(worktree: string, questionId: number): Promise<boolean> {
-  return (await addedLines(worktree)).some((l) => l.includes(answerMark(questionId)));
+/** T3: the mark of any answered question of the chain counts. */
+async function carriesMark(worktree: string, questionIds: number[]): Promise<boolean> {
+  return (await addedLines(worktree)).some((l) => questionIds.some((id) => l.includes(answerMark(id))));
 }
 
-/** AC-18: a fix recording a technical answer adds a file under docs/decisions/ that carries the answer's mark. */
-async function recordsAnswer(worktree: string, questionId: number): Promise<boolean> {
-  const added = (await gitOut(worktree, "-c", "core.quotePath=false", "diff", "--diff-filter=A", "--name-only", "origin/main...HEAD")).split("\n").filter((f) => f.startsWith(DECISIONS));
-  for (const f of added) {
+/** Files under docs/decisions/ the PR adds (`origin/main...HEAD`). */
+async function addedDecisionFiles(worktree: string): Promise<string[]> {
+  return (await gitOut(worktree, "-c", "core.quotePath=false", "diff", "--diff-filter=A", "--name-only", "origin/main...HEAD")).split("\n").filter((f) => f.startsWith(DECISIONS));
+}
+
+/** AC-18: a fix recording a technical answer adds a file under docs/decisions/ that carries the mark of an answered id of the chain. */
+async function recordsAnswer(worktree: string, questionIds: number[]): Promise<boolean> {
+  for (const f of await addedDecisionFiles(worktree)) {
     const text = await readFile(join(worktree, f), "utf8").catch(() => "");
-    if (text.includes(answerMark(questionId))) return true;
+    if (questionIds.some((id) => text.includes(answerMark(id)))) return true;
   }
   return false;
+}
+
+/** C8: the issue's answered questions, for the question check: one already answered may settle the new one. */
+async function issueAnswers(deps: DriverDeps, issue: number): Promise<string> {
+  const entries = await answeredForIssue(deps.paths, issue);
+  if (!entries.length) return "(none)";
+  return entries.map((e) => `#${e.question_comment_id}: Question: ${oneLine(e.question?.question ?? "(not logged)")} Answer: ${oneLine(e.answer ?? "")}`).join("\n");
 }
 
 /** AC-21, AC-22: the spec PR's scope, judged with the spec's Parent: from the worktree and the parent before (origin/main) and after. */
@@ -238,7 +250,8 @@ async function buildInput(
     fix_input: fixInput,
     history: s.history.length ? s.history.join("\n\n") : undefined,
     question: question ? questionBody(question, deps.cfg.maintainer) : undefined,
-    answer: s.answer === null ? undefined : `Question #${s.answerQuestionId}: ${s.answer}`,
+    // Each reply already carries its "Question #<id>: " prefix (T3).
+    answer: s.answer ?? undefined,
     mode: s.specMode ?? undefined,
     decide_input: s.decideInput ?? undefined,
     spec_problem: s.specProblem ?? undefined,
@@ -382,10 +395,13 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   const specPath = specPathFromIssueBody(issue.body);
   const specText = specOnMain(deps.repoDir, specPath);
   const diffBefore = await diffFilesAgainstBase(claim.worktree);
-  const security = stage === "review" && (state.sensitive || isSensitive(diffBefore, sensitiveGlobs).length > 0);
+  // C5: a sensitive diff gets the normal review first, then the security review (the state's security pass).
+  const sensitive = stage === "review" && (state.sensitive || isSensitive(diffBefore, sensitiveGlobs).length > 0);
+  const security = sensitive && state.securityPass;
   const profile = pickProfile(deps, def, state, security);
   const ci = stage === "review" && state.pr ? await ciSummary(deps, state.pr.head_sha) : undefined;
-  const answered = stage === "review" ? await answeredQuestions(deps, claim.issue, claim.worktree) : undefined;
+  // AC-10: review gets the diff's cited answers; C8: the question check gets the issue's answered questions.
+  const answered = stage === "review" ? await answeredQuestions(deps, claim.issue, claim.worktree) : stage === "question-check" ? await issueAnswers(deps, claim.issue) : undefined;
   const input = await buildInput(deps, claim, issue.title, issue.body, specText, ci, answered);
 
   const attempt = state.attempt;
@@ -445,7 +461,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
       return { type: "stage_ok", stage: "plan", result };
     }
     case "review":
-      return { type: "stage_ok", stage: "review", result: out.result as never, security };
+      return { type: "stage_ok", stage: "review", result: out.result as never, security, sensitive };
     case "question-check":
       return { type: "stage_ok", stage: "question-check", result: out.result as never };
     case "spec":
@@ -469,18 +485,21 @@ async function codeEvent(
   if (prNumber === undefined || !(await prBound(deps, claim, { prNumber, branch: branchOf(state) }, r.head_sha))) {
     return { type: "stage_failed", stage, reason: "result: pr mismatch" };
   }
-  if (stage === "fix" && state.recordAnswer && (state.answerQuestionId === null || !(await recordsAnswer(claim.worktree, state.answerQuestionId)))) {
+  if (stage === "fix" && state.recordAnswer && !(await recordsAnswer(claim.worktree, state.answerQuestionIds))) {
     return { type: "stage_failed", stage, reason: "result: answer not recorded under docs/decisions/" };
   }
   // AC-18: a fix on a spec PR records a product or technical answer in that PR, carrying the mark.
-  if (stage === "fix" && state.track === "spec" && answerToRecord(state) && !(await carriesMark(claim.worktree, state.answerQuestionId!))) {
+  if (stage === "fix" && state.track === "spec" && answerToRecord(state) && !(await carriesMark(claim.worktree, state.answerQuestionIds))) {
     return { type: "stage_failed", stage, reason: "result: answer not marked" };
   }
   const diff = await diffFilesAgainstBase(claim.worktree);
   let scope: ScopeResult = { ok: true };
   if (state.track === "spec") scope = await specTrackScope(deps, claim, diff, specPathFromIssueBody(issueBody));
   else if (state.plan) {
-    const extra = [...(stage === "fix" && state.recordAnswer ? [DECISIONS] : []), ...(await verifiedDecisionFiles(deps, claim.issue, claim.worktree))];
+    // C6: an ADR the PR adds is in scope (design section 3 item 2: an agent records its own large decision); an edit to an
+    // existing ADR is in scope only for a recording fix or with a verified mark.
+    const newAdrs = (await addedDecisionFiles(claim.worktree)).filter((f) => f.endsWith(".md"));
+    const extra = [...(stage === "fix" && state.recordAnswer ? [DECISIONS] : []), ...newAdrs, ...(await verifiedDecisionFiles(deps, claim.issue, claim.worktree))];
     scope = scopeGate(diff, state.plan, parseSpec(specText), sensitiveGlobs, extra);
   }
   return stage === "implement" ? { type: "stage_ok", stage, result: result as ImplementOutcome, scope } : { type: "stage_ok", stage, result: result as FixOutcome, scope };
@@ -498,7 +517,7 @@ async function specEvent(deps: DriverDeps, claim: Claim, issueBody: string, r: S
   const pr = r.pr_number === undefined || r.head_sha === undefined ? null : await prBound(deps, claim, { prNumber: r.pr_number, branch: `spec-${claim.issue}` }, r.head_sha);
   if (!pr) return failed("result: pr mismatch");
   if (CLOSING_KEYWORD.test(pr.body)) return failed("result: spec PR body closes an issue");
-  if (answerToRecord(state) && !(await carriesMark(claim.worktree, state.answerQuestionId!))) return failed("result: answer not marked");
+  if (answerToRecord(state) && !(await carriesMark(claim.worktree, state.answerQuestionIds))) return failed("result: answer not marked");
   const scope = await specTrackScope(deps, claim, await diffFilesAgainstBase(claim.worktree), specPath);
   if (issueSpec === null) await deps.gh.setIssueBody(claim.issue, `${issueBody}\n\nSpec: ${specPath}`);
   return { type: "stage_ok", stage: "spec", result: r, scope };
@@ -738,13 +757,15 @@ async function applyPending(deps: DriverDeps, claim: Claim): Promise<{ claim: Cl
   return { claim: c, status };
 }
 
-/** AC-18: `asked` on entering the question check, `checked` with its verdict. */
+/** AC-18: `asked` on entering the question check, or on a follow-up's pause without it (T-minor 5); `checked` with its verdict. */
 async function logQuestion(deps: DriverDeps, before: ChainState, after: ChainState, event: ChainEvent): Promise<void> {
   const at = deps.now().toISOString();
   if (event.type === "stage_ok" && event.stage === "question-check" && before.askingStage) {
     await appendQuestionLog(deps.paths, { issue: before.issue, at, event: "checked", asking_stage: before.askingStage, verdict: event.result.verdict, reasoning: event.result.reasoning });
   }
-  if (after.stage === "question-check" && before.stage !== "question-check" && before.stage !== "waiting" && after.question && after.askingStage) {
+  const entering = after.stage === "question-check" && before.stage !== "question-check" && before.stage !== "waiting";
+  const followUp = after.stage === "paused" && event.type === "stage_ok" && event.stage !== "question-check";
+  if ((entering || followUp) && after.question && after.askingStage) {
     await appendQuestionLog(deps.paths, { issue: after.issue, at, event: "asked", asking_stage: after.askingStage, question: after.question });
   }
 }

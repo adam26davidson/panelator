@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  branchOf, HISTORY_ENTRY_MAX, HISTORY_MAX_ENTRIES, initialChainState, ledgerOf, MAX_DECIDE_RETURNS, MAX_REPLANS, MAX_RESCUES,
+  branchOf, HISTORY_ENTRY_MAX, HISTORY_MAX_ENTRIES, initialChainState, ledgerOf, MAX_CHAIN_ERRORS, MAX_DECIDE_RETURNS, MAX_REPLANS, MAX_RESCUES,
   MAX_SPEC_ANSWERS, MAX_SPEC_REVISIONS, normalizeChainState, transition, VERIFY_PENDING_MAX_H, type LedgerCounts,
 } from "../src/chain/machine.ts";
 import type { Action, ChainEvent, ChainStage, ChainState } from "../src/chain/types.ts";
@@ -125,8 +125,10 @@ describe("chain: verify (AC-14)", () => {
     const f = transition(at("verify"), { type: "checks", status: "failed", log: "FAIL x.test.ts", sensitive: false, at: AT });
     expect(f.actions[0]).toMatchObject({ type: "run_stage", stage: "fix", fixInput: expect.stringContaining("FAIL x.test.ts") });
     expect(f.state.history.at(-1)).toContain("FAIL x.test.ts");
+    // C5: on a sensitive diff the normal review runs first; the security review follows its approval.
     const g = transition(at("verify"), { type: "checks", status: "green", sensitive: true, at: AT });
-    expect(g.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1, profile: "security" }]);
+    expect(g.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1 }]);
+    expect(g.state).toMatchObject({ sensitive: true, securityPass: false });
   });
   it("a failed check at the fix bound runs a rescue fix with the check as input (AC-1)", () => {
     const r = transition(at("verify", { fixes: 2 }), { type: "checks", status: "failed", log: "FAIL x.test.ts", sensitive: false, at: AT });
@@ -154,7 +156,7 @@ describe("chain: escalation path (AC-1 to AC-6)", () => {
     expect(r.state.history).toEqual(["fix attempt 1 failed: timeout", "fix: failed: timeout"]);
   });
   it("review failing twice runs a rescue review, with the security profile on a sensitive chain (AC-1)", () => {
-    const r1 = transition(at("review", { sensitive: true }), { type: "stage_failed", stage: "review", reason: "timeout" });
+    const r1 = transition(at("review", { sensitive: true, securityPass: true }), { type: "stage_failed", stage: "review", reason: "timeout" });
     expect(r1.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 2, profile: "security" }]);
     const r2 = transition(r1.state, { type: "stage_failed", stage: "review", reason: "timeout" });
     expect(r2.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1, profile: "security" }]);
@@ -298,7 +300,9 @@ describe("chain: escalation path (AC-1 to AC-6)", () => {
 });
 
 describe("chain: ledger and claim state (AC-7)", () => {
-  const ledger: LedgerCounts = { rescues: 1, specRescues: 0, replans: 0, specRevisions: 0, specAnswers: 1, decideReturns: 1, history: ["plan: failed twice: old"] };
+  const ledger: LedgerCounts = {
+    rescues: 1, specRescues: 0, replans: 0, specRevisions: 0, specAnswers: 1, decideReturns: 1, history: ["plan: failed twice: old"], pendingAnswer: null, chainFailures: null, chainErrors: 0,
+  };
   it("a seeded ledger carries counts into a new chain (AC-7)", () => {
     const s = initialChainState(1, null, ledger);
     expect(s).toMatchObject({ ...ledger, stage: "claimed", track: "issue", fixes: 0 });
@@ -458,8 +462,7 @@ describe("chain: merge, rebase, liveness, postpone", () => {
     expect(r2.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1 }]);
   });
   it("a postponed security review resumes with the security profile (AC-11, AC-25)", () => {
-    const g = transition(at("verify"), { type: "checks", status: "green", sensitive: true, at: AT });
-    const w = transition(g.state, { type: "stage_failed", stage: "review", reason: "429", postpone: true });
+    const w = transition(at("review", { sensitive: true, securityPass: true, pr: pr3 }), { type: "stage_failed", stage: "review", reason: "429", postpone: true });
     expect(w.state.stage).toBe("waiting");
     const r = transition(w.state, { type: "start" });
     expect(r.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1, profile: "security" }]);
@@ -540,7 +543,7 @@ describe("chain: spec stage and spec track (AC-4, AC-19, AC-21, AC-22)", () => {
     expect(ui.actions.some((a) => a.type === "finding")).toBe(false);
   });
   it("a merged record PR restores the parked issue PR and runs a fix (AC-18)", () => {
-    const s = at("merge", { track: "spec", pr: pr8, parkedPr: pr3, fixes: 1, answerQuestionId: 5, answerKind: "product", specProblem: null });
+    const s = at("merge", { track: "spec", pr: pr8, parkedPr: pr3, fixes: 1, answerQuestionId: 5, answerQuestionIds: [5], answerKind: "product", specProblem: null });
     const r = transition(s, { type: "merge_result", status: "merged", specGate: { ok: true } });
     expect(r.actions).toEqual([
       { type: "delete_branch", branch: "spec-1" },
@@ -603,7 +606,7 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
       { type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.any(String) },
     ]);
     expect(r.state.pendingFixInput).toBe(
-      `Required checks ci/test, ci/lint have been pending for 6 hours on ${pr3.head_sha}; the scheduler has re-run those it could. Investigate why they never report: the workflow files and triggers that should produce them, and whether each check has a run. Fix the cause if it is in this repository; otherwise change nothing and say so.`,
+      `Required checks ci/test, ci/lint have been pending for 6 hours on ${pr3.head_sha}; the scheduler has re-run those it could. Investigate why they never report: the workflow files and triggers that should produce them, and whether each check has a run. Fix the cause if it is in this repository; otherwise change nothing and say so. If a check is obsolete (nothing produces it any more and nothing it guards remains), record a finding that names its \`required_checks\` entry in agents/scheduler.yaml for removal, a change agents make in their own reviewed PR; do not edit that file here.`,
     );
     expect(r.state).toMatchObject({ stage: "fix", checksRerun: true, pendingSince: null });
     // The fix ran; verify starts a new window.
@@ -615,7 +618,8 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
     expect(r.state).toMatchObject({ stage: "question-check", askingStage: "verify", pendingSince: null });
     expect(r.state.question?.kind).toBe("capability");
     expect(r.state.question?.question).toContain("A required check never reported on PR #3");
-    expect(r.state.question?.options.map((o) => o.label)).toEqual(["fixed, re-check", "drop the check from `required_checks`"]);
+    // C9: the maintainer is offered only what agents cannot do; dropping the check is the fix input's agent action.
+    expect(r.state.question?.options.map((o) => o.label)).toEqual(["fixed, re-check"]);
     expect(r.state.question?.options.every((o) => o.cost.length > 0)).toBe(true);
     expect(r.state.question?.recommendation.length).toBeGreaterThan(0);
   });
@@ -633,16 +637,52 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
     expect(r.state).toMatchObject({ question: q, askingStage: "spec", decideReturns: 0 });
   });
   it("a question from a stage resumed with a reply is a follow-up: paused at once, nothing counted (AC-15)", () => {
-    const s = at("implement", { answer: "tell me more", answerQuestionId: 5, answerKind: "capability", plan });
-    const r = transition(s, { type: "stage_ok", stage: "implement", result: { escalation: qCapability } });
-    expect(r.actions).toEqual([{ type: "pause", question: qCapability, asking: "implement" }]);
-    expect(r.state).toMatchObject({ stage: "paused", question: qCapability, askingStage: "implement", decideReturns: 0, implementFailures: 0, rescues: 0, fixes: 0 });
+    const reply = "Question #5: Which GPU do you mean? Tell me more.";
+    const followUp = (question: Question): Question => ({ ...question, follow_up: true, reply_quote: "which GPU  do you\nmean?" });
+    const s = at("implement", { answer: reply, answerQuestionId: 5, answerQuestionIds: [5], answerKind: "capability", plan });
+    const r = transition(s, { type: "stage_ok", stage: "implement", result: { escalation: followUp(qCapability) } });
+    expect(r.actions).toEqual([{ type: "pause", question: followUp(qCapability), asking: "implement" }]);
+    expect(r.state).toMatchObject({ stage: "paused", askingStage: "implement", decideReturns: 0, implementFailures: 0, rescues: 0, fixes: 0 });
     expect(r.state.history).toEqual([]);
-    const rv = transition(at("review", { pr: pr3, answer: "a" }), reviewEscalates(q));
-    expect(rv.actions).toEqual([{ type: "pause", question: q, asking: "review" }]);
-    const sp = transition(at("spec", { track: "spec", specMode: "answer", answer: "a" }), specOk({ verdict: "question", question: qProduct }));
-    expect(sp.actions).toEqual([{ type: "pause", question: qProduct, asking: "spec" }]);
+    const rv = transition(at("review", { pr: pr3, answer: reply }), reviewEscalates(followUp(q)));
+    expect(rv.actions).toEqual([{ type: "pause", question: followUp(q), asking: "review" }]);
+    const sp = transition(at("spec", { track: "spec", specMode: "answer", answer: reply }), specOk({ verdict: "question", question: followUp(qProduct) }));
+    expect(sp.actions).toEqual([{ type: "pause", question: followUp(qProduct), asking: "spec" }]);
     expect(sp.state).toMatchObject({ track: "spec", specMode: "answer" });
+  });
+  it("with a reply present, a question that is not a marked follow-up quoting the reply goes to the question check (C2)", () => {
+    const reply = "Question #5: Use lru.";
+    for (const question of [q, { ...q, follow_up: true, reply_quote: "something the maintainer never wrote" }]) {
+      const r = transition(at("implement", { answer: reply, answerQuestionIds: [5], answerKind: "technical", plan }), { type: "stage_ok", stage: "implement", result: { escalation: question } });
+      expect(r.actions).toEqual([{ type: "run_stage", stage: "question-check", attempt: 1 }]);
+      expect(r.state).toMatchObject({ stage: "question-check", askingStage: "implement", answer: reply });
+    }
+  });
+  it("a review follow-up of kind other pauses: the follow-up row comes first (T-minor 2)", () => {
+    const fu: Question = { ...qOther, follow_up: true, reply_quote: "what breaks" };
+    const r = transition(at("review", { pr: pr3, answer: "Question #5: What breaks if we skip it?" }), reviewEscalates(fu));
+    expect(r.actions).toEqual([{ type: "pause", question: fu, asking: "review" }]);
+  });
+  it("in decide mode a new blocker of another kind, or a capability one, goes to the check; the same question again fails (C3)", () => {
+    const decide = { decideInput: "pick lru", decideKind: "technical" as const, plan };
+    const escalates = (question: Question) => ({ type: "stage_ok" as const, stage: "implement" as const, result: { escalation: question } });
+    for (const question of [{ ...qCapability, new_blocker: true }, { ...qProduct, new_blocker: true }]) {
+      const r = transition(at("implement", decide), escalates(question));
+      expect(r.actions).toEqual([{ type: "run_stage", stage: "question-check", attempt: 1 }]);
+      expect(r.state).toMatchObject({ question, askingStage: "implement", decideInput: "pick lru" });
+    }
+    for (const question of [q, { ...q, new_blocker: true }, qProduct]) {
+      const r = transition(at("implement", decide), escalates(question));
+      expect(r.actions).toEqual([{ type: "run_stage", stage: "implement", attempt: 2 }]);
+      expect(r.state.history).toEqual(["implement attempt 1 failed: escalated in decide mode"]);
+    }
+    // decide_yourself records the kind it sent back; a spec question of kind other counts as kind other.
+    const d = transition(at("question-check", { question: qProduct, askingStage: "plan" }), checkSays("decide_yourself", "decide"));
+    expect(d.state).toMatchObject({ stage: "plan", decideKind: "product", decideInput: "decide" });
+    const o = transition(at("spec", { track: "spec", specMode: "write" }), specOk({ verdict: "question", question: qOther }));
+    expect(o.state.decideKind).toBe("other");
+    const settled = transition(d.state, { type: "stage_ok", stage: "plan", result: plan });
+    expect(settled.state).toMatchObject({ decideInput: null, decideKind: null });
   });
   it("decide_yourself reruns the asker in decide mode; the second one escalates (AC-14)", () => {
     const r1 = transition(at("question-check", { question: q, askingStage: "implement", plan }), checkSays("decide_yourself", "pick lru"));
@@ -654,7 +694,7 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
     expect(r2.actions).toEqual([{ type: "run_stage", stage: "implement", attempt: 1 }]);
     expect(r2.state).toMatchObject({ decideReturns: 2, rescues: 1, rescueRun: true, decideInput: null });
     expect(r2.state.history.at(-1)).toBe("implement: decide_yourself: again");
-    const rv = transition(at("question-check", { question: q, askingStage: "review", sensitive: true, pr: pr3 }), checkSays("decide_yourself", "decide"));
+    const rv = transition(at("question-check", { question: q, askingStage: "review", sensitive: true, securityPass: true, pr: pr3 }), checkSays("decide_yourself", "decide"));
     expect(rv.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1, profile: "security" }]);
     const fx = transition(at("question-check", { question: q, askingStage: "fix", pr: pr3, pendingFixInput: "fix it" }), checkSays("decide_yourself", "decide"));
     expect(fx.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: "fix it" }]);
@@ -729,7 +769,8 @@ describe("chain: answers (AC-18)", () => {
   it("answers route by asking stage and kind (AC-18)", () => {
     const sp = transition(at("paused", { question: qProduct, askingStage: "spec", track: "spec", specMode: "answer" }), answered());
     expect(sp.actions).toEqual([{ type: "run_stage", stage: "spec", attempt: 1 }]);
-    expect(sp.state).toMatchObject({ specMode: "answer", answer: "use lru", answerQuestionId: 5, answerKind: "product", question: null });
+    expect(sp.state).toMatchObject({ specMode: "answer", answer: "Question #5: use lru", answerQuestionId: 5, answerQuestionIds: [5], answerKind: "product", question: null });
+    expect(sp.state.pendingAnswer).toEqual({ ids: [5], kind: "product", text: "Question #5: use lru" });
 
     for (const [question, asking] of [[q, "plan"], [qProduct, "plan"], [q, "implement"], [qProduct, "implement"]] as const) {
       const r = transition(at("paused", { question, askingStage: asking }), answered());
@@ -751,14 +792,14 @@ describe("chain: answers (AC-18)", () => {
 
     const vc = transition(at("paused", { question: qCapability, askingStage: "verify", pr: pr3, pendingSince: AT, checksRerun: true }), answered("re-check now"));
     expect(vc.actions).toEqual([{ type: "verify" }]);
-    expect(vc.state).toMatchObject({ stage: "verify", pendingSince: null, recordAnswer: false, answer: "re-check now", answerKind: "capability" });
+    expect(vc.state).toMatchObject({ stage: "verify", pendingSince: null, recordAnswer: false, answer: "Question #5: re-check now", answerKind: "capability", pendingAnswer: null });
 
     const ic = transition(at("paused", { question: qCapability, askingStage: "implement", plan }), answered());
     expect(ic.actions).toEqual([{ type: "run_stage", stage: "implement", attempt: 1 }]);
-    expect(ic.state).toMatchObject({ recordAnswer: false, answer: "use lru", track: "issue" });
+    expect(ic.state).toMatchObject({ recordAnswer: false, answer: "Question #5: use lru", track: "issue", pendingAnswer: null });
     const fc = transition(at("paused", { question: qCapability, askingStage: "fix", pr: pr3, pendingFixInput: "fix it" }), answered());
     expect(fc.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: "fix it" }]);
-    const rc = transition(at("paused", { question: qCapability, askingStage: "review", pr: pr3, sensitive: true }), answered());
+    const rc = transition(at("paused", { question: qCapability, askingStage: "review", pr: pr3, sensitive: true, securityPass: true }), answered());
     expect(rc.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1, profile: "security" }]);
   });
   it("on the spec track a review or fix decision is recorded by a fix on the spec PR, never by parking it", () => {
@@ -768,13 +809,20 @@ describe("chain: answers (AC-18)", () => {
       expect(r.state.pendingFixInput).toContain("(maintainer answer, question #5)");
     }
   });
-  it("an answer at the fix bound escalates (AC-18)", () => {
+  it("an answer at the fix bound escalates; the re-plan records the unrecorded answer first (AC-18, T4)", () => {
     const r = transition(at("paused", { question: q, askingStage: "review", fixes: 2, rescues: 1, pr: pr3 }), answered());
     expect(r.actions).toEqual([
       { type: "close_pr", pr: 3, branch: "issue-1", comment: expect.any(String) },
-      { type: "run_stage", stage: "plan", attempt: 1 },
+      { type: "run_stage", stage: "spec", attempt: 1 },
     ]);
-    expect(r.state).toMatchObject({ stage: "plan", replans: 1, pr: null });
+    expect(r.state).toMatchObject({
+      stage: "spec", specMode: "record", track: "spec", replans: 1, pr: null, recordAnswer: false,
+      answer: "Question #5: use lru", answerQuestionIds: [5], answerKind: "technical", pendingAnswer: { ids: [5], kind: "technical", text: "Question #5: use lru" },
+    });
+    // After that spec PR merges, plan runs with the answer recorded and gone from the ledger.
+    const merged = transition({ ...r.state, stage: "merge", pr: pr8 }, { type: "merge_result", status: "merged", specGate: { ok: true } });
+    expect(merged.actions.at(-1)).toEqual({ type: "run_stage", stage: "plan", attempt: 1 });
+    expect(merged.state).toMatchObject({ pendingAnswer: null, answer: null, answerQuestionIds: [], answerKind: null, track: "issue" });
   });
   it("answer fields clear on the resumed stage's success, and when verify moves on (AC-18)", () => {
     const answeredState = { answer: "a", answerQuestionId: 5, answerKind: "capability" as const };
@@ -793,6 +841,128 @@ describe("chain: answers (AC-18)", () => {
     expect(sp.state).toMatchObject({ answer: null, answerQuestionId: 5, answerKind: "product", specMode: null });
     const spFix = transition({ ...sp.state, stage: "fix" }, fixOk("c".repeat(40)));
     expect(spFix.state).toMatchObject({ answerQuestionId: 5, answerKind: "product" });
+  });
+});
+
+describe("chain: answer chains and unrecorded answers (final review T3, T4, T-minor 3)", () => {
+  it("a follow-up's reply adds to the first: every id, both texts, the strongest kind routes (T3)", () => {
+    // A product question from review, a follow-up of kind capability, then the second reply.
+    const first = transition(at("paused", { question: qProduct, askingStage: "review", pr: pr3 }), answered("Which widget do you mean?", 5));
+    expect(first.state).toMatchObject({ stage: "spec", specMode: "record", answerQuestionIds: [5], answerKind: "product" });
+    const asked = { ...first.state, stage: "paused" as const, question: { ...qCapability, follow_up: true, reply_quote: "Which widget" }, askingStage: "spec" as const };
+    const second = transition(asked, answered("The clock widget.", 6));
+    expect(second.state).toMatchObject({
+      stage: "spec", specMode: "record", answerQuestionId: 6, answerQuestionIds: [5, 6], answerKind: "product",
+      answer: "Question #5: Which widget do you mean?\n\nQuestion #6: The clock widget.",
+      pendingAnswer: { ids: [5, 6], kind: "product", text: "Question #5: Which widget do you mean?\n\nQuestion #6: The clock widget." },
+    });
+    // A capability reply after a technical one keeps the technical route: the fix records an ADR.
+    const tech = { ...at("paused", { question: qCapability, askingStage: "review", pr: pr3 }), answer: "Question #5: lru, but which size?", answerQuestionId: 5, answerQuestionIds: [5], answerKind: "technical" as const };
+    const r = transition(tech, answered("1000 entries", 6));
+    expect(r.state).toMatchObject({ stage: "fix", recordAnswer: true, answerQuestionIds: [5, 6], answerKind: "technical" });
+    expect(r.state.pendingFixInput).toContain("No GPU on this runner\nAnswer: 1000 entries");
+  });
+  it("on the spec track a later capability answer keeps the product answer's ids and kind (Task 6 minor)", () => {
+    const s = at("paused", { track: "spec", pr: pr8, question: qCapability, askingStage: "review", answer: null, answerQuestionId: 5, answerQuestionIds: [5], answerKind: "product", pendingAnswer: { ids: [5], kind: "product", text: "Question #5: yes" } });
+    const r = transition(s, answered("the runner is back", 6));
+    expect(r.state).toMatchObject({ answerQuestionIds: [5, 6], answerKind: "product", answer: "Question #6: the runner is back" });
+    expect(r.state.pendingAnswer).toEqual({ ids: [5, 6], kind: "product", text: "Question #5: yes\n\nQuestion #6: the runner is back" });
+  });
+  it("a claim seeded with an unrecorded answer starts at the spec stage in record mode with the answer (T4)", () => {
+    const ledger = { ...ledgerOf(initialChainState(1)), replans: 1, pendingAnswer: { ids: [5], kind: "product" as const, text: "Question #5: yes" } };
+    const s = initialChainState(1, null, ledger);
+    const r = transition(s, { type: "start" });
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "spec", attempt: 1 }]);
+    expect(r.state).toMatchObject({ stage: "spec", specMode: "record", track: "spec", answer: "Question #5: yes", answerQuestionId: 5, answerQuestionIds: [5], answerKind: "product" });
+    // With a spec problem the spec stage writes the spec and records the answer in the same PR.
+    const w = transition(initialChainState(1, "spec missing", ledger), { type: "start" });
+    expect(w.state).toMatchObject({ specMode: "write", answerQuestionIds: [5], answerKind: "product" });
+    // A ledger written before T4 and C7 loads with the new fields defaulted.
+    const old = { rescues: 1, specRescues: 0, replans: 0, specRevisions: 0, specAnswers: 0, decideReturns: 0, history: [] };
+    expect(initialChainState(1, null, old)).toMatchObject({ pendingAnswer: null, chainFailures: null, chainErrors: 0 });
+    expect(ledgerOf(initialChainState(1, null, old))).toEqual({ ...old, pendingAnswer: null, chainFailures: null, chainErrors: 0 });
+  });
+  it("a liveness release keeps the unrecorded answer in the ledger (T4)", () => {
+    const pending = { ids: [5], kind: "technical" as const, text: "Question #5: lru" };
+    const r = transition(at("fix", { pr: pr3, recordAnswer: true, answer: "Question #5: lru", answerQuestionIds: [5], answerKind: "technical", pendingAnswer: pending }), { type: "liveness_expired" });
+    expect(r.state.stage).toBe("released");
+    expect(ledgerOf(r.state).pendingAnswer).toEqual(pending);
+  });
+  it("the issue PR's merge and a merged spec PR clear the unrecorded answer; capability answers never set it (T4)", () => {
+    const pending = { ids: [5], kind: "technical" as const, text: "Question #5: lru" };
+    expect(transition(at("merge", { pr: pr3, pendingAnswer: pending }), { type: "merge_result", status: "merged" }).state.pendingAnswer).toBeNull();
+    const ui = transition(at("merge", { track: "spec", pr: pr8, pendingAnswer: pending }), { type: "merge_result", status: "merged", specGate: { ok: false, gate: "ui-design", reason: "x" } });
+    expect(ui.state.pendingAnswer).toBeNull();
+    expect(transition(at("paused", { question: qCapability, askingStage: "implement", plan }), answered()).state.pendingAnswer).toBeNull();
+  });
+  it("a re-plan or a spec revision drops the answer fields the closed PR was applying (T-minor 3)", () => {
+    const applying = { answer: "Question #5: retry", answerQuestionId: 5, answerQuestionIds: [5], answerKind: "capability" as const, decideInput: "d", decideKind: "technical" as const };
+    const replan = transition(at("fix", { pr: pr3, rescues: 1, rescueRun: true, pendingFixInput: "x", ...applying }), { type: "stage_failed", stage: "fix", reason: "boom" });
+    expect(replan.state).toMatchObject({ stage: "plan", replans: 1, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null, decideInput: null, decideKind: null });
+    const revise = transition(at("fix", { pr: pr3, rescues: 1, replans: 1, rescueRun: true, pendingFixInput: "x", ...applying }), { type: "stage_failed", stage: "fix", reason: "boom" });
+    expect(revise.state).toMatchObject({ stage: "spec", specMode: "revise", answer: null, answerQuestionIds: [], answerKind: null });
+  });
+});
+
+describe("chain: two reviews on a sensitive diff (final review C5)", () => {
+  it("the normal review's approval runs the security review; its approval merges", () => {
+    const s = at("review", { pr: pr3, sensitive: true });
+    const n = transition(s, { type: "stage_ok", stage: "review", result: approve, security: false, sensitive: true });
+    expect(n.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1, profile: "security" }]);
+    expect(n.state).toMatchObject({ stage: "review", securityPass: true });
+    const sec = transition(n.state, { type: "stage_ok", stage: "review", result: approve, security: true, sensitive: true });
+    expect(sec.actions).toEqual([{ type: "merge" }]);
+    expect(sec.state.securityPass).toBe(false);
+  });
+  it("findings from either review go to the fix loop, and the next round starts with the normal review again", () => {
+    for (const [pass, result] of [[false, changes], [true, changes], [false, { ...approve, findings_on_pr: changes.findings_on_pr }]] as const) {
+      const r = transition(at("review", { pr: pr3, sensitive: true, securityPass: pass }), { type: "stage_ok", stage: "review", result, security: pass, sensitive: true });
+      expect(r.state).toMatchObject({ stage: "fix", securityPass: false });
+      const back = transition({ ...r.state, stage: "verify" }, { type: "checks", status: "green", sensitive: true, at: AT });
+      expect(back.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1 }]);
+    }
+  });
+  it("a diff the driver found sensitive gets the security review even when verify did not mark it", () => {
+    const r = transition(at("review", { pr: pr3 }), { type: "stage_ok", stage: "review", result: approve, security: false, sensitive: true });
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1, profile: "security" }]);
+  });
+});
+
+describe("chain: the question check words the question (final review C10)", () => {
+  it("on send, the check's question, options and recommendation are what pauses; the asking stage's kind stays", () => {
+    const worded: Question = { kind: "technical", question: "Keep the cache in memory or on disk?", options: [{ label: "memory", cost: "lost on restart" }], recommendation: "memory" };
+    const r = transition(at("question-check", { question: qProduct, askingStage: "plan" }), { type: "stage_ok", stage: "question-check", result: { verdict: "send", reasoning: "r", question: worded } });
+    const sent = { ...worded, kind: "product" as const };
+    expect(r.actions).toEqual([{ type: "pause", question: sent, asking: "plan" }]);
+    expect(r.state.question).toEqual(sent);
+  });
+});
+
+describe("chain: repeated chain errors (final review C7)", () => {
+  it("the first chain_error releases with the error, a finding and a history entry; the next abandons", () => {
+    const s = at("implement", { plan, chainFailures: { count: 3, last: "boom (at)x" } });
+    const r = transition(s, { type: "chain_error", error: "GitHub said @someone 500" });
+    expect(r.state).toMatchObject({ stage: "released", chainErrors: 1, chainFailures: null });
+    expect(r.state.history.at(-1)).toBe("chain error in implement: GitHub said @someone 500");
+    expect(types(r.actions)).toEqual(["comment", "label", "finding", "notify", "release"]);
+    const comment = r.actions[0] as Extract<Action, { type: "comment" }>;
+    expect(comment.text).toContain("GitHub said (at)someone 500");
+    expect(comment.text).not.toContain("@");
+    expect(r.actions[2]).toMatchObject({ type: "finding", stage: "implement", finding: { evidence: "GitHub said @someone 500" } });
+    expect(r.actions[3]).toMatchObject({ type: "notify", gate: "chain_error" });
+    expect(ledgerOf(r.state)).toMatchObject({ chainErrors: 1, chainFailures: null });
+    const again = transition({ ...initialChainState(1, null, ledgerOf(r.state)), stage: "verify", pr: pr3 }, { type: "chain_error", error: "boom" });
+    expect(again.state.stage).toBe("abandoned");
+    expect(again.actions.find((a) => a.type === "comment")).toMatchObject({ text: expect.stringContaining("chain-error release 1/1") });
+    expect(again.actions.find((a) => a.type === "finding")).toMatchObject({ stage: "fix" });
+  });
+  it("a chain_error on the spec track closes the spec PR like a liveness release", () => {
+    const r = transition(at("fix", { track: "spec", pr: pr8, parkedPr: pr3 }), { type: "chain_error", error: "boom" });
+    expect(types(r.actions).slice(0, 2)).toEqual(["close_pr", "close_pr"]);
+    expect(r.state).toMatchObject({ pr: null, parkedPr: null });
+  });
+  it("MAX_CHAIN_ERRORS is one (AC-6)", () => {
+    expect(MAX_CHAIN_ERRORS).toBe(1);
   });
 });
 
@@ -863,6 +1033,7 @@ describe("chain: every event in every stage (AC-27)", () => {
     { type: "rebase_conflict", detail: "CONFLICT a.ts" },
     answered(),
     { type: "liveness_expired" },
+    { type: "chain_error", error: "boom" },
   ];
 
   // Spec section 4, "Valid events", written out.
@@ -876,7 +1047,8 @@ describe("chain: every event in every stage (AC-27)", () => {
       case "head_moved": return stage === "merge";
       case "rebase_conflict": return ["plan", "implement", "review", "fix", "verify", "merge"].includes(stage);
       case "answered": return stage === "paused";
-      case "liveness_expired": return !ENDED.includes(stage);
+      case "liveness_expired":
+      case "chain_error": return !ENDED.includes(stage);
     }
   }
 
@@ -891,7 +1063,8 @@ describe("chain: every event in every stage (AC-27)", () => {
   const VARIANTS: Partial<ChainState>[] = [
     {},
     { rescues: 1, specRescues: 1, replans: 1, specRevisions: 1, specAnswers: 1, decideReturns: 1, fixes: 2, attempt: 2, planFailures: 1, implementFailures: 1, scopeViolations: 1, rescueRun: true },
-    { answer: "a", answerQuestionId: 5, answerKind: "technical", decideInput: "d", parkedPr: pr3, pendingSince: AT, checksRerun: true, specProblem: "spec missing" },
+    { answer: "a", answerQuestionId: 5, answerQuestionIds: [5], answerKind: "technical", decideInput: "d", parkedPr: pr3, pendingSince: AT, checksRerun: true, specProblem: "spec missing" },
+    { pendingAnswer: { ids: [5], kind: "product", text: "Question #5: yes" }, securityPass: true, sensitive: true, decideKind: "technical", chainErrors: 1, chainFailures: { count: 3, last: "x" } },
   ];
 
   it("every event in every stage: valid pairs never throw, invalid pairs throw the invalid-event error, nothing waits on a human but paused (AC-27)", () => {

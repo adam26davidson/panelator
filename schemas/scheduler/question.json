@@ -46,6 +46,24 @@
     "recommendation": {
       "type": "string",
       "minLength": 1
+    },
+    "follow_up": {
+      "type": "boolean",
+      "description": "C2: answers the maintainer's reply, which asked something back; set only with reply_quote."
+    },
+    "reply_quote": {
+      "type": "string",
+      "minLength": 1,
+      "description": "C2: the part of the maintainer's reply this follow-up answers, quoted."
+    },
+    "new_blocker": {
+      "type": "boolean",
+      "description": "C3: in decide mode, a blocker other than the question sent back to decide."
     }
+  },
+  "dependentRequired": {
+    "follow_up": [
+      "reply_quote"
+    ]
   }
 }

@@ -1,5 +1,5 @@
 import { fixLoopGate, NEEDS_DESIGN_STAGE, readyGate, type ScopeResult } from "../gates/index.ts";
-import type { AgentStageName, AskingStage, ImplementResult, PlanResult, Question, SpecMode } from "../types.ts";
+import type { AgentStageName, AskingStage, ImplementResult, PendingAnswer, PlanResult, Question, SpecMode } from "../types.ts";
 import type { Action, ChainEvent, ChainStage, ChainState } from "./types.ts";
 
 export const CLAIM_LABEL = "in-progress";
@@ -14,6 +14,8 @@ export const MAX_REPLANS = 1;
 export const MAX_SPEC_REVISIONS = 1;
 export const MAX_SPEC_ANSWERS = 1;
 export const MAX_DECIDE_RETURNS = 1;
+/** C7: releases for repeated chain errors; the next one abandons the issue. */
+export const MAX_CHAIN_ERRORS = 1;
 export const VERIFY_PENDING_MAX_H = 6;
 /** History (AC-7): each entry capped in length, the last entries kept. */
 export const HISTORY_ENTRY_MAX = 4000;
@@ -26,25 +28,33 @@ const KIND_OTHER_REASONING = "kind other is not a question for the maintainer";
 /** Stages a chain does not leave by itself; `liveness_expired` is invalid in them. */
 export const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused"];
 
-export type LedgerCounts = Pick<ChainState, "rescues" | "specRescues" | "replans" | "specRevisions" | "specAnswers" | "decideReturns" | "history">;
+export type LedgerCounts = Pick<
+  ChainState, "rescues" | "specRescues" | "replans" | "specRevisions" | "specAnswers" | "decideReturns" | "history" | "pendingAnswer" | "chainFailures" | "chainErrors"
+>;
 
-export function ledgerOf(state: LedgerCounts): LedgerCounts {
+/** The ledger's fields of a state; a ledger written before T4 and C7 lacks the last three, which default. */
+export function ledgerOf(state: Omit<LedgerCounts, "pendingAnswer" | "chainFailures" | "chainErrors"> & Partial<LedgerCounts>): LedgerCounts {
   return {
     rescues: state.rescues, specRescues: state.specRescues, replans: state.replans, specRevisions: state.specRevisions,
     specAnswers: state.specAnswers, decideReturns: state.decideReturns, history: [...state.history],
+    pendingAnswer: state.pendingAnswer ?? null, chainFailures: state.chainFailures ?? null, chainErrors: state.chainErrors ?? 0,
   };
 }
 
 const clip = (text: string): string => text.slice(0, HISTORY_ENTRY_MAX);
 
-/** A new chain; `ledger` seeds the escalation counts and history of an issue claimed before (AC-7), trimmed like any history. */
-export function initialChainState(issue: number, specProblem: string | null = null, ledger: LedgerCounts | null = null): ChainState {
+/**
+ * A new chain; `ledger` seeds the escalation counts and history of an issue claimed before (AC-7), trimmed like any
+ * history, and an answer a release left unrecorded (T4).
+ */
+export function initialChainState(issue: number, specProblem: string | null = null, ledger: Parameters<typeof ledgerOf>[0] | null = null): ChainState {
   return {
     issue, stage: "claimed", attempt: 1, fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0,
     sensitive: false, pr: null, plan: null, pendingFixInput: null, postponedUntil: null, resumeStage: null, conflictPending: false,
     track: "issue", rescues: 0, specRescues: 0, replans: 0, specRevisions: 0, specAnswers: 0, decideReturns: 0, history: [],
-    rescueRun: false, specMode: null, specProblem, question: null, askingStage: null, answer: null, answerQuestionId: null, answerKind: null,
-    recordAnswer: false, decideInput: null, parkedPr: null, pendingSince: null, checksRerun: false,
+    rescueRun: false, specMode: null, specProblem, question: null, askingStage: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
+    pendingAnswer: null, recordAnswer: false, decideInput: null, decideKind: null, parkedPr: null, pendingSince: null, checksRerun: false, securityPass: false,
+    chainFailures: null, chainErrors: 0,
     ...(ledger ? { ...ledgerOf(ledger), history: ledger.history.slice(-HISTORY_MAX_ENTRIES).map(clip) } : {}),
   };
 }
@@ -83,13 +93,27 @@ function run(state: ChainState, stage: AgentStageName, extra: Partial<Extract<Ac
   return { state: { ...state, ...patch, stage, attempt, resumeStage: null }, actions: [{ type: "run_stage", stage, attempt, ...extra }] };
 }
 
-/** Every entry into the spec stage goes through here and sets the spec track. */
-function toSpec(state: ChainState, mode: SpecMode, patch: Partial<ChainState> = {}): Step {
-  return run({ ...state, track: "spec", specMode: mode }, "spec", {}, patch);
+/** The answer fields an unrecorded answer (T4) restores when no other answer is in hand, so its spec PR must carry its mark. */
+function restorePending(s: ChainState): Partial<ChainState> {
+  const p = s.pendingAnswer;
+  if (!p || s.answerQuestionIds.length) return {};
+  return { answer: p.text, answerQuestionIds: [...p.ids], answerQuestionId: p.ids[p.ids.length - 1], answerKind: p.kind };
 }
 
+/** Every entry into the spec stage goes through here and sets the spec track; an unrecorded answer comes along (T4). */
+function toSpec(state: ChainState, mode: SpecMode, patch: Partial<ChainState> = {}): Step {
+  return run({ ...state, track: "spec", specMode: mode }, "spec", {}, { ...patch, ...restorePending({ ...state, ...patch }) });
+}
+
+/** A fresh plan, unless an answer is still unrecorded (T4): then the spec stage records it first, and plan runs after that merge. */
+function toPlan(state: ChainState, patch: Partial<ChainState> = {}): Step {
+  if ({ ...state, ...patch }.pendingAnswer) return toSpec(state, "record", patch);
+  return run(state, "plan", {}, patch);
+}
+
+/** C5: the review pass the state is in; the security pass runs under the security profile. */
 function reviewProfile(state: ChainState): { profile?: "security" } {
-  return state.sensitive ? { profile: "security" } : {};
+  return state.securityPass ? { profile: "security" } : {};
 }
 
 function toFix(state: ChainState, fixInput: string, patch: Partial<ChainState> = {}): Step {
@@ -123,11 +147,15 @@ function escalate(state: ChainState, stuck: Stuck, reason: string, fixInput: str
     return abandon(s, stuck);
   }
   if (s.rescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { rescues: s.rescues + 1, rescueRun: true });
-  // The PR is closed: its fix input, conflict and rescue flag go with it, and so do a decide-mode input and an ADR requirement on its run.
-  const dropPr: Partial<ChainState> = { pr: null, pendingFixInput: null, conflictPending: false, rescueRun: false, decideInput: null, recordAnswer: false };
+  // The PR is closed: its fix input, conflict and rescue flag go with it, and so do a decide-mode input, an ADR requirement on its
+  // run and the answer it was applying (T-minor 3); an answer not yet recorded on main stays in `pendingAnswer` (T4).
+  const dropPr: Partial<ChainState> = {
+    pr: null, pendingFixInput: null, conflictPending: false, rescueRun: false, decideInput: null, decideKind: null, recordAnswer: false, securityPass: false,
+    answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
+  };
   const close = (why: string): Action[] => (s.pr ? [{ type: "close_pr", pr: s.pr.number, branch: branchOf(s), comment: `${why}${clip(reason)}` }] : []);
   if (s.replans < MAX_REPLANS) {
-    const next = run(s, "plan", {}, { ...dropPr, plan: null, fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, replans: s.replans + 1 });
+    const next = toPlan(s, { ...dropPr, plan: null, fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, replans: s.replans + 1 });
     return { state: next.state, actions: [...close("Closed by the scheduler to re-plan: "), ...next.actions] };
   }
   if (s.specRevisions < MAX_SPEC_REVISIONS) {
@@ -138,7 +166,7 @@ function escalate(state: ChainState, stuck: Stuck, reason: string, fixInput: str
 }
 
 function boundsText(s: ChainState): string {
-  return `rescue ${s.rescues}/${MAX_RESCUES}, spec-track rescue ${s.specRescues}/${MAX_RESCUES}, re-plan ${s.replans}/${MAX_REPLANS}, spec revision ${s.specRevisions}/${MAX_SPEC_REVISIONS}`;
+  return `rescue ${s.rescues}/${MAX_RESCUES}, spec-track rescue ${s.specRescues}/${MAX_RESCUES}, re-plan ${s.replans}/${MAX_REPLANS}, spec revision ${s.specRevisions}/${MAX_SPEC_REVISIONS}, chain-error release ${s.chainErrors}/${MAX_CHAIN_ERRORS}`;
 }
 
 /** Informational only: no @ anywhere (AC-5, C11), the newest history entries that fit. The driver appends the run-record paths. */
@@ -230,17 +258,34 @@ function pause(s: ChainState, question: Question, asking: AskingStage): Step {
 }
 
 /** AC-14: the asking stage runs again in decide mode; verify, or a second return on the issue, is a bound hit. */
-function decideYourself(state: ChainState, asking: AskingStage, reasoning: string): Step {
+function decideYourself(state: ChainState, asking: AskingStage, reasoning: string, kind: Question["kind"] = state.question?.kind ?? "other"): Step {
   const question = state.question;
   const s = { ...state, decideReturns: state.decideReturns + 1, question: null };
   if (asking === "verify" || s.decideReturns > MAX_DECIDE_RETURNS) return escalateAsker(s, asking, `decide_yourself: ${reasoning}`, question);
-  return resume(s, asking, { decideInput: reasoning }, "decide");
+  return resume(s, asking, { decideInput: reasoning, decideKind: kind }, "decide");
 }
 
-/** A stage's result carries a question (AC-12, AC-15, AC-17): a follow-up pauses, decide mode fails the run, otherwise the check runs. */
+const squash = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
+
+/**
+ * C2, AC-15: a follow-up answers the maintainer's reply, which asked something back: it says so (`follow_up`) and
+ * quotes the part of the reply it answers, and that quote must be in the reply the stage was given.
+ */
+function isFollowUp(state: ChainState, q: Question): boolean {
+  const quote = q.reply_quote === undefined ? "" : squash(q.reply_quote);
+  return q.follow_up === true && state.answer !== null && quote.length > 0 && squash(state.answer).includes(quote);
+}
+
+/** C3: in decide mode only a new blocker may be asked: marked `new_blocker`, and a capability question or of another kind. */
+const isNewBlocker = (state: ChainState, q: Question): boolean => q.new_blocker === true && (q.kind === "capability" || q.kind !== state.decideKind);
+
+/**
+ * A stage's result carries a question (AC-12, AC-14, AC-15, AC-17): a follow-up pauses at once; in decide mode anything
+ * but a new blocker fails the run; otherwise the question check runs.
+ */
 function ask(state: ChainState, stage: Stuck, question: Question): Step {
-  if (state.answer !== null) return pause({ ...state, rescueRun: false }, question, stage);
-  if (state.decideInput !== null) return failedInDecideMode(state, stage);
+  if (isFollowUp(state, question)) return pause({ ...state, rescueRun: false }, question, stage);
+  if (state.decideInput !== null && !isNewBlocker(state, question)) return failedInDecideMode(state, stage);
   return run({ ...state, rescueRun: false }, "question-check", {}, { question, askingStage: stage });
 }
 
@@ -253,8 +298,8 @@ function failedInDecideMode(state: ChainState, stage: Stuck): Step {
  * On the spec track the answered question's id and kind stay until the spec PR merges: its fixes are scope-checked with them.
  */
 function settle(state: ChainState, stage: AgentStageName): ChainState {
-  const s: ChainState = { ...state, rescueRun: false, decideInput: null, answer: null };
-  if (state.track === "issue") Object.assign(s, { answerQuestionId: null, answerKind: null });
+  const s: ChainState = { ...state, rescueRun: false, decideInput: null, decideKind: null, answer: null };
+  if (state.track === "issue") Object.assign(s, { answerQuestionId: null, answerQuestionIds: [], answerKind: null });
   if (stage === "fix") s.recordAnswer = false;
   return s;
 }
@@ -299,18 +344,22 @@ function stageOk(state: ChainState, event: StageOk): Step {
     case "review": {
       const r = event.result;
       if (r.verdict === "escalate") {
-        // AC-8: kind other is a bound hit with a rescue fix, before the follow-up and decide-mode rules.
+        // Section 4: the follow-up row comes first (T-minor 2); then kind other is a bound hit with a rescue fix (AC-8).
+        if (r.escalation && isFollowUp(state, r.escalation)) return ask(state, "review", r.escalation);
         if (!r.escalation || r.escalation.kind === "other") {
           return escalate(settle(state, "review"), "fix", `review escalated: ${r.escalation?.question ?? "no escalation object"}`, escalationInput("Review", r.escalation));
         }
         return ask(state, "review", r.escalation);
       }
       const s = settle(state, "review");
+      const sensitive = s.sensitive || event.sensitive === true;
       const text = `Review requested changes:\n${r.findings_on_pr.map((f, i) => `${i}. [${f.criterion}] ${f.file}:${f.line} ${f.scenario}`).join("\n")}`;
-      // AC-9: security findings go through the fix loop; a later approval without findings merges.
-      if ((s.sensitive || event.security) && r.findings_on_pr.length > 0) return toFix(note(s, text), text);
-      if (r.verdict === "approve") return { state: { ...s, stage: "merge" }, actions: [{ type: "merge" }] };
-      return toFix(note(s, text), text);
+      // AC-9: findings from either review on a sensitive diff go through the fix loop; the next round runs both reviews again.
+      if (sensitive && r.findings_on_pr.length > 0) return toFix(note({ ...s, securityPass: false }, text), text);
+      if (r.verdict !== "approve") return toFix(note({ ...s, securityPass: false }, text), text);
+      // C5: on a sensitive diff the normal review's approval is followed by the security review; both must approve.
+      if (sensitive && !s.securityPass && !event.security) return run({ ...s, securityPass: true }, "review", { profile: "security" });
+      return { state: { ...s, stage: "merge", securityPass: false }, actions: [{ type: "merge" }] };
     }
     case "spec": {
       const r = event.result;
@@ -319,7 +368,7 @@ function stageOk(state: ChainState, event: StageOk): Step {
         if (r.question.kind !== "other") return ask(state, "spec", r.question);
         // AC-14: kind other is not sent to the check; in decide mode it is a failed run like any question.
         if (state.decideInput !== null) return failedInDecideMode(state, "spec");
-        return decideYourself({ ...state, rescueRun: false }, "spec", KIND_OTHER_REASONING);
+        return decideYourself({ ...state, rescueRun: false }, "spec", KIND_OTHER_REASONING, "other");
       }
       if (r.pr_number === undefined || r.head_sha === undefined) throw new Error(`spec revised without a PR (issue ${state.issue})`);
       const scope = scopeOf(state, event);
@@ -335,7 +384,11 @@ function stageOk(state: ChainState, event: StageOk): Step {
     case "question-check": {
       const { question, askingStage } = state;
       if (!question || !askingStage) throw new Error(`question check without a question (issue ${state.issue})`);
-      if (event.result.verdict === "send") return pause(state, question, askingStage);
+      if (event.result.verdict === "send") {
+        // C10: the strong-tier check's wording is what the maintainer reads; the kind stays the asking stage's, which routes the answer.
+        const worded = event.result.question;
+        return pause(state, worded ? { kind: question.kind, question: worded.question, options: worded.options, recommendation: worded.recommendation } : question, askingStage);
+      }
       return decideYourself(state, askingStage, event.result.reasoning);
     }
   }
@@ -346,11 +399,11 @@ function neverReported(pr: number, names: string): Question {
   return {
     kind: "capability",
     question: `A required check never reported on PR #${pr}: ${names}. The scheduler re-ran it and a fix investigated its workflow; it stayed pending for another ${VERIFY_PENDING_MAX_H} hours.`,
+    // C9: only what agents cannot do is the maintainer's; dropping an obsolete check is a change agents make in a reviewed PR.
     options: [
       { label: "fixed, re-check", cost: `you fix the cause outside the repository (runner, app permissions, workflow settings); verify waits up to ${VERIFY_PENDING_MAX_H} more hours` },
-      { label: "drop the check from `required_checks`", cost: "you edit the scheduler configuration; PRs then merge without that check" },
     ],
-    recommendation: "fixed, re-check, if the check still guards something; otherwise drop it",
+    recommendation: "fixed, re-check, once the cause outside the repository is fixed",
   };
 }
 
@@ -365,15 +418,15 @@ function verifyChecks(state: ChainState, event: Extract<ChainEvent, { type: "che
     const sha = checked.pr.head_sha;
     const names = event.pending?.length ? event.pending.join(", ") : "(not named)";
     if (!checked.checksRerun) {
-      const input = `Required checks ${names} have been pending for ${VERIFY_PENDING_MAX_H} hours on ${sha}; the scheduler has re-run those it could. Investigate why they never report: the workflow files and triggers that should produce them, and whether each check has a run. Fix the cause if it is in this repository; otherwise change nothing and say so.`;
+      const input = `Required checks ${names} have been pending for ${VERIFY_PENDING_MAX_H} hours on ${sha}; the scheduler has re-run those it could. Investigate why they never report: the workflow files and triggers that should produce them, and whether each check has a run. Fix the cause if it is in this repository; otherwise change nothing and say so. If a check is obsolete (nothing produces it any more and nothing it guards remains), record a finding that names its \`required_checks\` entry in agents/scheduler.yaml for removal, a change agents make in their own reviewed PR; do not edit that file here.`;
       const next = toFix(checked, input, { checksRerun: true, pendingSince: null });
       return { state: next.state, actions: [{ type: "rerun_checks", sha }, ...next.actions] };
     }
     return run(checked, "question-check", {}, { question: neverReported(checked.pr.number, names), askingStage: "verify", pendingSince: null });
   }
   // Verify moves on: the window closes, and a reply that resumed verify is no longer an input (AC-18).
-  const moved: ChainState = { ...checked, pendingSince: null, checksRerun: false, answer: null };
-  if (state.track === "issue") Object.assign(moved, { answerQuestionId: null, answerKind: null });
+  const moved: ChainState = { ...checked, pendingSince: null, checksRerun: false, answer: null, securityPass: false };
+  if (state.track === "issue") Object.assign(moved, { answerQuestionId: null, answerQuestionIds: [], answerKind: null });
   if (event.status === "failed") {
     const text = `A required check failed:\n${event.log ?? "(no log excerpt)"}`;
     return toFix(note(moved, text), text);
@@ -386,14 +439,17 @@ function specMerged(state: ChainState, gate: NonNullable<Extract<ChainEvent, { t
   const deleteBranch: Action = { type: "delete_branch", branch: branchOf(state) };
   const fresh: Partial<ChainState> = {
     fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, conflictPending: false, pendingFixInput: null, pendingSince: null, checksRerun: false,
-    rescueRun: false, specProblem: null, specMode: null, decideInput: null, answer: null, answerQuestionId: null, answerKind: null, recordAnswer: false,
+    rescueRun: false, specProblem: null, specMode: null, decideInput: null, decideKind: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
+    recordAnswer: false, securityPass: false,
+    // T4: a merged spec PR on this chain carried the unrecorded answer (the driver refused one without its mark).
+    pendingAnswer: null,
   };
   const after = (next: Step): Step => ({ state: next.state, actions: [deleteBranch, ...next.actions] });
   if (gate.ok) {
     const base: ChainState = { ...state, ...fresh, track: "issue" };
     if (state.parkedPr) {
       return after(toFix({ ...base, pr: state.parkedPr, parkedPr: null },
-        `Apply the maintainer's decision to question #${state.answerQuestionId}, now recorded on main. Read it in the spec and the top designs, then change this PR to follow it.`));
+        `Apply the maintainer's decision to ${state.answerQuestionIds.map((id) => `question #${id}`).join(", ")}, now recorded on main. Read it in the spec and the top designs, then change this PR to follow it.`));
     }
     return after(run({ ...base, pr: null, plan: null }, "plan"));
   }
@@ -405,7 +461,7 @@ function specMerged(state: ChainState, gate: NonNullable<Extract<ChainEvent, { t
     ? [{ type: "close_pr", pr: state.parkedPr.number, branch: `issue-${state.issue}`, comment: "Closed by the scheduler: the issue waits for its design stage." }]
     : [];
   return {
-    state: { ...state, stage: "released", pr: null, parkedPr: null },
+    state: { ...state, ...fresh, stage: "released", pr: null, parkedPr: null },
     actions: [
       deleteBranch,
       ...closeParked,
@@ -417,48 +473,96 @@ function specMerged(state: ChainState, gate: NonNullable<Extract<ChainEvent, { t
   };
 }
 
-/** AC-18: the routes of the five `paused` rows of spec section 4. */
+const KIND_STRENGTH: Question["kind"][] = ["other", "capability", "technical", "product"];
+const strongest = (a: Question["kind"] | null, b: Question["kind"]): Question["kind"] => (a !== null && KIND_STRENGTH.indexOf(a) > KIND_STRENGTH.indexOf(b) ? a : b);
+
+/**
+ * AC-18: the routes of the five `paused` rows of spec section 4. T3: a reply to a question asked while an earlier answer
+ * was still unspent adds to it: every id is kept, the texts are joined, and the strongest kind routes and is recorded.
+ */
 function answered(state: ChainState, event: Extract<ChainEvent, { type: "answered" }>): Step {
   const { question, askingStage: asking } = state;
   if (!question || !asking) throw new Error(`paused without a question (issue ${state.issue})`);
-  const s: ChainState = { ...state, answer: event.answer, answerQuestionId: event.questionId, answerKind: question.kind, question: null };
+  const reply = `Question #${event.questionId}: ${event.answer}`;
+  const ids = [...state.answerQuestionIds, event.questionId];
+  const kind = strongest(state.answerKind, question.kind);
+  const answer = state.answer === null ? reply : `${state.answer}\n\n${reply}`;
+  const recordable = kind === "product" || kind === "technical";
+  const before = state.answer ?? state.pendingAnswer?.text ?? null;
+  const pendingAnswer: PendingAnswer | null = recordable ? { ids, kind, text: before === null ? reply : `${before}\n\n${reply}` } : state.pendingAnswer;
+  const s: ChainState = { ...state, answer, answerQuestionId: event.questionId, answerQuestionIds: ids, answerKind: kind, pendingAnswer, question: null };
   if (asking === "spec") return resume(s, "spec");
   // A capability answer is not a decision: the asking stage runs again with it, and nothing is recorded.
-  if (question.kind !== "product" && question.kind !== "technical") return resume(s, asking);
+  if (!recordable) return resume(s, asking);
   const decision = `${question.question}\nAnswer: ${event.answer}`;
   if (asking === "review" || asking === "fix") {
     // On a spec PR the decision is recorded in that PR; there is no issue PR to park.
     if (s.track === "spec") {
       return toFix(s, `Record the maintainer's decision in this spec PR, marked (maintainer answer, question #${event.questionId}), then apply it:\n${decision}`);
     }
-    if (question.kind === "product") return toSpec({ ...s, parkedPr: s.pr, pr: null }, "record");
+    if (kind === "product") return toSpec({ ...s, parkedPr: s.pr, pr: null }, "record");
     return toFix(s, `Record the maintainer's decision as an ADR under docs/decisions/, marked (maintainer answer, question #${event.questionId}), then apply it:\n${decision}`, { recordAnswer: true });
   }
   return toSpec(s, "record");
 }
 
+/**
+ * A release (liveness, C7 chain errors). AC-21: a released spec track frees `spec-<issue>` for the next spec PR, and a
+ * parked issue PR is closed so the next claim can open `issue-<issue>`. An unrecorded answer stays in the ledger (T4).
+ */
+function releaseClaim(state: ChainState, why: string, text: string, gate: string, reason: string, extra: Action[] = []): Step {
+  const closeComment = `Closed by the scheduler: the claim was released ${why}.`;
+  const closes: Action[] = [];
+  if (state.track === "spec") {
+    closes.push(state.pr ? { type: "close_pr", pr: state.pr.number, branch: branchOf(state), comment: closeComment } : { type: "delete_branch", branch: branchOf(state) });
+  }
+  if (state.parkedPr) closes.push({ type: "close_pr", pr: state.parkedPr.number, branch: `issue-${state.issue}`, comment: closeComment });
+  return {
+    state: { ...state, stage: "released", ...(state.track === "spec" ? { pr: null } : {}), parkedPr: null },
+    actions: [
+      ...closes,
+      { type: "comment", text },
+      { type: "label", add: [], remove: [CLAIM_LABEL] },
+      ...extra,
+      { type: "notify", gate, label: "", text },
+      { type: "release", reason, savePatch: true },
+    ],
+  };
+}
+
+/** The stage a chain error is charged to (C7): the agent stage it was in or waiting to resume, else fix (verify, merge) or plan. */
+function stuckOf(s: ChainState): Stuck {
+  const stage = s.stage === "waiting" ? s.resumeStage : s.stage;
+  if (stage === "question-check") return s.askingStage && s.askingStage !== "verify" ? s.askingStage : "fix";
+  if (stage === "plan" || stage === "implement" || stage === "review" || stage === "fix" || stage === "spec") return stage;
+  return s.stage === "claimed" ? "plan" : "fix";
+}
+
+/** C7: the driver failed on this chain again and again. The first time the claim is released with the error; after that the issue is abandoned. */
+function chainError(state: ChainState, error: string): Step {
+  const s = note({ ...state, chainFailures: null }, `chain error in ${state.stage}: ${error}`);
+  if (s.chainErrors >= MAX_CHAIN_ERRORS) return abandon(s, stuckOf(s));
+  const shown = clip(error).replaceAll("@", "(at)");
+  const text = [
+    "Claim released: the scheduler failed on this issue repeatedly. The last error:",
+    "",
+    "```", shown, "```",
+    "",
+    "Uncommitted work was saved as a patch in the scheduler state directory. The issue is claimed again on a later poll; another release like this abandons it.",
+  ].join("\n");
+  const finding: Action = {
+    type: "finding", stage: stuckOf(s),
+    finding: { what: "chain released after repeated scheduler errors", where: `issue #${s.issue}, stage ${state.stage}`, evidence: error, noticed_how: "scheduler chain error" },
+  };
+  return releaseClaim({ ...s, chainErrors: s.chainErrors + 1 }, "after repeated scheduler errors", text, "chain_error", "chain error", [finding]);
+}
+
 export function transition(state: ChainState, event: ChainEvent): Step {
-  if (event.type === "liveness_expired") {
+  if (event.type === "liveness_expired" || event.type === "chain_error") {
     if (ENDED.includes(state.stage)) invalid(state, event);
+    if (event.type === "chain_error") return chainError(state, event.error);
     const text = "Claim released: no run in flight and no activity for the liveness window. Uncommitted work was saved as a patch in the scheduler state directory.";
-    // AC-21: a released spec track frees `spec-<issue>` for the next spec PR, and a parked issue PR is closed so the next claim can open `issue-<issue>`.
-    const closes: Action[] = [];
-    if (state.track === "spec") {
-      closes.push(state.pr
-        ? { type: "close_pr", pr: state.pr.number, branch: branchOf(state), comment: "Closed by the scheduler: the claim was released by liveness." }
-        : { type: "delete_branch", branch: branchOf(state) });
-    }
-    if (state.parkedPr) closes.push({ type: "close_pr", pr: state.parkedPr.number, branch: `issue-${state.issue}`, comment: "Closed by the scheduler: the claim was released by liveness." });
-    return {
-      state: { ...state, stage: "released", ...(state.track === "spec" ? { pr: null } : {}), parkedPr: null },
-      actions: [
-        ...closes,
-        { type: "comment", text },
-        { type: "label", add: [], remove: [CLAIM_LABEL] },
-        { type: "notify", gate: "liveness", label: "", text },
-        { type: "release", reason: "liveness expired", savePatch: true },
-      ],
-    };
+    return releaseClaim(state, "by liveness", text, "liveness", "liveness expired");
   }
   if (event.type === "rebase_conflict") {
     if (!["plan", "implement", "review", "fix", "verify", "merge"].includes(state.stage)) invalid(state, event);
@@ -506,7 +610,7 @@ export function transition(state: ChainState, event: ChainEvent): Step {
   switch (state.stage) {
     case "claimed":
       // AC-19: a missing or incomplete spec starts at the spec stage.
-      if (event.type === "start") return state.specProblem ? toSpec(state, "write") : run(state, "plan");
+      if (event.type === "start") return state.specProblem ? toSpec(state, "write") : toPlan(state);
       break;
     case "waiting":
       if (event.type === "start" && state.resumeStage) {
@@ -523,7 +627,7 @@ export function transition(state: ChainState, event: ChainEvent): Step {
       if (event.type === "merge_result") {
         if (event.status === "merged") {
           if (state.track === "spec") return specMerged(state, event.specGate ?? { ok: false, gate: "spec-present", reason: "the post-merge spec gates did not run" });
-          return { state: { ...state, stage: "done" }, actions: [{ type: "label", add: [], remove: [CLAIM_LABEL] }, { type: "done" }] };
+          return { state: { ...state, stage: "done", pendingAnswer: null }, actions: [{ type: "label", add: [], remove: [CLAIM_LABEL] }, { type: "done" }] };
         }
         return toFix(state, `PR not mergeable:\n${event.detail ?? ""}`);
       }

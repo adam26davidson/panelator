@@ -170,7 +170,7 @@ describe("Scheduler.tick", () => {
     expect(started).toEqual([-1]);
   }, 30_000);
 
-  it("abandons a chain whose driveChain rejects MAX_CHAIN_FAILURES times instead of holding its slot (ruling 7b)", async () => {
+  it("releases a chain whose driveChain rejects MAX_CHAIN_FAILURES times with a chain_error: the error, a finding, the ledger (ruling 7b, C7)", async () => {
     expect(MAX_CHAIN_FAILURES).toBe(3);
     const errors: Record<string, unknown>[] = [];
     let calls = 0;
@@ -190,7 +190,31 @@ describe("Scheduler.tick", () => {
     expect(await listClaims(paths)).toEqual([]);
     expect(gh.calls.find((c) => c.method === "POST" && c.url === "/repos/o/r/issues/7/comments")).toBeTruthy();
     expect(gh.calls.find((c) => c.method === "DELETE" && c.url === "/repos/o/r/issues/7/labels/in-progress")).toBeTruthy();
-    expect(readFileSync(paths.serviceLog, "utf8")).toContain('"kind":"chain-abandoned"');
+    expect(readFileSync(paths.serviceLog, "utf8")).toContain('"kind":"chain-error"');
+    // C7: the comment carries the real error, a finding is queued, and the ledger counts the release.
+    const comment = gh.calls.find((c) => c.method === "POST" && c.url === "/repos/o/r/issues/7/comments")!.body as { body: string };
+    expect(comment.body).toContain("boom");
+    expect(readFileSync(paths.findingsQueue, "utf8")).toContain("chain released after repeated scheduler errors");
+    const ledger = JSON.parse(readFileSync(join(paths.escalations, "7.json"), "utf8"));
+    expect(ledger).toMatchObject({ chainErrors: 1, chainFailures: null });
+    expect(ledger.history.at(-1)).toBe("chain error in verify: boom");
+  }, 30_000);
+
+  it("keeps the failure count across a restart: a new Scheduler reads it from the claim (C7)", async () => {
+    let calls = 0;
+    const { deps, paths, pair } = await setup(routes([]), 1, async () => { calls++; throw new Error("boom"); });
+    await writeClaim(paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    for (let i = 0; i < 2; i++) {
+      await new Scheduler(deps, { driveChain: async () => { calls++; throw new Error(`boom ${i}`); } }).tick();
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect((await listClaims(paths))[0].state.chainFailures).toEqual({ count: 2, last: "boom 1" });
+    expect(JSON.parse(readFileSync(join(paths.escalations, "7.json"), "utf8")).chainFailures).toEqual({ count: 2, last: "boom 1" });
+    // A drive that returns resets the count.
+    await new Scheduler(deps, { driveChain: async (_d, c) => c }).tick();
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await listClaims(paths))[0].state.chainFailures).toBeNull();
+    expect(calls).toBe(2);
   }, 30_000);
 
   it("records a freshness error and still lists and claims when fast-forward fails (ruling 7c)", async () => {
@@ -262,7 +286,7 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     const [c] = await listClaims(paths);
     expect(c.pendingEvent).toBeUndefined();
     // A technical answer asked by plan is recorded by the spec stage in record mode (AC-18).
-    expect(c.state).toMatchObject({ stage: "spec", specMode: "record", answer: "Use the file store.", answerQuestionId: 500, rescues: 1 });
+    expect(c.state).toMatchObject({ stage: "spec", specMode: "record", answer: "Question #500: Use the file store.", answerQuestionId: 500, rescues: 1 });
     expect(await listPaused(paths)).toEqual([]);
     const answered = logLines(paths).filter((e) => e.event === "answered");
     expect(answered).toEqual([{ issue: 7, at: deps.now().toISOString(), event: "answered", asking_stage: "plan", question_comment_id: 500, reply_comment_id: 501, answer: "Use the file store.", question: Q }]);
@@ -351,7 +375,7 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     expect(await listPaused(paths)).toEqual([]);
     const [c] = await listClaims(paths);
     expect(c.pendingEvent).toBeUndefined();
-    expect(c.state).toMatchObject({ stage: "spec", answer: "Use the file store." });
+    expect(c.state).toMatchObject({ stage: "spec", answer: "Question #500: Use the file store." });
   }, 30_000);
 
   it("logs answered on a resume a crash left before its log line (AC-15)", async () => {
@@ -390,13 +414,13 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     expect(t.released).toEqual([]);
     const [c] = await listClaims(paths);
     expect(c.pendingEvent).toBeUndefined();
-    expect(c.state).toMatchObject({ stage: "spec", answer: "Use the file store." });
+    expect(c.state).toMatchObject({ stage: "spec", answer: "Question #500: Use the file store." });
     expect(started).toEqual([]);
   }, 30_000);
 
   it("does not expire or delete a claim carrying pending actions, by liveness or by MAX_CHAIN_FAILURES", async () => {
     let calls = 0;
-    const { s, paths, pair } = await setup(routes([], { 7: ["validated", "class:product"] }), 1, async () => { calls++; throw new Error("boom"); });
+    const { s, paths, pair, notifications } = await setup(routes([], { 7: ["validated", "class:product"] }), 1, async () => { calls++; throw new Error("boom"); });
     await writeClaim(paths, {
       issue: 7, slot: 0, state: { ...initialChainState(7), stage: "abandoned" }, worktree: join(pair.worktrees, "issue-7"), started_at: "2026-10-01T00:00:00Z", last_activity_at: "2026-10-01T00:00:00Z", run_id: null,
       pendingActions: [{ type: "comment", text: "abandoned" }],
@@ -408,6 +432,10 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     }
     expect(calls).toBe(MAX_CHAIN_FAILURES + 1);
     expect((await listClaims(paths)).map((c) => c.issue)).toEqual([7]);
+    // C7: reported once, when the count reaches MAX_CHAIN_FAILURES, not on every later failure.
+    expect(notifications.filter((n) => n.gate === "chain_error")).toEqual([
+      expect.objectContaining({ issue: 7, text: expect.stringContaining("an abandonment") }),
+    ]);
   }, 30_000);
 
   it("never expires a claim in stage paused or abandoned, whose liveness_expired is invalid", async () => {

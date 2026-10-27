@@ -35,7 +35,9 @@ When an answer is present it is a decision: implement on it and do not reopen it
 
 The question check sent this back for you to decide: {{decide_input}}
 When this is present, the question check found that your earlier question need not go to
-the maintainer, for the reasons given: decide it yourself, and do not escalate again.
+the maintainer, for the reasons given: decide it yourself, and do not ask it again. When
+the decision is a large one, write it as an ADR in `docs/decisions/` (a new file, with its
+reasoning); an ADR you add is always in the PR's scope.
 
 Implement every task in the plan, test-first, committing as you go. Run `pnpm test` from
 the repo root before you finish. Then push the branch and open a pull request with `gh pr create`
@@ -62,11 +64,20 @@ To escalate, write a result holding only the optional `escalation` object and `f
 { "escalation": { "kind": "product" | "technical" | "capability", "question": "...", "options": [{ "label": "...", "cost": "..." }], "recommendation": "..." }, "findings": [] }
 `kind` names which of the three it is, `question` is the question in a sentence or two,
 `options` gives each sensible choice with its cost, and `recommendation` says which you
-would pick and why. With a decide input present you must not escalate.
+would pick and why. The `escalation` object may also carry `follow_up` with `reply_quote`,
+and `new_blocker`, as this prompt describes; no other fields.
+
+With a decide input present, do not ask the question that was sent back again, in any
+wording: decide it. Only a new blocker that your decision does not settle may be
+escalated: set `"new_blocker": true`, and it must be a capability question or of a
+different kind from the question sent back; anything else counts as a failed run.
 
 **Follow-up.** When the maintainer's answer is present but the reply asks for more detail
 or asks something back, do not guess: return an `escalation` holding the follow-up
-question.
+question, with `"follow_up": true` and `"reply_quote"` set to the words of the reply you
+are answering, copied exactly. Set `follow_up` only then: the issue pauses again at once,
+without the question check. Any other question, even with an answer present, is checked as
+usual.
 
 `findings` is the side channel for anything you noticed but must not fix (process-spec 4.2).
 Every entry is an object, never a string, with exactly these fields:

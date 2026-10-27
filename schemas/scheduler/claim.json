@@ -284,6 +284,89 @@
         },
         "checksRerun": {
           "type": "boolean"
+        },
+        "answerQuestionIds": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "pendingAnswer": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "ids",
+                "kind",
+                "text"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "kind": {
+                  "enum": [
+                    "product",
+                    "technical"
+                  ]
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            }
+          ],
+          "description": "T4: a product or technical answer not yet recorded on main; a re-claim records it first."
+        },
+        "decideKind": {
+          "enum": [
+            "product",
+            "technical",
+            "capability",
+            "other",
+            null
+          ]
+        },
+        "securityPass": {
+          "type": "boolean"
+        },
+        "chainFailures": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "count",
+                "last"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "last": {
+                  "type": "string"
+                }
+              }
+            }
+          ],
+          "description": "C7: consecutive driver errors on the chain and the last error."
+        },
+        "chainErrors": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "C7: releases for repeated chain errors."
         }
       }
     },
@@ -305,25 +388,45 @@
       ]
     },
     "pendingEvent": {
-      "type": "object",
-      "required": [
-        "type",
-        "answer",
-        "questionId"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "answered"
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "answer",
+            "questionId"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "answered"
+            },
+            "answer": {
+              "type": "string"
+            },
+            "questionId": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
         },
-        "answer": {
-          "type": "string"
-        },
-        "questionId": {
-          "type": "integer",
-          "minimum": 1
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "error"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "chain_error"
+            },
+            "error": {
+              "type": "string"
+            }
+          }
         }
-      }
+      ]
     },
     "pendingActions": {
       "type": "array",

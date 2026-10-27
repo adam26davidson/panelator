@@ -64,6 +64,18 @@ export interface Question {
   question: string;
   options: { label: string; cost: string }[];
   recommendation: string;
+  /** C2: the question answers the maintainer's reply, which asked something back; `reply_quote` quotes that part of it. */
+  follow_up?: boolean;
+  reply_quote?: string;
+  /** C3: in decide mode, a blocker other than the one sent back to decide. */
+  new_blocker?: boolean;
+}
+
+/** T4: a product or technical answer not yet on main, kept in the escalation ledger until it is recorded there. */
+export interface PendingAnswer {
+  ids: number[];
+  kind: "product" | "technical";
+  text: string;
 }
 
 /** A plan, implement or fix result that carries only an escalation (AC-17). Never of kind "other". */
@@ -84,6 +96,8 @@ export interface SpecResult {
 export interface QuestionCheckResult {
   verdict: "send" | "decide_yourself";
   reasoning: string;
+  /** C10: on `send`, the question as the strong-tier check words it for the maintainer. */
+  question?: Question;
   findings?: Finding[];
 }
 
