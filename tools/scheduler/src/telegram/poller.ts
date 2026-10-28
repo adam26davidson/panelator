@@ -25,15 +25,8 @@ export class TelegramPoller {
     sleep?: (ms: number) => Promise<void>,
     afterConfirm?: (u: TelegramUpdate) => Promise<void>,
   ) {
-    Object.assign(this, {
-      client,
-      offsetPath,
-      timeout,
-      onUpdate,
-      log,
-      sleep,
-      afterConfirm,
-    });
+    this.sleep = sleep;
+    this.afterConfirm = afterConfirm;
     this.client = client;
     this.offsetPath = offsetPath;
     this.timeout = timeout;

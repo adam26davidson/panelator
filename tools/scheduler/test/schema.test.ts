@@ -10,6 +10,13 @@ const finding = {
 };
 
 describe("result schemas", () => {
+  it('accepts settled conversation turns only with a non-empty decision on every asking stage',()=>{
+    for(const name of ['plan-result','implement-result','review-result','fix-result','spec-result'] as const){
+      expect(validate(name,{conversation:'settled',decision:'Use second for simplicity',findings:[finding]}).ok).toBe(true);
+      expect(validate(name,{conversation:'settled',decision:''}).ok).toBe(false);
+      expect(validate(name,{conversation:'settled',decision:'yes',extra:true}).ok).toBe(false);
+    }
+  });
   it("accepts a ready plan result", () => {
     const r = validate("plan-result", {
       verdict: "ready",

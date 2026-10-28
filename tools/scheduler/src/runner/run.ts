@@ -87,11 +87,14 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   const input: StageInput = { ...req.input, result_path: resultPath, profile_instructions: profileInstructions };
   const iv = req.def.kind === 'standing' ? {ok:true as const} : validate("stage-input", input);
   if (!iv.ok) throw new Error(`stage input invalid: ${iv.errors.join("; ")}`);
-  const prompt = req.resume||req.conversation
-    ? renderReplyPrompt({answer:req.resume?input.answer??'':`${input.question??''}\n\n${input.answer??''}`,mode:input.mode??'work',result_path:resultPath,conversation:req.conversation,stage:req.def.name})
-    : req.replyPrompt ?? (req.def.kind === 'standing'
-    ? renderStandingPrompt(req.def.prompt, {...req.standingInput,result_path:resultPath,profile_instructions:profileInstructions}) + '\nIf no write tool is available, return the result JSON as your final response. Never post to GitHub or modify repository content.'
-    : renderPrompt(req.def.prompt, input));
+  const prompt = req.replyPrompt ?? (req.resume || req.conversation
+    ? renderReplyPrompt({
+      answer: req.resume ? input.answer ?? '' : `${input.question ?? ''}\n\n${input.answer ?? ''}`,
+      mode: input.mode ?? 'work', result_path: resultPath, conversation: req.conversation, stage: req.def.name,
+    })
+    : req.def.kind === 'standing'
+      ? renderStandingPrompt(req.def.prompt, {...req.standingInput,result_path:resultPath,profile_instructions:profileInstructions}) + '\nIf no write tool is available, return the result JSON as your final response. Never post to GitHub or modify repository content.'
+      : renderPrompt(req.def.prompt, input));
   await writeFile(join(dir, "prompt.md"), prompt);
   await writeFile(join(dir, "input.json"), JSON.stringify(req.standingInput ?? input, null, 2));
 
@@ -222,12 +225,12 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   };
   await writeFile(join(dir, "outcome.json"), JSON.stringify(persisted, null, 2));
 
-  if(req.resume&&judgement.outcome==='failed'){
+  if(req.resume&&(judgement.outcome==='failed'||judgement.outcome==='ok')){
     const turn=events.some(e=>['assistant','message_start','message_end'].includes(String(rec(e).type)));
     const init=events.some(e=>rec(e).type==='system'&&rec(e).subtype==='init'||['agent_start','message_start'].includes(String(rec(e).type)));
     const stderr=await readFile(join(dir,'stderr.log'),'utf8').catch(()=>'');
     const namesSession=[stderr,judgement.finalText??''].some(t=>t.includes(req.resume!.sessionId));
-    if(!turn&&(!init||namesSession)){
+    if(!turn&&(!init||(namesSession&&judgement.outcome==='failed'))){
       const fallback=!init?'resume: no init event':'resume: session unavailable';
       await writeFile(join(dir,'outcome.json'),JSON.stringify({...persisted,resume_fallback:fallback},null,2));
       return runStage(ctx,{...req,resume:undefined,replyPrompt:undefined,runId:runId+'-fresh',resumeFallback:fallback,resumedSessionId:req.resume.sessionId});

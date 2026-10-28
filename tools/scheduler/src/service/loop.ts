@@ -117,6 +117,7 @@ export class Scheduler {
       .catch((e) => d.log({ kind: "error", issue: claim.issue, error: `failure count: ${(e as Error).message}` }))
       .finally(() => {
         this.#active.delete(claim.issue);
+        if(d.telegram)this.wake();
         if (this.active === 0) {
           d.inhibitor.release();
           // Mid-tick, the tick's own finally requests the restart once it is done.
@@ -306,6 +307,7 @@ export class Scheduler {
       }catch(e){info.errors.push(`main checks: ${(e as Error).message}`);}
       await pruneUsage(d.paths, d.now()).catch((e) => info.errors.push(`prune: ${(e as Error).message}`));
 
+      if(d.telegram)await this.#serializeQuestions(async()=>this.telegramAnswers.auditLateIssueReplies((await listClaims(d.paths)).map(c=>c.issue))).catch(()=>d.log({kind:'telegram-issue-audit-failed'}));
       // Step 2 owns the claims of paused issues (a crash mid-pause or mid-resume); a claim carrying pending work is the driver's.
       const pausedIssues = new Set((await listPaused(d.paths)).map((r) => r.issue));
       for (const claim of await listClaims(d.paths)) {

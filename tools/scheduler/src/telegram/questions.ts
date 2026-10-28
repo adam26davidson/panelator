@@ -1,6 +1,7 @@
 import type { PausedRecord } from "../state/paused.ts";
 import type { TelegramUpdate, Keyboard } from "./client.ts";
 export interface PendingSelection {
+  message_id?: number;
   list_message_id: number;
   text: string;
   at: string;
@@ -59,13 +60,19 @@ export function openQuestionsList(records: PausedRecord[]) {
   return {
     text: records.length
       ? records
-          .map((r) => `#${r.issue} ${r.issue_title??r.question.question.split("\n")[0]}`)
+          .map(
+            (r) =>
+              `#${r.issue} ${r.issue_title ?? r.question.question.split("\n")[0]}`,
+          )
           .join("\n")
       : NO_OPEN_QUESTION,
     reply_markup: {
       inline_keyboard: records.map((r) => [
         {
-          text: `#${r.issue} ${r.issue_title??r.question.question}`.slice(0, 64),
+          text: `#${r.issue} ${r.issue_title ?? r.question.question}`.slice(
+            0,
+            64,
+          ),
           callback_data: `pick:${r.issue}`,
         },
       ]),
@@ -89,7 +96,9 @@ export function matchUpdate(
   if (u.edited_message) return { kind: "ignore" };
   const m = u.message;
   const cb = u.callback_query;
-  const open = records.filter((r) => r.phase === "paused");
+  const open = records.filter(
+    (r) => r.phase === "paused" && r.telegram?.message_id,
+  );
   if (m?.text === "/questions") return { kind: "questions" };
   if (cb?.data?.startsWith("q:")) {
     const [, nonce, option] = cb.data.split(":");
@@ -126,7 +135,11 @@ export function matchUpdate(
       ? open[0]
       : undefined;
   if (r) {
-    if (m.date * 1000 < Date.parse(r.telegram?.sent_at ?? r.asked_at ?? ""))
+    // Telegram dates have second resolution; a reply in the send's second is not stale.
+    if (
+      m.date <
+      Math.floor(Date.parse(r.telegram?.sent_at ?? r.asked_at ?? "") / 1000)
+    )
       return { kind: "ignore" };
     return { kind: "answer", record: r, text: m.text };
   }

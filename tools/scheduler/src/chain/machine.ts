@@ -607,7 +607,7 @@ export function transition(state:ChainState,event:ChainEvent):Step {
  if(event.type==='answered'&&state.resumeSession&&state.askingStage!=='verify'){
   const asking=state.askingStage!;
   const action=next.actions.find(a=>a.type==='run_stage');
-  if(action?.type==='run_stage'&&action.stage!==asking){
+  if(!action||(action.type==='run_stage'&&action.stage!==asking)){
    return {state:{...next.state,stage:asking,track:state.track,pr:state.pr,specMode:state.specMode,askingStage:asking,conversation:{asking,retried:false,next:{...next.state,resumeSession:null},actions:next.actions},resumeSession:state.resumeSession},actions:[{type:'run_stage',stage:asking,attempt:state.attempt,conversation:true}]};
   }
  }

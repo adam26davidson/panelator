@@ -14,6 +14,7 @@ import {
 } from "./questions.ts";
 import { saveJson } from "./poller.ts";
 interface Journal {
+  ignored_issue_comments?: number[];
   selection: PendingSelection | null;
   handled: number[];
   answered: PausedRecord[];
@@ -61,6 +62,44 @@ export class TelegramAnswers {
     j.answered = j.answered.slice(-1000);
     await saveJson(this.d.paths.telegramPending, j);
   }
+  /** Audit late issue answers while their resumed chain is active; never forward their text. */
+  async auditLateIssueReplies(issues: number[]) {
+    if (!this.d.telegram) return;
+    const journal = await this.journal();
+    const paused = await listPaused(this.d.paths);
+    let changed = false;
+    for (const issue of new Set(issues)) {
+      if (paused.some((r) => r.issue === issue && r.phase !== "resuming"))
+        continue;
+      const latest = journal.answered
+        .filter((r) => r.issue === issue)
+        .sort(
+          (a, b) => (b.question_comment_id ?? 0) - (a.question_comment_id ?? 0),
+        )[0];
+      if (latest?.telegram?.channel !== "telegram") continue;
+      const comments = await this.d.gh.listComments(issue);
+      for (const c of comments) {
+        if (
+          c.author !== this.d.cfg.maintainer ||
+          c.id <= (latest.question_comment_id ?? 0) ||
+          journal.ignored_issue_comments?.includes(c.id)
+        )
+          continue;
+        this.d.log({
+          kind: "issue-answer-ignored",
+          issue,
+          comment_id: c.id,
+          answered_on: "telegram",
+        });
+        journal.ignored_issue_comments = [
+          ...(journal.ignored_issue_comments ?? []),
+          c.id,
+        ].slice(-1000);
+        changed = true;
+      }
+    }
+    if (changed) await saveJson(this.d.paths.telegramPending, journal);
+  }
   async handle(u: TelegramUpdate) {
     const d = this.d;
     const channel = d.telegram;
@@ -68,6 +107,11 @@ export class TelegramAnswers {
     const journal = await this.journal();
     if (journal.handled.includes(u.update_id)) return;
     const records = await listPaused(d.paths);
+    // Delivery can be clicked before completePause finishes its GitHub bookkeeping.
+    // Leave the update unconfirmed until that record is committed, rather than
+    // letting the completing pause overwrite an answer or replying 'No open question'.
+    if (records.some((r) => r.phase === "pausing"))
+      throw new Error("question send still completing");
     const match = matchUpdate(
       u,
       [
@@ -84,8 +128,13 @@ export class TelegramAnswers {
         !r ||
         (r.phase === "resuming" && r.telegram?.answer_update_id !== u.update_id)
       ) {
-        d.log({kind:'telegram-answer-ignored',issue:match.record.issue,channel:match.record.telegram?.channel??'issue',update_id:u.update_id});
-        if(u.callback_query)await channel.answerCallback(u.callback_query.id);
+        d.log({
+          kind: "telegram-answer-ignored",
+          issue: match.record.issue,
+          channel: match.record.telegram?.channel ?? "issue",
+          update_id: u.update_id,
+        });
+        if (u.callback_query) await channel.answerCallback(u.callback_query.id);
         await channel.sendReply(
           alreadyAnswered(match.record.telegram?.channel ?? "the issue"),
           u.message?.message_id,
@@ -95,7 +144,9 @@ export class TelegramAnswers {
           // The nonce permits adoption after a crash between GitHub delivery and local persistence.
           const marker = `<!-- panelator-telegram-answer:${u.update_id} -->`;
           const comments = await d.gh.listComments(r.issue);
-          const existing = comments.find((c) => c.body.includes(marker));
+          const existing = comments.find(
+            (c) => c.author === d.cfg.app.bot_login && c.body.includes(marker),
+          );
           const posted =
             existing ??
             (await d.gh.comment(
@@ -115,7 +166,12 @@ export class TelegramAnswers {
               answer_update_id: u.update_id,
               channel: "telegram",
               thread_last_message_id:
-                u.message?.message_id ?? u.callback_query?.message?.message_id ?? r.telegram.message_id,
+                u.message?.message_id ??
+                (match.kind === "pick"
+                  ? journal.selection?.message_id
+                  : undefined) ??
+                u.callback_query?.message?.message_id ??
+                r.telegram.message_id,
             },
           };
           await writePaused(d.paths, r);
@@ -139,7 +195,9 @@ export class TelegramAnswers {
         if (match.kind === "pick") journal.selection = null;
       }
     } else if (match.kind === "list" || match.kind === "questions") {
-      const open = records.filter((r) => r.phase === "paused");
+      const open = records.filter(
+        (r) => r.phase === "paused" && r.telegram?.message_id,
+      );
       const list = openQuestionsList(open);
       const id = await channel.sendReply(
         list.text,
@@ -149,12 +207,15 @@ export class TelegramAnswers {
       if (match.kind === "list")
         journal.selection = {
           list_message_id: id,
+          message_id: u.message?.message_id,
           text: match.text,
           at: d.now().toISOString(),
           update_id: u.update_id,
         };
     } else if (match.kind === "none")
       await channel.sendReply(NO_OPEN_QUESTION, u.message?.message_id);
+    if (match.kind === "ignore" && u.callback_query)
+      await channel.answerCallback(u.callback_query.id);
     journal.handled.push(u.update_id);
     journal.handled = journal.handled.slice(-1000);
     journal.answered = journal.answered.slice(-1000);
@@ -169,13 +230,22 @@ export class TelegramAnswers {
       if (u.callback_query) {
         await this.d.telegram!.answerCallback(u.callback_query.id);
         if (u.callback_query.data?.startsWith("q:")) {
+          const n = Number(u.callback_query.data.split(":")[2]);
           await this.d.telegram!.replaceKeyboard(
             u.callback_query.message!.message_id,
-          );
-          const n = Number(u.callback_query.data.split(":")[2]);
-          await this.d.telegram!.sendReply(
-            chosenLine(n, r.question.options[n - 1]?.label ?? ""),
-            r.telegram?.message_id ?? undefined,
+            {
+              inline_keyboard: [
+                [
+                  {
+                    text: chosenLine(
+                      n,
+                      r.question.options[n - 1]?.label ?? "",
+                    ).slice(0, 64),
+                    callback_data: "answered",
+                  },
+                ],
+              ],
+            },
           );
         }
       }

@@ -635,7 +635,7 @@ async function pauseIssue(deps: DriverDeps, claim: Claim, a: Extract<Action, { t
     issue: claim.issue, phase: "pausing", nonce: randomUUID(), state: claim.state, question: a.question, asking_stage: a.asking,
     question_comment_id: null, asked_at: null, reminded: false, answer: null, reply_comment_id: null,
     session:a.asking==='verify'?null:claim.asking_session??null,
-    telegram:deps.telegram?{...emptyTelegram(),...claim.telegram_thread,sent:false,message_id:null,answer_update_id:null,ack_sent:false,send_failures:0}:null,
+    telegram:deps.telegram?{...emptyTelegram(),...claim.telegram_thread,sent:false,message_id:null,sent_at:null,reminder_message_id:null,channel:null,answer_update_id:null,ack_sent:false,send_failures:0}:null,
   };
   await writePaused(deps.paths, rec);
   await completePause(deps, rec);
@@ -673,9 +673,11 @@ export async function sendPausedQuestion(deps:DriverDeps,rec:PausedRecord):Promi
   const issue=await fetchIssue(deps,rec.issue);
   rec={...rec,issue_title:issue.title};
   const id=await deps.telegram.sendQuestion(rec,issue.title,`https://github.com/${deps.cfg.repo}/issues/${rec.issue}#issuecomment-${rec.question_comment_id}`);
-  rec={...rec,telegram:{...tg,message_id:id,sent:true,sent_at:deps.now().toISOString(),thread_message_ids:[...tg.thread_message_ids,id]}};
+  rec={...rec,telegram:{...tg,message_id:id,sent:true,sent_at:deps.now().toISOString(),thread_last_message_id:tg.thread_last_message_id??id,thread_message_ids:[...tg.thread_message_ids,id]}};
  }catch{deps.log({kind:'telegram-send-failed',issue:rec.issue});rec={...rec,telegram:{...tg,send_failures:tg.send_failures+1}};}
- await writePaused(deps.paths,rec);return rec;
+ await writePaused(deps.paths,rec);
+ if(rec.phase==='paused'&&rec.telegram?.sent&&rec.telegram.message_id&&rec.question_comment_id)await appendQuestionLog(deps.paths,{issue:rec.issue,at:deps.now().toISOString(),event:'sent',asking_stage:rec.asking_stage,question_comment_id:rec.question_comment_id,channel:'telegram',telegram_message_id:rec.telegram.message_id});
+ return rec;
 }
 
 /** AC-17: re-run, once, each pending required check that has a run; a refusal or a missing run is logged (the fix input names them). */
@@ -716,7 +718,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
       }
       case 'thread_reply':
         if(deps.telegram&&claim.telegram_thread?.thread_last_message_id){
-          try{const id=await deps.telegram.sendReply(a.text,claim.telegram_thread.thread_last_message_id);claim.telegram_thread.thread_message_ids.push(id);}
+          try{const id=await deps.telegram.sendReply(a.text.replace(/Done: recorded in PR #(\d+)/,`Done: recorded in https://github.com/${deps.cfg.repo}/pull/$1`),claim.telegram_thread.thread_last_message_id);claim.telegram_thread.thread_message_ids.push(id);}
           catch{deps.log({kind:'telegram-thread-reply-failed',issue:claim.issue});}
         }
         break;

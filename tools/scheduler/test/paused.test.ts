@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { initialChainState } from "../src/chain/machine.ts";
 import { archiveLedger, readLedger, writeLedger } from "../src/state/ledger.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
-import { listPaused, pausedDecision, removePaused, writePaused, type IssueComment, type PausedRecord } from "../src/state/paused.ts";
+import { emptyTelegram,listPaused, pausedDecision, removePaused, writePaused, type IssueComment, type PausedRecord } from "../src/state/paused.ts";
 import { answeredEntry, appendQuestionLog } from "../src/state/questions.ts";
 import { validate } from "../src/schema/validate.ts";
 
@@ -51,6 +51,9 @@ function fresh() {
 }
 
 describe("paused records", () => {
+  it('round-trips the asking session and Telegram thread fields',async()=>{
+    const p=fresh();await ensureStateDirs(p);const r=rec({session:{harness:'pi',model:'m',session_id:'s',worktree:'/w'},telegram:{...emptyTelegram(),message_id:10,sent:true,sent_at:ASKED,thread_message_ids:[10,11],thread_last_message_id:11,answer_update_id:99,ack_sent:true,channel:'telegram'}});await writePaused(p,r);expect(await listPaused(p)).toEqual([r]);
+  });
   it("round-trips, lists and removes", async () => {
     const p = fresh();
     await ensureStateDirs(p);
