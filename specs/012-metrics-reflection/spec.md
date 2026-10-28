@@ -108,7 +108,10 @@ scheduler (spec 008 AC-5).
   - `chain.transition`: `{ from, to, event, attempt, fixes, track, rescue }`
     on every change of `ChainState.stage`, so stage durations, attempts and
     fix cycles per issue are derivable;
-  - `issue.eligible`: `{ rank, work, cls }` the first tick an issue is in the
+  - `issue.eligible`: `{ rank, work, cls, validated_at, created_at }`
+    (`validated_at` the time of the issue's `validated` labelling read from its
+    label events, or `null` when none; `created_at` the issue's creation time)
+    the first tick an issue is in the
     eligible shortlist and not claimed (recorded once per issue per period of
     eligibility; a later claim closes the wait), `issue.claimed`: `{ slot }`,
     and `issue.released`: `{ reason }` (`done`, `abandoned`, `postponed`,
@@ -202,8 +205,9 @@ scheduler (spec 008 AC-5).
 - AC-6. **The seed set ships.** The repository carries these five
   definitions, each with its rationale, computed per ISO week:
   - `issue_to_merge_days` (speed, lower): median days from the issue's
-    `validated` labelling (the `labelEvents` of its first `issue.eligible`
-    payload, or its `createdAt` when none) to its `merge` event, for issues
+    `validated` labelling (`validated_at` of its first `issue.eligible` payload,
+    or that payload's `created_at` when `validated_at` is `null`) to its
+    `merge` event, for issues
     merged in the bucket;
   - `merged_per_week` (delivery, higher): count of `merge` events in the
     bucket, with `n` the count and `value` the count, and companion rows
@@ -285,7 +289,11 @@ scheduler (spec 008 AC-5).
   between a validated issue and a merge, which stages fail or loop, what the
   metric trends say about speed, delivery, quality, spend and autonomy, and
   what change would remove the largest bottleneck without lowering the bar;
-  each finding becomes a plan item (AC-16).
+  each finding becomes a plan item (AC-16). It also walks the design tree
+  (design section 10, staleness) from the input's `design_tree` (AC-15): for
+  every `docs/designs/<slug>.md` child path that has no file, and every merged
+  spec whose issue has no merged implementation PR, it files one plan item
+  (a finding, never an automatic rewrite), or states why not.
 - AC-12. **Charter reflection is a standing agent.**
   `agents/standing/charter-reflection.md`: as AC-11 with `trigger: {
   schedule: 7d }` and the same actions. Its prompt walks the charter clause
@@ -344,6 +352,10 @@ scheduler (spec 008 AC-5).
     than filing a duplicate;
   - `findings_pending`: the count of queue records the filer has not
     consumed, and the triage outcomes of the period by outcome;
+  - for delivery reflection: `design_tree`, built by the scheduler from the
+    repository at the period's end: per design, its `## Children` paths each
+    with `exists`, and per spec under `specs/` its status line and whether
+    the events hold a `merge` for its issue (`implemented`);
   - for charter reflection: `charter` (the clauses of `docs/charter.md`, one
     per paragraph, numbered) and `maintainer_contacts` (every
     `maintainer.contact` event of the period grouped by `kind` and `label`,
