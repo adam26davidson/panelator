@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
@@ -81,12 +81,13 @@ describe("Scheduler.tick", () => {
     await initializeAgents(paths,deps.registry,deps.parameters,deps.now());
     const state=(await readAgentState(paths,'action-audit'))!;await writeAgentState(paths,'action-audit',{...state,next_run:deps.now().toISOString()});
     let calls=0,finish!:()=>void;const pending=new Promise<void>(r=>{finish=r;});deps.runStanding=async()=>{calls++;await pending;};
-    expect((await s.tick()).claimed).toEqual([]);expect(s.active).toBe(1);await s.tick();expect(calls).toBe(1);
+    expect((await s.tick()).claimed).toEqual([]);expect(s.active).toBe(1);expect((await s.tick()).claimed).toEqual([]);expect(calls).toBe(1);
     finish();await new Promise(r=>setTimeout(r,20));expect(s.active).toBe(0);
   },30000);
   it("claims only as many issues as there are slots, in rank order, and labels the rest of the decisions (AC-1, AC-2, AC-5)", async () => {
     const { s, gh, started, paths } = await setup(routes([issue(2), issue(1), issue(3, ["validated"])]));
     const t = await s.tick();
+    expect(t.held).toBe(0);
     // No class/spec is system work, preferred at the initial 0.75 work share.
     expect(t.claimed).toEqual([3]);
     await new Promise((r) => setTimeout(r, 50));
@@ -495,6 +496,119 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     expect(await listClaims(paths)).toEqual([]);
     expect(readFileSync(paths.serviceLog, "utf8")).toContain('"kind":"paused-dropped"');
     expect(logLines(paths)).toEqual([]);
+  }, 30_000);
+});
+
+type Harness = Awaited<ReturnType<typeof setup>>;
+const FUTURE = "2026-10-12T13:00:00Z";
+const PAST = "2026-10-12T11:00:00Z";
+const writeWaiting = (h: Harness, n: number, postponedUntil: string) =>
+  writeClaim(h.paths, {
+    issue: n, slot: 0, state: { ...initialChainState(n), stage: "waiting", resumeStage: "review", postponedUntil },
+    worktree: join(h.pair.worktrees, `issue-${n}`), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null,
+  });
+const rmClaim = async (h: Harness, n: number) => (await import("node:fs/promises")).unlink(join(h.paths.claims, `${n}.json`));
+const holdingDrive = () => {
+  const st = { release: () => {} };
+  const drive: Drive = async (_d, claim) => { await new Promise<void>((r) => { st.release = r; }); return claim; };
+  return { st, drive };
+};
+
+describe("Scheduler.tick: a postponed chain holds its slot (spec 009)", () => {
+  it("claims nothing while a waiting claim holds the only slot, and starts the chain once postponedUntil passes (AC-1)", async () => {
+    const h = await setup(routes([issue(1)]));
+    await writeWaiting(h, 7, FUTURE);
+    const t = await h.s.tick();
+    expect(t.claimed).toEqual([]);
+    expect(t.held).toBe(1);
+    expect(labelCalls(h.gh, 1)).toEqual([]);
+    expect(h.gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues/1/comments")).toEqual([]);
+    expect((await listClaims(h.paths)).map((c) => c.issue)).toEqual([7]);
+    expect(existsSync(join(h.pair.worktrees, "issue-1"))).toBe(false);
+    h.setNow(new Date("2026-10-12T14:00:00Z"));
+    const t2 = await h.s.tick();
+    await settle();
+    expect(h.started).toEqual([7]);
+    expect(t2.claimed).toEqual([]);
+  }, 30_000);
+
+  it("counts the waiting claim, not the running chain (AC-2)", async () => {
+    const { st, drive } = holdingDrive();
+    const shortlist: unknown[] = [];
+    const h = await setup(routes(shortlist), 2, drive);
+    await writeClaim(h.paths, { issue: 3, slot: 0, state: { ...initialChainState(3), stage: "verify" }, worktree: join(h.pair.worktrees, "issue-3"), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null });
+    await h.s.tick();
+    await writeWaiting(h, 7, FUTURE);
+    shortlist.push(issue(1), issue(2));
+    const t = await h.s.tick();
+    expect(t.held).toBe(2);
+    expect(t.claimed).toEqual([]);
+    st.release();
+  }, 30_000);
+
+  it("claims exactly one issue with slots: 2 and one waiting claim (AC-2)", async () => {
+    const h = await setup(routes([issue(2), issue(1)]), 2);
+    await writeWaiting(h, 7, FUTURE);
+    const t = await h.s.tick();
+    expect(t.held).toBe(1);
+    expect(t.claimed).toEqual([1]);
+  }, 30_000);
+
+  it("claims past a paused issue, and past the claim a crash left beside its record (AC-3)", async () => {
+    const h = await setup(routes([waiting(), issue(1)]));
+    await writePaused(h.paths, record());
+    const t = await h.s.tick();
+    expect(t.held).toBe(0);
+    expect(t.claimed).toEqual([1]);
+    expect(labelCalls(h.gh, 7)).toEqual([]);
+
+    const h2 = await setup(routes([waiting(), issue(1)]));
+    await writePaused(h2.paths, record());
+    await writeClaim(h2.paths, { issue: 7, slot: 0, state: pausedState(), worktree: join(h2.pair.worktrees, "issue-7"), started_at: h2.deps.now().toISOString(), last_activity_at: h2.deps.now().toISOString(), run_id: null });
+    expect((await h2.s.tick()).claimed).toEqual([1]);
+  }, 30_000);
+
+  it("keeps an answered paused issue paused while a waiting claim holds the slot, then resumes it before a shortlisted issue (AC-4)", async () => {
+    const rs = routes([waiting(), issue(8, ["validated", "class:product", "priority"])], {}, { 7: [comment(500, BOT_LOGIN, "2026-10-12T08:00:00Z", "q"), comment(501, ME, "2026-10-12T09:00:00Z", "Use the file store.")] });
+    const h = await setup(rs, 1, firstStep);
+    await writeWaiting(h, 3, FUTURE);
+    await writePaused(h.paths, record());
+    const t = await h.s.tick();
+    expect(t.claimed).toEqual([]);
+    expect(await listPaused(h.paths)).toEqual([expect.objectContaining({ phase: "paused" })]);
+    expect(labelCalls(h.gh, 7)).toEqual([]);
+    await rmClaim(h, 3);
+    const t2 = await h.s.tick();
+    await settle();
+    expect(t2.claimed).toEqual([7]);
+    expect(labelCalls(h.gh, 8)).toEqual([]);
+  }, 30_000);
+
+  it("starts one over-held chain per running slot and claims nothing until held is below slots (AC-5)", async () => {
+    const { st, drive } = holdingDrive();
+    const h = await setup(routes([issue(1)]), 1, drive);
+    for (const n of [5, 6, 7]) await writeWaiting(h, n, PAST);
+    const order = (await listClaims(h.paths)).map((c) => c.issue);
+    const t = await h.s.tick();
+    expect(t.held).toBe(3);
+    expect(t.claimed).toEqual([]);
+    expect((await listClaims(h.paths)).map((c) => c.issue)).toEqual(order);
+    await rmClaim(h, order[0]);
+    st.release();
+    await settle();
+    const t2 = await h.s.tick();
+    expect(t2.held).toBe(2);
+    expect(t2.claimed).toEqual([]);
+    expect((await listClaims(h.paths)).map((c) => c.issue)).toEqual(order.slice(1));
+    st.release();
+  }, 30_000);
+
+  it("claims the next issue on the tick after the waiting claim goes (AC-6)", async () => {
+    const h = await setup(routes([issue(1)]));
+    await writeWaiting(h, 7, FUTURE);
+    expect((await h.s.tick()).claimed).toEqual([]);
+    await rmClaim(h, 7);
+    expect((await h.s.tick()).claimed).toEqual([1]);
   }, 30_000);
 });
 
