@@ -1,0 +1,14 @@
+name: questions_per_week
+goal: autonomy
+description: Questions sent to the maintainer per week
+unit: questions
+direction: lower
+introduced: 2026-10-28
+rationale: >-
+  The charter wants the system to need the maintainer only for decisions that are really theirs, so
+  every question that reaches the maintainer is a cost to the goal of autonomy. Counting the questions
+  actually sent, after the question check has let them through, measures that cost directly. It drives
+  two things: the question check's threshold, and the reflection's search for kinds of question that
+  recur and could be answered by a written rule or decision record instead.
+query: |-
+  SELECT date(at, 'weekday 0', '-6 days') AS bucket, count(*) AS value, count(*) AS n FROM events WHERE kind = 'question' AND json_extract(payload, '$.event') = 'sent' AND at >= :from AND at < :to GROUP BY bucket

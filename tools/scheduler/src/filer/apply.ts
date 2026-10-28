@@ -1,6 +1,8 @@
 import {appendFile,writeFile,rename} from 'node:fs/promises';
 import type {Question} from '../types.ts';
 import {validate} from '../schema/validate.ts';
+import {record as recordEvt} from '../events/store.ts';
+import {createIssueRecorded} from '../events/filed.ts';
 import {readJsonLines,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
 export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'}}
 export interface FilerResult {summary:string;decisions:Decision[]}
@@ -29,7 +31,7 @@ export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput
    // Spec creation belongs to the chain; an input cannot smuggle a Spec line into intake.
    let body=issue.body.replace(/^\s*Spec:.*$/gm,'');
    if(dec.outcome==='escalate')body=`Possible design flaw\n\n${body}\n\nQuestion for the spec stage:\n${JSON.stringify(dec.question,null,2)}`;
-   return d.gh.createIssue(issue.title,`${body}\n\nFiler verification: ${dec.reason}\n\n${marker}`,[issue.class,'validated']);
+   return createIssueRecorded(d.paths,d.gh,d.now(),{title:issue.title,body:`${body}\n\nFiler verification: ${dec.reason}\n\n${marker}`,labels:[issue.class,'validated'],by:d.botLogin,class:issue.class,marker});
   };
   // A security flag overrides every public outcome; a discard is private and stays a discard (AC-19).
   if(dec.outcome==='security'||(record?.finding.security&&dec.outcome!=='discard')) {
@@ -56,6 +58,7 @@ export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput
    case 'discard':case 'defer':break;
   }
   await appendFile(d.paths.findingsTriage,JSON.stringify(row)+'\n');triage.push(row);
+  await recordEvt(d.paths,'finding.triaged',row.at,row as unknown as Record<string,unknown>,{run_id:runId});
  }
  const line=Math.max(input.cursor,...input.records.filter(r=>!r.advisory_failed).map(r=>Number(r.ref)));
  await writeFile(d.paths.findingsCursor+'.tmp',JSON.stringify({line}));await rename(d.paths.findingsCursor+'.tmp',d.paths.findingsCursor);
