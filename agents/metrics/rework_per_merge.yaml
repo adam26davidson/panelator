@@ -1,0 +1,22 @@
+name: rework_per_merge
+goal: quality
+description: Mean fix cycles plus rescues per merged issue.
+unit: cycles per merge
+direction: lower
+introduced: 2026-10-28
+rationale: >-
+  Quality is the charter's third goal: change that lands should be right the first time.
+  Every fix cycle and rescue is the review or verify stage sending work back, so their count
+  per merged issue measures how often the first attempt was not good enough, whatever the
+  final diff looks like. Delivery reflection uses it to find which stage loops, and it is
+  paired with post_merge_defects, which catches what the loops let through. Both are counted
+  as one seed metric under rework and post-merge defects.
+query: |
+  WITH merged AS (
+    SELECT issue, date(at,'weekday 0','-6 days') AS bucket FROM events WHERE kind = 'merge' AND at >= :from AND at < :to),
+  rework AS (
+    SELECT m.bucket, m.issue,
+      (SELECT count(*) FROM events t WHERE t.kind = 'chain.transition' AND t.issue = m.issue
+         AND (json_extract(t.payload, '$.to') = 'fix' OR json_extract(t.payload, '$.rescue') = 1)) AS cycles
+    FROM merged m)
+  SELECT bucket, avg(cycles) AS value, count(*) AS n FROM rework GROUP BY bucket ORDER BY bucket

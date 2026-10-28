@@ -1,0 +1,16 @@
+name: merged_per_week_system
+goal: delivery
+description: System-work issues merged per week.
+unit: merges
+direction: higher
+introduced: 2026-10-28
+rationale: >-
+  Delivery is split by kind of work because the shortlist holds a share between system work
+  (the pipeline improving itself) and product work, set by the system_work_share parameter.
+  This count shows whether the share the parameter asks for is the share that merges, which
+  is what reflection needs to judge the parameter. It sits beside merged_per_week_product
+  and the total, and is counted with them as one seed metric.
+query: |
+  SELECT date(at,'weekday 0','-6 days') AS bucket, count(*) AS value, count(*) AS n
+  FROM events WHERE kind = 'merge' AND at >= :from AND at < :to AND json_extract(payload, '$.work') = 'system'
+  GROUP BY bucket ORDER BY bucket

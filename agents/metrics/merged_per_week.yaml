@@ -1,0 +1,16 @@
+name: merged_per_week
+goal: delivery
+description: Issues merged per week.
+unit: merges
+direction: higher
+introduced: 2026-10-28
+rationale: >-
+  Delivery is the charter's second goal: the system exists to turn validated issues into
+  merged changes. Throughput is the plainest count of that, and it is read together with
+  rework and cost so that a rise reached by lowering the bar shows up elsewhere. Delivery
+  reflection compares the weekly count with the previous twelve weeks to see whether a
+  change to the chain, a parameter or an agent moved the rate of merges at all.
+query: |
+  SELECT date(at,'weekday 0','-6 days') AS bucket, count(*) AS value, count(*) AS n
+  FROM events WHERE kind = 'merge' AND at >= :from AND at < :to
+  GROUP BY bucket ORDER BY bucket

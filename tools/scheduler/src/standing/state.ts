@@ -9,6 +9,8 @@ export interface AgentState {
  last_run:{at:string;run_id:string;outcome:string}|null; next_run:string|null;
  pending_events:StandingEvent[]; paused:boolean; paused_by:string|null; failures:number;
  summary?:string; removed_at?:string;
+ /** Written only by a run that ended ok: the next reflection period starts here (spec 012 AC-20). */
+ last_success?:{at:string;run_id:string}|null;
  running?:{run_id:string;started_at:string};
 }
 export async function updateAgentState(paths:StatePaths,name:string,fn:(state:AgentState)=>AgentState):Promise<void> {
@@ -47,4 +49,9 @@ export async function pruneRemovedAgents(paths:StatePaths,registry:Record<string
   if(!state.removed_at)await writeAgentState(paths,name,{...state,removed_at:now.toISOString()});
   else if(now.getTime()-Date.parse(state.removed_at)>30*86400000){await unlink(join(paths.agents,`${name}.json`)); await parameters.prune(`schedule.${name}`);}
  }
+}
+/** Spec 012 AC-14: due on a passed schedule, or on events once `min_events` (default 1) are pending. */
+export function agentDue(def:StandingDefinition,state:AgentState,now:Date):boolean {
+ if(state.next_run&&Date.parse(state.next_run)<=now.getTime())return true;
+ return state.pending_events.length>0&&state.pending_events.length>=(def.trigger.min_events??1);
 }

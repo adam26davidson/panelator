@@ -1,0 +1,120 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "reflection-input.json",
+ "type": "object",
+ "required": [
+  "period",
+  "agent",
+  "parameters",
+  "agents",
+  "metrics",
+  "events_summary",
+  "issues",
+  "open_questions",
+  "previous_plans",
+  "open_bot_issues",
+  "findings_pending"
+ ],
+ "properties": {
+  "period": {
+   "type": "object",
+   "required": [
+    "from",
+    "to"
+   ],
+   "properties": {
+    "from": {
+     "type": "string"
+    },
+    "to": {
+     "type": "string"
+    }
+   }
+  },
+  "agent": {
+   "type": "string"
+  },
+  "parameters": {
+   "type": "object"
+  },
+  "agents": {
+   "type": "object"
+  },
+  "metrics": {
+   "$ref": "metrics-report.json"
+  },
+  "events_summary": {
+   "type": "object"
+  },
+  "issues": {
+   "type": "array",
+   "items": {
+    "type": "object"
+   }
+  },
+  "open_questions": {
+   "type": "array",
+   "items": {
+    "type": "object"
+   }
+  },
+  "previous_plans": {
+   "type": "array",
+   "items": {
+    "type": "object"
+   }
+  },
+  "open_bot_issues": {
+   "type": "array",
+   "items": {
+    "type": "object"
+   }
+  },
+  "findings_pending": {
+   "type": "object"
+  },
+  "design_tree": {
+   "type": "object"
+  },
+  "charter": {
+   "type": "array",
+   "items": {
+    "type": "object"
+   }
+  },
+  "maintainer_contacts": {
+   "type": "array",
+   "items": {
+    "type": "object"
+   }
+  },
+  "metric_definitions": {
+   "type": "array",
+   "items": {
+    "type": "object"
+   }
+  },
+  "snapshots": {
+   "type": "array",
+   "items": {
+    "type": "object"
+   }
+  },
+  "all_plans": {
+   "type": "array",
+   "items": {
+    "type": "object"
+   }
+  },
+  "question_outcomes": {
+   "type": "array",
+   "items": {
+    "type": "object"
+   }
+  },
+  "console_present": {
+   "type": "boolean"
+  }
+ },
+ "additionalProperties": true
+}

@@ -5,7 +5,7 @@ import { appendFindings, onFindingsQueued } from "../state/findings.ts";
 import { livenessGate } from "../gates/index.ts";
 import { ensureWorktree, uncommittedPatch } from "../runner/worktree.ts";
 import { buildSelectContext } from "../shortlist/fetch.ts";
-import {initializeAgents,readAgentState} from '../standing/state.ts';
+import {agentDue,initializeAgents,readAgentState} from '../standing/state.ts';
 import {runStandingAgent} from '../standing/run.ts';
 import type {StandingDefinition} from '../types.ts';
 import type {ParameterStore} from '../parameters/store.ts';
@@ -332,7 +332,7 @@ export class Scheduler {
         states.sort((a,b)=>(a.state.next_run??'').localeCompare(b.state.next_run??''));
         for(const {def,state} of states) {
           if(free<=0)break;
-          if(state.paused||this.#activeStanding.has(def.name)||!((state.next_run && Date.parse(state.next_run)<=d.now().getTime())||state.pending_events.length))continue;
+          if(state.paused||this.#activeStanding.has(def.name)||!agentDue(def,state,d.now()))continue;
           if(state.running && await d.unitActive(`panelator-stage-${state.running.run_id}`))continue;
           d.inhibitor.acquire();
           const p=(d.runStanding??runStandingAgent)({...d,parameters:d.parameters},def,state)

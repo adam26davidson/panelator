@@ -1,0 +1,16 @@
+name: questions_decide_yourself
+goal: autonomy
+description: Questions the check returned to the asking stage to decide itself.
+unit: questions
+direction: higher
+introduced: 2026-10-28
+rationale: >-
+  The question check sends a question back to the asking stage when the system could decide
+  it itself. A count of those returns is the design's own signal for tuning the threshold:
+  too few and questions that should never have reached the maintainer are slipping through
+  (see questions_per_week), too many and stages are asking by reflex. It is a companion to
+  questions_per_week, and meta-reflection reads the two together.
+query: |
+  SELECT date(at,'weekday 0','-6 days') AS bucket, count(*) AS value, count(*) AS n
+  FROM events WHERE kind = 'question' AND json_extract(payload, '$.event') = 'checked' AND json_extract(payload, '$.verdict') = 'decide_yourself' AND at >= :from AND at < :to
+  GROUP BY bucket ORDER BY bucket

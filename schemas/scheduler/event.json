@@ -1,0 +1,1014 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "event.json",
+ "description": "Spec 012 AC-1: the envelope of one raw event; per kind the payload schema or true.",
+ "type": "object",
+ "required": [
+  "id",
+  "at",
+  "kind",
+  "payload"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "id": {
+   "type": "string",
+   "minLength": 1
+  },
+  "at": {
+   "type": "string",
+   "format": "date-time"
+  },
+  "kind": {
+   "enum": [
+    "run.ended",
+    "chain.transition",
+    "issue.eligible",
+    "issue.claimed",
+    "issue.released",
+    "merge",
+    "pr.opened",
+    "ci.check",
+    "review.result",
+    "finding.queued",
+    "finding.triaged",
+    "action",
+    "question",
+    "pause.started",
+    "pause.ended",
+    "slots.sample",
+    "maintainer.contact",
+    "parameter.changed",
+    "agent.run",
+    "issue.filed",
+    "reflection.plan",
+    "metrics.snapshot",
+    "aws.cost"
+   ]
+  },
+  "issue": {
+   "type": "integer",
+   "minimum": 0
+  },
+  "run_id": {
+   "type": "string"
+  },
+  "agent": {
+   "type": "string"
+  },
+  "payload": {
+   "type": "object"
+  }
+ },
+ "allOf": [
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "run.ended"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/run.ended"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "chain.transition"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/chain.transition"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "issue.eligible"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/issue.eligible"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "issue.claimed"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/issue.claimed"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "issue.released"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/issue.released"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "merge"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/merge"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "pr.opened"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/pr.opened"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "ci.check"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/ci.check"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "review.result"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/review.result"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "finding.queued"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/finding.queued"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "finding.triaged"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/finding.triaged"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "action"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/action"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "question"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/question"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "pause.started"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/pause.started"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "pause.ended"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/pause.ended"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "slots.sample"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/slots.sample"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "maintainer.contact"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/maintainer.contact"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "parameter.changed"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/parameter.changed"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "agent.run"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/agent.run"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "issue.filed"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/issue.filed"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "reflection.plan"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/reflection.plan"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "metrics.snapshot"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": {
+      "$ref": "#/$defs/metrics.snapshot"
+     }
+    }
+   }
+  },
+  {
+   "if": {
+    "properties": {
+     "kind": {
+      "const": "aws.cost"
+     }
+    },
+    "required": [
+     "kind"
+    ]
+   },
+   "then": {
+    "properties": {
+     "payload": true
+    }
+   }
+  }
+ ],
+ "$defs": {
+  "run.ended": {
+   "$ref": "usage-record.json"
+  },
+  "chain.transition": {
+   "type": "object",
+   "properties": {
+    "from": {
+     "type": "string"
+    },
+    "to": {
+     "type": "string"
+    },
+    "event": {
+     "type": "string"
+    },
+    "attempt": {
+     "type": "integer"
+    },
+    "fixes": {
+     "type": "integer"
+    },
+    "track": {
+     "enum": [
+      "issue",
+      "spec"
+     ]
+    },
+    "rescue": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "from",
+    "to",
+    "event",
+    "attempt",
+    "fixes",
+    "track",
+    "rescue"
+   ],
+   "additionalProperties": false
+  },
+  "issue.eligible": {
+   "type": "object",
+   "properties": {
+    "rank": {
+     "type": "integer"
+    },
+    "work": {
+     "enum": [
+      "system",
+      "product"
+     ]
+    },
+    "cls": {
+     "enum": [
+      "feature",
+      "debt",
+      "none"
+     ]
+    },
+    "validated_at": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "created_at": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "rank",
+    "work",
+    "cls",
+    "validated_at",
+    "created_at"
+   ],
+   "additionalProperties": false
+  },
+  "issue.claimed": {
+   "type": "object",
+   "properties": {
+    "slot": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "slot"
+   ],
+   "additionalProperties": false
+  },
+  "issue.released": {
+   "type": "object",
+   "properties": {
+    "reason": {
+     "enum": [
+      "done",
+      "abandoned",
+      "postponed",
+      "paused",
+      "error",
+      "stopped"
+     ]
+    }
+   },
+   "required": [
+    "reason"
+   ],
+   "additionalProperties": false
+  },
+  "merge": {
+   "type": "object",
+   "properties": {
+    "issue": {
+     "type": "integer"
+    },
+    "pr": {
+     "type": "integer"
+    },
+    "cls": {
+     "enum": [
+      "feature",
+      "debt",
+      "none"
+     ]
+    },
+    "work": {
+     "enum": [
+      "system",
+      "product"
+     ]
+    },
+    "at": {
+     "type": "string"
+    },
+    "backfilled": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "issue",
+    "pr",
+    "cls",
+    "at"
+   ],
+   "additionalProperties": false
+  },
+  "pr.opened": {
+   "type": "object",
+   "properties": {
+    "pr": {
+     "type": "integer"
+    },
+    "track": {
+     "enum": [
+      "issue",
+      "spec"
+     ]
+    }
+   },
+   "required": [
+    "pr",
+    "track"
+   ],
+   "additionalProperties": false
+  },
+  "ci.check": {
+   "type": "object",
+   "properties": {
+    "sha": {
+     "type": "string"
+    },
+    "pr": {
+     "type": "integer"
+    },
+    "check": {
+     "type": "string"
+    },
+    "status": {
+     "type": "string"
+    },
+    "run_id": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "sha",
+    "check",
+    "status",
+    "run_id"
+   ],
+   "additionalProperties": false
+  },
+  "review.result": {
+   "type": "object",
+   "properties": {
+    "pr": {
+     "type": "integer"
+    },
+    "head_sha": {
+     "type": "string"
+    },
+    "verdict": {
+     "type": "string"
+    },
+    "findings": {
+     "type": "integer"
+    },
+    "criteria_failed": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "independent": {
+     "type": "boolean"
+    },
+    "reviewer_model": {
+     "type": "string"
+    },
+    "security": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "pr",
+    "head_sha",
+    "verdict",
+    "findings",
+    "criteria_failed",
+    "independent",
+    "reviewer_model",
+    "security"
+   ],
+   "additionalProperties": false
+  },
+  "finding.queued": {
+   "type": "object",
+   "properties": {
+    "issue": {
+     "type": "integer"
+    },
+    "stage": {
+     "type": "string"
+    },
+    "run_id": {
+     "type": "string"
+    },
+    "timestamp": {
+     "type": "string"
+    },
+    "finding": {
+     "$ref": "finding.json"
+    },
+    "backfilled": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "issue",
+    "stage",
+    "run_id",
+    "timestamp",
+    "finding"
+   ],
+   "additionalProperties": false
+  },
+  "finding.triaged": {
+   "$ref": "triage-entry.json"
+  },
+  "action": {
+   "$ref": "action-log-entry.json"
+  },
+  "question": {
+   "$ref": "question-log-entry.json"
+  },
+  "pause.started": {
+   "type": "object",
+   "properties": {
+    "stage": {
+     "type": "string"
+    },
+    "question_comment_id": {
+     "type": "integer"
+    },
+    "reason": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "stage",
+    "reason"
+   ],
+   "additionalProperties": false
+  },
+  "pause.ended": {
+   "type": "object",
+   "properties": {
+    "stage": {
+     "type": "string"
+    },
+    "question_comment_id": {
+     "type": "integer"
+    },
+    "reason": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "stage",
+    "reason"
+   ],
+   "additionalProperties": false
+  },
+  "slots.sample": {
+   "type": "object",
+   "properties": {
+    "active": {
+     "type": "integer"
+    },
+    "slots": {
+     "type": "integer"
+    },
+    "chains": {
+     "type": "integer"
+    },
+    "standing": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "active",
+    "slots",
+    "chains",
+    "standing"
+   ],
+   "additionalProperties": false
+  },
+  "maintainer.contact": {
+   "type": "object",
+   "properties": {
+    "channel": {
+     "type": "string"
+    },
+    "kind": {
+     "enum": [
+      "notification",
+      "question",
+      "reminder",
+      "funds",
+      "credential",
+      "first_contact"
+     ]
+    },
+    "issue": {
+     "type": "integer"
+    },
+    "question_comment_id": {
+     "type": "integer"
+    },
+    "label": {
+     "type": "string"
+    },
+    "text": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "channel",
+    "kind",
+    "label",
+    "text"
+   ],
+   "additionalProperties": false
+  },
+  "parameter.changed": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "old": {},
+    "new": {},
+    "field": {
+     "type": "string"
+    },
+    "actor": {
+     "type": "string"
+    },
+    "at": {
+     "type": "string"
+    },
+    "backfilled": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "name",
+    "field",
+    "actor"
+   ],
+   "additionalProperties": false
+  },
+  "agent.run": {
+   "type": "object",
+   "properties": {
+    "outcome": {
+     "type": "string"
+    },
+    "summary": {
+     "type": "string"
+    },
+    "events_received": {
+     "type": "integer"
+    },
+    "actions": {
+     "type": "integer"
+    },
+    "findings": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "outcome",
+    "summary",
+    "events_received",
+    "actions",
+    "findings"
+   ],
+   "additionalProperties": false
+  },
+  "issue.filed": {
+   "type": "object",
+   "properties": {
+    "number": {
+     "type": "integer"
+    },
+    "by": {
+     "type": "string"
+    },
+    "class": {
+     "type": "string"
+    },
+    "labels": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "marker": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "prs": {
+     "type": "array",
+     "items": {
+      "type": "integer"
+     }
+    }
+   },
+   "required": [
+    "number",
+    "by",
+    "class",
+    "labels",
+    "marker"
+   ],
+   "additionalProperties": false
+  },
+  "reflection.plan": {
+   "type": "object",
+   "properties": {
+    "agent": {
+     "type": "string"
+    },
+    "run_id": {
+     "type": "string"
+    },
+    "plan_issue": {
+     "type": "integer"
+    },
+    "plan": {
+     "type": "object"
+    }
+   },
+   "required": [
+    "agent",
+    "run_id",
+    "plan_issue",
+    "plan"
+   ],
+   "additionalProperties": true
+  },
+  "metrics.snapshot": {
+   "type": "object",
+   "properties": {
+    "reason": {
+     "type": "string"
+    },
+    "report": {
+     "$ref": "metrics-report.json"
+    }
+   },
+   "required": [
+    "reason",
+    "report"
+   ],
+   "additionalProperties": false
+  }
+ }
+}

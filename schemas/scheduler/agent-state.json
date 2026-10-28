@@ -30,6 +30,12 @@
     "failures": {
       "type": "integer",
       "minimum": 0
+    },
+    "last_success": {
+      "type": [
+        "object",
+        "null"
+      ]
     }
   },
   "required": [

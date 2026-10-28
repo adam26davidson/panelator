@@ -1,0 +1,107 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "reflection-plan.json",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "title",
+  "summary",
+  "observations",
+  "items",
+  "metrics_note",
+  "open_questions_note",
+  "deferred"
+ ],
+ "properties": {
+  "title": {
+   "type": "string",
+   "minLength": 1
+  },
+  "summary": {
+   "type": "string"
+  },
+  "observations": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "what",
+     "evidence"
+    ],
+    "properties": {
+     "what": {
+      "type": "string"
+     },
+     "evidence": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "items": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "title",
+     "body",
+     "class",
+     "kind"
+    ],
+    "properties": {
+     "title": {
+      "type": "string",
+      "minLength": 1
+     },
+     "body": {
+      "type": "string"
+     },
+     "class": {
+      "type": "string"
+     },
+     "kind": {
+      "enum": [
+       "bottleneck",
+       "charter",
+       "automate_contact",
+       "metric_change",
+       "agent_change",
+       "other"
+      ]
+     },
+     "existing_issue": {
+      "type": "integer",
+      "minimum": 1
+     }
+    }
+   }
+  },
+  "metrics_note": {
+   "type": "string"
+  },
+  "open_questions_note": {
+   "type": "string"
+  },
+  "deferred": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "title",
+     "why"
+    ],
+    "properties": {
+     "title": {
+      "type": "string"
+     },
+     "why": {
+      "type": "string"
+     }
+    }
+   }
+  }
+ }
+}

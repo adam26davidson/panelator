@@ -1,0 +1,16 @@
+name: merged_per_week_product
+goal: delivery
+description: Product-work issues merged per week.
+unit: merges
+direction: higher
+introduced: 2026-10-28
+rationale: >-
+  Product merges are what the maintainer ultimately wants from the pipeline, so they are
+  counted apart from system work. A week of system merges and no product merges is a warning
+  that the self-improvement share has crowded out the product, whatever the total says.
+  Reflection reads this beside merged_per_week_system to judge the system_work_share
+  parameter, and the pair is counted as one seed metric with the total.
+query: |
+  SELECT date(at,'weekday 0','-6 days') AS bucket, count(*) AS value, count(*) AS n
+  FROM events WHERE kind = 'merge' AND at >= :from AND at < :to AND json_extract(payload, '$.work') = 'product'
+  GROUP BY bucket ORDER BY bucket

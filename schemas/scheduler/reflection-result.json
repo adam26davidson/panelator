@@ -1,0 +1,19 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "reflection-result.json",
+ "allOf": [
+  {
+   "$ref": "standing-result.json"
+  }
+ ],
+ "type": "object",
+ "required": [
+  "summary",
+  "plan"
+ ],
+ "properties": {
+  "plan": {
+   "$ref": "reflection-plan.json"
+  }
+ }
+}

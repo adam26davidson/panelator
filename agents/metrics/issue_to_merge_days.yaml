@@ -1,0 +1,26 @@
+name: issue_to_merge_days
+goal: speed
+description: Median days from an issue being validated to its merge.
+unit: days
+direction: lower
+introduced: 2026-10-28
+rationale: >-
+  Speed is the charter's first goal: a validated issue should reach main quickly without
+  lowering the bar. The median is used, not the mean, because a single abandoned-then-
+  retried issue would swamp a weekly mean. The start is the issue's validated labelling (or
+  its creation time when no label event was readable), so queue and shortlist wait count
+  against the system, not only the time the chain spends working. Delivery reflection reads
+  this to decide which stage or wait to attack first.
+query: |
+  WITH first_eligible AS (
+    SELECT issue, payload, row_number() OVER (PARTITION BY issue ORDER BY at) AS rn
+    FROM events WHERE kind = 'issue.eligible' AND issue IS NOT NULL),
+  merged AS (
+    SELECT date(m.at,'weekday 0','-6 days') AS bucket,
+           julianday(m.at) - julianday(COALESCE(json_extract(f.payload, '$.validated_at'), json_extract(f.payload, '$.created_at'))) AS days
+    FROM events m JOIN first_eligible f ON f.issue = m.issue AND f.rn = 1
+    WHERE m.kind = 'merge' AND m.at >= :from AND m.at < :to),
+  ranked AS (
+    SELECT bucket, days, row_number() OVER (PARTITION BY bucket ORDER BY days) AS i, count(*) OVER (PARTITION BY bucket) AS c FROM merged)
+  SELECT bucket, avg(days) AS value, max(c) AS n FROM ranked
+  WHERE i IN ((c + 1) / 2, (c + 2) / 2) GROUP BY bucket ORDER BY bucket

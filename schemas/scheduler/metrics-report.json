@@ -1,0 +1,110 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "metrics-report.json",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "from",
+  "to",
+  "computed_at",
+  "metrics"
+ ],
+ "properties": {
+  "from": {
+   "type": "string"
+  },
+  "to": {
+   "type": "string"
+  },
+  "computed_at": {
+   "type": "string"
+  },
+  "metrics": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [
+     "name",
+     "goal",
+     "unit",
+     "direction",
+     "introduced",
+     "status",
+     "buckets"
+    ],
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "goal": {
+      "enum": [
+       "speed",
+       "delivery",
+       "quality",
+       "spend",
+       "autonomy"
+      ]
+     },
+     "unit": {
+      "type": "string"
+     },
+     "direction": {
+      "enum": [
+       "lower",
+       "higher"
+      ]
+     },
+     "introduced": {
+      "type": "string"
+     },
+     "status": {
+      "enum": [
+       "active",
+       "replaced",
+       "retired"
+      ]
+     },
+     "replaced_by": {
+      "type": "string"
+     },
+     "overlap_days_left": {
+      "type": "integer"
+     },
+     "description": {
+      "type": "string"
+     },
+     "rationale": {
+      "type": "string"
+     },
+     "buckets": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "bucket",
+        "value",
+        "n"
+       ],
+       "properties": {
+        "bucket": {
+         "type": "string"
+        },
+        "value": {
+         "type": [
+          "number",
+          "null"
+         ]
+        },
+        "n": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

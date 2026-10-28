@@ -1,0 +1,20 @@
+name: cost_per_merged_issue_usd
+goal: spend
+description: Token cost of every run on an issue, per merged issue.
+unit: USD per merge
+direction: lower
+introduced: 2026-10-28
+rationale: >-
+  Spend is the charter's fourth goal: the pipeline must pay for itself in merged work. The
+  cost of an issue is every run recorded with its number (stages, rescues, question checks),
+  including attempts that failed, divided by the issues merged in the bucket, so waste is
+  counted rather than hidden. Only token cost is known until AWS cost records exist (the
+  aws.cost kind has no producer yet). Reflection uses it to judge model tiers, bounds and
+  retry limits.
+query: |
+  WITH merged AS (
+    SELECT issue, date(at,'weekday 0','-6 days') AS bucket FROM events WHERE kind = 'merge' AND at >= :from AND at < :to),
+  cost AS (
+    SELECT m.bucket, COALESCE((SELECT sum(json_extract(r.payload, '$.cost_usd')) FROM events r WHERE r.kind = 'run.ended' AND r.issue = m.issue), 0) AS usd
+    FROM merged m)
+  SELECT bucket, sum(usd) / count(*) AS value, count(*) AS n FROM cost GROUP BY bucket ORDER BY bucket

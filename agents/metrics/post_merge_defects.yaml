@@ -1,0 +1,21 @@
+name: post_merge_defects
+goal: quality
+description: Bug issues filed that cite a PR merged in the previous 30 days.
+unit: issues
+direction: lower
+introduced: 2026-10-28
+rationale: >-
+  Rework counts what review caught; post-merge defects count what it did not. A bug issue
+  whose body cites a pull request merged in the previous 30 days is evidence that the merged
+  change was faulty, which is the sharpest signal that the bar was lowered or the review
+  criteria are missing something. The issue.filed event carries the PR numbers its body
+  cites, taken from the finding's where field. Delivery reflection reads this with
+  rework_per_merge as one seed metric.
+query: |
+  SELECT date(f.at,'weekday 0','-6 days') AS bucket, count(*) AS value, count(*) AS n
+  FROM events f
+  WHERE f.kind = 'issue.filed' AND json_extract(f.payload, '$.class') = 'class:bug' AND f.at >= :from AND f.at < :to
+    AND EXISTS (SELECT 1 FROM events m, json_each(json_extract(f.payload, '$.prs')) j
+                WHERE m.kind = 'merge' AND json_extract(m.payload, '$.pr') = j.value
+                  AND m.at <= f.at AND julianday(f.at) - julianday(m.at) <= 30)
+  GROUP BY bucket ORDER BY bucket

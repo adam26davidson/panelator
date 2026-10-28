@@ -1,0 +1,17 @@
+name: questions_per_week
+goal: autonomy
+description: Questions sent to the maintainer per week.
+unit: questions
+direction: lower
+introduced: 2026-10-28
+rationale: >-
+  Autonomy is the charter's fifth goal: the maintainer decides what only the maintainer can,
+  and the system decides the rest. Each question sent is a pause on the maintainer, so the
+  weekly count is the direct cost of the system's autonomy falling short. Charter reflection
+  reads it with the maintainer-contact review to find recurring questions worth automating,
+  and meta-reflection checks it against questions_decide_yourself to judge the question
+  check's threshold.
+query: |
+  SELECT date(at,'weekday 0','-6 days') AS bucket, count(*) AS value, count(*) AS n
+  FROM events WHERE kind = 'question' AND json_extract(payload, '$.event') = 'sent' AND at >= :from AND at < :to
+  GROUP BY bucket ORDER BY bucket
