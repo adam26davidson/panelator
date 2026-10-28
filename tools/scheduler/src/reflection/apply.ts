@@ -74,12 +74,12 @@ export async function applyReflectionResult(d: ApplyDeps, def: StandingDefinitio
     if (item.body.length < MIN_BODY) { defer(`body is under ${MIN_BODY} characters`); continue; }
     if (item.kind === "metric_change" && !/^##\s+Rationale\b/m.test(item.body)) { defer("a metric_change needs a ## Rationale section"); continue; }
     const existing = mine(marker);
-    if (!existing && created >= d.maxIssues) { defer("over the plan bound"); continue; }
+    if (created >= d.maxIssues) { defer("over the plan bound"); continue; }
     const charter = /docs\/charter\.md/.test(`${item.title}\n${item.body}`);
     const number = existing?.number ?? await createIssueRecorded(d.paths, d.gh, at, {
       title: item.title, body: `Plan: #${planIssue}\nKind: ${item.kind}\n\n${item.body}\n\n${marker}`, labels: [item.class, "validated"], by: d.botLogin, class: item.class, marker,
     });
-    if (!existing) created++;
+    created++;
     filed.push({ index, title: item.title, kind: item.kind, issue: number, charter });
   }
   await save({ plan_issue: planIssue, filed, deferred });

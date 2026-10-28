@@ -181,6 +181,14 @@ describe("reflection apply (AC-16 to AC-19)", () => {
     expect(plan(w).body).toContain("Item 9: over the plan bound");
   });
 
+  it("counts items found by their marker toward the bound on a retry", async () => {
+    const w = await applyWorld();
+    const items = Array.from({ length: 12 }, (_, i) => item(i + 1));
+    await applyReflectionResult(w.d, delivery, "k", "r", result(items));
+    await applyReflectionResult(w.d, delivery, "k", "r", result(items));
+    expect(w.issues.filter((i) => i.labels.includes("validated"))).toHaveLength(8);
+  });
+
   it("defers an item with an unknown class, a short body or a metric_change without a rationale, and files the rest", async () => {
     const w = await applyWorld();
     await applyReflectionResult(w.d, delivery, "k", "r", result([
