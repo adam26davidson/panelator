@@ -487,3 +487,4 @@ are stale and are corrected as part of B.
 - `specs/006-no-human-stops/spec.md`
 - `specs/007-telegram-channel/spec.md`
 - `specs/008-agent-registry/spec.md`
+- `specs/009-postponed-chain-holds-slot/spec.md`
