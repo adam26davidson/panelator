@@ -2,6 +2,8 @@ import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { appendMerge } from "../src/state/merges.ts";
+import { openIndex } from "../src/events/index.ts";
 import { savePatch } from "../src/state/patches.ts";
 import { initialChainState } from "../src/chain/machine.ts";
 import { listClaims, readClaim, removeClaim, touchClaim, writeClaim } from "../src/state/claims.ts";
@@ -104,6 +106,19 @@ describe("runs and usage", () => {
     writeFileSync(join(p.usage, "garbage.json"), "not json");
     expect(await pruneUsage(p, new Date("2030-01-01T00:00:00Z"))).toBe(1);
     expect(existsSync(join(p.usage, "garbage.json"))).toBe(true);
+  });
+});
+
+describe("merge records", () => {
+  it("records one raw merge beside the existing merge log write", async () => {
+    const p = fresh(); await ensureStateDirs(p);
+    const m = { issue: 7, pr: 22, cls: "debt" as const, work: "system" as const, at: "2026-10-12T00:00:00.000Z" };
+    await appendMerge(p, m);
+    expect(readFileSync(join(p.root, "merges.jsonl"), "utf8")).toBe(JSON.stringify(m) + "\n");
+    const db = openIndex(p);
+    const rows = db.prepare("SELECT issue, payload FROM events WHERE kind = 'merge'").all();
+    expect(rows).toHaveLength(1); expect(rows[0]!.issue).toBe(7);
+    expect(JSON.parse(String(rows[0]!.payload))).toEqual(m); db.close();
   });
 });
 

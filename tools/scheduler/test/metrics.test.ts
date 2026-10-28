@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { openIndex } from "../src/events/index.ts";
 import { agentsDir } from "../src/config.ts";
-import { computeMetrics, recordSnapshot } from "../src/metrics/compute.ts";
+import { backfillEvents } from "../src/events/backfill.ts";
+import { computeMetrics, historyRange, recordSnapshot } from "../src/metrics/compute.ts";
 import { formatReport } from "../src/metrics/format.ts";
 import { loadMetricDefinitions, type MetricDefinition } from "../src/metrics/definitions.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
@@ -62,6 +63,22 @@ describe("the seed set (AC-5, AC-6)", () => {
     db = openIndex(p, { readOnly: true });
     expect(computeMetrics(db, seeds, { ...range, today: range.to })).toEqual(before);
     db.close();
+  });
+
+  it("shows the full backfilled history, including weeks before introduced", async () => {
+    const p = statePaths(mkdtempSync(join(tmpdir(), "metric-history-")));
+    cpSync(join(fixtures, "backfill-state"), p.root, { recursive: true });
+    await ensureStateDirs(p); await backfillEvents(p);
+    const db = openIndex(p, { readOnly: true });
+    const dates = historyRange(db, seeds.issue_to_merge_days!, new Date("2026-10-28"));
+    // The old-shape usage record is August 1, earlier than the September usage record.
+    expect(dates.from.toISOString()).toBe("2026-07-27T00:00:00.000Z");
+    const report = computeMetrics(db, seeds, { ...dates, names: ["issue_to_merge_days"] });
+    expect(report.metrics[0]!.buckets[0]!.bucket).toBe("2026-07-27");
+    db.close();
+    const empty = statePaths(mkdtempSync(join(tmpdir(), "metric-empty-"))); await ensureStateDirs(empty);
+    const e = openIndex(empty, { readOnly: true });
+    expect(historyRange(e, seeds.issue_to_merge_days!, dates.to).from.toISOString()).toBe("2026-10-26T00:00:00.000Z"); e.close();
   });
 
   it("records a snapshot event for a computation", async () => {

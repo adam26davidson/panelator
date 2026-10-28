@@ -25,6 +25,12 @@ export function weeksBetween(from: Date, to: Date): string[] {
   return out;
 }
 
+/** Full history starts with the earliest raw event, including backfilled records, not the definition's introduction. */
+export function historyRange(index: DatabaseSync, def: MetricDefinition, now: Date): { from: Date; to: Date } {
+  const first = index.prepare("SELECT min(at) AS at FROM events").get() as { at: string | null };
+  return { from: new Date(weekStart(Date.parse(first.at ?? def.introduced))), to: now };
+}
+
 /** The report of spec 012 AC-9: every weekly bucket from `from` to `to`, a gap as `value: null, n: 0`. */
 export function computeMetrics(
   index: DatabaseSync, definitions: Record<string, MetricDefinition>,

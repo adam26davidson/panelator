@@ -64,7 +64,7 @@ question, finding and parameter logs) once at its first start.
 - `panelator-scheduler events query "<sql>"` runs one read-only `SELECT` against the index and prints JSON lines.
 - `panelator-scheduler metrics [--weeks n] [--json] [--snapshot] [--all]` prints the report for the last `n` weeks
   (default 12), one row per metric and week; `--snapshot` also records it as a `metrics.snapshot` event, `--all`
-  includes retired metrics. `metrics show <name>` prints one definition and its full history.
+  includes retired metrics. `metrics show <name>` prints one definition and its full history from the ISO week of the earliest recorded event (including backfilled events) to now.
 
 **Metrics** are definition files in `agents/metrics/<name>.yaml`: `name` (the file name), `goal` (`speed`, `delivery`,
 `quality`, `spend` or `autonomy`), `description`, `unit`, `direction` (`lower` or `higher` is better), `introduced`,

@@ -34,9 +34,9 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  // A reflection's period start and plan key are fixed before its first attempt, so a retry at a later time
  // finds the plan marker of the first (spec 012 AC-16, AC-20).
  let reflection=state.reflection;
- if(reflective&&(state.failures===0||!reflection)) {
+ if(reflective&&!reflection) {
   const from=periodStart(state,now);
-  reflection={period_from:from.toISOString(),plan_key:`standing-${def.name}-${from.getTime()}`};
+  reflection={period_from:from.toISOString(),plan_key:`${def.name}-${from.getTime()}`};
   await updateAgentState(d.paths,def.name,s=>({...s,reflection}));
  }
  let worktree=d.repoDir,created=false;
@@ -73,7 +73,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   if(def.output==='filer-result')await applyFilerResult(filer,runId,input as Awaited<ReturnType<typeof buildFilerInput>>,body as FilerResult);
   if(!reflective)await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},body.findings??[]);
   const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog,d.paths),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now};
-  if(reflective)await applyReflectionResult({paths:d.paths,gh:d.gh,botLogin:d.botLogin,classes:filer.classes,maxIssues:d.cfg.reflection_max_issues,now:d.now,actionCtx:ctx},def,reflection!.plan_key,runId,body as unknown as ReflectionResult);
+  if(reflective)await applyReflectionResult({paths:d.paths,gh:d.gh,botLogin:d.botLogin,classes:filer.classes,maxIssues:d.cfg.reflection_max_issues,now:d.now,actionCtx:ctx},def,reflection!.plan_key,runId,body as unknown as ReflectionResult,reflectionInput!);
   else for(const action of body.actions??[])await applyAction(ctx,{...action,agent:def.name,run_id:runId},def.actions);
   actionCount=body.actions?.length??0;findingCount=body.findings?.length??0;
   summary=body.summary;outcome='ok';
@@ -83,7 +83,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   if(created)await removeWorktree(d.repoDir,worktree).catch(e=>d.log({kind:'error',error:String(e)}));
   await updateAgentState(d.paths,def.name,s=>{const next={...s};delete next.running;return next;});
  }
- await record(d.paths,'agent.run',d.now(),{outcome,summary:summary||error,events_received:received.length,actions:actionCount,findings:findingCount},{agent:def.name,run_id:runId});
+ await record(d.paths,'agent.run',d.now(),{outcome,summary:summary||error,events_received:received.length,actions:actionCount,findings:findingCount,attempt,...(outcome==='failed'?{error}:{})},{agent:def.name,run_id:runId});
  if(outcome!=='ok'&&state.failures===0){await updateAgentState(d.paths,def.name,current=>({...current,failures:1}));return;}
  const at=d.now().toISOString();
  const next=def.trigger.schedule?new Date(d.now().getTime()+parseDuration(String((await d.parameters.read(`schedule.${def.name}`)).value))).toISOString():null;

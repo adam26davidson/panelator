@@ -32,6 +32,7 @@ import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
 import { chainWorld, standingWorld, scripted, RATE_LIMITED, worldPaths, type ChainWorld } from "./helpers/e2e-routes.ts";
 import { emit } from "../src/standing/events.ts";
 import { recordEvent } from "../src/events/store.ts";
+import { appendMerge } from "../src/state/merges.ts";
 import { openIndex } from "../src/events/index.ts";
 import { EVENT_KINDS } from "../src/events/kinds.ts";
 import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
@@ -632,7 +633,7 @@ describe("end to end: reflection agents (spec 012)", () => {
   const merges = async (w: Awaited<ReturnType<typeof standingWorld>>, n: number, from = 1) => {
     for (let i = from; i < from + n; i++) {
       await emit(w.paths, w.registry, "merge", { issue: i, pr: i, sha: "a".repeat(40) }, w.deps.now());
-      await recordEvent(w.paths, { at: w.deps.now().toISOString(), kind: "merge", issue: i, payload: { issue: i, pr: i, cls: "debt", work: "system", at: w.deps.now().toISOString() } });
+      await appendMerge(w.paths, { issue: i, pr: i, cls: "debt", work: "system", at: w.deps.now().toISOString() });
     }
   };
   const bot = (number: number, title: string, labels: string[], body = "") => ({ number, title, body, user: { login: BOT.login }, labels: labels.map((name) => ({ name })), created_at: "2026-09-20T00:00:00Z" });
@@ -651,7 +652,7 @@ describe("end to end: reflection agents (spec 012)", () => {
     expect(plans).toHaveLength(1);
     expect(plans[0]!.title).toBe("Delivery plan 2026-10-01");
     expect(plans[0]!.labels.map((l) => l.name)).toEqual(["reflection", "reflection:delivery"]);
-    expect(plans[0]!.body).toMatch(/<!-- panelator-reflection:standing-delivery-reflection-\d+:plan -->$/);
+    expect(plans[0]!.body).toMatch(/<!-- panelator-reflection:delivery-reflection-\d+:plan -->$/);
     expect(plans[0]!.body).toContain("## Direct actions applied");
     expect(plans[0]!.body).toContain("set_parameter");
     expect(w.closed.map((i) => i.number)).toEqual([91]);
@@ -713,6 +714,64 @@ describe("end to end: reflection agents (spec 012)", () => {
     expect(w.issues.filter((i) => /^Item \d$/.test(i.title))).toHaveLength(2);
   }, 30000);
 
+  it("reuses the stored plan key after process death with failures still zero", async () => {
+    const w = await standingWorld({ "charter-reflection": [plan([item(1)])] });
+    const name = "charter-reflection", key = "charter-reflection-1756944000000";
+    const s = (await readAgentState(w.paths, name))!;
+    s.running = { run_id: "interrupted", started_at: w.deps.now().toISOString() };
+    s.reflection = { period_from: "2026-09-04T00:00:00.000Z", plan_key: key }; s.failures = 0;
+    s.next_run = w.deps.now().toISOString(); await writeAgentState(w.paths, name, s);
+    w.issues.push(bot(90, "Interrupted plan", ["reflection", "reflection:charter"], `<!-- panelator-reflection:${key}:plan -->`));
+    w.setNow(new Date("2026-10-01T05:00:00Z"));
+    await w.scheduler.tick(); await idle(w);
+    expect(planIssues(w, "reflection:charter")).toHaveLength(1);
+    expect(planIssues(w, "reflection:charter")[0]!.body).toContain(`<!-- panelator-reflection:${key}:plan -->`);
+    expect(readdirSync(join(w.paths.reflections, name))).toEqual([`${key}.json`]);
+    expect((await readAgentState(w.paths, name))?.reflection).toBeUndefined();
+  }, 30000);
+
+  it("records both attempts when a reflection fails once and succeeds on retry", async () => {
+    const name = "charter-reflection";
+    const w = await standingWorld({ [name]: [RATE_LIMITED, plan([])] });
+    await due(w, name); await w.scheduler.tick(); await idle(w);
+    const key = (await readAgentState(w.paths, name))!.reflection!.plan_key;
+    w.setNow(new Date("2026-10-01T06:00:00Z"));
+    await w.scheduler.tick(); await idle(w);
+    const db = openIndex(w.paths);
+    const runs = db.prepare("SELECT payload FROM events WHERE kind = 'agent.run' AND agent = ? ORDER BY at").all(name).map(r => JSON.parse(String(r.payload)));
+    db.close();
+    expect(runs).toHaveLength(2);
+    expect(runs[0]).toMatchObject({ outcome: "failed", attempt: 1, error: expect.any(String) });
+    expect(runs[1]).toMatchObject({ outcome: "ok", attempt: 2 });
+    expect(planIssues(w, "reflection:charter")).toHaveLength(1);
+    expect(planIssues(w, "reflection:charter")[0]!.body).toContain(`<!-- panelator-reflection:${key}:plan -->`);
+  }, 30000);
+
+  it("lists an open question from the events despite a note saying none", async () => {
+    const w = await standingWorld({ "charter-reflection": [plan([])] });
+    const at = "2026-09-30T10:00:00.000Z";
+    await recordEvent(w.paths, { at, kind: "question", issue: 103, payload: { at, issue: 103, event: "sent", asking_stage: "spec", question_comment_id: 501 } });
+    await recordEvent(w.paths, { at, kind: "maintainer.contact", issue: 103, payload: { channel: "log", kind: "question", label: "spec", question_comment_id: 501, text: "Which audience again?" } });
+    await due(w, "charter-reflection"); await w.scheduler.tick(); await idle(w);
+    expect(planIssues(w, "reflection:charter")[0]!.body).toContain("#103 (spec, sent 2026-09-30T10:00:00.000Z): Which audience again?");
+  }, 30000);
+
+  it("counts the first four items toward the bound after a crash and retry", async () => {
+    const r = plan(Array.from({ length: 12 }, (_, i) => item(i + 1)));
+    const w = await standingWorld({ "charter-reflection": [r, r] });
+    await due(w, "charter-reflection"); w.failNext.create = 5;
+    await w.scheduler.tick(); await idle(w);
+    expect((await readAgentState(w.paths, "charter-reflection"))?.failures).toBe(1);
+    const key = (await readAgentState(w.paths, "charter-reflection"))!.reflection!.plan_key;
+    w.setNow(new Date("2026-10-01T05:00:00Z"));
+    await w.scheduler.tick(); await idle(w);
+    expect(w.issues.filter(i => i.labels.some(l => l.name === "validated")).map(i => i.title)).toEqual(Array.from({ length: 8 }, (_, i) => `Item ${i + 1}`));
+    const stored = JSON.parse(readFileSync(join(w.paths.reflections, "charter-reflection", `${key}.json`), "utf8"));
+    expect(stored.deferred).toEqual([9, 10, 11, 12].map(n => ({ title: `Item ${n}`, why: "over the plan bound" })));
+    const plans = planIssues(w, "reflection:charter"); expect(plans).toHaveLength(1);
+    for (let n = 1; n <= 8; n++) expect(plans[0]!.body).toContain(`Item ${n} (bottleneck)`);
+  }, 30000);
+
   it("refuses an action outside the agent's list and files the rest of the result", async () => {
     const w = await standingWorld({ "charter-reflection": [{ ...plan([item(1)]), actions: [{ kind: "rerun_workflow", args: { run_id: 1, cancel: false }, why }] }] });
     await due(w, "charter-reflection");
@@ -721,6 +780,12 @@ describe("end to end: reflection agents (spec 012)", () => {
     expect(rows.map((r) => [r.kind, r.status, r.reason])).toEqual([["rerun_workflow", "refused", "action not allowed"]]);
     expect(w.issues.some((i) => i.title === "Item 1")).toBe(true);
   }, 30000);
+
+  it("leaves only monthly logs, the index and the backfill marker under events/", () => {
+    for (const paths of worldPaths) for (const file of readdirSync(paths.events)) {
+      expect(file, paths.events).toMatch(/^(?:\d{4}-\d{2}\.jsonl|index\.sqlite(?:-wal|-shm|-journal)?|backfilled\.json)$/);
+    }
+  });
 
   it("has recorded every kind of event across the recorded runs (AC-2)", async () => {
     const seen = new Set<string>();
