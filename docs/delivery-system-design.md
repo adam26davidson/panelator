@@ -489,3 +489,4 @@ are stale and are corrected as part of B.
 - `specs/008-agent-registry/spec.md`
 - `specs/009-postponed-chain-holds-slot/spec.md`
 - `specs/010-approve-esbuild-build/spec.md`
+- `specs/011-asking-stage-keeps-its-work/spec.md`
