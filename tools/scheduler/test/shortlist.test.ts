@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { rankIssues } from "../src/shortlist/rank.ts";
+import { rankIssues, workOf } from "../src/shortlist/rank.ts";
 import { selectEligible } from "../src/shortlist/select.ts";
 import { withTopDesign } from "./helpers/repo-pair.ts";
 import type { IssueData } from "../src/types.ts";
@@ -20,15 +20,25 @@ function issue(n: number, over: Partial<IssueData> = {}): IssueData {
 }
 
 describe("rankIssues", () => {
-  it("puts priority first, then the class behind the 2:1 ratio, then oldest", () => {
+  it('classifies by the Parent chain on main, with label fallback only when no chain resolves',()=>{
+    const files:Record<string,string>={'docs/designs/sub.md':'Parent: docs/delivery-system-design.md'};
+    expect(workOf(issue(1),'Parent: docs/product-spec.md',p=>files[p]??null)).toBe('product');
+    expect(workOf(issue(1),'Parent: docs/designs/sub.md',p=>files[p]??null)).toBe('system');
+    expect(workOf(issue(1,{labels:['class:product']}),null,()=>null)).toBe('product');
+    expect(workOf(issue(1,{labels:[]}),null,()=>null)).toBe('system');
+    expect(workOf(issue(1,{labels:[]}),'Parent: docs/loop.md',()=> 'Parent: docs/loop.md')).toBe('system');
+  });
+  it("puts priority first, then the kind behind the work share, then oldest", () => {
     const a = issue(1, { labels: ["validated", "class:bug"] });
     const b = issue(2, { labels: ["validated", "class:product"] });
     const c = issue(3, { labels: ["validated", "class:product", "priority"] });
     const d = issue(4, { labels: ["validated", "class:product"] });
-    // 2 features and 0 debt merged recently: debt is behind, so bug comes before products
-    expect(rankIssues([a, b, c, d], labels, { feature: 2, debt: 0 }).map((i) => i.number)).toEqual([3, 1, 2, 4]);
-    // 0 and 0: feature first
-    expect(rankIssues([a, b, c, d], labels, { feature: 0, debt: 0 }).map((i) => i.number)).toEqual([3, 2, 4, 1]);
+    expect(rankIssues([a, b, c, d], labels, { feature: 2, debt: 0, system:0, product:0 }).map((i) => i.number)).toEqual([3, 1, 2, 4]);
+    expect(rankIssues([a, b, c, d], labels, { feature: 0, debt: 0, system:4, product:0 }).map((i) => i.number)).toEqual([3, 2, 4, 1]);
+    for(const share of [0,0.5,0.75,1]) {
+      const ranked=rankIssues([a,b],labels,{feature:0,debt:0,system:1,product:0},share);
+      expect(ranked[0].number).toBe(share>0.5?1:2);
+    }
   });
 });
 

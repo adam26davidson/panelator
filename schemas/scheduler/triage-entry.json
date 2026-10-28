@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "triage-entry.json",
+  "type": "object",
+  "properties": {
+    "ref": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "ref",
+    "outcome",
+    "reason",
+    "run_id",
+    "at"
+  ],
+  "additionalProperties": true
+}

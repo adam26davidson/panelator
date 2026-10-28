@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "parameters.json",
+  "type": "object",
+  "additionalProperties": {
+    "type": "object",
+    "properties": {
+      "value": {},
+      "mode": {
+        "enum": [
+          "auto",
+          "locked"
+        ]
+      },
+      "set_by": {
+        "type": "string"
+      },
+      "at": {
+        "type": "string",
+        "format": "date-time"
+      }
+    },
+    "required": [
+      "value",
+      "mode",
+      "set_by",
+      "at"
+    ],
+    "additionalProperties": false
+  }
+}

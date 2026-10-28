@@ -25,6 +25,7 @@ import type { StageInput } from "../stages/prompt.ts";
 import { removeClaim, writeClaim, type Claim } from "../state/claims.ts";
 import { appendFindings } from "../state/findings.ts";
 import { archiveLedger, writeLedger } from "../state/ledger.ts";
+import { classifyWork } from '../shortlist/rank.ts';
 import { appendMerge } from "../state/merges.ts";
 import { writePaused, type PausedRecord } from "../state/paused.ts";
 import { savePatch } from "../state/patches.ts";
@@ -42,6 +43,7 @@ import type { Action, ChainEvent, ChainState } from "./types.ts";
 const execFileP = promisify(execFile);
 
 export interface DriverDeps {
+  emitEvent?: (event:string,payload:unknown)=>Promise<void>;
   cfg: Config;
   paths: StatePaths;
   gh: GitHubClient;
@@ -582,12 +584,16 @@ async function mergeEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> {
     const r = await deps.gh.mergePullRequest(pr.number, pr.head_sha);
     if (!r.merged) return { type: "merge_result", status: "not_mergeable", detail: r.message };
   }
+  await deps.emitEvent?.('merge',{issue:claim.issue,pr:pr.number,sha:pr.head_sha});
   // AC-4: a spec PR is not a feature or debt merge; the chain goes on after the gates on main.
   if (claim.state.track === "spec") return { type: "merge_result", status: "merged", specGate: await specGateOnMain(deps, claim) };
   // The issue's labels give the merge record its class; no label refuses the merge (spec 006 AC-9).
   const labels = await deps.gh.issueLabels(claim.issue);
   const cls = classOf({ number: claim.issue, title: "", author: "", body: "", labels, labelEvents: [], createdAt: "" }, deps.cfg.labels);
-  await appendMerge(deps.paths, { issue: claim.issue, pr: pr.number, cls, at: deps.now().toISOString() });
+  const body = (await fetchIssue(deps,claim.issue)).body;
+  const ctx = buildSelectContext(deps.repoDir,deps.cfg,new Set(),deps.cfg.app.bot_login);
+  const work = classifyWork({number:claim.issue,title:'',author:'',body,labels,labelEvents:[],createdAt:''},ctx.readSpec);
+  await appendMerge(deps.paths, { issue: claim.issue, pr: pr.number, cls, work, at: deps.now().toISOString() });
   return { type: "merge_result", status: "merged" };
 }
 
@@ -655,6 +661,7 @@ async function rerunChecks(deps: DriverDeps, claim: Claim, sha: string): Promise
 
 export async function applyActions(deps: DriverDeps, claim: Claim, actions: Action[]): Promise<StepStatus> {
   let status: StepStatus = "continue";
+  if(claim.state.stage==='abandoned')await deps.emitEvent?.('issue_abandoned',{issue:claim.issue});
   for (const a of actions) {
     switch (a.type) {
       case "label": {

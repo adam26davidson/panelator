@@ -1,0 +1,25 @@
+- name: aws_cap_usd
+  type: number
+  default: 0
+  min: 0
+  mode: locked
+  description: Maximum AWS spend; infrastructure enforcement is added by F1.
+- name: system_work_share
+  type: number
+  default: 0.75
+  min: 0
+  max: 1
+  mode: auto
+  description: Target share of system rather than product work.
+- name: slots
+  type: number
+  default: 1
+  min: 1
+  max: 4
+  mode: auto
+  description: Concurrent runs; initial value comes from scheduler configuration.
+- name: first_contact_needs_approval
+  type: boolean
+  default: true
+  mode: locked
+  description: Require approval for first contact with an outside party.

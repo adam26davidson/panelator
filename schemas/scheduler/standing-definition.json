@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "standing-definition.json",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "const": "standing"
+    },
+    "trigger": {
+      "type": "object"
+    },
+    "harness": {
+      "enum": [
+        "claude",
+        "pi"
+      ]
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tier": {
+      "enum": [
+        "strong",
+        "standard"
+      ]
+    },
+    "bounds": {
+      "type": "object"
+    },
+    "permission": {
+      "const": "no-prompt"
+    },
+    "worktree": {
+      "enum": [
+        "fresh",
+        "none"
+      ]
+    },
+    "profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input": {
+      "type": "string",
+      "minLength": 1
+    },
+    "output": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "fallback": {
+      "type": "string",
+      "minLength": 1
+    },
+    "independent": {
+      "type": "boolean"
+    },
+    "effort": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "kind",
+    "trigger",
+    "harness",
+    "model",
+    "tier",
+    "bounds",
+    "permission",
+    "worktree",
+    "profile",
+    "input",
+    "output"
+  ],
+  "additionalProperties": false
+}

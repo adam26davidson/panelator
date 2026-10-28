@@ -17,6 +17,16 @@ import { systemdStopUnit, systemdUnitActive } from "../src/service/units.ts";
 import { loadStageDefinitions } from "../src/stages/definition.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 
+import {loadRegistry} from '../src/standing/registry.ts';
+import {EVENT_NAMES,emit} from '../src/standing/events.ts';
+import {initializeAgents,listAgentStates} from '../src/standing/state.ts';
+import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
+import {ParameterStore,withStateLock} from '../src/parameters/store.ts';
+import {registryActionsCheck,loadActionLevels,applyAction} from '../src/actions/index.ts';
+import {ActionLog} from '../src/actions/log.ts';
+import {undoAction} from '../src/actions/undo.ts';
+import {onFindingsQueued} from '../src/state/findings.ts';
+
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 const has = (name: string) => args.includes(name);
@@ -33,6 +43,49 @@ function fail(reason: string): never {
   console.error(`panelator-scheduler: ${reason}`);
   process.exit(78);
 }
+
+const {registry,parameters,levels}=(()=>{try {
+  const kinds=registryActionsCheck(join(agentsDir,'actions.yaml'));
+  const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,kinds);
+  const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),cfg,registry));
+  return {registry,parameters,levels:loadActionLevels(join(agentsDir,'actions.yaml'))};
+}catch(e){fail((e as Error).message);}})();
+await initializeAgents(paths,registry,parameters,new Date());
+const actionLog=new ActionLog(paths.actionsLog);
+const emitEvent=(event:string,payload:unknown)=>emit(paths,registry,event,payload);
+onFindingsQueued(paths,(count,offset)=>emitEvent('finding_queued',{count,offset}));
+
+// Local administration works without service auth or the main-only checkout requirement.
+if(['param','agent','action'].includes(args[0])) {
+  let client:GitHubClient|undefined;
+  const remote=async()=>client??=new GitHubClient(createAppClient(cfg.app,readFileSync(cfg.app.private_key_path,'utf8')).octokit,cfg.repo);
+  const ctx={paths,parameters,log:actionLog,levels,now:()=>new Date(),gh:{rerunWorkflowRun:async(id:number)=>(await remote()).rerunWorkflowRun(id),cancelWorkflowRun:async(id:number)=>(await remote()).cancelWorkflowRun(id)}};
+  try {
+    const [command,verb,name,value]=args;
+    if(command==='param'&&verb==='list')console.log(JSON.stringify(await parameters.all(),null,2));
+    else if(command==='agent'&&verb==='list')console.log(JSON.stringify(Object.fromEntries(Object.entries(await listAgentStates(paths)).map(([name,state])=>[name,{...state,pending_event_count:state.pending_events.length}])),null,2));
+    else if(command==='action'&&verb==='list')console.log(JSON.stringify(await actionLog.list(flag('--since')),null,2));
+    else if(command==='param'&&verb==='set') {
+      const def=parameters.definitions[name];if(!def)throw new Error(`undefined parameter ${name}`);
+      const parsed=['number','boolean'].includes(def.type)?JSON.parse(value):value;
+      const row=await applyAction(ctx,{agent:'maintainer',run_id:'command',kind:'set_parameter',args:{name,value:parsed},why:'Maintainer command line parameter change'},'maintainer');
+      if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
+    } else if(command==='param'&&verb==='mode') {
+      await withStateLock(actionLog.path+'.operation',async()=>{
+        const pending=await actionLog.writePending({agent:'maintainer',run_id:'command',kind:'parameter_mode',args:{name,value},why:'Maintainer command line parameter mode change',undo:null});
+        try {await parameters.setParameterMode(name,value as 'auto'|'locked','maintainer');await actionLog.settle(pending.id,'applied');}catch(e){await actionLog.settle(pending.id,'refused',(e as Error).message);throw e;}
+      });
+    } else if(command==='agent'&&['pause','resume','run'].includes(verb)) {
+      if(!registry[name])throw new Error(`unknown agent ${name}`);
+      const row=await applyAction(ctx,{agent:'maintainer',run_id:'command',kind:`${verb}_agent`,args:{name},why:`Maintainer command line ${verb} agent request`},'maintainer');
+      if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
+    } else if(command==='action'&&verb==='undo') {
+      const row=await undoAction(ctx,name,'maintainer');if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
+    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>');
+    process.exit(0);
+  }catch(e){console.error((e as Error).message);process.exit(1);}
+}
+await actionLog.markStalePending();
 
 if (cfg.app.id === 0 || cfg.app.installation_id === 0) fail("GitHub App ids not set in agents/scheduler.yaml");
 let privateKey: string;
@@ -65,7 +118,7 @@ const gh = new GitHubClient(app.octokit, cfg.repo);
 let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
-  cfg, paths, gh, notifier: rateLimited(new LogNotifier(paths.serviceLog), cfg.notify_rate_limit_hours),
+  cfg, paths, gh, registry, parameters, emitEvent, notifier: rateLimited(new LogNotifier(paths.serviceLog), cfg.notify_rate_limit_hours),
   stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: repoRoot, binDir,
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),

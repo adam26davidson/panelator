@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "action.json",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "minLength": 1
+    },
+    "args": {
+      "type": "object"
+    },
+    "why": {
+      "type": "string",
+      "minLength": 20
+    }
+  },
+  "required": [
+    "kind",
+    "args",
+    "why"
+  ],
+  "additionalProperties": false
+}

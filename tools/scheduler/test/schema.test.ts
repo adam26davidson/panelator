@@ -78,7 +78,7 @@ describe("result schemas", () => {
     expect(ok.ok).toBe(true);
   });
 
-  it("accepts the spec and question-check stage names in a usage record, and nothing else (AC-26)", () => {
+  it("accepts chain and standing agent names in usage records (008 AC-3)", () => {
     const rec = (stage: string) => validate("usage-record", {
       run_id: "r1", issue: 1, stage, attempt: 1, outcome: "ok", harness: "claude", model: "claude-fable-5-1",
       cost_usd: 0.1, input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_write_tokens: 0,
@@ -87,7 +87,8 @@ describe("result schemas", () => {
     }).ok;
     expect(rec("spec")).toBe(true);
     expect(rec("question-check")).toBe(true);
-    expect(rec("nope")).toBe(false);
+    expect(rec("action-audit")).toBe(true);
+    expect(rec("")).toBe(false);
   });
 
   it("validates a claim record and its chain state (spec 006 C12)", () => {

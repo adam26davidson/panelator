@@ -19,9 +19,12 @@ export type SchemaName =
   | "question-check-result"
   | "paused"
   | "escalation-ledger"
-  | "question-log-entry";
+  | "question-log-entry"
+  | "standing-definition" | "standing-result" | "action" | "action-log-entry"
+  | "parameter-definition" | "parameters" | "filer-result" | "triage-entry" | "agent-state" | "filer-input" | "audit-input";
 
 const NAMES: SchemaName[] = [
+  "standing-definition", "standing-result", "action", "action-log-entry", "parameter-definition", "parameters", "filer-result", "triage-entry", "agent-state", "filer-input", "audit-input",
   "finding",
   "plan-result",
   "implement-result",

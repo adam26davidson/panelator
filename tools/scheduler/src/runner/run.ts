@@ -10,7 +10,8 @@ import { renderPrompt, type StageInput } from "../stages/prompt.ts";
 import { appendFindings } from "../state/findings.ts";
 import type { StatePaths } from "../state/paths.ts";
 import { newRunId, runDir, writeUsageRecord, type UsageRecord } from "../state/runs.ts";
-import type { Harness, Profile, StageDefinition } from "../types.ts";
+import type { Harness, Profile, AgentDefinition, AgentStageName } from "../types.ts";
+import { renderStandingPrompt } from '../standing/registry.ts';
 import { stageEnv } from "./credentials.ts";
 import { spawnBounded, type SpawnResult } from "./process.ts";
 import { linkProfileSkills } from "./skills.ts";
@@ -28,7 +29,8 @@ export interface RunnerContext {
 }
 
 export interface StageRequest {
-  def: StageDefinition;
+  def: AgentDefinition;
+  standingInput?: Record<string, unknown>;
   input: StageInput;
   issue: number;
   attempt: number;
@@ -77,19 +79,32 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
     ? [req.profile.instructions, req.profile.reviewCriteria].filter(Boolean).join("\n\n")
     : req.input.profile_instructions ?? "";
   const input: StageInput = { ...req.input, result_path: resultPath, profile_instructions: profileInstructions };
-  const iv = validate("stage-input", input);
+  const iv = req.def.kind === 'standing' ? {ok:true as const} : validate("stage-input", input);
   if (!iv.ok) throw new Error(`stage input invalid: ${iv.errors.join("; ")}`);
-  const prompt = renderPrompt(req.def.prompt, input);
+  const prompt = req.def.kind === 'standing'
+    ? renderStandingPrompt(req.def.prompt, {...req.standingInput,result_path:resultPath,profile_instructions:profileInstructions}) + '\nIf no write tool is available, return the result JSON as your final response. Never post to GitHub or modify repository content.'
+    : renderPrompt(req.def.prompt, input);
   await writeFile(join(dir, "prompt.md"), prompt);
-  await writeFile(join(dir, "input.json"), JSON.stringify(input, null, 2));
+  await writeFile(join(dir, "input.json"), JSON.stringify(req.standingInput ?? input, null, 2));
 
-  if (req.profile && harness !== "fake") await linkProfileSkills(req.worktree, harness, req.profile);
+  if (req.profile && harness !== "fake" && !(req.def.kind==='standing' && req.def.worktree==='none')) await linkProfileSkills(req.worktree, harness, req.profile);
 
   const stageRun: StageRun = {
-    runId, stage: req.def.name, attempt: req.attempt, issue: req.issue, prompt, model, bounds: req.def.bounds,
+    runId, stage: req.def.name as AgentStageName, attempt: req.attempt, issue: req.issue, prompt, model, bounds: req.def.bounds,
     worktree: req.worktree, sessionId: (ctx.sessionId ?? randomUUID)(), resultPath, profile: req.profile, effort: req.def.effort,
   };
   const cmd = ctx.adapter.buildCommand(stageRun);
+  if(req.def.kind === 'standing' && harness === 'claude') {
+    // allowedTools is an approval policy, not a tool boundary: override the tool set
+    // as well, so permissive local settings cannot grant a standing agent a shell.
+    cmd.argv.push('--tools','Read,Glob,Grep');
+  }
+  if(req.def.kind === 'standing' && harness === 'pi') {
+    // A profile-less pi invocation otherwise gets its default write and shell tools.
+    const i=cmd.argv.indexOf('--tools');
+    if(i>=0)cmd.argv[i+1]='read,grep,find';
+    else cmd.argv.splice(1,0,'--tools','read,grep,find');
+  }
   await writeFile(join(dir, "command.txt"), JSON.stringify({ argv: cmd.argv, env: Object.keys(cmd.env), cwd: req.worktree }, null, 2));
 
   const splitter = new JsonlSplitter();
@@ -155,7 +170,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   if (spawned !== null && judgement.outcome !== "timeout" && judgement.outcome !== "bounds") {
     let raw = await readFile(resultPath, "utf8").catch(() => null);
     // T1: a read-only stage on a harness that gives it no write tool returns its result in the final text.
-    if (raw === null && judgement.finalText && ctx.adapter.resultInText?.(req.def.name)) {
+    if (raw === null && judgement.finalText && (req.def.kind === 'standing' || ctx.adapter.resultInText?.(req.def.name))) {
       raw = lastJsonObject(judgement.finalText);
       if (raw !== null) await writeFile(resultPath, raw);
     }
@@ -174,7 +189,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   }
 
   // Findings are a side channel: queued from any result that parsed, valid or not (AC-28).
-  const findingsIn = Array.isArray(rec(parsed).findings) ? (rec(parsed).findings as unknown[]) : [];
+  const findingsIn = req.def.kind !== 'standing' && Array.isArray(rec(parsed).findings) ? (rec(parsed).findings as unknown[]) : [];
   const findings = await appendFindings(ctx.paths, { issue: req.issue, stage: req.def.name, run_id: runId, timestamp: now().toISOString() }, findingsIn);
 
   const endedAt = now();

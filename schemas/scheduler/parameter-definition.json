@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "parameter-definition.json",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "enum": [
+        "number",
+        "boolean",
+        "string",
+        "duration"
+      ]
+    },
+    "default": {},
+    "min": {
+      "type": [
+        "number",
+        "string"
+      ]
+    },
+    "max": {
+      "type": [
+        "number",
+        "string"
+      ]
+    },
+    "mode": {
+      "enum": [
+        "auto",
+        "locked"
+      ]
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "name",
+    "type",
+    "default",
+    "mode",
+    "description"
+  ],
+  "additionalProperties": false
+}

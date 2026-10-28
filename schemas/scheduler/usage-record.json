@@ -10,8 +10,8 @@
   "additionalProperties": false,
   "properties": {
     "run_id": { "type": "string", "minLength": 1 },
-    "issue": { "type": "integer", "minimum": 1 },
-    "stage": { "enum": ["plan", "implement", "review", "fix", "spec", "question-check"] },
+    "issue": { "type": "integer", "minimum": 0 },
+    "stage": { "type": "string", "minLength": 1 },
     "attempt": { "type": "integer", "minimum": 1 },
     "outcome": { "enum": ["ok", "failed", "timeout", "bounds"] },
     "harness": { "enum": ["claude", "pi", "fake"] },

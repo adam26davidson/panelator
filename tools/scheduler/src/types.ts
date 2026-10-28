@@ -38,6 +38,15 @@ export interface StageDefinition {
   prompt: string;
 }
 
+export interface StandingDefinition extends Omit<StageDefinition, "name" | "kind" | "worktree"> {
+  name: string;
+  kind: "standing";
+  trigger: { schedule?: string; events?: string[] };
+  worktree: "fresh" | "none";
+  actions: string[];
+}
+export type AgentDefinition = StageDefinition | StandingDefinition;
+
 /** A labelling event from the issue timeline, oldest first. */
 export interface LabelEvent {
   label: string;

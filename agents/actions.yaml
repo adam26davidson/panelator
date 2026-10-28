@@ -1,0 +1,18 @@
+set_parameter:
+  level: 1
+  description: Change an auto parameter within its limits.
+pause_agent:
+  level: 1
+  description: Pause a standing agent.
+resume_agent:
+  level: 1
+  description: Resume an agent unless the maintainer paused it.
+run_agent:
+  level: 1
+  description: Mark an agent due now.
+rerun_workflow:
+  level: 1
+  description: Re-run a workflow at most once per day.
+undo:
+  level: 1
+  description: Reverse a recorded reversible action.
