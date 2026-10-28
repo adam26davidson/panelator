@@ -2,6 +2,12 @@
 
 Status: written 2026-10-28 from the delivery-system design (spec D); specs
 derived from that design need no maintainer approval (design section 11).
+Revised 2026-10-28 after the first implementation attempt (PR #34) hit the
+fix-loop bound: the points its reviews kept finding are now stated (the plan
+key, the eligibility marker's home, the `ci.check` and `agent.run` rules, the
+liveness-expiry transition, the index log, the design-tree issue derivation,
+the plan body's open questions, the item bound on a retry, the `issue.filed`
+body, `metrics show`'s range, and the helper files).
 Class: tooling. Domain: backend.
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
@@ -95,9 +101,16 @@ scheduler (spec 008 AC-5).
   `true`). Given a `recordEvent` call, then one line is appended before the
   caller continues; given a kind not in AC-2 or a payload that fails its
   schema, then the call throws and nothing is written. Nothing in the
-  scheduler rewrites, truncates, moves or deletes a file under `events/`; a
-  test greps the source for every open of `events/` and asserts each is an
-  append or a read. The usage pruning of spec 001 section 11 is unchanged
+  scheduler rewrites, truncates, moves or deletes a file under `events/`;
+  the only files under `events/` are the monthly JSONL, `index.sqlite`
+  (AC-3, the one file there that is rewritten, because it is derived) and
+  `backfilled.json` (AC-4, written once). Any other scheduler state that
+  records lives elsewhere: the "already recorded as eligible" marks of AC-2
+  are `shortlist/eligible.json` in the state directory, not under `events/`.
+  A test greps the source for every open of a path under `events/` (every
+  `StatePaths` member whose value is under the events directory, not only
+  the directory itself) and asserts each is an append, a read, or the
+  index's own rebuild. The usage pruning of spec 001 section 11 is unchanged
   and no longer loses data (the event has the copy).
 - AC-2. **Every point the design names is recorded.** The scheduler records,
   at the moment it writes the existing record or makes the transition, with
@@ -106,14 +119,18 @@ scheduler (spec 008 AC-5).
     question checks and standing agents alike), with `issue`, `run_id` and,
     for a standing agent, `agent`;
   - `chain.transition`: `{ from, to, event, attempt, fixes, track, rescue }`
-    on every change of `ChainState.stage`, so stage durations, attempts and
-    fix cycles per issue are derivable;
+    on every change of `ChainState.stage`, wherever the change is made: the
+    driver's `step()`, and every path outside it that calls `transition()`
+    on a claim (the service loop's liveness expiry, `event:
+    liveness_expired`, `to: released`, is one; a test asserts it), so stage
+    durations, attempts and fix cycles per issue are derivable;
   - `issue.eligible`: `{ rank, work, cls, validated_at, created_at }`
     (`validated_at` the time of the issue's `validated` labelling read from its
     label events, or `null` when none; `created_at` the issue's creation time)
     the first tick an issue is in the
     eligible shortlist and not claimed (recorded once per issue per period of
-    eligibility; a later claim closes the wait), `issue.claimed`: `{ slot }`,
+    eligibility, the marks kept in `shortlist/eligible.json`, AC-1; a later
+    claim closes the wait), `issue.claimed`: `{ slot }`,
     and `issue.released`: `{ reason }` (`done`, `abandoned`, `postponed`,
     `paused`, `error`, `stopped`), which together give queue and shortlist
     wait time;
@@ -121,7 +138,12 @@ scheduler (spec 008 AC-5).
     `at`), and `pr.opened`: `{ pr, track }`;
   - `ci.check`: `{ sha, pr?, check, status, run_id }` whenever the scheduler
     reads a check run's final state for a PR head or for `main` (spec 008's
-    `main` watcher), once per `(sha, check, status)`;
+    `main` watcher), once per `(sha, check, status)` across the life of the
+    store, not of the process: before recording, the scheduler queries the
+    index (AC-3) for an existing `ci.check` with that `(sha, check, status)`
+    and records only when none is found, so a service restart between two
+    reads of the same completed check does not record it twice (a test
+    restarts the loop between two reads and asserts one event);
   - `review.result`: `{ pr, head_sha, verdict, findings, criteria_failed,
     independent, reviewer_model, security }` for every review and security
     review result;
@@ -143,10 +165,16 @@ scheduler (spec 008 AC-5).
     (`kind: question`) and every reminder (`kind: reminder`); F2 adds
     `funds`, `credential` and `first_contact`;
   - `parameter.changed`: the history entry of spec 008 AC-11;
-  - `agent.run`: `{ outcome, summary, events_received, actions, findings }`
-    when a standing agent's run ends;
-  - `issue.filed`: `{ number, by, class, labels, marker }` for every issue the
-    scheduler creates (the filer, a reflection, spec 006's escalation issues);
+  - `agent.run`: `{ outcome, summary, events_received, actions, findings,
+    attempt, error? }` when a standing agent's attempt ends, whatever the
+    outcome: the first failed attempt (spec 008 AC-3's `failures: 1`) is
+    recorded with `outcome: failed` and its `error` before the scheduler
+    returns to wait for the retry, so a run that fails once and then
+    succeeds leaves two events;
+  - `issue.filed`: `{ number, by, class, labels, marker, body }` for every
+    issue the scheduler creates (the filer, a reflection, spec 006's
+    escalation issues), `body` the issue body as created, so a query can
+    read what the issue cites (AC-6's `post_merge_defects`);
   - `reflection.plan`: the plan of AC-16 with its plan issue number;
   - `metrics.snapshot`: the report of AC-9 as computed for a reflection run or
     the `metrics --snapshot` command.
@@ -166,7 +194,14 @@ scheduler (spec 008 AC-5).
   database. Given the file is missing, fails to open, or carries an older
   schema version, then it is deleted and rebuilt from the JSONL in full.
   Given a line that fails to parse, then it is skipped, counted, and reported
-  in the service log once per file; the raw file is not touched. Given the
+  in the service log once per file; the raw file is not touched. The report
+  is not optional: `openIndex` takes a log function and, when the caller
+  passes none, appends to the service log itself (the `serviceLog` path of
+  `StatePaths`), so every opener in the service (the `ci.check` recorder,
+  the reflection input, the metrics command) reports the skip, and the
+  offset moving past the line never hides it; a test opens an index over a
+  file with one bad line without a log argument and finds the report in the
+  service log. Given the
   index is deleted while the service runs, then the next `openIndex` rebuilds
   it and every metric gives the same values as before, asserted by a test.
 - AC-4. **History is backfilled once.** `panelator-scheduler events backfill`
@@ -270,7 +305,9 @@ scheduler (spec 008 AC-5).
   metrics [--weeks <n>] [--json] [--snapshot] [--all]` prints the report for
   the last `n` weeks (default 12) as a table, one row per metric and bucket,
   or as JSON; `--all` includes retired metrics; `metrics show <name>` prints
-  one metric's definition and its full history. `panelator-scheduler events
+  one metric's definition and its full history, computed from the ISO week
+  of the earliest event in the index (backfilled events included, so the
+  weeks before `introduced` appear) to now, retired or not. `panelator-scheduler events
   query "<sql>"` runs one read-only `SELECT` against the index and prints the
   rows, for the maintainer and for a dev-log. The commands run on the laptop
   as the service user and read the state directory; they never write the
@@ -354,8 +391,16 @@ scheduler (spec 008 AC-5).
     consumed, and the triage outcomes of the period by outcome;
   - for delivery reflection: `design_tree`, built by the scheduler from the
     repository at the period's end: per design, its `## Children` paths each
-    with `exists`, and per spec under `specs/` its status line and whether
-    the events hold a `merge` for its issue (`implemented`);
+    with `exists`, and per spec under `specs/` its path, status line,
+    `issue` and `implemented`. No spec names its issue in its text, so the
+    issue is derived: the squash commit that added the spec file (`git log
+    --diff-filter=A -- <path>`, the oldest subject) ends with `(#<pr>)`, and
+    the `merge` event whose `pr` is that number names the `issue`; `issue`
+    is `null` when no such commit or event exists. `implemented` is `true`
+    when the events hold a `merge` for that issue with a different `pr`
+    (the implementation PR), `false` when they hold none, and `null` when
+    `issue` is `null`. A test over a fixture repository with one spec added
+    by a `(#N)` commit and the matching `merge` events asserts both values;
   - for charter reflection: `charter` (the clauses of `docs/charter.md`, one
     per paragraph, numbered) and `maintainer_contacts` (every
     `maintainer.contact` event of the period grouped by `kind` and `label`,
@@ -380,18 +425,41 @@ scheduler (spec 008 AC-5).
   `metric_change`, `agent_change` or `other`, `class` is one of the class
   labels of `agents/scheduler.yaml`, and `body` states what to change, why
   (citing the evidence), and how to tell it worked (which metric or event
-  should move). Given a valid result, then the scheduler, in
-  `tools/scheduler/src/reflection/apply.ts`:
-  1. writes the plan to `reflections/<agent>/<run id>.json` in the state
+  should move).
+
+  **The plan key.** Spec 008's run id changes on every attempt (it carries
+  the attempt and the clock), so it cannot name a plan that a retry must
+  find. Before a reflection agent's first attempt for a period, the
+  scheduler writes `reflection: { period_from, plan_key }` into the agent's
+  state record (`agents/<name>.json`, schema `agent-state.json`), with
+  `period_from` the period start of AC-15 and `plan_key` equal to
+  `<agent>-<period_from as epoch milliseconds>`. Whenever the state record
+  already holds `reflection`, every later attempt reuses it as it is,
+  whatever `failures` says: a retry after a failed attempt, and a rerun
+  after the process died mid-apply (`running` set, `failures: 0`), both keep
+  the same period and key. The field is cleared only when an attempt
+  succeeds. Every "run id" in the markers, the plan file name and the
+  `reflection.plan` payload below is this plan key; the attempt's run id is
+  what the `run_id` envelope field and `agent.run` carry.
+
+  Given a valid result, then the scheduler, in
+  `tools/scheduler/src/reflection/apply.ts`, receiving the result, the plan
+  key and the input it was built from:
+  1. writes the plan to `reflections/<agent>/<plan key>.json` in the state
      directory;
   2. creates one plan issue as the App, titled `<Agent> plan <date>`,
      labelled `reflection` and the agent's name (`reflection:delivery`,
      `reflection:charter`, `reflection:meta`), never `validated`, whose body
      carries the summary, the observations, the metrics note, the open
-     questions (each by issue and question), the items with links to the
-     issues filed, the direct actions applied in this run (design 6.1), and
-     the deferred items; it ends with the marker
-     `<!-- panelator-reflection:<run id>:plan -->`;
+     questions, the items with links to the issues filed, the direct actions
+     applied in this run (design 6.1), and the deferred items; it ends with
+     the marker `<!-- panelator-reflection:<plan key>:plan -->`. The open
+     questions section is built by the scheduler from the input's
+     `open_questions` (AC-15), one line per question as `#<issue> (<stage>,
+     sent <time>): <question text>`, or "None." when the list is empty, with
+     the agent's `open_questions_note` under it; the note never replaces the
+     list (a test with one open question in the events and a result whose
+     note says "none" asserts the question appears in the body);
   3. files each item without `existing_issue` as an issue (AC-17), and for an
      item with `existing_issue` appends a comment to that issue linking the
      plan;
@@ -401,24 +469,34 @@ scheduler (spec 008 AC-5).
      `findings` as spec 008 AC-5 does.
 
   Given a result with no items, then the plan issue is still created and
-  says so. Given a crash after step 2, then the next run finds the plan
-  marker on GitHub and does not create a second plan issue for that run id;
-  the item markers of AC-17 do the same for items.
+  says so. Given a crash after step 2, then the next attempt, at a later
+  clock time, finds the plan marker on GitHub and does not create a second
+  plan issue for that plan key; the item markers of AC-17 do the same for
+  items. Two tests cover it, both with the fake clock advanced between the
+  attempts: a thrown error after the plan issue (the retry path), and a
+  process death after the plan issue with `failures` still 0 (the restart
+  path, the state record carrying `running` and `reflection`).
 - AC-17. **Plan items are validated issues the shortlist works.** Given an
   item, then the scheduler creates the issue as the App with the item's
   class label and `validated`, a body that opens with `Plan: #<plan issue>`
   and the item's `kind`, carries the item's body, and ends with the hidden
-  marker `<!-- panelator-reflection:<run id>:<index> -->`, searched for
+  marker `<!-- panelator-reflection:<plan key>:<index> -->`, searched for
   before creating as spec 008 AC-18 does. The issue has no `Spec:` line, so
   the chain starts at the spec stage (spec 006 AC-19), and the authority
-  rule holds because the App is the author. Given more than 8 items without
-  `existing_issue`, then the first 8 in the result's order are filed and the
-  rest are written into the plan as deferred with the reason "over the plan
-  bound", so a reflection cannot flood the shortlist; the bound is chain
-  configuration (`agents/scheduler.yaml`, `reflection_max_issues`), not a
-  prompt. Given an item whose `class` is not a class label, or whose body is
-  under 200 characters, then the item is deferred with that reason and the
-  rest of the result is still applied.
+  rule holds because the App is the author: every line of the item's body
+  matching `^\s*Spec:` is removed before the issue is created, as the filer
+  does (spec 008), so an item citing a spec cannot start the chain at the
+  plan stage. Given more than 8 items without `existing_issue`, then the
+  first 8 in the result's order are filed and the rest are written into the
+  plan as deferred with the reason "over the plan bound", so a reflection
+  cannot flood the shortlist; the bound is chain configuration
+  (`agents/scheduler.yaml`, `reflection_max_issues`), not a prompt. The
+  bound counts the items of the plan key that exist on GitHub, not the
+  issues this attempt created: an item found by its marker counts toward
+  it, so a retry after a crash at item 4 of twelve files items 4 to 7 and
+  defers 8 to 11 (a test asserts it). Given an item whose `class` is not a
+  class label, or whose body is under 200 characters, then the item is
+  deferred with that reason and the rest of the result is still applied.
 - AC-18. **Reflection never acts above level 1.** Given a reflection result
   whose `actions` carry a kind not in the agent's `actions` list, or level
   2, then it is refused and queued as spec 008 AC-8 says. Given a result
@@ -439,7 +517,8 @@ scheduler (spec 008 AC-5).
 - AC-20. **A reflection that fails is not silent.** Given a reflection run
   that fails twice (spec 008 AC-3), then the finding and notification spec
   008 writes name the agent, and the next scheduled run uses the same period
-  start (the last successful run), so no period is skipped. Given a plan
+  start (the last successful run), so no period is skipped; each failed
+  attempt has its own `agent.run` event (AC-2). Given a plan
   whose filed issue is later abandoned (spec 006 AC-5), then the next plan's
   `previous_plans` input shows it as `abandoned`, so the reflection sees the
   outcome of what it asked for.
@@ -494,9 +573,13 @@ scheduler (spec 008 AC-5).
 
 - `tools/scheduler/src/events/`: `store.ts` (`recordEvent`, the envelope,
   the kind table and payload schema map, AC-1, AC-2), `index.ts`
-  (`openIndex`, incremental load, rebuild, schema version, AC-3),
-  `backfill.ts` (AC-4), `kinds.ts` (the names of AC-2 as a `const` array
-  shared with the schema).
+  (`openIndex`, incremental load, rebuild, schema version, the default
+  service log, AC-3), `backfill.ts` (AC-4), `kinds.ts` (the names of AC-2
+  as a `const` array shared with the schema), `ci.ts` (the `ci.check`
+  recorder with its index lookup, AC-2), `filed.ts` (the one wrapper every
+  issue creation goes through, so `issue.filed` is recorded beside it,
+  AC-2). Further helper modules under `src/events/`, `src/metrics/` and
+  `src/reflection/` are the implementer's call; the plan lists them.
 - `tools/scheduler/src/metrics/`: `definitions.ts` (loads
   `agents/metrics/*.yaml`, the checks of AC-5, AC-7 and AC-8, the read-only
   `SELECT` rule), `compute.ts` (`computeMetrics`, weekly buckets, the
@@ -506,23 +589,29 @@ scheduler (spec 008 AC-5).
   the previous plans), `apply.ts` (AC-16 to AC-19: the plan file, the plan
   issue, the item issues with markers, the bound, the predecessor close).
 - Recording calls (AC-2) in: `tools/scheduler/src/chain/driver.ts`
-  (`chain.transition`, `pr.opened`, `merge`, `review.result`, `ci.check`
-  for PR heads, `issue.filed` for escalation issues), `src/service/loop.ts`
+  (`chain.transition`, `pr.opened`, `review.result`, `ci.check` for PR
+  heads, `issue.filed` for escalation issues), `src/state/merges.ts`
+  (`merge`, beside the merge record's own write), `src/service/loop.ts`
   (`issue.eligible`, `issue.claimed`, `issue.released`, `slots.sample`,
-  `pause.started`, `pause.ended`, the first-start backfill), `src/runner/run.ts`
-  or `src/state/runs.ts` (`run.ended`), `src/state/findings.ts`
+  `pause.started`, `pause.ended`, `chain.transition` for the liveness
+  expiry, the first-start backfill), `src/runner/run.ts` or
+  `src/state/runs.ts` (`run.ended`), `src/state/findings.ts`
   (`finding.queued`), `src/filer/apply.ts` (`finding.triaged`,
   `issue.filed`), `src/actions/log.ts` (`action`), `src/state/questions.ts`
   (`question`, and `maintainer.contact` for `sent` and `reminded`),
   `src/notify/log.ts` and the Telegram notifier of spec 007
   (`maintainer.contact` for notifications), `src/parameters/store.ts`
-  (`parameter.changed`), `src/standing/run.ts` (`agent.run`, the reflection
-  input and apply dispatch), `src/standing/events.ts` (`ci.check` for
-  `main`).
+  (`parameter.changed`), `src/standing/run.ts` (`agent.run` per attempt,
+  the plan key, the reflection input and apply dispatch),
+  `src/standing/events.ts` (`ci.check` for `main`). Any other state writer
+  that gains a one-line recording call is in scope.
 - `tools/scheduler/src/standing/registry.ts`, `src/standing/state.ts` and
-  `src/types.ts`: the `min_events` trigger field and the due rule (AC-14).
+  `src/types.ts`: the `min_events` trigger field and the due rule (AC-14);
+  `src/standing/state.ts` and `schemas/scheduler/agent-state.json`: the
+  `reflection` field (AC-16). `src/config.ts`: `reflection_max_issues`
+  (AC-17). `src/schema/validate.ts`: the new schema names.
 - `tools/scheduler/src/state/paths.ts`: `events/`, `events/index.sqlite`,
-  `events/backfilled.json`, `reflections/`.
+  `events/backfilled.json`, `reflections/`, `shortlist/eligible.json`.
 - `tools/scheduler/src/github/client.ts`: create an issue with labels (as
   spec 008), add a comment, close an issue with a comment, search open
   issues for a body marker, list issues by label (for the previous plan
@@ -585,10 +674,20 @@ criteria, or what routes a sensitive diff to the security review.
     reflection whose input marks a recurring contact and whose result files
     the automation item; a meta-reflection whose `metric_change` item is
     filed with its rationale and whose item without one is deferred; a result
-    with twelve items of which eight are filed and four deferred; a crash
-    after the plan issue is created, with the next run creating no second
-    plan issue; a refused level-2 action from a reflection; the spec 006
-    AC-28, spec 007 and spec 008 chains unchanged.
+    with twelve items of which eight are filed and four deferred; the same
+    twelve-item result crashing at item 4 and retried, with items 4 to 7
+    filed and 8 to 11 deferred (AC-17); a crash after the plan issue is
+    created, with the next attempt at a later clock time creating no second
+    plan issue, once as a thrown error and once as a process death with
+    `failures` still 0 (AC-16); a reflection that fails once and succeeds on
+    retry, with two `agent.run` events (AC-2); an open question in the
+    events listed in the plan body (AC-16); a liveness expiry recording its
+    `chain.transition` (AC-2); a restart between two reads of one completed
+    check recording one `ci.check` (AC-2); a refused level-2 action from a
+    reflection; the spec 006 AC-28, spec 007 and spec 008 chains unchanged.
+  - `metrics show <name>` over a backfilled state directory printing the
+    weeks before `introduced` (AC-10), and `design_tree` over the fixture
+    repository (AC-15).
 - After the service is restarted on the merged code: the backfill's counts,
   the first `panelator-scheduler metrics` output over the real history, and
   the first real run of each reflection agent (its plan issue, the issues it
