@@ -7,11 +7,14 @@ import { ensureWorktree, uncommittedPatch } from "../runner/worktree.ts";
 import { buildSelectContext } from "../shortlist/fetch.ts";
 import {agentDue,initializeAgents,readAgentState} from '../standing/state.ts';
 import {runStandingAgent} from '../standing/run.ts';
-import type {StandingDefinition} from '../types.ts';
+import type {IssueData,StandingDefinition} from '../types.ts';
 import type {ParameterStore} from '../parameters/store.ts';
 import {watchMainChecks} from '../standing/events.ts';
 import {execFileSync} from 'node:child_process';
-import { rankIssues, classifyWork } from "../shortlist/rank.ts";
+import { rankIssues, classifyWork, classOf } from "../shortlist/rank.ts";
+import { recordEvent } from "../events/store.ts";
+import { backfillEvents } from "../events/backfill.ts";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { selectEligible } from "../shortlist/select.ts";
 import { listClaims, readClaim, removeClaim, writeClaim, type Claim } from "../state/claims.ts";
 import { readLedger, writeLedger } from "../state/ledger.ts";
@@ -73,6 +76,8 @@ export class Scheduler {
   #stopReason = "";
   #ticking = false;
   #restartPending = false;
+  #lastSample = "";
+  #slotsFree = 0;
 
   constructor(deps: SchedulerDeps, opts: { driveChain?: DriveFn } = {}) {
     this.#deps = deps;
@@ -157,6 +162,7 @@ export class Scheduler {
       d.log({ kind: "stale-claim", issue: claim.issue });
       await savePatch(d.paths, claim.issue, await uncommittedPatch(claim.worktree).catch(() => ""));
       await removeClaim(d.paths, claim.issue);
+      await recordEvent(d.paths, { kind: "issue.released", at: d.now().toISOString(), issue: claim.issue, payload: { reason: "stopped" } });
       return true;
     }
     const ghActivity = await d.gh.issueActivityAt(claim.issue).catch(() => claim.last_activity_at);
@@ -177,6 +183,21 @@ export class Scheduler {
     await applyActions(this.#deps, { ...claim, state }, actions);
   }
 
+  async #pauseEnded(rec: PausedRecord, reason: string): Promise<void> {
+    const d = this.#deps;
+    await recordEvent(d.paths, { kind: "pause.ended", at: d.now().toISOString(), issue: rec.issue, payload: { stage: rec.asking_stage, ...(rec.question_comment_id === null ? {} : { question_comment_id: rec.question_comment_id }), reason } });
+  }
+
+  /** Spec 012 AC-2: occupancy, once at the start of each tick and again whenever it changes within the tick. */
+  async #sample(slots: number, always = false): Promise<void> {
+    const d = this.#deps;
+    const payload = { active: this.active, slots, chains: this.#active.size, standing: this.#activeStanding.size };
+    const key = JSON.stringify(payload);
+    if (!always && key === this.#lastSample) return;
+    this.#lastSample = key;
+    await recordEvent(d.paths, { kind: "slots.sample", at: d.now().toISOString(), payload });
+  }
+
   /** Step 2 of a tick, for one paused record of an issue not running in this process (AC-13, AC-15, AC-16). True when it resumed the issue into a slot. */
   async #handlePaused(rec: PausedRecord, isOpen: boolean, slotFree: boolean, info: TickInfo): Promise<boolean> {
     const d = this.#deps;
@@ -184,6 +205,7 @@ export class Scheduler {
       // Review focus 5: a closed paused issue is dropped, with any claim a crash mid-pause or mid-resume left.
       await removePaused(d.paths, rec.issue);
       await removeClaim(d.paths, rec.issue);
+      await this.#pauseEnded(rec, "closed");
       d.serviceLog.write({ kind: "paused-dropped", issue: rec.issue, phase: rec.phase });
       return false;
     }
@@ -213,7 +235,7 @@ export class Scheduler {
       const text = `@${d.cfg.maintainer} Still waiting on your answer: ${rec.question.question}`;
       await d.gh.comment(rec.issue, text);
       await d.notifier.notify({ issue: rec.issue, gate: "question-reminder", label: NEEDS_DECISION_LABEL, text });
-      await appendQuestionLog(d.paths, { issue: rec.issue, at: d.now().toISOString(), event: "reminded", asking_stage: rec.asking_stage, ...(rec.question_comment_id === null ? {} : { question_comment_id: rec.question_comment_id }) });
+      await appendQuestionLog(d.paths, { issue: rec.issue, at: d.now().toISOString(), event: "reminded", asking_stage: rec.asking_stage, ...(rec.question_comment_id === null ? {} : { question_comment_id: rec.question_comment_id }) }, { label: NEEDS_DECISION_LABEL, text });
     }
     return false;
   }
@@ -247,8 +269,34 @@ export class Scheduler {
     await d.gh.addLabels(rec.issue, [CLAIM_LABEL]);
     await d.gh.removeLabel(rec.issue, NEEDS_DECISION_LABEL);
     await removePaused(d.paths, rec.issue);
+    await this.#pauseEnded(rec, "answered");
+    await recordEvent(d.paths, { kind: "issue.claimed", at: d.now().toISOString(), issue: rec.issue, payload: { slot: claim.slot } });
     info.claimed.push(rec.issue);
     this.#start(claim);
+  }
+
+  /**
+   * AC-2: `issue.eligible` once per issue per period of eligibility. The set of issues in a period is kept in
+   * `events/eligible.json`; a claim (or falling off the shortlist) closes the period, so a later wait is a new one.
+   */
+  async #recordEligible(ranked: IssueData[], readSpec: (path: string) => string | null, labels: SchedulerDeps["cfg"]["labels"]): Promise<void> {
+    const d = this.#deps;
+    let open: number[] = [];
+    try {
+      open = JSON.parse(readFileSync(d.paths.eventsEligible, "utf8")) as number[];
+    } catch {
+      /* none yet */
+    }
+    for (const [i, issue] of ranked.entries()) {
+      if (open.includes(issue.number)) continue;
+      const validated = issue.labelEvents.filter((e) => e.label === "validated" && e.action === "labeled").at(-1);
+      await recordEvent(d.paths, { kind: "issue.eligible", at: d.now().toISOString(), issue: issue.number, payload: {
+        rank: i + 1, work: classifyWork(issue, readSpec), cls: classOf(issue, labels), validated_at: validated?.at ?? null, created_at: issue.createdAt,
+      } });
+    }
+    // Issues about to be claimed leave the period; the rest stay in it.
+    const slots = Math.max(0, this.#slotsFree);
+    writeFileSync(d.paths.eventsEligible, JSON.stringify(ranked.slice(slots).map((i) => i.number)));
   }
 
   async tick(): Promise<TickInfo> {
@@ -259,6 +307,9 @@ export class Scheduler {
     try {
       const slots = d.parameters ? Number((await d.parameters.read('slots')).value) : d.cfg.slots;
       if(d.registry && d.parameters)await initializeAgents(d.paths,d.registry,d.parameters,d.now());
+      // The first tick after this code lands copies the history that predates the store (spec 012 AC-4).
+      if(!existsSync(d.paths.eventsBackfilled))await backfillEvents(d.paths,rec=>d.log(rec)).then(c=>d.log({kind:'events-backfilled',...c})).catch(e=>info.errors.push(`backfill: ${(e as Error).message}`));
+      await this.#sample(slots,true);
       const token = await readToken(d.paths).catch(() => null);
       if (token && new Date(token.expires_at).getTime() - d.now().getTime() < TOKEN_REFRESH_MARGIN_MS) await this.#refreshToken();
       try {
@@ -340,6 +391,7 @@ export class Scheduler {
             .finally(()=>{this.#activeStanding.delete(def.name);if(this.active===0){d.inhibitor.release();if(this.#restartPending&&!this.#ticking)d.requestRestart();}});
           this.#activeStanding.set(def.name,p);free--;
         }
+        await this.#sample(slots);
       }
       if (free <= 0) return info;
       // AC-13: the shortlist treats an issue with a paused record as claimed.
@@ -356,7 +408,9 @@ export class Scheduler {
       }
       const readSpec=buildSelectContext(d.repoDir,d.cfg,claimed,d.botLogin).readSpec;
       const share=d.parameters?Number((await d.parameters.read('system_work_share')).value):0.75;
+      this.#slotsFree = free;
       const ranked = rankIssues(eligible, d.cfg.labels, await recentMerges(d.paths, d.now()),share,i=>classifyWork(i,readSpec));
+      await this.#recordEligible(ranked, readSpec, d.cfg.labels);
       for (const issue of ranked.slice(0, free)) {
         if (this.#stopping) break;
         try {
@@ -372,11 +426,13 @@ export class Scheduler {
           await writeClaim(d.paths, claim);
           await d.gh.addLabels(issue.number, [CLAIM_LABEL]);
           info.claimed.push(issue.number);
+          await recordEvent(d.paths, { kind: "issue.claimed", at: d.now().toISOString(), issue: issue.number, payload: { slot: claim.slot } });
           this.#start(claim);
         } catch (e) {
           info.errors.push(`claim ${issue.number}: ${(e as Error).message}`);
         }
       }
+      await this.#sample(slots);
       return info;
     } finally {
       this.#ticking = false;

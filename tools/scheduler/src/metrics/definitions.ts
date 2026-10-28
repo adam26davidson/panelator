@@ -44,13 +44,17 @@ function bare(sql: string): string {
  * AC-5: one `SELECT` (or `WITH ... SELECT`) over the `events` table of the index and nothing else. Throws the reason.
  * The table rule is checked by preparing the query against a database that holds `events` alone.
  */
-export function checkQuery(query: string): void {
+export function assertSelectOnly(query: string): void {
   const text = bare(query).trim().replace(/;\s*$/, "");
   if (!/^(select|with)\b/i.test(text)) throw new Error("must be a single SELECT or WITH ... SELECT");
   if (text.includes(";")) throw new Error("must be one statement");
   const bad = FORBIDDEN.exec(text);
   if (bad) throw new Error(`may not use ${bad[1].toUpperCase()}`);
   if (/\b(sqlite_\w+|pragma_\w+)/i.test(text)) throw new Error("may read the events table only");
+}
+
+export function checkQuery(query: string): void {
+  assertSelectOnly(query);
   const db = new DatabaseSync(":memory:");
   try {
     db.exec("CREATE TABLE events(id TEXT PRIMARY KEY, at TEXT, kind TEXT, issue INTEGER, run_id TEXT, agent TEXT, payload TEXT)");

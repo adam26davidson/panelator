@@ -1,4 +1,5 @@
 import { appendFile, readFile } from "node:fs/promises";
+import { recordEvent } from "../events/store.ts";
 import { validate } from "../schema/validate.ts";
 import type { AskingStage, Question } from "../types.ts";
 import type { StatePaths } from "./paths.ts";
@@ -16,10 +17,18 @@ export interface QuestionLogEntry {
   answer?: string;
 }
 
-export async function appendQuestionLog(p: StatePaths, entry: QuestionLogEntry): Promise<void> {
+/** `contact` is the label and text the maintainer was sent, recorded as a `maintainer.contact` for `sent` and `reminded`. */
+export async function appendQuestionLog(p: StatePaths, entry: QuestionLogEntry, contact?: { label: string; text: string }): Promise<void> {
   const v = validate("question-log-entry", entry);
   if (!v.ok) throw new Error(`invalid question-log entry: ${v.errors.join("; ")}`);
   await appendFile(p.questionsLog, JSON.stringify(entry) + "\n");
+  await recordEvent(p, { kind: "question", at: entry.at, issue: entry.issue, payload: { ...entry } });
+  if (entry.event === "sent" || entry.event === "reminded") {
+    await recordEvent(p, {
+      kind: "maintainer.contact", at: entry.at, issue: entry.issue,
+      payload: { channel: "github", kind: entry.event === "sent" ? "question" : "reminder", issue: entry.issue, ...(entry.question_comment_id === undefined ? {} : { question_comment_id: entry.question_comment_id }), label: contact?.label ?? "needs-decision", text: contact?.text ?? "" },
+    });
+  }
 }
 
 /** Every `answered` line of the log, oldest first. */

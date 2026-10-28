@@ -32,10 +32,7 @@ export async function recordEvent(paths: StatePaths, input: EventInput, opts: { 
   const { id: given, at: _at, ...rest } = input;
   const event: SchedulerEvent = { id: given ?? randomBytes(8).toString("hex"), at, ...rest };
   if (event.issue === 0) delete event.issue;
-  if (opts.trustPayload) {
-    const envelope = validate("event", { ...event, payload: {} });
-    if (!envelope.ok) throw new Error(`invalid event: ${envelope.errors.join("; ")}`);
-  } else {
+  if (!opts.trustPayload) {
     const v = validate("event", event);
     if (!v.ok) throw new Error(`invalid ${input.kind} event: ${v.errors.join("; ")}`);
   }

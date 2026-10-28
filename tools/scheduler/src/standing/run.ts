@@ -19,10 +19,12 @@ import {applyFilerResult,type FilerResult} from '../filer/apply.ts';
 import {buildAuditInput} from './audit-input.ts';
 import {updateAgentState,type AgentState} from './state.ts';
 import {parseDuration} from './registry.ts';
+import {recordEvent} from '../events/store.ts';
 const exec=promisify(execFile);
 export interface StandingDeps extends DriverDeps {parameters:ParameterStore;botLogin:string}
 export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,state:AgentState):Promise<void> {
  const received=state.pending_events;
+ let nActions=0,nFindings=0;
  const now=d.now(),attempt=state.failures+1,runId=`standing-${def.name}-${attempt}-${now.getTime()}`;
  const filer:FilerDeps={paths:d.paths,gh:d.gh,botLogin:d.botLogin,now:d.now,classes:[...d.cfg.labels.feature_classes,...d.cfg.labels.debt_classes],notify:(text,key)=>d.notifier.notify({issue:0,gate:'standing',label:`${def.name}:${key??text}`,text})};
  let worktree=d.repoDir,created=false;
@@ -56,8 +58,9 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   const body=result.result as {summary:string;actions?:{kind:string;args:Record<string,unknown>;why:string}[];findings?:unknown[]};
   if(def.output==='filer-result')await applyFilerResult(filer,runId,input as Awaited<ReturnType<typeof buildFilerInput>>,body as FilerResult);
   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},body.findings??[]);
-  const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now};
+  const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog,d.paths),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now};
   for(const action of body.actions??[])await applyAction(ctx,{...action,agent:def.name,run_id:runId},def.actions);
+  nActions=body.actions?.length??0;nFindings=body.findings?.length??0;
   summary=body.summary;outcome='ok';
   await writeFile(join(d.paths.runs,result.runId,'summary.json'),JSON.stringify({summary}));
  }catch(e){error=(e as Error).message;d.log({kind:'standing-error',agent:def.name,error});}
@@ -67,6 +70,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  }
  if(outcome!=='ok'&&state.failures===0){await updateAgentState(d.paths,def.name,current=>({...current,failures:1}));return;}
  const at=d.now().toISOString();
+ await recordEvent(d.paths,{kind:'agent.run',at,agent:def.name,run_id:runId,payload:{outcome,summary:summary||error,events_received:received.length,actions:nActions,findings:nFindings}});
  const next=def.trigger.schedule?new Date(d.now().getTime()+parseDuration(String((await d.parameters.read(`schedule.${def.name}`)).value))).toISOString():null;
  await updateAgentState(d.paths,def.name,current=>({...current,last_run:{at,run_id:runId,outcome},summary:summary||error,next_run:next,failures:0,pending_events:current.pending_events.filter(e=>!received.some(r=>JSON.stringify(r)===JSON.stringify(e)))}));
  if(outcome!=='ok') {

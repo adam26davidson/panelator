@@ -27,6 +27,8 @@ import { appendFindings } from "../state/findings.ts";
 import { archiveLedger, writeLedger } from "../state/ledger.ts";
 import { classifyWork } from '../shortlist/rank.ts';
 import { appendMerge } from "../state/merges.ts";
+import { recordCiChecks } from "../events/ci.ts";
+import { recordEvent } from "../events/store.ts";
 import { writePaused, type PausedRecord } from "../state/paused.ts";
 import { savePatch } from "../state/patches.ts";
 import type { StatePaths } from "../state/paths.ts";
@@ -539,6 +541,7 @@ async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> 
   const pr = claim.state.pr;
   if (!pr) throw new Error(`verify without a PR (issue ${claim.issue})`);
   const summary = await deps.gh.checks(pr.head_sha, deps.cfg.required_checks);
+  await recordCiChecks(deps.paths, summary.runs, deps.now(), { sha: pr.head_sha, pr: pr.number, issue: claim.issue });
   // R1: judge sensitivity on the pushed head (after head_moved the local copy is stale).
   await syncWorktree(deps, claim);
   const sensitive = isSensitive(await diffFilesAgainstBase(claim.worktree), readSensitiveGlobs(deps.agentsDir)).length > 0;
@@ -614,6 +617,7 @@ async function pauseIssue(deps: DriverDeps, claim: Claim, a: Extract<Action, { t
     question_comment_id: null, asked_at: null, reminded: false, answer: null, reply_comment_id: null,
   };
   await writePaused(deps.paths, rec);
+  await recordEvent(deps.paths, { kind: "pause.started", at: deps.now().toISOString(), issue: claim.issue, payload: { stage: a.asking, reason: "question" } });
   await completePause(deps, rec);
 }
 
@@ -636,9 +640,10 @@ export async function completePause(deps: DriverDeps, rec: PausedRecord, adoptBy
   await deps.gh.addLabels(rec.issue, [NEEDS_DECISION_LABEL]);
   await deps.gh.removeLabel(rec.issue, CLAIM_LABEL);
   await deps.notifier.notify({ issue: rec.issue, gate: "question", label: NEEDS_DECISION_LABEL, text: `Issue #${rec.issue} has a question for the maintainer (${rec.question.kind}): ${rec.question.question}` });
-  await appendQuestionLog(deps.paths, { issue: rec.issue, at: deps.now().toISOString(), event: "sent", asking_stage: rec.asking_stage, question_comment_id: questionId });
+  await appendQuestionLog(deps.paths, { issue: rec.issue, at: deps.now().toISOString(), event: "sent", asking_stage: rec.asking_stage, question_comment_id: questionId }, { label: NEEDS_DECISION_LABEL, text: rec.question.question });
   await writePaused(deps.paths, { ...asked, phase: "paused" });
   await removeClaim(deps.paths, rec.issue);
+  await recordEvent(deps.paths, { kind: "issue.released", at: deps.now().toISOString(), issue: rec.issue, payload: { reason: "paused" } });
 }
 
 /** AC-17: re-run, once, each pending required check that has a run; a refusal or a missing run is logged (the fix input names them). */
@@ -686,6 +691,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
       case "release":
         if (a.savePatch) await savePatch(deps.paths, claim.issue, await uncommittedPatch(claim.worktree).catch(() => ""), deps.now(), "release");
         await removeClaim(deps.paths, claim.issue);
+        await recordEvent(deps.paths, { kind: "issue.released", at: deps.now().toISOString(), issue: claim.issue, payload: { reason: /error/i.test(a.reason) ? "error" : "stopped" } });
         status = "ended";
         break;
       case "done":
@@ -699,10 +705,12 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         }
         await removeWorktree(deps.repoDir, claim.worktree).catch((e) => deps.log({ kind: "error", issue: claim.issue, error: `worktree remove: ${(e as Error).message}` }));
         await removeClaim(deps.paths, claim.issue);
+        await recordEvent(deps.paths, { kind: "issue.released", at: deps.now().toISOString(), issue: claim.issue, payload: { reason: claim.state.stage === "abandoned" ? "abandoned" : "done" } });
         status = "ended";
         break;
       case "wait":
         claim.state.postponedUntil = a.seconds >= POSTPONE_WAIT_S ? new Date(deps.now().getTime() + a.seconds * 1000).toISOString() : null;
+        if (claim.state.postponedUntil) await recordEvent(deps.paths, { kind: "issue.released", at: deps.now().toISOString(), issue: claim.issue, payload: { reason: "postponed" } });
         status = "waiting";
         break;
       case "close_pr": {
@@ -789,6 +797,25 @@ async function logQuestion(deps: DriverDeps, before: ChainState, after: ChainSta
   }
 }
 
+/** Spec 012 AC-2: the transition, the PR opening and the review result, beside the state change they describe. */
+async function recordStepEvents(deps: DriverDeps, issue: number, before: ChainState, after: ChainState, event: ChainEvent): Promise<void> {
+  const at = deps.now().toISOString();
+  // A rescue restarts the stuck stage, so a rescue run is a transition though the stage name is the same.
+  if (before.stage !== after.stage || (after.rescueRun && !before.rescueRun)) {
+    await recordEvent(deps.paths, { kind: "chain.transition", at, issue, payload: { from: before.stage, to: after.stage, event: event.type, attempt: after.attempt, fixes: after.fixes, track: after.track, rescue: after.rescueRun } });
+  }
+  if (before.pr === null && after.pr !== null && after.pr.number !== before.parkedPr?.number) {
+    await recordEvent(deps.paths, { kind: "pr.opened", at, issue, payload: { pr: after.pr.number, track: after.track } });
+  }
+  if (event.type === "stage_ok" && event.stage === "review" && before.pr) {
+    const def = deps.stages.review;
+    await recordEvent(deps.paths, { kind: "review.result", at, issue, payload: {
+      pr: before.pr.number, head_sha: before.pr.head_sha, verdict: event.result.verdict, findings: event.result.findings_on_pr.length,
+      criteria_failed: [...new Set(event.result.findings_on_pr.map((f) => f.criterion))], independent: def?.independent ?? false, reviewer_model: def?.model ?? "", security: event.security,
+    } });
+  }
+}
+
 /** Errors propagate to the caller; the service loop catches and logs them per chain. */
 export async function step(deps: DriverDeps, claim: Claim): Promise<{ claim: Claim; status: StepStatus }> {
   // An abandonment not yet finished: finish it, no transition (AC-5).
@@ -825,6 +852,7 @@ export async function step(deps: DriverDeps, claim: Claim): Promise<{ claim: Cla
   // AC-7: the ledger is written whenever a counter or the history changes, before any action.
   if (JSON.stringify(ledgerOf(before)) !== JSON.stringify(ledgerOf(state))) await writeLedger(deps.paths, claim.issue, ledgerOf(state));
   await logQuestion(deps, before, state, event);
+  await recordStepEvents(deps, claim.issue, before, state, event);
   if (state.stage === "abandoned") {
     // AC-5: the whole action list is on disk before the first action, so a crash finishes it from where it stopped.
     claim = { ...claim, pendingActions: actions };
