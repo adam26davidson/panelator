@@ -472,7 +472,10 @@ describe("chain: merge, rebase, liveness, postpone", () => {
   });
 });
 
-const specOk = (result: SpecResult, scope: { ok: true } | { ok: false; violations: string[] } = { ok: true }) => ({ type: "stage_ok" as const, stage: "spec" as const, result, scope });
+const HEAD = "d".repeat(40);
+const specOk = (result: SpecResult, scope: { ok: true } | { ok: false; violations: string[] } = { ok: true }) => ({
+  type: "stage_ok" as const, stage: "spec" as const, result, scope, ...(result.verdict === "question" ? { head: HEAD } : {}),
+});
 const checkSays = (verdict: "send" | "decide_yourself", reasoning = "r") => ({ type: "stage_ok" as const, stage: "question-check" as const, result: { verdict, reasoning } });
 const answered = (answer = "use lru", questionId = 5) => ({ type: "answered" as const, answer, questionId });
 const reviewEscalates = (escalation: Question) => ({ type: "stage_ok" as const, stage: "review" as const, result: { ...approve, verdict: "escalate" as const, escalation }, security: false });
@@ -580,12 +583,12 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
     expect(r.state).toMatchObject({ stage: "question-check", question: q, askingStage: "review", rescues: 0, history: [] });
   });
   it("an implement result with a capability escalation goes to the question check (AC-17)", () => {
-    const r = transition(at("implement", { plan }), { type: "stage_ok", stage: "implement", result: { escalation: qCapability } });
+    const r = transition(at("implement", { plan }), { type: "stage_ok", stage: "implement", result: { escalation: qCapability }, head: HEAD });
     expect(r.actions).toEqual([{ type: "run_stage", stage: "question-check", attempt: 1 }]);
     expect(r.state).toMatchObject({ stage: "question-check", question: qCapability, askingStage: "implement", pr: null, implementFailures: 0, scopeViolations: 0 });
-    const p = transition(at("plan"), { type: "stage_ok", stage: "plan", result: { escalation: qProduct } });
+    const p = transition(at("plan"), { type: "stage_ok", stage: "plan", result: { escalation: qProduct }, head: HEAD });
     expect(p.state).toMatchObject({ stage: "question-check", askingStage: "plan", plan: null });
-    const f = transition(at("fix", { pr: pr3, fixes: 1, pendingFixInput: "fix it" }), { type: "stage_ok", stage: "fix", result: { escalation: q } });
+    const f = transition(at("fix", { pr: pr3, fixes: 1, pendingFixInput: "fix it" }), { type: "stage_ok", stage: "fix", result: { escalation: q }, head: HEAD });
     expect(f.state).toMatchObject({ stage: "question-check", askingStage: "fix", fixes: 1, pr: pr3, pendingFixInput: "fix it" });
   });
   it("a spec question of kind technical goes to the question check, keeping the spec track and mode", () => {
@@ -640,7 +643,7 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
     const reply = "Question #5: Which GPU do you mean? Tell me more.";
     const followUp = (question: Question): Question => ({ ...question, follow_up: true, reply_quote: "which GPU  do you\nmean?" });
     const s = at("implement", { answer: reply, answerQuestionId: 5, answerQuestionIds: [5], answerKind: "capability", plan });
-    const r = transition(s, { type: "stage_ok", stage: "implement", result: { escalation: followUp(qCapability) } });
+    const r = transition(s, { type: "stage_ok", stage: "implement", result: { escalation: followUp(qCapability) }, head: HEAD });
     expect(r.actions).toEqual([{ type: "pause", question: followUp(qCapability), asking: "implement" }]);
     expect(r.state).toMatchObject({ stage: "paused", askingStage: "implement", decideReturns: 0, implementFailures: 0, rescues: 0, fixes: 0 });
     expect(r.state.history).toEqual([]);
@@ -653,7 +656,7 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
   it("with a reply present, a question that is not a marked follow-up quoting the reply goes to the question check (C2)", () => {
     const reply = "Question #5: Use lru.";
     for (const question of [q, { ...q, follow_up: true, reply_quote: "something the maintainer never wrote" }]) {
-      const r = transition(at("implement", { answer: reply, answerQuestionIds: [5], answerKind: "technical", plan }), { type: "stage_ok", stage: "implement", result: { escalation: question } });
+      const r = transition(at("implement", { answer: reply, answerQuestionIds: [5], answerKind: "technical", plan }), { type: "stage_ok", stage: "implement", result: { escalation: question }, head: HEAD });
       expect(r.actions).toEqual([{ type: "run_stage", stage: "question-check", attempt: 1 }]);
       expect(r.state).toMatchObject({ stage: "question-check", askingStage: "implement", answer: reply });
     }
@@ -665,7 +668,7 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
   });
   it("in decide mode any question marked new_blocker goes to the check; an unmarked one fails the run (C3, CM2)", () => {
     const decide = { decideInput: "pick lru", decidedQuestion: q, plan };
-    const escalates = (question: Question) => ({ type: "stage_ok" as const, stage: "implement" as const, result: { escalation: question } });
+    const escalates = (question: Question) => ({ type: "stage_ok" as const, stage: "implement" as const, result: { escalation: question }, head: HEAD });
     for (const question of [{ ...qCapability, new_blocker: true }, { ...qProduct, new_blocker: true }, { ...q, question: "Which eviction policy?", new_blocker: true }]) {
       const r = transition(at("implement", decide), escalates(question));
       expect(r.actions).toEqual([{ type: "run_stage", stage: "question-check", attempt: 1 }]);
@@ -689,13 +692,13 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
   });
   it("decide mode is checked before the follow-up rule (Tm1)", () => {
     const fu: Question = { ...q, follow_up: true, reply_quote: "Which cache do you mean?" };
-    const r = transition(at("implement", { plan, decideInput: "d", decidedQuestion: q, answer: "Question #5: Which cache do you mean?" }), { type: "stage_ok", stage: "implement", result: { escalation: fu } });
+    const r = transition(at("implement", { plan, decideInput: "d", decidedQuestion: q, answer: "Question #5: Which cache do you mean?" }), { type: "stage_ok", stage: "implement", result: { escalation: fu }, head: HEAD });
     expect(r.state.history).toEqual(["implement attempt 1 failed: escalated in decide mode"]);
   });
   it("a follow-up quote must be at least 15 characters of the latest reply as written, and a question or a request (Tm1)", () => {
     const state = at("implement", { plan, answer: "Question #5: Use lru.\n\nQuestion #6: Fine. Which size do you suggest?", answerQuestionIds: [5, 6], answerKind: "capability" });
     const toCheck = (quote: string) => {
-      const r = transition(state, { type: "stage_ok", stage: "implement", result: { escalation: { ...qCapability, follow_up: true, reply_quote: quote } } });
+      const r = transition(state, { type: "stage_ok", stage: "implement", result: { escalation: { ...qCapability, follow_up: true, reply_quote: quote } }, head: HEAD });
       return r.state.stage;
     };
     expect(toCheck("Which size do you suggest?")).toBe("paused");
@@ -743,10 +746,10 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
     expect(rv.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 2 }]);
     expect(rv.state.history).toEqual(["review attempt 1 failed: escalated in decide mode"]);
     expect(rv.state.decideInput).toBe("decide");
-    const im = transition(at("implement", { decideInput: "decide" }), { type: "stage_ok", stage: "implement", result: { escalation: q } });
+    const im = transition(at("implement", { decideInput: "decide" }), { type: "stage_ok", stage: "implement", result: { escalation: q }, head: HEAD });
     expect(im.actions).toEqual([{ type: "run_stage", stage: "implement", attempt: 2 }]);
     expect(im.state).toMatchObject({ implementFailures: 1, decideInput: "decide" });
-    const fx = transition(at("fix", { pr: pr3, decideInput: "decide", pendingFixInput: "fix it" }), { type: "stage_ok", stage: "fix", result: { escalation: q } });
+    const fx = transition(at("fix", { pr: pr3, decideInput: "decide", pendingFixInput: "fix it" }), { type: "stage_ok", stage: "fix", result: { escalation: q }, head: HEAD });
     expect(fx.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: "fix it" }]);
     expect(fx.state).toMatchObject({ rescues: 1, rescueRun: true });
     for (const kind of [qProduct, qOther]) {
@@ -756,7 +759,7 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
       expect(sp.state.history).toEqual(["spec attempt 1 failed: escalated in decide mode"]);
     }
     // A failed run inside a rescue escalates at once.
-    const rescued = transition(at("plan", { decideInput: "decide", rescueRun: true, rescues: 1 }), { type: "stage_ok", stage: "plan", result: { escalation: q } });
+    const rescued = transition(at("plan", { decideInput: "decide", rescueRun: true, rescues: 1 }), { type: "stage_ok", stage: "plan", result: { escalation: q }, head: HEAD });
     expect(rescued.state).toMatchObject({ replans: 1, stage: "plan" });
   });
   it("a spec question of kind other counts as a decide_yourself (AC-14)", () => {
@@ -1055,21 +1058,21 @@ describe("chain: every event in every stage (AC-27)", () => {
     { type: "start" },
     { type: "stage_ok", stage: "plan", result: plan },
     { type: "stage_ok", stage: "plan", result: { verdict: "spec_gap", domain: "backend", tasks: [], questions: ["Q"] } },
-    { type: "stage_ok", stage: "plan", result: { escalation: q } },
+    { type: "stage_ok", stage: "plan", result: { escalation: q }, head: HEAD },
     { type: "stage_ok", stage: "implement", result: impl, scope: { ok: true } },
     { type: "stage_ok", stage: "implement", result: impl, scope: scopeBad },
-    { type: "stage_ok", stage: "implement", result: { escalation: qCapability } },
+    { type: "stage_ok", stage: "implement", result: { escalation: qCapability }, head: HEAD },
     { type: "stage_ok", stage: "fix", result: { head_sha: "c".repeat(40), addressed: [0] }, scope: { ok: true } },
     { type: "stage_ok", stage: "fix", result: { head_sha: "c".repeat(40), addressed: [0] }, scope: scopeBad },
-    { type: "stage_ok", stage: "fix", result: { escalation: qProduct } },
+    { type: "stage_ok", stage: "fix", result: { escalation: qProduct }, head: HEAD },
     { type: "stage_ok", stage: "review", result: approve, security: false },
     { type: "stage_ok", stage: "review", result: changes, security: true },
     { type: "stage_ok", stage: "review", result: { ...approve, verdict: "escalate", escalation: q }, security: false },
     { type: "stage_ok", stage: "review", result: { ...approve, verdict: "escalate", escalation: qOther }, security: false },
     { type: "stage_ok", stage: "spec", result: revised, scope: { ok: true } },
     { type: "stage_ok", stage: "spec", result: revised, scope: scopeBad },
-    { type: "stage_ok", stage: "spec", result: { verdict: "question", question: qProduct } },
-    { type: "stage_ok", stage: "spec", result: { verdict: "question", question: qOther } },
+    { type: "stage_ok", stage: "spec", result: { verdict: "question", question: qProduct }, head: HEAD },
+    { type: "stage_ok", stage: "spec", result: { verdict: "question", question: qOther }, head: HEAD },
     { type: "stage_ok", stage: "question-check", result: { verdict: "send", reasoning: "r" } },
     { type: "stage_ok", stage: "question-check", result: { verdict: "decide_yourself", reasoning: "r" } },
     ...EVENTS_FAILED,
@@ -1169,6 +1172,92 @@ describe("chain: every event in every stage (AC-27)", () => {
       expect(counters(r.state), stage).toEqual(counters(s));
       expect(r.actions, stage).toEqual([{ type: "wait", seconds: 1800 }]);
     }
+  });
+  it("held work is carried, set or cleared by every valid pair, and cleared only when something is discarded (spec 011 AC-7)", () => {
+    const heldVariants: ChainState["heldWork"][] = [null, { branch: "issue-1", head: "a".repeat(40) }, { branch: "spec-1", head: "a".repeat(40) }];
+    const ledger = (s: ChainState) => s.rescues + s.specRescues + s.replans + s.specRevisions;
+    let carried = 0;
+    let cleared = 0;
+    let set = 0;
+    for (const stage of STAGES) {
+      for (const track of stage === "spec" ? (["spec"] as const) : (["issue", "spec"] as const)) {
+        for (const variant of VARIANTS) {
+          for (const heldWork of heldVariants) {
+            const state = fixture(stage, track, { ...variant, heldWork });
+            for (const event of EVENTS) {
+              if (!VALID(stage, event)) continue;
+              const label = `${stage}/${track}/${JSON.stringify(variant)}/${JSON.stringify(heldWork)}: ${JSON.stringify(event)}`;
+              const r = transition(state, event);
+              const after = r.state.heldWork;
+              if (event.type === "stage_ok" && event.head !== undefined && r.state.stage !== "abandoned" && r.state.stage !== "released") {
+                // A question routed from a plan, implement, fix or spec result records the new head, replacing any held work.
+                if (after !== null && (r.state.stage === "question-check" || r.state.stage === "paused")) {
+                  expect(after, label).toEqual({ branch: track === "spec" ? "spec-1" : "issue-1", head: event.head });
+                  set++;
+                  continue;
+                }
+              }
+              if (["released", "abandoned", "done"].includes(r.state.stage) || event.type === "liveness_expired" || event.type === "chain_error") {
+                expect(after, label).toBeNull();
+                if (heldWork) cleared++;
+                continue;
+              }
+              if (after === heldWork) { if (heldWork) carried++; continue; }
+              // Cleared: only by a bound PR, the asking stage's failure, or an escalation (rescue, re-plan, spec revision).
+              expect(after, label).toBeNull();
+              cleared++;
+              const bound = event.type === "stage_ok" && (event.stage === "implement" || event.stage === "fix" || event.stage === "spec") && r.state.pr !== null && heldWork!.branch === (track === "spec" ? "spec-1" : "issue-1");
+              const askerFailed = (event.type === "stage_failed" && !event.postpone && event.stage === state.askingStage)
+                // An unmarked question in decide mode counts as a failed run.
+                || (event.type === "stage_ok" && event.head !== undefined && state.decideInput !== null && event.stage === state.askingStage);
+              expect(bound || askerFailed || ledger(r.state) > ledger(state) || r.state.stage === "abandoned", label).toBe(true);
+            }
+          }
+        }
+      }
+    }
+    expect(carried).toBeGreaterThan(50);
+    expect(cleared).toBeGreaterThan(50);
+    expect(set).toBeGreaterThan(5);
+  });
+  describe("held work (spec 011)", () => {
+    const held = { branch: "issue-1", head: "a".repeat(40) };
+    it("a stage_ok that raises a question without a head throws; review's does not", () => {
+      expect(() => transition(at("implement", { plan }), { type: "stage_ok", stage: "implement", result: { escalation: qCapability } })).toThrow(/without a head/);
+      expect(() => transition(at("plan"), { type: "stage_ok", stage: "plan", result: { escalation: qProduct } })).toThrow(/without a head/);
+      expect(() => transition(at("spec", { track: "spec", specMode: "write" }), { type: "stage_ok", stage: "spec", result: { verdict: "question", question: qOther } })).toThrow(/without a head/);
+      expect(() => transition(at("review", { pr: pr3 }), reviewEscalates(qProduct))).not.toThrow();
+    });
+    it("a question records the branch and head; a second question replaces the held head", () => {
+      const r = transition(at("implement", { plan }), { type: "stage_ok", stage: "implement", result: { escalation: qCapability }, head: HEAD });
+      expect(r.state.heldWork).toEqual({ branch: "issue-1", head: HEAD });
+      const again = transition(at("implement", { plan, heldWork: held }), { type: "stage_ok", stage: "implement", result: { escalation: qCapability }, head: "9".repeat(40) });
+      expect(again.state.heldWork).toEqual({ branch: "issue-1", head: "9".repeat(40) });
+      const sp = transition(at("spec", { track: "spec", specMode: "write" }), specOk({ verdict: "question", question: qProduct }));
+      expect(sp.state.heldWork).toEqual({ branch: "spec-1", head: HEAD });
+    });
+    it("a kind-other spec question sent straight back to decide records the work", () => {
+      const r = transition(at("spec", { track: "spec", specMode: "write" }), specOk({ verdict: "question", question: qOther }));
+      expect(r.state).toMatchObject({ stage: "spec", specMode: "decide", heldWork: { branch: "spec-1", head: HEAD } });
+    });
+    it("a PR bound on the held branch clears it; a spec PR on spec-1 with work on issue-1 carries it", () => {
+      const bound = transition(at("implement", { plan, heldWork: held }), { type: "stage_ok", stage: "implement", result: impl, scope: { ok: true } });
+      expect(bound.state.heldWork).toBeNull();
+      const record = transition(at("spec", { track: "spec", specMode: "record", heldWork: held }), specOk(revised));
+      expect(record.state.heldWork).toEqual(held);
+    });
+    it("the asking stage's failure clears it; the question check's first failure and a postponement carry it", () => {
+      const failed = transition(at("implement", { plan, heldWork: held, askingStage: "implement" }), { type: "stage_failed", stage: "implement", reason: "boom" });
+      expect(failed.state.heldWork).toBeNull();
+      const qc = at("question-check", { question: qCapability, askingStage: "implement", heldWork: held });
+      expect(transition(qc, { type: "stage_failed", stage: "question-check", reason: "boom" }).state).toMatchObject({ stage: "question-check", attempt: 2, heldWork: held });
+      expect(transition(qc, { type: "stage_failed", stage: "question-check", reason: "429", postpone: true }).state.heldWork).toEqual(held);
+      expect(transition(qc, { type: "stage_ok", stage: "question-check", result: { verdict: "send", reasoning: "r" } }).state).toMatchObject({ stage: "paused", heldWork: held });
+    });
+    it("a spec PR merging on the spec track carries held work back to the issue track", () => {
+      const r = transition(at("merge", { track: "spec", pr: pr8, heldWork: held }), { type: "merge_result", status: "merged", specGate: { ok: true } });
+      expect(r.state).toMatchObject({ stage: "plan", track: "issue", heldWork: held });
+    });
   });
   it("rebase_conflict is invalid in the spec stage and the question check", () => {
     expect(() => transition(at("spec", { track: "spec" }), { type: "rebase_conflict", detail: "x" })).toThrow(/^invalid event rebase_conflict /);

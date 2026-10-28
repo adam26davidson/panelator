@@ -68,18 +68,20 @@ export interface ChainState {
   parkedPr: { number: number; head_sha: string } | null;
   pendingSince: string | null;
   checksRerun: boolean;
+  /** AC-1: the branch and head a stage left when its result carried a question; kept until a PR is bound on it or the attempt is discarded. */
+  heldWork: { branch: string; head: string } | null;
 }
 
 export type ChainEvent =
   | { type: "start" }
   /** C14: a result with an `escalation` need not carry the stage's other fields, and its event carries no `scope` (AC-17). */
-  | { type: "stage_ok"; stage: "plan"; result: PlanOutcome }
-  | { type: "stage_ok"; stage: "implement"; result: ImplementOutcome; scope?: ScopeResult }
-  | { type: "stage_ok"; stage: "fix"; result: FixOutcome; scope?: ScopeResult }
+  | { type: "stage_ok"; stage: "plan"; result: PlanOutcome; head?: string }
+  | { type: "stage_ok"; stage: "implement"; result: ImplementOutcome; scope?: ScopeResult; head?: string }
+  | { type: "stage_ok"; stage: "fix"; result: FixOutcome; scope?: ScopeResult; head?: string }
   /** `security`: this run was the security review; `sensitive`: the reviewed diff touches a sensitive path (C5). */
   | { type: "stage_ok"; stage: "review"; result: ReviewResult; security: boolean; sensitive?: boolean }
   /** `scope`: the spec PR's scope check (AC-22), required for `revised`, absent for `question`. */
-  | { type: "stage_ok"; stage: "spec"; result: SpecResult; scope?: ScopeResult }
+  | { type: "stage_ok"; stage: "spec"; result: SpecResult; scope?: ScopeResult; head?: string }
   | { type: "stage_ok"; stage: "question-check"; result: QuestionCheckResult }
   | { type: "stage_failed"; stage: AgentStageName; reason: string; postpone?: boolean }
   /** `at`: when the checks were read; `pending`: the required checks still pending or missing. */
