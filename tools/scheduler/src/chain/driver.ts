@@ -629,7 +629,6 @@ async function mergeEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> {
   const work = classifyWork({number:claim.issue,title:'',author:'',body,labels,labelEvents:[],createdAt:''},ctx.readSpec);
   const mergeRecord = { issue: claim.issue, pr: pr.number, cls, work, at: deps.now().toISOString() };
   await appendMerge(deps.paths, mergeRecord);
-  await record(deps.paths, "merge", mergeRecord.at, mergeRecord, { issue: claim.issue });
   return { type: "merge_result", status: "merged" };
 }
 

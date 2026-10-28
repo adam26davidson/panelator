@@ -1,5 +1,7 @@
+import { standingWorld } from './helpers/e2e-routes.ts';
+import { runStandingAgent, type StandingDeps } from '../src/standing/run.ts';
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -82,6 +84,21 @@ it('builds the action audit from the context window, grouped by kind and status'
  const input=await buildAuditInput(paths,'2026-10-10T00:00:00Z',new Date('2026-10-27'));
  expect(input.kinds.set_parameter.entries).toHaveLength(2);expect(input.kinds.set_parameter.undone).toBe(1);expect(input.kinds.set_parameter.refused).toBe(1);expect(input.parameter_history).toHaveLength(1);
 });
+it('runStandingAgent retains a stored reflection key even with failures zero and running set', async () => {
+ const result = {summary:'reflected',plan:{title:'t',summary:'s',observations:[],items:[{title:'Item',body:'Implement a targeted improvement because the event evidence shows repeated fix loops; verify that rework_per_merge decreases over four weekly snapshots without reducing the review bar or hiding failed attempts. '.repeat(2),class:'class:tooling',kind:'bottleneck'}],metrics_note:'m',open_questions_note:'none',deferred:[]}};
+ const w = await standingWorld({'charter-reflection':[result]});
+ const name='charter-reflection',key='charter-reflection-1756944000000';
+ const state=(await readAgentState(w.paths,name))!;
+ state.reflection={period_from:'2026-09-04T00:00:00.000Z',plan_key:key}; state.failures=0;
+ state.running={run_id:'interrupted',started_at:'2026-10-01T00:00:00.000Z'};
+ await writeAgentState(w.paths,name,state); w.setNow(new Date('2026-10-01T08:00:00Z'));
+ w.failNext.create=1; // fail mid-apply so the state still carries the key for inspection
+ await runStandingAgent(w.deps as StandingDeps,w.registry[name],state);
+ expect((await readAgentState(w.paths,name))?.reflection).toEqual(state.reflection);
+ expect((await readAgentState(w.paths,name))?.failures).toBe(1);
+ expect(readdirSync(join(w.paths.reflections,name))).toEqual([`${key}.json`]);
+},30000);
+
 it('persists main check transitions without repeating after restart',async()=>{
  const {paths,registry,now}=await stateSetup();
  registry['findings-filer'].trigger.events!.push('ci_failure_main');

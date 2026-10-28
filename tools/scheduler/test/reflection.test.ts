@@ -1,4 +1,6 @@
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { recordEvent } from "../src/events/store.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -82,12 +84,22 @@ describe("reflection input (AC-15)", () => {
 
   it("flags a missing child file and a spec with no merged implementation in the design tree", async () => {
     const { paths, repo } = await world();
+    for (const f of readdirSync(paths.events)) rmSync(join(paths.events, f));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" });
+    git("init"); git("config", "user.email", "test@example.com"); git("config", "user.name", "Test");
+    git("add", "specs/001-a/spec.md"); git("commit", "-m", "spec 001: a (#22)");
+    git("add", "specs/002-b/spec.md"); git("commit", "-m", "spec 002: b (#23)");
+    mkdirSync(join(repo, "specs/003-c"));
+    writeFileSync(join(repo, "specs/003-c/spec.md"), "# 3\n\nStatus: approved\nIssue: #101\n");
+    git("add", "specs/003-c/spec.md"); git("commit", "-m", "spec without a PR number");
+    for (const [issue, pr] of [[101, 22], [101, 30], [102, 23]]) await recordEvent(paths, { at: now.toISOString(), kind: "merge", issue, payload: { issue, pr, cls: "debt", work: "system", at: now.toISOString() } });
     const input = await buildReflectionInput(deps(paths, repo), def("delivery-reflection"), new Date("2026-09-01T00:00:00Z"), now) as Record<string, any>;
     expect(validate("reflection-input", input)).toEqual({ ok: true });
     expect(input.design_tree.designs).toEqual([{ path: "docs/designs/foo.md", children: [{ path: "specs/001-a/spec.md", exists: true }, { path: "docs/designs/missing.md", exists: false }] }]);
     expect(input.design_tree.specs).toEqual([
       { path: "specs/001-a/spec.md", status: "approved", issue: 101, implemented: true },
-      { path: "specs/002-b/spec.md", status: "approved", issue: 555, implemented: false },
+      { path: "specs/002-b/spec.md", status: "approved", issue: 102, implemented: false },
+      { path: "specs/003-c/spec.md", status: "approved", issue: null, implemented: null },
     ]);
   });
 
@@ -163,6 +175,14 @@ describe("reflection apply (AC-16 to AC-19)", () => {
     const db = openIndex(w.paths);
     expect(db.prepare("SELECT count(*) AS c FROM events WHERE kind IN ('reflection.plan', 'issue.filed')").get()).toEqual({ c: 4 });
     db.close();
+  });
+
+  it("lists the input's open questions even when the agent's note says none", async () => {
+    const w = await applyWorld();
+    const r = result([]); r.plan.open_questions_note = "none";
+    await applyReflectionResult(w.d, delivery, "k", "r", r, { open_questions: [{ issue: 103, asking_stage: "spec", sent_at: "2026-10-03T10:00:00.000Z", question: "Which audience again?" }] });
+    expect(plan(w).body).toContain("#103 (spec, sent 2026-10-03T10:00:00.000Z): Which audience again?");
+    expect(plan(w).body).toContain("\nnone\n");
   });
 
   it("still creates the plan issue when there are no items, and says so", async () => {

@@ -19,6 +19,9 @@ export interface ReflectionResult {
     metrics_note: string; open_questions_note: string; deferred: { title: string; why: string }[];
   };
 }
+export interface PlanInput {
+  open_questions: { issue: number | null; asking_stage: string; sent_at: string; question: string }[];
+}
 export interface ApplyDeps {
   paths: StatePaths;
   /** The only GitHub operations a reflection's apply may call (spec 012 AC-18). */
@@ -38,7 +41,7 @@ const TITLE = (agent: string) => short(agent).replace(/^./, (c) => c.toUpperCase
 const MIN_BODY = 200;
 
 /** Spec 012 AC-16 to AC-19: the plan file, the plan issue, the item issues, the predecessor's close, the direct actions. */
-export async function applyReflectionResult(d: ApplyDeps, def: StandingDefinition, key: string, runId: string, result: ReflectionResult): Promise<{ plan_issue: number; filed: number[]; deferred: number }> {
+export async function applyReflectionResult(d: ApplyDeps, def: StandingDefinition, key: string, runId: string, result: ReflectionResult, input: PlanInput = { open_questions: [] }): Promise<{ plan_issue: number; filed: number[]; deferred: number }> {
   const v = validate("reflection-result", result);
   if (!v.ok) throw new Error(`reflection result: ${v.errors.join("; ")}`);
   const at = d.now();
@@ -104,7 +107,7 @@ export async function applyReflectionResult(d: ApplyDeps, def: StandingDefinitio
     result.plan.summary, "",
     "## Observations", list(result.plan.observations.map((o) => `${o.what} (${o.evidence})`)), "",
     "## Metrics", result.plan.metrics_note || "None.", "",
-    "## Open questions", result.plan.open_questions_note || "None.", "",
+    "## Open questions", list(input.open_questions.map((q) => `#${q.issue} (${q.asking_stage}, sent ${q.sent_at}): ${q.question}`)), "", result.plan.open_questions_note, "",
     "## Items", filed.length || deferred.length ? "" : "This plan has no items.",
     list(filed.map((f) => `#${f.issue} ${f.title} (${f.kind}${f.existing ? ", existing issue" : ""})${f.charter ? " — charter change: needs the maintainer" : ""}`)), "",
     "## Direct actions applied", list(prior?.applied ? ((prior.actions as string[]) ?? []) : applied), "",
