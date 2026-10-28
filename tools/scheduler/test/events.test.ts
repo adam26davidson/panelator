@@ -52,6 +52,12 @@ describe("recordEvent (spec 012 AC-1)", () => {
   });
 
   it("is the only code that writes under events/ (append-only grep)", () => {
+    // Every StatePaths member under the events directory, not only the directory itself (AC-1).
+    const sp = statePaths("/s") as unknown as Record<string, unknown>;
+    const members = Object.keys(sp).filter((k) => typeof sp[k] === "string" && ((sp[k] as string) === "/s/events" || (sp[k] as string).startsWith("/s/events/")));
+    expect(members).toEqual(expect.arrayContaining(["events", "eventsIndex", "eventsBackfilled"]));
+    expect(members).not.toContain("eligibleMarks");
+    const memberRef = new RegExp(`[pP]aths\\.(${members.join("|")})\\b|\\{[^}]*\\b(${members.join("|")})\\b[^}]*\\}\\s*=\\s*\\w*[pP]aths`);
     const root = join(import.meta.dirname, "..");
     const files: string[] = [];
     const walk = (d: string) => { for (const n of readdirSync(d)) { const f = join(d, n); statSync(f).isDirectory() ? walk(f) : f.endsWith(".ts") && files.push(f); } };
@@ -62,7 +68,7 @@ describe("recordEvent (spec 012 AC-1)", () => {
     for (const f of files) {
       const text = readFileSync(f, "utf8").split("\n");
       text.forEach((line, i) => {
-        if (!/paths\.events\w*|\bevents\//.test(line) || /^\s*(\/\/|\*|\/\*)/.test(line)) return;
+        if (!(memberRef.test(line) || /\bevents\//.test(line)) || /^\s*(\/\/|\*|\/\*)/.test(line)) return;
         const near = text.slice(Math.max(0, i - 1), i + 2).join(" ");
         const write = /\b(writeFile|writeFileSync|rename|renameSync|unlink|unlinkSync|truncate|rm|rmSync|copyFile)\b/.test(line);
         // The backfill marker and the derived index are the only non-append files; both are named exactly.

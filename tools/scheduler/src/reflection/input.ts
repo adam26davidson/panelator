@@ -141,11 +141,10 @@ function designTree(d: ReflectionDeps, db: DatabaseSync) {
   const specs: { path: string; status: string | null; issue: number | null; implemented: boolean | null }[] = [];
   for (const [path, text] of files) {
     if (path.startsWith("specs/")) {
-      const line = /^(?:Issue|Closes)[: ]+#(\d+)/im.exec(text)?.[1];
       const specPr = addedBy(path);
-      const issue: number | null = line ? Number(line) : merges.find((m) => specPr !== null && m.payload.pr === specPr)?.issue ?? null;
+      const issue: number | null = merges.find((m) => specPr !== null && m.payload.pr === specPr)?.issue ?? null;
       // Implemented: a merge for the issue other than the PR that added the spec.
-      const implemented = issue === null ? null : merges.some((m) => m.issue === issue && (specPr === null || m.payload.pr !== specPr));
+      const implemented = issue === null ? null : merges.some((m) => m.issue === issue && m.payload.pr !== specPr);
       specs.push({ path, status: parseSpec(text).status, issue, implemented });
     } else if (path !== ROOT) {
       designs.push({ path, children: (parseChildren(text) ?? []).map((c) => ({ path: c, exists: files.has(c) || existsSync(join(d.repoDir, c)) })) });
@@ -156,7 +155,7 @@ function designTree(d: ReflectionDeps, db: DatabaseSync) {
 
 /** The reflection input of spec 012 AC-15, for the period from `from` to `now`. */
 export async function buildReflectionInput(d: ReflectionDeps, def: StandingDefinition, from: Date, now: Date) {
-  const db = openIndex(d.paths);
+  const db = openIndex(d.paths, { readOnly: true });
   try {
     const f = from.toISOString(), t = now.toISOString();
     const metrics = computeMetrics(db, d.metrics, { from: new Date(from.getTime() - 12 * 7 * DAY), to: now, today: now });

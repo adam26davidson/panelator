@@ -25,6 +25,13 @@ export function weeksBetween(from: Date, to: Date): string[] {
   return out;
 }
 
+/** The range of `metrics show` (AC-10): from the ISO week of the earliest event in the index, or `introduced` when it is empty, to `now`. */
+export function historyRange(index: DatabaseSync, def: MetricDefinition, now: Date): { from: Date; to: Date } {
+  const first = (index.prepare("SELECT min(at) AS at FROM events").get() as { at: string | null }).at;
+  const start = first !== null && !Number.isNaN(Date.parse(first)) ? Date.parse(first) : Date.parse(`${def.introduced}T00:00:00Z`);
+  return { from: new Date(Date.parse(weekStart(start))), to: now };
+}
+
 /** The report of spec 012 AC-9: every weekly bucket from `from` to `to`, a gap as `value: null, n: 0`. */
 export function computeMetrics(
   index: DatabaseSync, definitions: Record<string, MetricDefinition>,

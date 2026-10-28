@@ -29,8 +29,8 @@ definitions under agents/metrics/ and the code as you need.
 Walk the design tree in the input's `design_tree`. For every design child path with
 `exists: false`, and for every spec marked `implemented: false` (its issue has no merged
 implementation), file one plan item (a finding; never rewrite a design yourself) or say in
-`deferred` why you did not. For a spec whose `implemented` is null the issue is unknown: check
-`git log` for its implementation before deciding.
+`deferred` why you did not. For a spec whose `implemented` is null the scheduler could not derive its issue (no merged
+pull request added it); say so under `deferred` and file nothing for it.
 
 You may apply level 1 actions directly (set_parameter, pause_agent, resume_agent, run_agent), each
 with a `why` of at least 20 characters; they are listed in the plan. Everything that changes the

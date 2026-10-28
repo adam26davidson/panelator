@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { openIndex } from "../src/events/index.ts";
 import { agentsDir } from "../src/config.ts";
-import { computeMetrics, recordSnapshot } from "../src/metrics/compute.ts";
+import { backfillEvents } from "../src/events/backfill.ts";
+import { computeMetrics, historyRange, recordSnapshot } from "../src/metrics/compute.ts";
 import { formatReport } from "../src/metrics/format.ts";
 import { loadMetricDefinitions, type MetricDefinition } from "../src/metrics/definitions.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
@@ -135,5 +136,23 @@ describe("the report's statuses (AC-7, AC-9)", () => {
     const all = computeMetrics(db, defs(), { from: new Date("2026-10-05"), to: today, today, includeRetired: true });
     expect(all.metrics.find((m) => m.name === "gone")!.status).toBe("retired");
     db.close();
+  });
+});
+
+describe("metrics show history (AC-10)", () => {
+  it("starts at the earliest backfilled event, before the metric was introduced", async () => {
+    const paths = statePaths(mkdtempSync(join(tmpdir(), "history-")));
+    await ensureStateDirs(paths);
+    cpSync(join(fixtures, "backfill-state"), paths.root, { recursive: true });
+    await backfillEvents(paths);
+    const seeds = loadMetricDefinitions(join(agentsDir, "metrics"), new Date("2026-10-28"));
+    const db = openIndex(paths, { readOnly: true });
+    const range = historyRange(db, seeds.issue_to_merge_days!, new Date("2026-10-28"));
+    expect(range.from.toISOString().slice(0, 10)).toBe("2026-07-27");
+    const report = computeMetrics(db, seeds, { ...range, names: ["issue_to_merge_days"] });
+    db.close();
+    const buckets = report.metrics[0]!.buckets.map((b) => b.bucket);
+    expect(buckets[0]).toBe("2026-07-27");
+    expect(buckets.some((b) => b < seeds.issue_to_merge_days!.introduced)).toBe(true);
   });
 });

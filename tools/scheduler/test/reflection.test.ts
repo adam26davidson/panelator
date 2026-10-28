@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { ActionLog } from "../src/actions/log.ts";
 import { agentsDir } from "../src/config.ts";
 import { openIndex } from "../src/events/index.ts";
+import { recordEvent } from "../src/events/store.ts";
+import { git, repoPair } from "./helpers/repo-pair.ts";
 import { applyReflectionResult, type ApplyDeps, type ReflectionResult } from "../src/reflection/apply.ts";
 import { buildReflectionInput, groupContacts, openQuestions, periodStart, questionOutcomes, type ReflectionDeps } from "../src/reflection/input.ts";
 import { loadMetricDefinitions } from "../src/metrics/definitions.ts";
@@ -80,14 +82,23 @@ describe("reflection input (AC-15)", () => {
     expect(input.maintainer_contacts.filter((g: { recurring: boolean }) => g.recurring).length).toBeGreaterThanOrEqual(1);
   });
 
-  it("flags a missing child file and a spec with no merged implementation in the design tree", async () => {
-    const { paths, repo } = await world();
+  it("derives each spec's issue from the commit that added it and the merge events, and flags a missing child (AC-15)", async () => {
+    const paths = statePaths(mkdtempSync(join(tmpdir(), "reflection-state-")));
+    await ensureStateDirs(paths);
+    const { repo } = repoPair({ "docs/charter.md": "# Charter\n\nThe system delivers.\n", "docs/designs/foo.md": "# Foo\n\n## Children\n\n- `specs/001-a/spec.md`\n- `docs/designs/missing.md`\n" });
+    const add = (rel: string, subject: string) => { mkdirSync(join(repo, rel, ".."), { recursive: true }); writeFileSync(join(repo, rel), "# s\n\nStatus: approved\n"); git(repo, "add", "-A"); git(repo, "commit", "-q", "-m", subject); };
+    add("specs/001-a/spec.md", "spec 001: a (#22)");
+    add("specs/002-b/spec.md", "spec 002: b (#23)");
+    add("specs/003-c/spec.md", "spec 003: c, no pull request number");
+    const merge = (issue: number, pr: number) => recordEvent(paths, { at: "2026-10-20T00:00:00.000Z", kind: "merge", issue, payload: { issue, pr, cls: "debt", work: "system", at: "2026-10-20T00:00:00.000Z" } });
+    await merge(101, 22); await merge(101, 30); await merge(102, 23);
     const input = await buildReflectionInput(deps(paths, repo), def("delivery-reflection"), new Date("2026-09-01T00:00:00Z"), now) as Record<string, any>;
     expect(validate("reflection-input", input)).toEqual({ ok: true });
     expect(input.design_tree.designs).toEqual([{ path: "docs/designs/foo.md", children: [{ path: "specs/001-a/spec.md", exists: true }, { path: "docs/designs/missing.md", exists: false }] }]);
     expect(input.design_tree.specs).toEqual([
       { path: "specs/001-a/spec.md", status: "approved", issue: 101, implemented: true },
-      { path: "specs/002-b/spec.md", status: "approved", issue: 555, implemented: false },
+      { path: "specs/002-b/spec.md", status: "approved", issue: 102, implemented: false },
+      { path: "specs/003-c/spec.md", status: "approved", issue: null, implemented: null },
     ]);
   });
 
@@ -163,6 +174,18 @@ describe("reflection apply (AC-16 to AC-19)", () => {
     const db = openIndex(w.paths);
     expect(db.prepare("SELECT count(*) AS c FROM events WHERE kind IN ('reflection.plan', 'issue.filed')").get()).toEqual({ c: 4 });
     db.close();
+  });
+
+  it("lists the input's open questions in the plan body, whatever the agent's note says", async () => {
+    const w = await applyWorld();
+    const input = { open_questions: [{ issue: 103, asking_stage: "spec", sent_at: "2026-10-03T10:00:00.000Z", question: "Which audience again?" }] };
+    await applyReflectionResult(w.d, delivery, "k", "r", result([], { }), input);
+    const section = plan(w).body.split("## Open questions")[1]!.split("## Items")[0]!;
+    expect(section).toContain("#103 (spec, sent 2026-10-03T10:00:00.000Z): Which audience again?");
+    const w2 = await applyWorld();
+    await applyReflectionResult(w2.d, delivery, "k", "r", { ...result([]), plan: { ...result([]).plan, open_questions_note: "none" } }, input);
+    expect(plan(w2).body).toContain("Which audience again?");
+    expect(plan(w2).body).toContain("none");
   });
 
   it("still creates the plan issue when there are no items, and says so", async () => {

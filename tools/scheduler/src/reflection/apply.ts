@@ -38,7 +38,7 @@ const TITLE = (agent: string) => short(agent).replace(/^./, (c) => c.toUpperCase
 const MIN_BODY = 200;
 
 /** Spec 012 AC-16 to AC-19: the plan file, the plan issue, the item issues, the predecessor's close, the direct actions. */
-export async function applyReflectionResult(d: ApplyDeps, def: StandingDefinition, key: string, runId: string, result: ReflectionResult): Promise<{ plan_issue: number; filed: number[]; deferred: number }> {
+export async function applyReflectionResult(d: ApplyDeps, def: StandingDefinition, key: string, runId: string, result: ReflectionResult, input?: { open_questions?: { issue: number; asking_stage: string; sent_at: string; question: string }[] }): Promise<{ plan_issue: number; filed: number[]; deferred: number }> {
   const v = validate("reflection-result", result);
   if (!v.ok) throw new Error(`reflection result: ${v.errors.join("; ")}`);
   const at = d.now();
@@ -100,11 +100,13 @@ export async function applyReflectionResult(d: ApplyDeps, def: StandingDefinitio
     await save({ plan_issue: planIssue, filed, deferred, applied: true, actions: applied });
   }
   const list = (xs: string[]) => (xs.length ? xs.map((x) => `- ${x}`).join("\n") : "None.");
+  const oq = input?.open_questions ?? [];
+  const openQuestions = [oq.length ? oq.map((q) => `#${q.issue} (${q.asking_stage}, sent ${q.sent_at}): ${q.question}`).join("\n") : "None.", result.plan.open_questions_note].filter(Boolean).join("\n\n");
   const body = [
     result.plan.summary, "",
     "## Observations", list(result.plan.observations.map((o) => `${o.what} (${o.evidence})`)), "",
     "## Metrics", result.plan.metrics_note || "None.", "",
-    "## Open questions", result.plan.open_questions_note || "None.", "",
+    "## Open questions", openQuestions, "",
     "## Items", filed.length || deferred.length ? "" : "This plan has no items.",
     list(filed.map((f) => `#${f.issue} ${f.title} (${f.kind}${f.existing ? ", existing issue" : ""})${f.charter ? " — charter change: needs the maintainer" : ""}`)), "",
     "## Direct actions applied", list(prior?.applied ? ((prior.actions as string[]) ?? []) : applied), "",

@@ -1,3 +1,4 @@
+import { appendMerge } from "../src/state/merges.ts";
 import {TelegramClient} from '../src/telegram/client.ts';
 import {telegramChannel} from '../src/telegram/channel.ts';
 import {TelegramPoller} from '../src/telegram/poller.ts';
@@ -632,7 +633,7 @@ describe("end to end: reflection agents (spec 012)", () => {
   const merges = async (w: Awaited<ReturnType<typeof standingWorld>>, n: number, from = 1) => {
     for (let i = from; i < from + n; i++) {
       await emit(w.paths, w.registry, "merge", { issue: i, pr: i, sha: "a".repeat(40) }, w.deps.now());
-      await recordEvent(w.paths, { at: w.deps.now().toISOString(), kind: "merge", issue: i, payload: { issue: i, pr: i, cls: "debt", work: "system", at: w.deps.now().toISOString() } });
+      await appendMerge(w.paths, { issue: i, pr: i, cls: "debt", work: "system", at: w.deps.now().toISOString() });
     }
   };
   const bot = (number: number, title: string, labels: string[], body = "") => ({ number, title, body, user: { login: BOT.login }, labels: labels.map((name) => ({ name })), created_at: "2026-09-20T00:00:00Z" });
@@ -651,7 +652,7 @@ describe("end to end: reflection agents (spec 012)", () => {
     expect(plans).toHaveLength(1);
     expect(plans[0]!.title).toBe("Delivery plan 2026-10-01");
     expect(plans[0]!.labels.map((l) => l.name)).toEqual(["reflection", "reflection:delivery"]);
-    expect(plans[0]!.body).toMatch(/<!-- panelator-reflection:standing-delivery-reflection-\d+:plan -->$/);
+    expect(plans[0]!.body).toMatch(/<!-- panelator-reflection:delivery-reflection-\d+:plan -->$/);
     expect(plans[0]!.body).toContain("## Direct actions applied");
     expect(plans[0]!.body).toContain("set_parameter");
     expect(w.closed.map((i) => i.number)).toEqual([91]);
@@ -722,6 +723,82 @@ describe("end to end: reflection agents (spec 012)", () => {
     expect(w.issues.some((i) => i.title === "Item 1")).toBe(true);
   }, 30000);
 
+  it("after a process death past the plan issue (failures still 0), the restart reuses the stored plan key", async () => {
+    const w = await standingWorld({ "charter-reflection": [plan([item(1)])] });
+    await due(w, "charter-reflection");
+    const period = "2026-09-03T00:00:00.000Z", key = `charter-reflection-${Date.parse(period)}`;
+    const s = (await readAgentState(w.paths, "charter-reflection"))!;
+    await writeAgentState(w.paths, "charter-reflection", { ...s, failures: 0, running: { run_id: "dead", started_at: "2026-10-01T00:00:00.000Z" }, reflection: { period_from: period, plan_key: key } });
+    w.issues.push(bot(95, "Charter plan 2026-10-01", ["reflection", "reflection:charter"], `Where time went.\n\n<!-- panelator-reflection:${key}:plan -->`));
+    w.setNow(new Date("2026-10-01T06:00:00Z"));
+    await due(w, "charter-reflection");
+    await writeAgentState(w.paths, "operator", { ...(await readAgentState(w.paths, "operator"))!, paused: true }); // the clock jump would make it due ahead of the reflection
+    await w.scheduler.tick(); await idle(w);
+    expect((await readAgentState(w.paths, "charter-reflection"))?.last_run?.outcome).toBe("ok");
+    expect(w.issues.filter((i) => i.body.includes(":plan -->"))).toHaveLength(1);
+    expect(w.issues.find((i) => i.title === "Item 1")!.body).toContain(`Plan: #95`);
+    expect(w.issues.find((i) => i.title === "Item 1")!.body).toContain(`panelator-reflection:${key}:0`);
+  }, 30000);
+
+  it("a reflection that fails once and succeeds on retry leaves two agent.run events and one plan key", async () => {
+    const w = await standingWorld({ "charter-reflection": [undefined, plan([item(1)])] });
+    await due(w, "charter-reflection");
+    await w.scheduler.tick(); await idle(w);
+    expect((await readAgentState(w.paths, "charter-reflection"))?.failures).toBe(1);
+    w.setNow(new Date("2026-10-01T05:00:00Z"));
+    await w.scheduler.tick(); await idle(w);
+    const db = openIndex(w.paths);
+    const runs = (db.prepare("SELECT payload FROM events WHERE kind = 'agent.run' AND agent = 'charter-reflection' ORDER BY at, rowid").all() as { payload: string }[]).map((r) => JSON.parse(r.payload));
+    db.close();
+    expect(runs).toHaveLength(2);
+    expect(runs[0]).toMatchObject({ outcome: "failed", attempt: 1 });
+    expect(typeof runs[0].error).toBe("string");
+    expect(runs[1]).toMatchObject({ outcome: "ok", attempt: 2 });
+    expect(planIssues(w, "reflection:charter")).toHaveLength(1);
+  }, 30000);
+
+  it("lists an open question from the events in the plan body, whatever the agent's note says", async () => {
+    const w = await standingWorld({ "charter-reflection": [plan([])] });
+    await recordEvent(w.paths, { at: "2026-09-30T10:00:00.000Z", kind: "question", issue: 103, payload: { issue: 103, at: "2026-09-30T10:00:00.000Z", event: "sent", asking_stage: "spec", question_comment_id: 777 } });
+    await recordEvent(w.paths, { at: "2026-09-30T10:00:00.000Z", kind: "maintainer.contact", issue: 103, payload: { channel: "log", kind: "question", issue: 103, question_comment_id: 777, label: "q", text: "Which audience again?" } });
+    await due(w, "charter-reflection");
+    await w.scheduler.tick(); await idle(w);
+    const body = planIssues(w, "reflection:charter")[0]!.body;
+    expect(body).toContain("#103 (spec, sent 2026-09-30T10:00:00.000Z): Which audience again?");
+  }, 30000);
+
+  it("a twelve-item result crashing at item 4 and retried files items 1 to 8 and defers 9 to 12", async () => {
+    const result = plan(Array.from({ length: 12 }, (_, i) => item(i + 1)));
+    const w = await standingWorld({ "charter-reflection": [result, result] });
+    await due(w, "charter-reflection");
+    w.failNext.create = 5; // the plan issue and items 1 to 4 are created, the fifth item's creation fails
+    await w.scheduler.tick(); await idle(w);
+    expect((await readAgentState(w.paths, "charter-reflection"))?.failures).toBe(1);
+    expect(w.issues.filter((i) => i.labels.some((l) => l.name === "validated"))).toHaveLength(4);
+    w.setNow(new Date("2026-10-01T05:00:00Z"));
+    await w.scheduler.tick(); await idle(w);
+    expect(w.issues.filter((i) => i.labels.some((l) => l.name === "validated")).map((i) => i.title)).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map((n) => `Item ${n}`));
+    expect(planIssues(w, "reflection:charter")).toHaveLength(1);
+    const dir = join(w.paths.reflections, "charter-reflection");
+    const stored = JSON.parse(readFileSync(join(dir, readdirSync(dir).filter((f) => f.endsWith(".json"))[0]!), "utf8"));
+    expect(stored.deferred.map((d: { title: string; why: string }) => [d.title, d.why])).toEqual([9, 10, 11, 12].map((n) => [`Item ${n}`, "over the plan bound"]));
+    const b = planIssues(w, "reflection:charter")[0]!.body;
+    for (let n = 1; n <= 8; n++) expect(b).toContain(`Item ${n} (bottleneck)`);
+  }, 30000);
+
+  it("records one ci.check when a restarted service reads the same completed check on main again (AC-2)", async () => {
+    const w = await standingWorld({});
+    for (const name of Object.keys(w.registry)) await writeAgentState(w.paths, name, { ...(await readAgentState(w.paths, name))!, paused: true });
+    await w.scheduler.tick(); await idle(w);
+    const restarted = new Scheduler(w.deps); // a second process over the same state directory
+    await restarted.tick();
+    for (let i = 0; i < 1000 && restarted.active; i++) await new Promise((r) => setTimeout(r, 25));
+    const db = openIndex(w.paths);
+    const n = (db.prepare("SELECT count(*) AS c FROM events WHERE kind = 'ci.check'").get() as { c: number }).c;
+    db.close();
+    expect(n).toBe(1);
+  }, 30000);
+
   it("has recorded every kind of event across the recorded runs (AC-2)", async () => {
     const seen = new Set<string>();
     for (const p of worldPaths) {
@@ -731,5 +808,7 @@ describe("end to end: reflection agents (spec 012)", () => {
     }
     const missing = EVENT_KINDS.filter((k) => k !== "aws.cost" && !seen.has(k));
     expect(missing).toEqual([]);
+    // Only the monthly JSONL, the derived index and the backfill marker live under events/ (AC-1).
+    for (const p of worldPaths) for (const f of readdirSync(p.events)) expect(f).toMatch(/^(\d{4}-\d{2}\.jsonl|index\.sqlite(-wal|-shm|-journal)?|backfilled\.json)$/);
   });
 });

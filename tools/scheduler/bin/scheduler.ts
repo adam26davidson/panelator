@@ -29,7 +29,7 @@ import {ActionLog} from '../src/actions/log.ts';
 import {undoAction} from '../src/actions/undo.ts';
 import {onFindingsQueued} from '../src/state/findings.ts';
 import {loadMetricDefinitions,assertReadOnlySelect} from '../src/metrics/definitions.ts';
-import {computeMetrics,recordSnapshot} from '../src/metrics/compute.ts';
+import {computeMetrics,historyRange,recordSnapshot} from '../src/metrics/compute.ts';
 import {formatReport} from '../src/metrics/format.ts';
 import {openIndex} from '../src/events/index.ts';
 import {backfillEvents} from '../src/events/backfill.ts';
@@ -76,8 +76,8 @@ if(args[0]==='metrics'||args[0]==='events') {
       for(const row of db.prepare(args[2]).all())console.log(JSON.stringify(row));
     } else if(args[0]==='metrics'&&args[1]==='show') {
       const def=metrics[args[2]];if(!def)throw new Error(`unknown metric ${args[2]}`);
-      const to=new Date(),db=openIndex(paths,{readOnly:true});
-      const report=computeMetrics(db,metrics,{from:new Date(Date.parse(def.introduced+'T00:00:00Z')-7*86400000),to,names:[def.name]});
+      const db=openIndex(paths,{readOnly:true}),{from,to}=historyRange(db,def,new Date());
+      const report=computeMetrics(db,metrics,{from,to,names:[def.name]});
       console.log(JSON.stringify({definition:def,history:report.metrics[0]?.buckets},null,2));
     } else if(args[0]==='metrics'&&!args[1]?.length||args[0]==='metrics'&&args[1]?.startsWith('--')) {
       const weeks=Number(flag('--weeks')??12);if(!Number.isInteger(weeks)||weeks<1)throw new Error('--weeks must be a positive integer');

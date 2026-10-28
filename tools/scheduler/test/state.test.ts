@@ -7,6 +7,8 @@ import { initialChainState } from "../src/chain/machine.ts";
 import { listClaims, readClaim, removeClaim, touchClaim, writeClaim } from "../src/state/claims.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import { newRunId, pruneUsage, runDir, writeUsageRecord, type UsageRecord } from "../src/state/runs.ts";
+import { openIndex } from "../src/events/index.ts";
+import { appendMerge } from "../src/state/merges.ts";
 import { readToken, writeToken } from "../src/state/token.ts";
 
 function fresh() {
@@ -132,5 +134,19 @@ describe("savePatch", () => {
     expect(readFileSync(b!, "utf8")).toBe("diff b\n");
     expect(readFileSync(c!, "utf8")).toBe("diff c\n");
     expect(await savePatch(p, 7, "  \n", now)).toBeNull();
+  });
+});
+
+describe("merges", () => {
+  it("records a merge event beside the merge record", async () => {
+    const p = fresh();
+    await ensureStateDirs(p);
+    await appendMerge(p, { issue: 7, pr: 9, cls: "debt", work: "system", at: "2026-10-10T00:00:00.000Z" });
+    const db = openIndex(p);
+    const rows = db.prepare("SELECT issue, payload FROM events WHERE kind = 'merge'").all() as { issue: number; payload: string }[];
+    db.close();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.issue).toBe(7);
+    expect(JSON.parse(rows[0]!.payload)).toEqual({ issue: 7, pr: 9, cls: "debt", work: "system", at: "2026-10-10T00:00:00.000Z" });
   });
 });
