@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { validate } from "../schema/validate.ts";
 import type { StatePaths } from "../state/paths.ts";
 import { EVENT_KINDS, type EventKind } from "./kinds.ts";
+import type { CheckRun } from "../github/types.ts";
 
 /** Spec 012 AC-1: one raw event. `payload` is the record as the scheduler had it. */
 export interface SchedulerEvent {
@@ -39,4 +40,34 @@ export async function recordEvent(paths: StatePaths, input: EventInput, opts: { 
   await mkdir(paths.events, { recursive: true });
   await appendFile(eventFile(paths, at), JSON.stringify(event) + "\n");
   return event;
+}
+
+const seenChecks = new Set<string>();
+
+/** Spec 012 AC-2: `ci.check` for each completed check run read for a head or `main`, once per (sha, check, status). */
+export async function recordCiChecks(paths: StatePaths, runs: CheckRun[], at: Date, ctx: { sha: string; pr?: number; issue?: number }): Promise<void> {
+  for (const r of runs) {
+    if (r.status !== "completed") continue;
+    const status = r.conclusion ?? "unknown";
+    const key = `${paths.root}|${ctx.sha}|${r.name}|${status}`;
+    if (seenChecks.has(key)) continue;
+    seenChecks.add(key);
+    await recordEvent(paths, {
+      kind: "ci.check", at: at.toISOString(), ...(ctx.issue ? { issue: ctx.issue } : {}),
+      payload: { sha: ctx.sha, ...(ctx.pr === undefined ? {} : { pr: ctx.pr }), check: r.name, status, run_id: r.id },
+    });
+  }
+}
+
+/** Pull request numbers a body cites (`#123`, `pull/123`): what the post-merge defect metric joins on. */
+export function citedPrs(body: string): number[] {
+  return [...new Set([...body.matchAll(/(?:pull\/|#)(\d+)\b/g)].map((m) => Number(m[1])))];
+}
+
+/** Spec 012 AC-2: `issue.filed` for every issue the scheduler creates. */
+export async function recordIssueFiled(paths: StatePaths, f: { number: number; by: string; cls: string; labels: string[]; marker: string | null; body: string; at: Date }): Promise<void> {
+  await recordEvent(paths, {
+    kind: "issue.filed", at: f.at.toISOString(),
+    payload: { number: f.number, by: f.by, class: f.cls, labels: f.labels, marker: f.marker, prs: citedPrs(f.body) },
+  });
 }

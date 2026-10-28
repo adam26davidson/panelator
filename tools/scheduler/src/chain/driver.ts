@@ -27,8 +27,7 @@ import { appendFindings } from "../state/findings.ts";
 import { archiveLedger, writeLedger } from "../state/ledger.ts";
 import { classifyWork } from '../shortlist/rank.ts';
 import { appendMerge } from "../state/merges.ts";
-import { recordCiChecks } from "../events/ci.ts";
-import { recordEvent } from "../events/store.ts";
+import { recordCiChecks, recordEvent } from "../events/store.ts";
 import { writePaused, type PausedRecord } from "../state/paused.ts";
 import { savePatch } from "../state/patches.ts";
 import type { StatePaths } from "../state/paths.ts";
@@ -596,7 +595,9 @@ async function mergeEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> {
   const body = (await fetchIssue(deps,claim.issue)).body;
   const ctx = buildSelectContext(deps.repoDir,deps.cfg,new Set(),deps.cfg.app.bot_login);
   const work = classifyWork({number:claim.issue,title:'',author:'',body,labels,labelEvents:[],createdAt:''},ctx.readSpec);
-  await appendMerge(deps.paths, { issue: claim.issue, pr: pr.number, cls, work, at: deps.now().toISOString() });
+  const mergeRec = { issue: claim.issue, pr: pr.number, cls, work, at: deps.now().toISOString() };
+  await appendMerge(deps.paths, mergeRec);
+  await recordEvent(deps.paths, { kind: "merge", at: mergeRec.at, issue: mergeRec.issue, payload: { ...mergeRec } });
   return { type: "merge_result", status: "merged" };
 }
 

@@ -1,8 +1,7 @@
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { LogEntry } from "../actions/log.ts";
-import { recordIssueFiled } from "../events/filed.ts";
-import { recordEvent } from "../events/store.ts";
+import { recordEvent, recordIssueFiled } from "../events/store.ts";
 import type { GitHubClient } from "../github/client.ts";
 import { validate } from "../schema/validate.ts";
 import type { StatePaths } from "../state/paths.ts";
