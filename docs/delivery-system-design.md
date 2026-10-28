@@ -490,3 +490,4 @@ are stale and are corrected as part of B.
 - `specs/009-postponed-chain-holds-slot/spec.md`
 - `specs/010-approve-esbuild-build/spec.md`
 - `specs/011-asking-stage-keeps-its-work/spec.md`
+- `specs/012-metrics-reflection/spec.md`
