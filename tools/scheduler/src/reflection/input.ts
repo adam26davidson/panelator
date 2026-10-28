@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -127,13 +128,25 @@ export function questionOutcomes(db: DatabaseSync, since: string) {
 
 function designTree(d: ReflectionDeps, db: DatabaseSync) {
   const files = loadDesignTree(d.repoDir);
-  const merged = new Set(rows(db, "SELECT DISTINCT issue FROM events WHERE kind = 'merge'").map((r) => r.issue));
+  const merges = rows(db, "SELECT * FROM events WHERE kind = 'merge'");
+  // The spec's PR is the `(#N)` of the squash commit that added the file; the merge event for that PR names the issue.
+  const addedBy = (path: string): number | null => {
+    try {
+      const subjects = execFileSync("git", ["log", "--diff-filter=A", "--format=%s", "--", path], { cwd: d.repoDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().split("\n");
+      const m = /\(#(\d+)\)\s*$/.exec(subjects.at(-1) ?? "");
+      return m ? Number(m[1]) : null;
+    } catch { return null; }
+  };
   const designs: { path: string; children: { path: string; exists: boolean }[] }[] = [];
   const specs: { path: string; status: string | null; issue: number | null; implemented: boolean | null }[] = [];
   for (const [path, text] of files) {
     if (path.startsWith("specs/")) {
-      const issue = /^(?:Issue|Closes)[: ]+#(\d+)/im.exec(text)?.[1];
-      specs.push({ path, status: parseSpec(text).status, issue: issue ? Number(issue) : null, implemented: issue ? merged.has(Number(issue)) : null });
+      const line = /^(?:Issue|Closes)[: ]+#(\d+)/im.exec(text)?.[1];
+      const specPr = addedBy(path);
+      const issue: number | null = line ? Number(line) : merges.find((m) => specPr !== null && m.payload.pr === specPr)?.issue ?? null;
+      // Implemented: a merge for the issue other than the PR that added the spec.
+      const implemented = issue === null ? null : merges.some((m) => m.issue === issue && (specPr === null || m.payload.pr !== specPr));
+      specs.push({ path, status: parseSpec(text).status, issue, implemented });
     } else if (path !== ROOT) {
       designs.push({ path, children: (parseChildren(text) ?? []).map((c) => ({ path: c, exists: files.has(c) || existsSync(join(d.repoDir, c)) })) });
     }
