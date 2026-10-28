@@ -75,9 +75,10 @@ export async function applyReflectionResult(d: ApplyDeps, def: StandingDefinitio
     if (item.kind === "metric_change" && !/^##\s+Rationale\b/m.test(item.body)) { defer("a metric_change needs a ## Rationale section"); continue; }
     const existing = mine(marker);
     if (created >= d.maxIssues) { defer("over the plan bound"); continue; }
+    const body = item.body.replace(/^[ \t]*Spec:.*$/gm, "").trim(); // an item cannot smuggle a Spec line: the chain starts at the spec stage
     const charter = /docs\/charter\.md/.test(`${item.title}\n${item.body}`);
     const number = existing?.number ?? await createIssueRecorded(d.paths, d.gh, at, {
-      title: item.title, body: `Plan: #${planIssue}\nKind: ${item.kind}\n\n${item.body}\n\n${marker}`, labels: [item.class, "validated"], by: d.botLogin, class: item.class, marker,
+      title: item.title, body: `Plan: #${planIssue}\nKind: ${item.kind}\n\n${body}\n\n${marker}`, labels: [item.class, "validated"], by: d.botLogin, class: item.class, marker,
     });
     created++;
     filed.push({ index, title: item.title, kind: item.kind, issue: number, charter });

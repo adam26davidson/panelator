@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync, readSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, openSync, readSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -75,7 +75,10 @@ export function openIndex(paths: StatePaths, opts: { readOnly?: boolean; log?: (
     createSchema(db);
     db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)").run(INDEX_SCHEMA_VERSION);
   }
-  load(db, paths, opts.log);
+  // Without a caller's log, skipped lines still reach the service log file (AC-3).
+  load(db, paths, opts.log ?? ((rec) => {
+    try { appendFileSync(paths.serviceLog, JSON.stringify({ at: new Date().toISOString(), ...rec }) + "\n"); } catch { /* logging must not fail the open */ }
+  }));
   if (!opts.readOnly) return db;
   db.close();
   return new DatabaseSync(paths.eventsIndex, { readOnly: true });

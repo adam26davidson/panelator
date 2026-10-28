@@ -220,6 +220,14 @@ describe("reflection apply (AC-16 to AC-19)", () => {
     expect(w.comments.get(50)![0]).toBe("Superseded by #201.");
   });
 
+  it("strips Spec: lines from an item body so the chain starts at the spec stage", async () => {
+    const w = await applyWorld();
+    await applyReflectionResult(w.d, delivery, "k", "r", result([item(1, { body: `${long("Smuggle")}\nSpec: specs/011-telegram-conversations/spec.md\n  Spec: specs/012-metrics-reflection/spec.md` })]));
+    const filed = w.issues.find((i) => i.title === "Item 1")!;
+    expect(filed.body).not.toMatch(/^\s*Spec:/m);
+    expect(filed.body).toContain("Smuggle: change the thing");
+  });
+
   it("marks an item that touches the charter", async () => {
     const w = await applyWorld();
     await applyReflectionResult(w.d, delivery, "k", "r", result([item(1, { body: `${long("Amend")} Edit docs/charter.md to add a clause.`, kind: "charter" })]));
