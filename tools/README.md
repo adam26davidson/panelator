@@ -50,3 +50,36 @@ Security findings are routed to draft repository advisories, never public issues
 Wiping the state directory forgets every claim but leaves their `in-progress` labels on GitHub; remove those by hand, or the issues are never picked up again.
 
 v0 ships only the `backend` and `security` profiles. A plan whose domain names any other profile fails, and the firmware HIL check of spec section 8 has no owner until the firmware profile spec.
+
+## Events, metrics and reflection (spec 012)
+
+**The event store.** The scheduler appends every run, stage transition, merge, CI result, review, finding, action,
+question, pause, slot sample, notification, parameter change and standing-agent run as one JSON line to
+`events/<YYYY-MM>.jsonl` in its state directory, through `recordEvent`, the only writer. Nothing rewrites or deletes
+those files. `events/index.sqlite` is a derived `node:sqlite` index, rebuilt from the JSONL whenever it is missing,
+unreadable or of an older version; the service backfills the older records (`usage/`, `merges.jsonl`, the action,
+question, finding and parameter logs) once at its first start.
+
+- `panelator-scheduler events backfill` runs the backfill by hand (a second run records nothing).
+- `panelator-scheduler events query "<sql>"` runs one read-only `SELECT` against the index and prints JSON lines.
+- `panelator-scheduler metrics [--weeks n] [--json] [--snapshot] [--all]` prints the report for the last `n` weeks
+  (default 12), one row per metric and week; `--snapshot` also records it as a `metrics.snapshot` event, `--all`
+  includes retired metrics. `metrics show <name>` prints one definition and its full history.
+
+**Metrics** are definition files in `agents/metrics/<name>.yaml`: `name` (the file name), `goal` (`speed`, `delivery`,
+`quality`, `spend` or `autonomy`), `description`, `unit`, `direction` (`lower` or `higher` is better), `introduced`,
+`rationale` (at least 200 characters: the decision the metric drives and why it tracks the goal), and `query`, one
+read-only `SELECT` over the `events` table returning `(bucket, value, n)` with the parameters `:from` and `:to`
+(buckets are the Monday of each week). `replaces` names a metric the new one supersedes, which must keep being
+computed for 28 days after `introduced`, with a rationale of its own; `retired` is a date after which a metric is
+left out of the report. A bad definition stops the service with exit 78 and fails `pnpm test`. A change under
+`agents/metrics/` is a reviewed PR like any change under `agents/`; a reflection proposes one only as an issue.
+
+**Reflection agents** (`agents/standing/`): `delivery-reflection` (weekly, or after ten merges) looks for bottlenecks,
+metric trends and design-tree gaps; `charter-reflection` (weekly) judges the system against each charter clause and
+reviews every maintainer contact; `meta-reflection` (monthly) judges the metrics and the reflections. Each returns a
+plan; the scheduler writes it to `reflections/<agent>/` and creates a **plan issue** as the App, labelled
+`reflection` and `reflection:<delivery|charter|meta>` and never `validated`, so the shortlist ignores it. The
+plan's items become `validated` issues, at most `reflection_max_issues` (default 8) per plan, each opening with
+`Plan: #<plan issue>`; the rest are listed in the plan as deferred. The previous plan issue of the same agent is
+closed when the new one is filed.

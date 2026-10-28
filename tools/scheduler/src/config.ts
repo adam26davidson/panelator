@@ -26,6 +26,8 @@ export interface Config {
   };
   systemd: { scope: boolean; inhibit: boolean };
   decide: { base_url: string; key_env: string };
+  /** Issues one reflection plan may file (spec 012 AC-17); the rest are written into the plan as deferred. */
+  reflection_max_issues: number;
 }
 
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -83,8 +85,10 @@ export function loadConfig(path: string): Config {
       debt_classes: (labels.debt_classes as string[]) ?? ["class:bug", "class:tooling", "class:dependency"],
     },
     systemd: { scope: systemd.scope !== false, inhibit: systemd.inhibit !== false },
+    reflection_max_issues: num("reflection_max_issues", 8),
     decide: { base_url: String(decide.base_url ?? ""), key_env: String(decide.key_env ?? "PANELATOR_DECIDE_KEY") },
   };
+  if (!Number.isInteger(cfg.reflection_max_issues) || cfg.reflection_max_issues < 0) throw new Error("config reflection_max_issues must be a non-negative integer");
   if (cfg.slots < 1) throw new Error("config slots must be >= 1");
   if (cfg.poll_interval_s < 5) throw new Error("config poll_interval_s must be >= 5");
   if (!cfg.app.bot_login) throw new Error("config app.bot_login is required");

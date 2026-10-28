@@ -167,6 +167,9 @@
     },
     "actions": {
       "type": "array"
+    },
+    "applied": {
+      "type": "boolean"
     }
   },
   "required": [

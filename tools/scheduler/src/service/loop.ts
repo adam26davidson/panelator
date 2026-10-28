@@ -34,6 +34,7 @@ import { schedulerChanged } from "./git.ts";
 
 export interface SchedulerDeps extends DriverDeps {
   registry?:Record<string,StandingDefinition>;
+  metrics?:Record<string,import('../metrics/definitions.ts').MetricDefinition>;
   parameters?:ParameterStore;
   runStanding?:typeof runStandingAgent;
   botLogin: string;

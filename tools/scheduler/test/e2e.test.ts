@@ -29,7 +29,11 @@ import {appendFindings} from '../src/state/findings.ts';
 import {readAgentState,writeAgentState} from '../src/standing/state.ts';
 import {runStandingAgent} from '../src/standing/run.ts';
 import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
-import { chainWorld, standingWorld, scripted, RATE_LIMITED, type ChainWorld } from "./helpers/e2e-routes.ts";
+import { chainWorld, standingWorld, scripted, RATE_LIMITED, worldPaths, type ChainWorld } from "./helpers/e2e-routes.ts";
+import { emit } from "../src/standing/events.ts";
+import { recordEvent } from "../src/events/store.ts";
+import { openIndex } from "../src/events/index.ts";
+import { EVENT_KINDS } from "../src/events/kinds.ts";
 import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
 
 const spec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
@@ -96,6 +100,7 @@ describe("end to end: one issue through the whole chain with the fake adapter an
     const SHA = git(pair.repo, "rev-parse", "origin/main").trim();
     const paths = statePaths(join(pair.root, "state"));
     await ensureStateDirs(paths);
+    worldPaths.push(paths);
     const labels = new Set(["validated", "class:product"]);
     const comments: string[] = [];
     const labelLog: string[] = [];
@@ -615,4 +620,116 @@ describe('standing agents: recorded runs through the real runner and mocked App'
   await w.scheduler.tick();await idle(w);expect(w.adapter.ran.filter(s=>s==='operator')).toEqual(['operator','operator']);
   expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);expect(w.notifications).toHaveLength(1);expect(w.notifications[0].label).toMatch(/^operator:/);
  },30000);
+});
+
+describe("end to end: reflection agents (spec 012)", () => {
+  const why = "the evidence in the plan supports this change";
+  const body = (what: string) => `${what}. Change the stage prompts so the first attempt passes review; the evidence is in issues 101 to 104, where four fix cycles were needed, so the loop cost two extra runs per merge. Success looks like the rework_per_merge metric falling over the next four weeks.`;
+  const item = (n: number, over: Record<string, unknown> = {}) => ({ title: `Item ${n}`, body: body(`Item ${n}`), class: "class:tooling", kind: "bottleneck", ...over });
+  const plan = (items: unknown[], extra: Record<string, unknown> = {}) => ({ summary: "reflected", plan: { title: "Plan", summary: "Where time went.", observations: [{ what: "fix loops", evidence: "rework_per_merge 2.0" }], items, metrics_note: "speed flat", open_questions_note: "none", deferred: [], ...extra } });
+  async function idle(w: Awaited<ReturnType<typeof standingWorld>>) { for (let i = 0; i < 1000 && w.scheduler.active; i++) await new Promise((r) => setTimeout(r, 25)); expect(w.scheduler.active).toBe(0); }
+  const due = async (w: Awaited<ReturnType<typeof standingWorld>>, name: string) => { const s = (await readAgentState(w.paths, name))!; s.next_run = w.deps.now().toISOString(); await writeAgentState(w.paths, name, s); };
+  const merges = async (w: Awaited<ReturnType<typeof standingWorld>>, n: number, from = 1) => {
+    for (let i = from; i < from + n; i++) {
+      await emit(w.paths, w.registry, "merge", { issue: i, pr: i, sha: "a".repeat(40) }, w.deps.now());
+      await recordEvent(w.paths, { at: w.deps.now().toISOString(), kind: "merge", issue: i, payload: { issue: i, pr: i, cls: "debt", work: "system", at: w.deps.now().toISOString() } });
+    }
+  };
+  const bot = (number: number, title: string, labels: string[], body = "") => ({ number, title, body, user: { login: BOT.login }, labels: labels.map((name) => ({ name })), created_at: "2026-09-20T00:00:00Z" });
+  const planIssues = (w: Awaited<ReturnType<typeof standingWorld>>, label: string) => w.issues.filter((i) => i.labels.some((l) => l.name === label));
+
+  it("wakes delivery reflection on ten merges and not nine; files, points, applies one action and closes the previous plan", async () => {
+    const w = await standingWorld({ "delivery-reflection": [plan([item(1), item(2), item(3, { existing_issue: 90 })], {}).summary ? { ...plan([item(1), item(2), item(3, { existing_issue: 90 })]), actions: [{ kind: "set_parameter", args: { name: "system_work_share", value: 0.5 }, why }] } : {}] });
+    w.issues.push(bot(90, "Existing bot issue", ["class:tooling"]), bot(91, "Delivery plan 2026-09-24", ["reflection", "reflection:delivery"], "old\n\n<!-- panelator-reflection:old:plan -->"));
+    await merges(w, 9);
+    await w.scheduler.tick(); await idle(w);
+    expect(w.adapter.ran).toEqual([]);
+    await merges(w, 1, 10);
+    await w.scheduler.tick(); await idle(w);
+    expect(w.adapter.ran).toEqual(["delivery-reflection"]);
+    const plans = planIssues(w, "reflection:delivery");
+    expect(plans).toHaveLength(1);
+    expect(plans[0]!.title).toBe("Delivery plan 2026-10-01");
+    expect(plans[0]!.labels.map((l) => l.name)).toEqual(["reflection", "reflection:delivery"]);
+    expect(plans[0]!.body).toMatch(/<!-- panelator-reflection:standing-delivery-reflection-\d+:plan -->$/);
+    expect(plans[0]!.body).toContain("## Direct actions applied");
+    expect(plans[0]!.body).toContain("set_parameter");
+    expect(w.closed.map((i) => i.number)).toEqual([91]);
+    const filed = w.issues.filter((i) => i.labels.some((l) => l.name === "validated") && i.number !== 90);
+    expect(filed.map((i) => i.title)).toEqual(["Item 1", "Item 2"]);
+    expect(filed[0]!.body).toMatch(new RegExp(`^Plan: #${plans[0]!.number}\\nKind: bottleneck`));
+    expect(w.comments.get(90)).toHaveLength(1);
+    expect((await w.parameters.read("system_work_share")).value).toBe(0.5);
+    expect(existsSync(join(w.paths.reflections, "delivery-reflection"))).toBe(true);
+    expect(w.mock.unmatched).toEqual([]);
+  }, 30000);
+
+  it("files the automation item of a recurring maintainer contact", async () => {
+    const w = await standingWorld({ "charter-reflection": [plan([item(1, { kind: "automate_contact", title: "Automate the CI-red notification" })])] });
+    for (const t of ["2026-09-30T00:00:00.000Z", "2026-09-30T06:00:00.000Z"]) await recordEvent(w.paths, { at: t, kind: "maintainer.contact", payload: { channel: "log", kind: "notification", issue: 0, label: "ci", text: "main is red" } });
+    await due(w, "charter-reflection");
+    await w.scheduler.tick(); await idle(w);
+    expect(w.adapter.ran).toEqual(["charter-reflection"]);
+        const filed = w.issues.find((i) => i.title === "Automate the CI-red notification")!;
+    expect(filed.body).toContain("Kind: automate_contact");
+    expect(filed.labels.map((l) => l.name)).toEqual(["class:tooling", "validated"]);
+    expect(planIssues(w, "reflection:charter")).toHaveLength(1);
+  }, 30000);
+
+  it("files a metric_change with its rationale and defers one without", async () => {
+    const w = await standingWorld({ "meta-reflection": [plan([
+      item(1, { kind: "metric_change", title: "Replace cost metric", body: `${body("Replace")}\n\n## Rationale\nThe metric ignores rescues.` }),
+      item(2, { kind: "metric_change", title: "Drop merges metric" }),
+    ])] });
+    await due(w, "meta-reflection");
+    await w.scheduler.tick(); await idle(w);
+    expect(w.issues.map((i) => i.title)).toContain("Replace cost metric");
+    expect(w.issues.map((i) => i.title)).not.toContain("Drop merges metric");
+    const meta = planIssues(w, "reflection:meta")[0]!;
+    expect(meta.body).toContain("Drop merges metric: a metric_change needs a ## Rationale section");
+  }, 30000);
+
+  it("files eight of twelve items and writes four into the plan as over the bound", async () => {
+    const w = await standingWorld({ "charter-reflection": [plan(Array.from({ length: 12 }, (_, i) => item(i + 1)))] });
+    await due(w, "charter-reflection");
+    await w.scheduler.tick(); await idle(w);
+    expect(w.issues.filter((i) => i.labels.some((l) => l.name === "validated"))).toHaveLength(8);
+    const stored = JSON.parse(readFileSync(join(w.paths.reflections, "charter-reflection", readdirSync(join(w.paths.reflections, "charter-reflection"))[0]!), "utf8"));
+    expect(stored.deferred.map((d: { why: string }) => d.why)).toEqual(Array(4).fill("over the plan bound"));
+  }, 30000);
+
+  it("after a crash past the plan issue, the retry at a later time creates no second plan issue and no duplicate item", async () => {
+    const result = plan([item(1), item(2)]);
+    const w = await standingWorld({ "charter-reflection": [result, result] });
+    await due(w, "charter-reflection");
+    w.failNext.create = 1; // the plan issue is created, the first item's creation fails
+    await w.scheduler.tick(); await idle(w);
+    expect((await readAgentState(w.paths, "charter-reflection"))?.failures).toBe(1);
+    expect(planIssues(w, "reflection:charter")).toHaveLength(1);
+    w.setNow(new Date("2026-10-01T05:00:00Z"));
+    await w.scheduler.tick(); await idle(w);
+    expect((await readAgentState(w.paths, "charter-reflection"))?.last_run?.outcome).toBe("ok");
+    expect(planIssues(w, "reflection:charter")).toHaveLength(1);
+    expect(w.issues.filter((i) => /^Item \d$/.test(i.title))).toHaveLength(2);
+  }, 30000);
+
+  it("refuses an action outside the agent's list and files the rest of the result", async () => {
+    const w = await standingWorld({ "charter-reflection": [{ ...plan([item(1)]), actions: [{ kind: "rerun_workflow", args: { run_id: 1, cancel: false }, why }] }] });
+    await due(w, "charter-reflection");
+    await w.scheduler.tick(); await idle(w);
+    const rows = await new ActionLog(w.paths.actionsLog).list();
+    expect(rows.map((r) => [r.kind, r.status, r.reason])).toEqual([["rerun_workflow", "refused", "action not allowed"]]);
+    expect(w.issues.some((i) => i.title === "Item 1")).toBe(true);
+  }, 30000);
+
+  it("has recorded every kind of event across the recorded runs (AC-2)", async () => {
+    const seen = new Set<string>();
+    for (const p of worldPaths) {
+      const db = openIndex(p);
+      for (const r of db.prepare("SELECT DISTINCT kind FROM events").all() as { kind: string }[]) seen.add(r.kind);
+      db.close();
+    }
+    const missing = EVENT_KINDS.filter((k) => k !== "aws.cost" && !seen.has(k));
+    expect(missing).toEqual([]);
+  });
 });
