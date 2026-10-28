@@ -239,6 +239,19 @@ async function specTrackScope(deps: DriverDeps, claim: Claim, diff: string[], sp
   return specScopeGate(diff, specPath, parent, before, after, claim.state.answerKind === "product");
 }
 
+/** Spec 011 AC-4: what the resumed stage is told about the work it left before its question. */
+async function heldWorkText(deps: DriverDeps, claim: Claim): Promise<string | undefined> {
+  const held = claim.state.heldWork;
+  if (!held || held.branch !== branchOf(claim.state)) return undefined;
+  const pushed = await pushedBranch(claim.worktree, held.branch);
+  const prs = await openPrsFrom(deps, claim.issue, held.branch);
+  return [
+    `Branch ${held.branch} is at ${held.head}; it is ${pushed ? "on origin" : "not on origin"}.`,
+    `Open pull requests from it: ${prs.length ? prs.map((n) => `#${n}`).join(", ") : "(none)"}.`,
+    "This is your own work from before your question was asked; you continue from it, you do not start again.",
+  ].join("\n");
+}
+
 async function buildInput(
   deps: DriverDeps, claim: Claim, issueTitle: string, issueBody: string, specText: string, ci: string | undefined, answered: string | undefined,
 ): Promise<StageInput> {
@@ -265,6 +278,7 @@ async function buildInput(
         : s.decideInput,
     spec_problem: s.specProblem ?? undefined,
     answered_questions: answered,
+    held_work: claim.state.stage === "question-check" ? undefined : await heldWorkText(deps, claim),
     result_path: "", profile_instructions: "",
   };
 }
@@ -324,6 +338,67 @@ async function dropStaleRemoteBranch(deps: DriverDeps, claim: Claim, branch: str
   deps.log({ kind: "stale-branch-dropped", issue: claim.issue, branch, prs, patch: saved });
 }
 
+/** Whether `branch` exists on origin (a live lookup, not the tracking ref). */
+async function pushedBranch(worktree: string, branch: string): Promise<boolean> {
+  return (await gitOut(worktree, "ls-remote", "--heads", "origin", `refs/heads/${branch}`).catch(() => "")).trim() !== "";
+}
+
+/** The open PRs from `branch`; a lookup failure is logged and counts as none. */
+async function openPrsFrom(deps: DriverDeps, issue: number, branch: string): Promise<number[]> {
+  return deps.gh.openPullRequestsFrom(branch).catch((e) => {
+    deps.log({ kind: "warn", issue, msg: `open PRs from ${branch}: ${(e as Error).message}` });
+    return [] as number[];
+  });
+}
+
+/**
+ * Spec 011 AC-1: a stage's result carries a question, so the work it left is kept. The commits not on origin/main are
+ * saved as a `held` patch first (a lost worktree costs nothing), then logged; the returned head goes on the event.
+ */
+async function holdWork(deps: DriverDeps, claim: Claim, stage: Exclude<AgentStageName, "question-check" | "review">): Promise<string> {
+  const head = await worktreeHead(claim.worktree);
+  const branch = branchOf(claim.state);
+  const commits = await commitsPatch(claim.worktree, "origin/main");
+  const patch = commits.trim() ? await savePatch(deps.paths, claim.issue, commits, deps.now(), "held") : null;
+  const pushed = await pushedBranch(claim.worktree, branch);
+  const prs = await openPrsFrom(deps, claim.issue, branch);
+  deps.log({ kind: "held-work", issue: claim.issue, stage, branch, head, pushed, prs, patch });
+  return head;
+}
+
+/**
+ * Spec 011 AC-2, AC-5: with no PR bound and held work on the chain's branch, the work is kept where it is: the branch
+ * is put at the held head when the worktree lost it, and nothing is patched, dropped or reset. Returns false when
+ * there is nothing to keep (the held head is on main, or the work is lost), and the failed-attempt path applies.
+ */
+async function keepHeldWork(deps: DriverDeps, claim: Claim, branch: string): Promise<boolean> {
+  const held = claim.state.heldWork!;
+  const wt = claim.worktree;
+  if (await refExists(wt, held.head) && await isAncestor(wt, held.head, "origin/main")) return false;
+  let head = held.head;
+  if (await refExists(wt, held.head)) {
+    const current = (await gitOut(wt, "rev-parse", "--abbrev-ref", "HEAD")).trim();
+    if (current !== branch || (await worktreeHead(wt)) !== held.head) {
+      await checkoutBranch(wt, branch, held.head);
+      deps.log({ kind: "held-work-restored", issue: claim.issue, branch, head: held.head, source: "local" });
+    }
+  } else {
+    const tracking = `refs/remotes/origin/${branch}`;
+    await gitOut(wt, "fetch", "-q", "origin", `+refs/heads/${branch}:${tracking}`).catch(() => "");
+    if (!(await refExists(wt, tracking))) {
+      deps.log({ kind: "held-work-lost", issue: claim.issue, branch, head: held.head });
+      claim.state = { ...claim.state, heldWork: null };
+      return false;
+    }
+    head = (await gitOut(wt, "rev-parse", tracking)).trim();
+    await checkoutBranch(wt, branch, head);
+    claim.state = { ...claim.state, heldWork: { branch, head } };
+    deps.log({ kind: "held-work-restored", issue: claim.issue, branch, head, source: "origin" });
+  }
+  deps.log({ kind: "held-work-kept", issue: claim.issue, branch, head });
+  return true;
+}
+
 /**
  * Fetch, keep any leftovers as a patch, then put the worktree where the next step must see it: with no PR, the
  * chain's branch (`issue-<n>` or `spec-<n>`) fresh from origin/main (C1, AC-21); with a PR, that PR's branch at its
@@ -341,8 +416,13 @@ async function syncWorktree(deps: DriverDeps, claim: Claim): Promise<void> {
   }
   const branch = branchOf(claim.state);
   if (claim.state.pr === null) {
+    const held = claim.state.heldWork;
+    // Spec 011: work a stage left when it asked a question is the resumed stage's input, not a failed attempt's leftovers.
+    if (held && held.branch === branch && (await keepHeldWork(deps, claim, branch))) return;
     const commits = await commitsPatch(claim.worktree, "origin/main");
-    if (commits.trim()) {
+    // AC-6: the held work of another branch (the issue's, while the spec track records an answer) is already saved and kept.
+    const heldElsewhere = claim.state.heldWork && claim.state.heldWork.branch !== branch && (await worktreeHead(claim.worktree)) === claim.state.heldWork.head;
+    if (commits.trim() && !heldElsewhere) {
       const saved = await savePatch(deps.paths, claim.issue, commits, deps.now(), "commits");
       deps.log({ kind: "recovered-commits", issue: claim.issue, patch: saved, base: "origin/main" });
     }
@@ -469,6 +549,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
         const domain = (result as { domain: string }).domain;
         if (!listProfiles(deps.agentsDir).includes(domain)) return { type: "stage_failed", stage: "plan", reason: `profile not available: ${domain}` };
       }
+      if ("escalation" in result && result.escalation) return { type: "stage_ok", stage: "plan", result, head: await holdWork(deps, claim, "plan") };
       return { type: "stage_ok", stage: "plan", result };
     }
     case "review":
@@ -490,7 +571,8 @@ async function codeEvent(
   const state = claim.state;
   // AC-17: a result that escalates has no PR or scope to check.
   if ("escalation" in result && result.escalation) {
-    return stage === "implement" ? { type: "stage_ok", stage, result: result as ImplementOutcome } : { type: "stage_ok", stage, result: result as FixOutcome };
+    const head = await holdWork(deps, claim, stage);
+    return stage === "implement" ? { type: "stage_ok", stage, result: result as ImplementOutcome, head } : { type: "stage_ok", stage, result: result as FixOutcome, head };
   }
   const r = result as ImplementResult | { head_sha: string };
   const prNumber = stage === "implement" ? (r as ImplementResult).pr_number : state.pr?.number;
@@ -521,7 +603,7 @@ async function codeEvent(
 async function specEvent(deps: DriverDeps, claim: Claim, issueBody: string, r: SpecResult, start: string): Promise<ChainEvent> {
   const state = claim.state;
   const failed = (reason: string): ChainEvent => ({ type: "stage_failed", stage: "spec", reason });
-  if (r.verdict === "question") return { type: "stage_ok", stage: "spec", result: r };
+  if (r.verdict === "question") return { type: "stage_ok", stage: "spec", result: r, head: await holdWork(deps, claim, "spec") };
   // D5: the spec-result schema already refused a spec_path outside specs/ (the run failed as "result: invalid").
   const specPath = r.spec_path!;
   const issueSpec = specPathFromIssueBody(issueBody);
@@ -731,7 +813,11 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
           const saved = await savePatch(deps.paths, claim.issue, await commitsPatch(claim.worktree, "origin/main", local), deps.now(), "deleted-branch");
           deps.log({ kind: "branch-saved", issue: claim.issue, branch: a.branch, patch: saved });
         }
-        await checkoutBranch(claim.worktree, `issue-${claim.issue}`, "origin/main");
+        // Spec 011 AC-6: work held on the issue branch is where the resumed chain continues; no reset.
+        const held = claim.state.heldWork;
+        const keep = held && held.branch === `issue-${claim.issue}` && (await refExists(claim.worktree, held.head));
+        if (keep) deps.log({ kind: "held-work-kept", issue: claim.issue, branch: held.branch, head: held.head });
+        await checkoutBranch(claim.worktree, `issue-${claim.issue}`, keep ? held.head : "origin/main");
         await deleteLocalBranch(claim.worktree, a.branch);
         await deps.gh.deleteBranch(a.branch);
         break;

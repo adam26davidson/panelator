@@ -1043,6 +1043,8 @@ describe("chain: formatQuestion (AC-13)", () => {
   });
 });
 
+const headOf = (e: ChainEvent) => (e as { head?: string }).head;
+
 describe("chain: every event in every stage (AC-27)", () => {
   const STAGES: ChainStage[] = [
     "claimed", "plan", "implement", "verify", "review", "fix", "merge", "spec", "question-check", "done", "released", "waiting", "paused", "abandoned",
@@ -1189,10 +1191,10 @@ describe("chain: every event in every stage (AC-27)", () => {
               const label = `${stage}/${track}/${JSON.stringify(variant)}/${JSON.stringify(heldWork)}: ${JSON.stringify(event)}`;
               const r = transition(state, event);
               const after = r.state.heldWork;
-              if (event.type === "stage_ok" && event.head !== undefined && r.state.stage !== "abandoned" && r.state.stage !== "released") {
+              if (event.type === "stage_ok" && headOf(event) !== undefined && r.state.stage !== "abandoned" && r.state.stage !== "released") {
                 // A question routed from a plan, implement, fix or spec result records the new head, replacing any held work.
-                if (after !== null && (r.state.stage === "question-check" || r.state.stage === "paused")) {
-                  expect(after, label).toEqual({ branch: track === "spec" ? "spec-1" : "issue-1", head: event.head });
+                if (after !== null && (r.state.stage === "question-check" || r.state.stage === "paused" || (r.state.stage === "spec" && r.state.specMode === "decide"))) {
+                  expect(after, label).toEqual({ branch: track === "spec" ? "spec-1" : "issue-1", head: headOf(event) });
                   set++;
                   continue;
                 }
@@ -1209,7 +1211,7 @@ describe("chain: every event in every stage (AC-27)", () => {
               const bound = event.type === "stage_ok" && (event.stage === "implement" || event.stage === "fix" || event.stage === "spec") && r.state.pr !== null && heldWork!.branch === (track === "spec" ? "spec-1" : "issue-1");
               const askerFailed = (event.type === "stage_failed" && !event.postpone && event.stage === state.askingStage)
                 // An unmarked question in decide mode counts as a failed run.
-                || (event.type === "stage_ok" && event.head !== undefined && state.decideInput !== null && event.stage === state.askingStage);
+                || (event.type === "stage_ok" && headOf(event) !== undefined && state.decideInput !== null && event.stage === state.askingStage);
               expect(bound || askerFailed || ledger(r.state) > ledger(state) || r.state.stage === "abandoned", label).toBe(true);
             }
           }
