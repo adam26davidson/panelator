@@ -163,6 +163,16 @@ export class GitHubClient {
   async createIssue(title:string,body:string,labels:string[]):Promise<number> {
     const {data}=await this.octokit.request('POST /repos/{owner}/{repo}/issues',{...this.base,title,body,labels,request:{retries:0}}); return data.number;
   }
+  /** An issue's state and labels, for a reflection's `previous_plans` (spec 012 AC-15). */
+  async issueState(issue: number): Promise<{ state: "open" | "closed"; labels: string[]; closed_at: string | null }> {
+    const { data } = await this.octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}", { ...this.base, issue_number: issue });
+    return { state: data.state as "open" | "closed", labels: (data.labels as unknown[]).map((l) => (typeof l === "string" ? l : String(rec(l).name))), closed_at: data.closed_at ? String(data.closed_at) : null };
+  }
+  /** Creates the labels that do not exist yet, as the claim label is (spec 012 AC-16). */
+  async ensureLabels(labels: string[]): Promise<void> {
+    const have = new Set(((await this.octokit.paginate("GET /repos/{owner}/{repo}/labels", { ...this.base, per_page: 100 })) as Rec[]).map((l) => String(l.name)));
+    for (const name of labels.filter((l) => !have.has(l))) await this.octokit.request("POST /repos/{owner}/{repo}/labels", { ...this.base, name, request: { retries: 0 } });
+  }
   async listOpenIssuesByLabel(label:string):Promise<IssueData[]> {return (await this.listOpenIssues()).filter(i=>i.labels.includes(label));}
   async listOpenIssuesByAuthor(login:string):Promise<IssueData[]> {return (await this.listOpenIssues()).filter(i=>i.author===login);}
   async searchOpenIssuesByMarker(marker:string):Promise<IssueData[]> {return (await this.listOpenIssues()).filter(i=>i.body.includes(marker));}

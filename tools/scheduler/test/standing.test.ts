@@ -35,7 +35,7 @@ describe('standing registry', () => {
   it('rejects unknown placeholders', () => expect(() => renderStandingPrompt('{{oops}}', {})).toThrow());
   it('loads every real agent and cross-checks action code', () => {
     const kinds=registryActionsCheck('agents/actions.yaml');
-    expect(Object.keys(loadRegistry('agents/standing',EVENT_NAMES,kinds)).sort()).toEqual(['action-audit','findings-filer']);
+    expect(Object.keys(loadRegistry('agents/standing',EVENT_NAMES,kinds)).sort()).toEqual(['action-audit','charter-reflection','delivery-reflection','findings-filer','meta-reflection']);
   });
   it('still loads an agent that names a kind raised to level 2', async()=>{
     const dir=await mkdtemp(join(tmpdir(),'level2-'));
@@ -43,6 +43,18 @@ describe('standing registry', () => {
     const defs=join(dir,'standing');const {mkdir}=await import('node:fs/promises');await mkdir(defs);
     await writeFile(join(defs,'test.md'),text.replace('profile: none','profile: none\nactions: [set_parameter]'));
     expect(loadRegistry(defs,['merge'],registryActionsCheck(actions)).test.actions).toEqual(['set_parameter']);
+  });
+  it('accepts min_events with events and rejects it under 1, fractional, or without events (spec 012 AC-14)', () => {
+    expect(load(text.replace('events: [merge]','events: [merge], min_events: 10')).test.trigger.min_events).toBe(10);
+    for (const bad of ['events: [merge], min_events: 0','events: [merge], min_events: 1.5',"events: [merge], min_events: '3'"]) expect(()=>load(text.replace('events: [merge]',bad)),bad).toThrow(/min_events/);
+    expect(()=>load(text.replace('schedule: 1d, events: [merge]','schedule: 1d, min_events: 2'))).toThrow(/min_events/);
+  });
+  it('keeps the filer and the audit on the default of one event', () => {
+    const real=loadRegistry('agents/standing',EVENT_NAMES,registryActionsCheck('agents/actions.yaml'));
+    expect(real['findings-filer'].trigger.min_events).toBeUndefined();expect(real['action-audit'].trigger.min_events).toBeUndefined();
+    expect(real['delivery-reflection'].trigger).toEqual({schedule:'7d',events:['merge'],min_events:10});
+    expect(real['charter-reflection'].trigger).toEqual({schedule:'7d'});expect(real['meta-reflection'].trigger).toEqual({schedule:'30d'});
+    expect(real['meta-reflection'].actions).toEqual([]);
   });
   it('parses durations', () => { expect(parseDuration('1h')).toBe(3600000); expect(parseDuration('2d')).toBe(172800000); expect(() => parseDuration('bad')).toThrow(); });
 });

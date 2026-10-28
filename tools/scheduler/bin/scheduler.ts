@@ -153,7 +153,7 @@ const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec));
 let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
-  cfg, paths, gh, telegram,registry, parameters, emitEvent, notifier: rateLimited(new LogNotifier(paths.serviceLog,paths), cfg.notify_rate_limit_hours),
+  cfg, paths, gh, telegram,registry, metrics, parameters, emitEvent, notifier: rateLimited(new LogNotifier(paths.serviceLog,paths), cfg.notify_rate_limit_hours),
   stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: repoRoot, binDir,
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),
