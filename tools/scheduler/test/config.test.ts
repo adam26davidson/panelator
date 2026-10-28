@@ -5,6 +5,11 @@ import { describe, expect, it } from "vitest";
 import { defaultConfigPath, loadConfig } from "../src/config.ts";
 
 describe("loadConfig", () => {
+  it('defaults Telegram and rejects unknown keys and invalid timeouts',()=>{
+    const dir=mkdtempSync(join(tmpdir(),'cfg-'));const p=join(dir,'s.yaml');const base='repo: a/b\nmaintainer: a\napp: {bot_login: bot}\n';
+    writeFileSync(p,base);expect(loadConfig(p).telegram?.long_poll_timeout_s).toBe(50);expect(loadConfig(p).telegram?.credentials_path).not.toContain('~');
+    for(const block of ['telegram: {extra: 1}','telegram: {long_poll_timeout_s: 0}','telegram: {long_poll_timeout_s: nope}','telegram: []']){writeFileSync(p,base+block);expect(()=>loadConfig(p)).toThrow(/telegram/);}
+  });
   it("loads the committed agents/scheduler.yaml with defaults", () => {
     const c = loadConfig(defaultConfigPath);
     expect(c.repo).toBe("adam26davidson/panelator");

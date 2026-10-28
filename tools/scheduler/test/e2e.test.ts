@@ -1,3 +1,7 @@
+import {TelegramClient} from '../src/telegram/client.ts';
+import {telegramChannel} from '../src/telegram/channel.ts';
+import {TelegramPoller} from '../src/telegram/poller.ts';
+import {fakeTelegram} from './helpers/fake-telegram.ts';
 import {execFileSync} from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,7 +17,7 @@ import type { StageRun } from "../src/adapters/types.ts";
 import { CHARTER_REVERT_LINE } from "../src/chain/driver.ts";
 import { ledgerOf } from "../src/chain/machine.ts";
 import { listClaims } from "../src/state/claims.ts";
-import { listPaused, type PausedRecord } from "../src/state/paused.ts";
+import { writePaused,listPaused, type PausedRecord } from "../src/state/paused.ts";
 import type { Question } from "../src/types.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import type { Notification } from "../src/notify/types.ts";
@@ -30,6 +34,60 @@ import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
 
 const spec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
 const BOT = { login: "panelator-pipeline[bot]", type: "Bot" };
+
+describe('Telegram recorded chains',()=>{
+ const wait=async(f:()=>boolean)=>{for(let i=0;i<600&&!f();i++)await new Promise(r=>setTimeout(r,20));expect(f()).toBe(true);};
+ async function connect(w:ChainWorld){const server=await fakeTelegram();w.deps.telegram=telegramChannel(new TelegramClient('SECRET',42,server.url));return server;}
+ it('recovers a crash after the GitHub answer comment, confirms once and acknowledges a slept reply once',async()=>{
+  let w!:ChainWorld;const a=agents(()=>w);w=await chainWorld({files:repoFiles(),results:{plan:[{escalation:ask('capability','Enable it?')},PLAN],implement:[a.implement(9)],review:[APPROVE],'question-check':[SEND]}});const server=await connect(w);
+  try{await w.tick();const replyDate=Math.floor(Date.now()/1000)+1;w.deps.now=()=>new Date((replyDate+300)*1000);const u={update_id:15,message:{message_id:1000,date:replyDate,chat:{id:42},text:'done'}};const post=w.deps.gh.comment.bind(w.deps.gh);let crash=true;w.deps.gh.comment=async(issue,body)=>{const r=await post(issue,body);if(crash&&body.startsWith('Answer from')){crash=false;throw Error('simulated crash after remote delivery');}return r;};await expect(w.scheduler.handleTelegramUpdate(u)).rejects.toThrow('simulated crash');expect((await listPaused(w.paths))[0].phase).toBe('paused');
+   const restarted=new Scheduler(w.deps);const poll=new TelegramPoller(w.deps.telegram!.client,w.paths.telegramOffset,50,x=>restarted.handleTelegramUpdate(x),()=>{},undefined,x=>restarted.confirmTelegramUpdate(x));poll.start();try{server.push(u);await wait(()=>server.sent.some(m=>String(m.text).startsWith('Picked up your reply from')));await restarted.tick();await wait(()=>restarted.active===0);expect(w.comments.filter(c=>c.body.startsWith('Answer from'))).toHaveLength(1);await restarted.handleTelegramUpdate(u);await restarted.confirmTelegramUpdate(u);expect(server.sent.filter(m=>String(m.text).startsWith('Picked up'))).toHaveLength(1);expect(JSON.parse(readFileSync(w.paths.telegramOffset,'utf8')).next_update_id).toBe(16);expect(w.mergeRequests).toEqual([9]);await expectSettled(w);}finally{await poll.stop();}
+  }finally{await server.close();}
+ },120000);
+ it('technical review answer resumes review before the ADR fix and merge',async()=>{
+  let w!:ChainWorld;const a=agents(()=>w);w=await chainWorld({files:repoFiles(),results:{plan:[PLAN],implement:[a.implement(9)],review:[ESCALATE(ask('technical','Which cache?')),{conversation:'settled',decision:'Use option one for bounded memory'},APPROVE],fix:[a.adr()],'question-check':[SEND]}});const server=await connect(w);
+  try{await w.tick();const [r]=await listPaused(w.paths);const u={update_id:1,message:{message_id:1000,date:Math.floor(Date.now()/1000)+1,chat:{id:42},text:'Use option one'}};await w.scheduler.handleTelegramUpdate(u);await w.scheduler.confirmTelegramUpdate(u);await w.tick();const turn=w.adapter.runs.find(r=>r.conversation);expect(turn?.stage).toBe('review');expect(turn?.resume?.sessionId).toBe(r.session!.session_id);expect(w.adapter.runs.find(r=>r.stage==='fix')?.input.decision).toBe('Use option one for bounded memory');expect(w.onMain('docs/decisions/0001-x.md')).toContain('maintainer answer');expect(w.mergeRequests).toEqual([9]);await expectSettled(w);}finally{await server.close();}
+ },120000);
+ it('a missing resumed session falls back fresh in the same attempt and merges',async()=>{
+  let w!:ChainWorld;const a=agents(()=>w);w=await chainWorld({files:repoFiles(),results:{plan:[{escalation:ask('capability','Enable it?')},PLAN],implement:[a.implement(9)],review:[APPROVE],'question-check':[SEND]}});const server=await connect(w);const build=w.adapter.buildCommand.bind(w.adapter);const empty=join(w.pair.root,'empty.jsonl');writeFileSync(empty,'');let failedResume=false;w.adapter.buildCommand=run=>{if(run.resume&&!failedResume){failedResume=true;return {argv:[process.execPath,join(import.meta.dirname,'fixtures','stage-script.ts'),empty,run.resultPath,'1','0'],env:{}};}return build(run);};
+  try{await w.tick();const u={update_id:1,message:{message_id:1000,date:Math.floor(Date.now()/1000)+1,chat:{id:42},text:'done'}};await w.scheduler.handleTelegramUpdate(u);await w.scheduler.confirmTelegramUpdate(u);await w.tick();expect(failedResume).toBe(true);const records=readdirSync(w.paths.usage).map(f=>JSON.parse(readFileSync(join(w.paths.usage,f),'utf8')));expect(records.find(r=>r.resume_fallback)?.attempt).toBe(1);expect(w.mergeRequests).toEqual([9]);await expectSettled(w);}finally{await server.close();}
+ },120000);
+ it('free text with two questions waits for a choice, then resumes and merges the selected issue',async()=>{
+  let w!:ChainWorld;const a=agents(()=>w);w=await chainWorld({files:repoFiles(),results:{plan:[{escalation:ask('capability','Enable it?')},PLAN],implement:[a.implement(9)],review:[APPROVE],'question-check':[SEND]}});const server=await connect(w);
+  try{await w.tick();const [r]=await listPaused(w.paths);await writePaused(w.paths,{...r,issue:8,nonce:'other',issue_title:'Other issue'});await w.scheduler.handleTelegramUpdate({update_id:1,message:{message_id:1000,date:Math.floor(Date.now()/1000)+1,chat:{id:42},text:'done'}});expect(w.adapter.ran).toEqual(['plan','question-check']);const list=server.sent.at(-1)!;expect(list.text).toContain('#7 Thing');expect(list.text).toContain('#8 Other issue');const v={update_id:2,callback_query:{id:'pick',data:'pick:7',message:{message_id:Number(list.message_id),date:1,chat:{id:42}}}};await w.scheduler.handleTelegramUpdate(v);await w.scheduler.confirmTelegramUpdate(v);await w.tick();expect(w.mergeRequests).toEqual([9]);await expectSettled(w);}finally{await server.close();}
+ },120000);
+ it('a reminder stays on Telegram and a later issue reply wins over a button',async()=>{
+  let w!:ChainWorld;const a=agents(()=>w);w=await chainWorld({files:repoFiles(),results:{plan:[{escalation:ask('capability','Enable it?')},PLAN],implement:[a.implement(9)],review:[APPROVE],'question-check':[SEND]}});const server=await connect(w);
+  try{await w.tick();const [r]=await listPaused(w.paths);await writePaused(w.paths,{...r,asked_at:new Date(Date.now()-25*3600000).toISOString()});const comments=w.comments.length;await w.tick();expect(w.comments).toHaveLength(comments);expect(server.sent.at(-1)?.text).toContain('Still waiting');w.reply('done');await w.tick();await w.scheduler.handleTelegramUpdate({update_id:1,callback_query:{id:'late',data:`q:${r.nonce}:1`,message:{message_id:r.telegram!.message_id!,date:1,chat:{id:42}}}});expect(server.sent.at(-1)?.text).toContain('already answered on issue');expect(w.mergeRequests).toEqual([9]);await expectSettled(w);}finally{await server.close();}
+ },120000);
+ it('button reply resumes the asking session, acknowledges before work and merges',async()=>{
+  let w!:ChainWorld;const a=agents(()=>w);w=await chainWorld({files:repoFiles(),results:{plan:[{escalation:ask('capability','Can you enable it?')},PLAN],implement:[a.implement(9)],review:[APPROVE],'question-check':[SEND]}});
+  const server=await connect(w);try{
+   await w.tick();const [r]=await listPaused(w.paths);expect(r.session?.session_id).toBe(w.adapter.runs[0].sessionId);expect(server.sent).toHaveLength(1);expect(w.questions()[0].body).not.toContain('@adam');
+   const poll=new TelegramPoller(w.deps.telegram!.client,w.paths.telegramOffset,50,u=>w.scheduler.handleTelegramUpdate(u),()=>{},undefined,u=>w.scheduler.confirmTelegramUpdate(u));poll.start();
+   try{server.push({update_id:1,callback_query:{id:'cb',data:`q:${r.nonce}:1`,message:{message_id:r.telegram!.message_id!,date:Date.now()/1000,chat:{id:42}}}});await wait(()=>server.sent.some(m=>String(m.text).includes('Got it')));await w.tick();expect(w.adapter.runs[2].resume?.sessionId).toBe(r.session!.session_id);expect(w.mergeRequests).toEqual([9]);expect(server.answeredCallbacks).toHaveLength(1);
+    expect(JSON.stringify(w.logs)).not.toContain('SECRET');
+    for(const dir of readdirSync(w.paths.runs)){for(const file of ['command.txt','input.json','prompt.md'])expect(readFileSync(join(w.paths.runs,dir,file),'utf8')).not.toContain('SECRET');}
+    await expectSettled(w);}finally{await poll.stop();}
+  }finally{await server.close();}
+ },120000);
+ it('plan pushback stays in its session through a follow-up, then records the settled decision',async()=>{
+  let w!:ChainWorld;const a=agents(()=>w);const pushback='why not the second one?';
+  const follow={...ask('product','Second has a larger footprint. Still choose it?'),follow_up:true,reply_quote:pushback};
+  w=await chainWorld({files:repoFiles(),results:{plan:[{escalation:ask('product','Which layout?')},{escalation:follow},{conversation:'settled',decision:'Use second for simpler operation'},PLAN],spec:[(run:StageRun)=>{
+   const marks=w.questions().map(q=>`(maintainer answer, question #${q.id})`).join(', ');return a.spec(12,{'specs/010-thing/spec.md':specOf().replace('## 6. Open decisions',`Use second ${marks}.\n\n## 6. Open decisions`)})(run);
+  }],implement:[a.implement(9)],review:[APPROVE,APPROVE],'question-check':[SEND]}});
+  const server=await connect(w);try{
+   await w.tick();const [first]=await listPaused(w.paths);
+   const u={update_id:10,message:{message_id:1000,date:Math.floor(Date.now()/1000)+1,chat:{id:42},text:pushback}};
+   await w.scheduler.handleTelegramUpdate(u);await w.scheduler.confirmTelegramUpdate(u);await w.tick();
+   const [second]=await listPaused(w.paths);expect(second.question.follow_up).toBe(true);expect(w.adapter.runs[2].conversation).toBe(true);expect(w.adapter.runs[2].resume?.sessionId).toBe(first.session!.session_id);expect(server.sent.at(-1)?.reply_to_message_id).toBe(1000);
+   const v={update_id:11,message:{message_id:1001,date:Math.floor(Date.now()/1000)+2,chat:{id:42},text:'Use second'}};
+   await w.scheduler.handleTelegramUpdate(v);await w.scheduler.confirmTelegramUpdate(v);await w.tick();
+   const record=w.adapter.runs.find(r=>r.stage==='spec');expect(record?.input.decision).toBe('Use second for simpler operation');expect(record?.resume).toBeUndefined();expect(w.mergeRequests).toEqual([12,9]);expect(server.sent.some(m=>String(m.text).startsWith('Settled:'))).toBe(true);await expectSettled(w);
+  }finally{await server.close();}
+ },120000);
+});
 
 describe("end to end: one issue through the whole chain with the fake adapter and a mocked GitHub", () => {
   it("claims, plans, implements, verifies, reviews, merges, and leaves the records (AC-1, AC-3, AC-24, AC-29 shape)", async () => {

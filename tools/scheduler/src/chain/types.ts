@@ -9,6 +9,9 @@ export type ChainStage =
   | "done" | "released" | "waiting" | "paused" | "abandoned";
 
 export interface ChainState {
+  resumeSession?:import('../state/paused.ts').AskingSession|null;
+  conversation?: {asking:Exclude<AskingStage,'verify'>;retried:boolean;next:ChainState;actions:Action[]}|null;
+  decision?:string|null;
   issue: number;
   stage: ChainStage;
   attempt: number;
@@ -95,7 +98,8 @@ export type ChainEvent =
   | { type: "chain_error"; error: string };
 
 export type Action =
-  | { type: "run_stage"; stage: AgentStageName; attempt: number; fixInput?: string; profile?: "security" }
+  | {type:'thread_reply';text:string}
+  | { type: "run_stage"; stage: AgentStageName; attempt: number; fixInput?: string; profile?: "security";conversation?:boolean }
   | { type: "verify" }
   | { type: "merge" }
   | { type: "label"; add: string[]; remove: string[]; target?: "pr" }

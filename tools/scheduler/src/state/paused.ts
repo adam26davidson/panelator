@@ -9,7 +9,16 @@ import type { StatePaths } from "./paths.ts";
 
 export type { IssueComment } from "../github/types.ts";
 
+export interface AskingSession { harness: import('../types.ts').Harness; model:string; session_id:string; worktree:string }
+export interface TelegramThread {
+ message_id:number|null; sent:boolean; sent_at:string|null; send_failures:number; reminder_message_id:number|null;
+ thread_message_ids:number[]; thread_last_message_id:number|null; answer_update_id:number|null; ack_sent:boolean; channel:'telegram'|'issue'|null;
+}
+export const emptyTelegram = ():TelegramThread=>({message_id:null,sent:false,sent_at:null,send_failures:0,reminder_message_id:null,thread_message_ids:[],thread_last_message_id:null,answer_update_id:null,ack_sent:false,channel:null});
 export interface PausedRecord {
+  issue_title?:string;
+  session?: AskingSession|null;
+  telegram?: TelegramThread|null;
   issue: number;
   phase: "pausing" | "paused" | "resuming";
   state: ChainState;
@@ -42,7 +51,7 @@ export async function listPaused(p: StatePaths): Promise<PausedRecord[]> {
   const out: PausedRecord[] = [];
   for (const n of names) {
     const r = JSON.parse(await readFile(join(p.paused, n), "utf8")) as PausedRecord;
-    out.push({ ...r, state: normalizeChainState(r.state) });
+    out.push({ ...r, session:r.session??null, telegram:r.telegram??null, state: normalizeChainState(r.state) });
   }
   return out.sort((a, b) => a.issue - b.issue);
 }

@@ -52,6 +52,17 @@ function argvCapturingSystemdRun(dir: string): { bin: string; argvFile: string }
 }
 
 describe("runStage", () => {
+  it('falls back once before any agent turn, with a fresh prompt in the same attempt',async()=>{
+    const {paths,ctx,req,root}=setup({result:goodPlan});await ensureStateDirs(paths);
+    const adapter=ctx.adapter as ReturnType<typeof fakeAdapter>;const build=adapter.buildCommand.bind(adapter);const empty=join(root,'empty.jsonl');writeFileSync(empty,'');const good=adapter.opts.eventsFile;let calls=0;
+    adapter.buildCommand=run=>{calls++;adapter.opts.exitCode=run.resume?1:0;adapter.opts.eventsFile=run.resume?empty:good;return build(run);};
+    req.resume={sessionId:'old-session',harness:'fake',model:'m'};req.input.answer='Question #10: done';req.input.question='Please enable it';
+    const out=await runStage(ctx,req);expect(calls).toBe(2);expect(out.outcome).toBe('ok');expect(out.usage.attempt).toBe(1);expect(out.usage.resume_fallback).toContain('no init');expect(out.usage.resumed_session_id).toBe('old-session');expect(out.sessionId).toBe('sess-1');expect(readFileSync(join(paths.runs,out.runId,'prompt.md'),'utf8')).toContain('Plan #7');
+  });
+  it('a failure after an agent turn is not a resume fallback',async()=>{
+    const {paths,ctx,req}=setup({result:goodPlan,exitCode:1});await ensureStateDirs(paths);req.resume={sessionId:'old-session',harness:'fake',model:'m'};
+    const out=await runStage(ctx,req);expect(out.outcome).toBe('failed');expect(out.usage.resume_fallback).toBeUndefined();expect(out.usage.resumed_session_id).toBe('old-session');expect(out.sessionId).toBe('old-session');
+  });
   it("passes RuntimeMaxSec of the stage timeout plus ten minutes to the scope (spec 003 AC-1)", async () => {
     const { paths, ctx, req, root } = setup({ result: goodPlan, timeoutMin: 2 });
     const shim = argvCapturingSystemdRun(root);

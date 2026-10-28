@@ -88,6 +88,12 @@ export interface PendingAnswer {
 }
 
 /** A plan, implement or fix result that carries only an escalation (AC-17). Never of kind "other". */
+export interface ConversationResult {
+  conversation:'settled';
+  decision:string;
+  findings?:Finding[];
+}
+
 export interface EscalationOnly {
   escalation: Question;
   findings?: Finding[];

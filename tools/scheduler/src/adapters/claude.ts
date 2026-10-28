@@ -24,13 +24,13 @@ function buildCommand(run: ClaudeStageRun): Command {
     "--model", run.model,
     "--max-turns", String(run.bounds.max_turns),
     "--max-budget-usd", String(run.bounds.max_cost_usd),
-    "--session-id", run.sessionId,
+    ...(run.resume?['--resume',run.resume.sessionId]:['--session-id',run.sessionId]),
     "--permission-mode", "dontAsk",
   ];
   if (run.effort) argv.push("--effort", run.effort);
   if (run.fallbackModel) argv.push("--fallback-model", run.fallbackModel);
   // I5: plan, review and the question check only read, whatever the profile allows; the result file is their one write.
-  const readOnly = run.stage === "plan" || run.stage === "review" || run.stage === "question-check";
+  const readOnly = run.conversation || run.stage === "plan" || run.stage === "review" || run.stage === "question-check";
   const tools = !readOnly && run.profile && run.profile.tools.length ? run.profile.tools : ["Read", "Glob", "Grep"];
   // Absolute-path permission rule: the // prefix replaces the leading slash (Edit(//tmp/x) means /tmp/x). Claude Code
   // matches file-path rules for Edit and Read only; an Edit rule also covers the Write tool, while a Write(path) rule
@@ -38,6 +38,7 @@ function buildCommand(run: ClaudeStageRun): Command {
   const writeResult = `Edit(/${run.resultPath})`;
   argv.push("--add-dir", dirname(run.resultPath));
   argv.push("--allowedTools", [...tools, writeResult].join(","));
+  if(run.conversation)argv.push('--tools','Read,Glob,Grep,Write,Edit');
   return { argv, env: { CI: "true", CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(run.bounds.timeout_min * 60_000) } };
 }
 
