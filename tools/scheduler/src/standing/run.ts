@@ -27,12 +27,12 @@ export interface StandingDeps extends DriverDeps {parameters:ParameterStore;botL
 export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,state:AgentState):Promise<void> {
  const received=state.pending_events;
  let nActions=0,nFindings=0;
- const now=d.now(),attempt=state.failures+1,runId=`standing-${def.name}-${attempt}-${now.getTime()}`;
+ const now=d.now(),periodKey=state.period_key??now.getTime(),attempt=state.failures+1,runId=`standing-${def.name}-${attempt}-${now.getTime()}`;
  const filer:FilerDeps={paths:d.paths,gh:d.gh,botLogin:d.botLogin,now:d.now,classes:[...d.cfg.labels.feature_classes,...d.cfg.labels.debt_classes],notify:(text,key)=>d.notifier.notify({issue:0,gate:'standing',label:`${def.name}:${key??text}`,text})};
  let worktree=d.repoDir,created=false;
  let summary='',outcome='failed',error='standing run failed';
  try {
-  await updateAgentState(d.paths,def.name,s=>({...s,running:{run_id:runId,started_at:now.toISOString()}}));
+  await updateAgentState(d.paths,def.name,s=>({...s,period_key:periodKey,running:{run_id:runId,started_at:now.toISOString()}}));
   if(def.worktree==='fresh') {
    worktree=join(d.paths.worktrees,`standing-${def.name}`);
    // A run never inherits the previous run's changes, including after an interrupted run.
@@ -64,7 +64,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
    // The plan lists the direct actions applied in this run, so they are applied first (spec 012 AC-16).
    const applied=[];for(const action of body.actions??[])applied.push(await applyAction(ctx,{...action,agent:def.name,run_id:runId},def.actions));
    const ri=input as {period:{from:string};open_questions:{issue:number;asking_stage:string;question:string;sent_at:string}[]};
-   const planKey=`standing-${def.name}-${Date.parse(ri.period.from)}`;
+   const planKey=`standing-${def.name}-${periodKey}`;
    const open=ri.open_questions.map(q=>({issue:q.issue,text:`${q.question||'(question text not recorded)'} (${q.asking_stage}, sent ${q.sent_at})`}));
    await applyReflectionResult({paths:d.paths,gh:d.gh,botLogin:d.botLogin,now:d.now,classes:filer.classes,maxIssues:d.cfg.reflection_max_issues},def,runId,planKey,body as unknown as ReflectionResult,applied,open);
    await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},body.findings??[]);
@@ -81,11 +81,11 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   if(created)await removeWorktree(d.repoDir,worktree).catch(e=>d.log({kind:'error',error:String(e)}));
   await updateAgentState(d.paths,def.name,s=>{const next={...s};delete next.running;return next;});
  }
- if(outcome!=='ok'&&state.failures===0){await updateAgentState(d.paths,def.name,current=>({...current,failures:1}));return;}
  const at=d.now().toISOString();
  await recordEvent(d.paths,{kind:'agent.run',at,agent:def.name,run_id:runId,payload:{outcome,summary:summary||error,events_received:received.length,actions:nActions,findings:nFindings}});
+ if(outcome!=='ok'&&state.failures===0){await updateAgentState(d.paths,def.name,current=>({...current,failures:1}));return;}
  const next=def.trigger.schedule?new Date(d.now().getTime()+parseDuration(String((await d.parameters.read(`schedule.${def.name}`)).value))).toISOString():null;
- await updateAgentState(d.paths,def.name,current=>({...current,last_run:{at,run_id:runId,outcome},...(outcome==='ok'?{last_success:{at,run_id:runId}}:{}),summary:summary||error,next_run:next,failures:0,pending_events:current.pending_events.filter(e=>!received.some(r=>JSON.stringify(r)===JSON.stringify(e)))}));
+ await updateAgentState(d.paths,def.name,current=>({...current,period_key:undefined,last_run:{at,run_id:runId,outcome},...(outcome==='ok'?{last_success:{at,run_id:runId}}:{}),summary:summary||error,next_run:next,failures:0,pending_events:current.pending_events.filter(e=>!received.some(r=>JSON.stringify(r)===JSON.stringify(e)))}));
  if(outcome!=='ok') {
   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:at},[{what:`standing agent ${def.name} failed twice`,where:`agents/standing/${def.name}.md`,evidence:error,noticed_how:'standing run retry exhausted'}]);
   await filer.notify(`Standing agent ${def.name} failed twice: ${error}`);

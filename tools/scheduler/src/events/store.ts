@@ -3,6 +3,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { validate } from "../schema/validate.ts";
 import type { StatePaths } from "../state/paths.ts";
+import { openIndex } from "./index.ts";
 import { EVENT_KINDS, type EventKind } from "./kinds.ts";
 import type { CheckRun } from "../github/types.ts";
 
@@ -42,16 +43,22 @@ export async function recordEvent(paths: StatePaths, input: EventInput, opts: { 
   return event;
 }
 
-const seenChecks = new Set<string>();
-
 /** Spec 012 AC-2: `ci.check` for each completed check run read for a head or `main`, once per (sha, check, status). */
 export async function recordCiChecks(paths: StatePaths, runs: CheckRun[], at: Date, ctx: { sha: string; pr?: number; issue?: number }): Promise<void> {
-  for (const r of runs) {
-    if (r.status !== "completed") continue;
+  const completed = runs.filter((r) => r.status === "completed");
+  if (completed.length === 0) return;
+  // The index is the memory of what was recorded, so a restart does not record a check run twice.
+  const db = openIndex(paths);
+  const known = new Set<string>();
+  try {
+    const rows = db.prepare("SELECT payload FROM events WHERE kind = 'ci.check' AND json_extract(payload, '$.sha') = ?").all(ctx.sha) as { payload: string }[];
+    for (const row of rows) { const p = JSON.parse(row.payload) as { check: string; status: string }; known.add(`${p.check}|${p.status}`); }
+  } finally { db.close(); }
+  for (const r of completed) {
     const status = r.conclusion ?? "unknown";
-    const key = `${paths.root}|${ctx.sha}|${r.name}|${status}`;
-    if (seenChecks.has(key)) continue;
-    seenChecks.add(key);
+    const key = `${r.name}|${status}`;
+    if (known.has(key)) continue;
+    known.add(key);
     await recordEvent(paths, {
       kind: "ci.check", at: at.toISOString(), ...(ctx.issue ? { issue: ctx.issue } : {}),
       payload: { sha: ctx.sha, ...(ctx.pr === undefined ? {} : { pr: ctx.pr }), check: r.name, status, run_id: r.id },

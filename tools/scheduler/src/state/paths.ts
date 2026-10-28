@@ -43,7 +43,7 @@ export function statePaths(root: string): StatePaths {
     events: join(root, 'events'),
     eventsIndex: join(root, 'events', 'index.sqlite'),
     eventsBackfilled: join(root, 'events', 'backfilled.json'),
-    eventsEligible: join(root, 'events', 'eligible.json'),
+    eventsEligible: join(root, 'eligible.json'),
     reflections: join(root, 'reflections'),
     claims: join(root, "claims"),
     runs: join(root, "runs"),

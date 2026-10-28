@@ -31,6 +31,9 @@
       "type": "integer",
       "minimum": 0
     },
+    "period_key": {
+      "type": "number"
+    },
     "last_success": {
       "type": [
         "object",

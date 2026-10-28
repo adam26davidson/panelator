@@ -12,6 +12,8 @@ export interface AgentState {
  /** Written only by a run that ended ok: the next reflection period starts here (spec 012 AC-20). */
  last_success?:{at:string;run_id:string}|null;
  running?:{run_id:string;started_at:string};
+ /** Stable across the attempts of one run, so a retried reflection finds its plan marker (spec 012 AC-16). */
+ period_key?:number;
 }
 export async function updateAgentState(paths:StatePaths,name:string,fn:(state:AgentState)=>AgentState):Promise<void> {
  if(!/^[a-z][a-z0-9-]*$/.test(name))throw new Error('invalid agent name');
