@@ -35,6 +35,7 @@ The problem to resolve: {{spec_problem}}
 History of earlier attempts: {{history}}
 The question, if any: {{question}}
 The maintainer's answer, if any: {{answer}}
+Work you did before your question, if any: {{held_work}}
 The question check sent this back for you to decide: {{decide_input}}
 
 **What to do in each mode.**
@@ -99,6 +100,7 @@ in `docs/product-spec.md`, a decision entry in `docs/design-tree.md`) is always 
 for the maintainer, never yours to make.
 Every question is checked by an independent reviewer before it is sent; anything outside
 the three kinds comes back to you in `decide` mode.
+Commit your work before you return a question: it is kept, and your resumed run continues from it.
 
 **Marking recorded answers.** Every maintainer answer you record carries the mark
 `(maintainer answer, question #<id>)`, where `<id>` is the question comment id given with

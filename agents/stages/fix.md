@@ -36,6 +36,7 @@ Earlier attempts at this issue failed for the reasons recorded there; do not rep
 
 The question you asked earlier, if any: {{question}}
 The maintainer's answer, if any: {{answer}}
+Work you did before your question, if any: {{held_work}}
 When an answer is present it is a decision: apply it and do not reopen it. When you are
 asked to record the answer as an ADR, add a file under `docs/decisions/` that states the
 question, the decision and its reasoning, and carries the mark
@@ -66,6 +67,7 @@ a large decision with one clearly right answer is yours, recorded as an ADR in
 reviewer before it is sent, and anything outside those three kinds comes back to you to
 decide.
 
+Commit your work before you escalate: it is kept, and your resumed run continues from it.
 To escalate, write a result holding only the optional `escalation` object and `findings`:
 { "escalation": { "kind": "product" | "technical" | "capability", "question": "...", "options": [{ "label": "...", "cost": "..." }], "recommendation": "..." }, "findings": [] }
 `kind` names which of the three it is, `question` is the question in a sentence or two,

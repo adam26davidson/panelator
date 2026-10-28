@@ -97,6 +97,10 @@ describe("result schemas", () => {
     }).ok;
     expect(claim({ ...initialChainState(7), stage: "plan" })).toBe(true);
     expect(claim({ stage: "plan" })).toBe(false);
+    // Spec 011 AC-1: held work is null or a branch and a head.
+    expect(claim({ ...initialChainState(7), heldWork: null })).toBe(true);
+    expect(claim({ ...initialChainState(7), heldWork: { branch: "issue-7", head: "a".repeat(40) } })).toBe(true);
+    expect(claim({ ...initialChainState(7), heldWork: { branch: "issue-7" } })).toBe(false);
     expect(claim({ ...initialChainState(7), stage: "needs-human" })).toBe(false);
     expect(claim({ ...initialChainState(7), history: ["x".repeat(4001)] })).toBe(false);
   });

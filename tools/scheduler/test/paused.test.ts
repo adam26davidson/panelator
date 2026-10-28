@@ -71,6 +71,7 @@ describe("paused records", () => {
     expect(got.state.track).toBe("issue");
     expect(got.state.rescues).toBe(0);
     expect(got.state.history).toEqual([]);
+    expect(got.state.heldWork).toBeNull();
     expect("securityFinding" in got.state).toBe(false);
   });
   it("rejects an invalid record", async () => {

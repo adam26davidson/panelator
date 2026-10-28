@@ -50,6 +50,7 @@ describe("claims", () => {
       expect(got?.state.track).toBe("issue");
       expect(got?.state.rescues).toBe(0);
       expect(got?.state.history).toEqual([]);
+      expect(got?.state.heldWork).toBeNull();
       expect(got?.state && "securityFinding" in got.state).toBe(false);
     }
     await writeClaim(p, (await readClaim(p, 7))!);
