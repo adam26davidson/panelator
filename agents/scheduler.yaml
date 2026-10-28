@@ -15,6 +15,7 @@ liveness_hours: 2
 retry_cost_limit_usd: 1.0
 rescue_model: claude-fable-5-1   # strongest model, for rescue attempts (spec 006)
 notify_rate_limit_hours: 4
+reflection_max_issues: 8     # issues one reflection plan may file; the rest are deferred in the plan (spec 012)
 required_checks: [test]
 state_dir: ~/.local/state/panelator-scheduler
 labels:
