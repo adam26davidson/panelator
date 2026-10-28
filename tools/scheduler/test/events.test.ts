@@ -100,6 +100,14 @@ describe("the index (AC-3)", () => {
     db.close();
   });
 
+  it("reports a skipped line to the service log file when the caller passes no log", async () => {
+    const p = await fresh();
+    await seed(p);
+    appendFileSync(join(p.events, "2026-09.jsonl"), "not json\n");
+    openIndex(p).close();
+    expect(readFileSync(p.serviceLog, "utf8")).toContain("events-index-skipped-lines");
+  });
+
   it("skips a line that does not parse, reports it once and leaves the file alone", async () => {
     const p = await fresh();
     await seed(p);
