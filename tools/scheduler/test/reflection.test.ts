@@ -174,6 +174,10 @@ describe("reflection apply (AC-16 to AC-19)", () => {
     expect(JSON.parse(readFileSync(join(w.paths.reflections, "delivery-reflection", "k1.json"), "utf8"))).toMatchObject({ plan_issue: 201, filed: [{ issue: 202 }, { issue: 203 }] });
     const db = openIndex(w.paths);
     expect(db.prepare("SELECT count(*) AS c FROM events WHERE kind IN ('reflection.plan', 'issue.filed')").get()).toEqual({ c: 4 });
+    const ev = JSON.parse((db.prepare("SELECT payload FROM events WHERE kind = 'reflection.plan'").get() as { payload: string }).payload);
+    expect(ev.plan_issue).toBe(201);
+    expect(ev.plan.title).toBeTruthy();
+    expect(ev.plan.items.length).toBeGreaterThan(0);
     db.close();
   });
 

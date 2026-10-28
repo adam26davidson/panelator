@@ -115,6 +115,6 @@ export async function applyReflectionResult(d: ApplyDeps, def: StandingDefinitio
     planMarker(key),
   ].join("\n");
   await d.gh.setIssueBody(planIssue, body);
-  await record(d.paths, "reflection.plan", at, { run_id: key, agent: def.name, plan_issue: planIssue, filed: filed.map((f) => f.issue), deferred: deferred.length, title: result.plan.title }, { agent: def.name, run_id: runId });
+  await record(d.paths, "reflection.plan", at, { run_id: key, agent: def.name, plan_issue: planIssue, plan: result.plan, filed: filed.map((f) => f.issue), deferred }, { agent: def.name, run_id: runId });
   return { plan_issue: planIssue, filed: filed.map((f) => f.issue), deferred: deferred.length };
 }
