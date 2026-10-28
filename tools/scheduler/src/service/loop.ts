@@ -386,7 +386,7 @@ export class Scheduler {
           if(state.paused||this.#activeStanding.has(def.name)||!agentDue(def,state,d.now()))continue;
           if(state.running && await d.unitActive(`panelator-stage-${state.running.run_id}`))continue;
           d.inhibitor.acquire();
-          const p=(d.runStanding??runStandingAgent)({...d,parameters:d.parameters},def,state)
+          const p=(d.runStanding??runStandingAgent)({...d,parameters:d.parameters,registry:d.registry},def,state)
             .catch(e=>d.log({kind:'standing-error',agent:def.name,error:String(e)}))
             .finally(()=>{this.#activeStanding.delete(def.name);if(this.active===0){d.inhibitor.release();if(this.#restartPending&&!this.#ticking)d.requestRestart();}});
           this.#activeStanding.set(def.name,p);free--;

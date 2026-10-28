@@ -1,9 +1,14 @@
 import type { Octokit } from "octokit";
 import type { IssueData, LabelEvent } from "../types.ts";
-import type { CheckRun, CheckSummary, IssueComment, PullRequestInfo } from "./types.ts";
+import type { CheckRun, CheckSummary, IssueComment, PullRequestInfo, RawIssue } from "./types.ts";
 
 type Rec = Record<string, unknown>;
 const toComment = (c: Rec): IssueComment => ({ id: Number(c.id), author: String(rec(c.user).login ?? ""), at: String(c.created_at), body: String(c.body ?? "") });
+const toRaw = (i: Rec): RawIssue => ({
+  number: Number(i.number), title: String(i.title ?? ""), body: String(i.body ?? ""), author: String(rec(i.user).login ?? ""),
+  labels: ((i.labels as unknown[]) ?? []).map((l) => (typeof l === "string" ? l : String(rec(l).name))), state: i.state === "closed" ? "closed" : "open",
+  created_at: String(i.created_at ?? ""), closed_at: i.closed_at ? String(i.closed_at) : null,
+});
 const rec = (x: unknown): Rec => (typeof x === "object" && x !== null ? (x as Rec) : {});
 
 export class GitHubClient {
@@ -162,6 +167,23 @@ export class GitHubClient {
 
   async createIssue(title:string,body:string,labels:string[]):Promise<number> {
     const {data}=await this.octokit.request('POST /repos/{owner}/{repo}/issues',{...this.base,title,body,labels,request:{retries:0}}); return data.number;
+  }
+  /** Fully paginated, pull requests dropped, no timeline reads: the cheap listing reflection uses (open, closed or all). */
+  async listIssuesRaw(opts: { state: "open" | "closed" | "all"; labels?: string }): Promise<RawIssue[]> {
+    const raw = (await this.octokit.paginate("GET /repos/{owner}/{repo}/issues", { ...this.base, state: opts.state, per_page: 100, ...(opts.labels ? { labels: opts.labels } : {}) })) as Rec[];
+    return raw.filter((i) => !i.pull_request).map(toRaw);
+  }
+  async issueState(n: number): Promise<RawIssue> {
+    const { data } = await this.octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}", { ...this.base, issue_number: n });
+    return toRaw(data as Rec);
+  }
+  /** A label that already exists (422) is not an error. */
+  async ensureLabel(name: string, color: string): Promise<void> {
+    try {
+      await this.octokit.request("POST /repos/{owner}/{repo}/labels", { ...this.base, name, color, request: { retries: 0 } });
+    } catch (e) {
+      if ((e as { status?: number }).status !== 422) throw e;
+    }
   }
   async listOpenIssuesByLabel(label:string):Promise<IssueData[]> {return (await this.listOpenIssues()).filter(i=>i.labels.includes(label));}
   async listOpenIssuesByAuthor(login:string):Promise<IssueData[]> {return (await this.listOpenIssues()).filter(i=>i.author===login);}

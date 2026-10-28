@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {statePaths,ensureStateDirs} from '../src/state/paths.ts';
-import {initializeAgents,readAgentState,writeAgentState,pruneRemovedAgents} from '../src/standing/state.ts';
+import {agentDue,initializeAgents,readAgentState,writeAgentState,pruneRemovedAgents} from '../src/standing/state.ts';
 import {emit,EVENT_NAMES,watchMainChecks} from '../src/standing/events.ts';
 import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
 import {ParameterStore} from '../src/parameters/store.ts';
@@ -32,10 +32,24 @@ describe('standing registry', () => {
   function load(s = text) { const dir = mkdtempSync(join(tmpdir(), 'registry-')); writeFileSync(join(dir, 'test.md'), s); return loadRegistry(dir, ['merge'], []); }
   it('loads and renders', () => { expect(load().test.actions).toEqual([]); expect(renderStandingPrompt('{{agent}}', {agent:'test'})).toBe('test'); });
   it.each([['kind: standing','kind: wrong'], ['schedule: 1d','schedule: 1m'], ['events: [merge]','events: [oops]'], ['name: test','name: other'], ['worktree: none','worktree: issue'], ['tier: strong','tier: strong\nfallback: other'], ['input: audit-input','input: audit-input\nunknown: true'], ['output: standing-result','output: plan-result'], ['profile: none\n',''], ['profile: none','profile: none\nactions: [oops]']])('rejects %s -> %s', (a,b) => expect(() => load(text.replace(a,b))).toThrow(/test.md/));
+  it('accepts trigger.min_events with events and rejects it under 1, non-integer or without events (spec 012 AC-14)', () => {
+    expect(load(text.replace('events: [merge]', 'events: [merge], min_events: 10')).test.trigger.min_events).toBe(10);
+    for (const bad of ['events: [merge], min_events: 0', 'events: [merge], min_events: 1.5']) expect(() => load(text.replace('events: [merge]', bad))).toThrow(/min_events/);
+    expect(() => load(text.replace('{schedule: 1d, events: [merge]}', '{schedule: 1d, min_events: 2}'))).toThrow(/min_events/);
+  });
+  it('is due on events only once min_events are pending, and on a passed schedule with whatever is pending (spec 012 AC-14)', () => {
+    const def = load(text.replace('events: [merge]', 'events: [merge], min_events: 10')).test;
+    const now = new Date('2026-10-01T00:00:00Z');
+    const state = (n: number, next: string | null = '2026-10-09T00:00:00Z') => ({ last_run: null, next_run: next, pending_events: Array.from({ length: n }, (_, i) => ({ event: 'merge', payload: i, at: '' })), paused: false, paused_by: null, failures: 0 });
+    expect(agentDue(def, state(9), now)).toBe(false);
+    expect(agentDue(def, state(10), now)).toBe(true);
+    expect(agentDue(def, state(2, '2026-09-30T00:00:00Z'), now)).toBe(true);
+    expect(agentDue(load().test, state(1), now)).toBe(true);
+  });
   it('rejects unknown placeholders', () => expect(() => renderStandingPrompt('{{oops}}', {})).toThrow());
   it('loads every real agent and cross-checks action code', () => {
     const kinds=registryActionsCheck('agents/actions.yaml');
-    expect(Object.keys(loadRegistry('agents/standing',EVENT_NAMES,kinds)).sort()).toEqual(['action-audit','findings-filer']);
+    expect(Object.keys(loadRegistry('agents/standing',EVENT_NAMES,kinds)).sort()).toEqual(['action-audit','charter-reflection','delivery-reflection','findings-filer','meta-reflection']);
   });
   it('still loads an agent that names a kind raised to level 2', async()=>{
     const dir=await mkdtemp(join(tmpdir(),'level2-'));

@@ -1,5 +1,6 @@
 import {execFileSync} from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
@@ -25,7 +26,12 @@ import {appendFindings} from '../src/state/findings.ts';
 import {readAgentState,writeAgentState} from '../src/standing/state.ts';
 import {runStandingAgent} from '../src/standing/run.ts';
 import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
-import { chainWorld, standingWorld, scripted, RATE_LIMITED, type ChainWorld } from "./helpers/e2e-routes.ts";
+import { chainWorld, standingWorld, scripted, RATE_LIMITED, worldPaths, type ChainWorld } from "./helpers/e2e-routes.ts";
+import { emit } from "../src/standing/events.ts";
+import { recordEvent } from "../src/events/store.ts";
+import { openIndex } from "../src/events/index.ts";
+import { EVENT_KINDS, UNPRODUCED_KINDS } from "../src/events/kinds.ts";
+import { buildReflectionInput } from "../src/reflection/input.ts";
 import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
 
 const spec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
@@ -557,4 +563,155 @@ describe('standing agents: recorded runs through the real runner and mocked App'
   await w.scheduler.tick();await idle(w);expect(w.adapter.ran.filter(s=>s==='operator')).toEqual(['operator','operator']);
   expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);expect(w.notifications).toHaveLength(1);expect(w.notifications[0].label).toMatch(/^operator:/);
  },30000);
+});
+
+describe("reflection agents (spec 012 section 6)", () => {
+  type World = Awaited<ReturnType<typeof standingWorld>>;
+  const body = (what: string) => `${what}. ${"This explains what to change, why (the evidence cited in the plan) and how to tell it worked: the metric moves. ".repeat(3)}`;
+  const item = (title: string, extra: Record<string, unknown> = {}) => ({ title, body: body(title), class: "class:tooling", kind: "bottleneck", ...extra });
+  const plan = (items: unknown[], extra: Record<string, unknown> = {}) => ({ title: "Plan", summary: "What the period showed.", observations: [{ what: "CI is slow", evidence: "ci.check durations" }], items, metrics_note: "speed flat", open_questions_note: "none", deferred: [], ...extra });
+  const result = (items: unknown[], extra: Record<string, unknown> = {}, top: Record<string, unknown> = {}) => ({ summary: "reflected", plan: plan(items, extra), ...top });
+  async function runAgent(w: World, name: string) {
+    await runStandingAgent({ ...w.deps, parameters: w.parameters, registry: w.registry }, w.registry[name], (await readAgentState(w.paths, name))!);
+  }
+  async function idle(w: World) { for (let i = 0; i < 1000 && w.scheduler.active; i++) await new Promise((r) => setTimeout(r, 25)); expect(w.scheduler.active).toBe(0); }
+  const creates = (w: World) => w.mock.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues");
+
+  it("delivery reflection: woken by ten merges and not nine; files three items, points one at an existing issue, applies a parameter, closes the previous plan", async () => {
+    const why = "Independently verified operational adjustment";
+    const w = await standingWorld({ "delivery-reflection": [result([item("Cut CI wait"), item("Speed the review stage"), item("Existing bug", { existing_issue: 90 })], {}, { actions: [{ kind: "set_parameter", args: { name: "system_work_share", value: 0.5 }, why }] })] });
+    w.issues.push({ number: 90, title: "Existing", body: "x", user: { login: BOT.login }, labels: [{ name: "class:bug" }], created_at: "2026-10-01T00:00:00Z" });
+    w.issues.push({ number: 91, title: "Delivery reflection plan 2026-09-24", body: "old\n\n<!-- panelator-reflection:old:plan -->", user: { login: BOT.login }, labels: [{ name: "reflection" }, { name: "reflection:delivery" }], created_at: "2026-09-24T00:00:00Z" });
+    for (let i = 1; i <= 9; i++) await emit(w.paths, w.registry, "merge", { issue: i, pr: i, sha: `s${i}` }, w.deps.now());
+    await w.scheduler.tick(); await idle(w);
+    expect(w.adapter.ran).not.toContain("delivery-reflection");
+    await emit(w.paths, w.registry, "merge", { issue: 10, pr: 10, sha: "s10" }, w.deps.now());
+    await w.scheduler.tick(); await idle(w);
+    expect(w.adapter.ran).toContain("delivery-reflection");
+    // Plan issue plus two new items; the existing issue gets a comment, not a new issue.
+    expect(creates(w)).toHaveLength(3);
+    const plans = w.issues.filter((i) => i.labels.some((l) => l.name === "reflection:delivery") && i.number !== 91);
+    expect(plans).toHaveLength(1);
+    expect(plans[0].labels.map((l) => l.name)).toEqual(["reflection", "reflection:delivery"]);
+    expect(plans[0].body).toMatch(/<!-- panelator-reflection:standing-delivery-reflection-\d+:plan -->$/);
+    expect(plans[0].body).toContain("#90 (existing issue, linked here)");
+    expect(plans[0].body).toContain("set_parameter");
+    const filed = w.issues.filter((i) => i.labels.some((l) => l.name === "validated"));
+    expect(filed).toHaveLength(2);
+    for (const f of filed) { expect(f.body.startsWith(`Plan: #${plans[0].number}\n\nKind: bottleneck`)).toBe(true); expect(f.body).toMatch(/<!-- panelator-reflection:[^:]+:\d+ -->$/); expect(f.body).not.toMatch(/^Spec:/m); }
+    expect(w.issues.find((i) => i.number === 91)!.state).toBe("closed");
+    expect((await w.parameters.read("system_work_share")).value).toBe(0.5);
+    expect(w.comments.get(90)!.map((c) => (c as { body: string }).body).join()).toContain(`plan #${plans[0].number}`);
+    expect((await readAgentState(w.paths, "delivery-reflection"))!.last_success).not.toBeNull();
+    expect(await readdir(join(w.paths.reflections, "delivery-reflection"))).toHaveLength(1);
+    expect(w.mock.unmatched).toEqual([]);
+  }, 60000);
+
+  it("charter reflection: the input marks a recurring contact and the result files the automation item", async () => {
+    const w = await standingWorld({ "charter-reflection": [result([item("Automate the scope question", { kind: "automate_contact" })])] });
+    const at = "2026-09-28T10:00:00.000Z";
+    for (const text of ["Which scope?", "Which scope again?"]) await recordEvent(w.paths, { kind: "maintainer.contact", at, issue: 5, payload: { channel: "log", kind: "notification", issue: 5, label: "needs-decision", text } });
+    await recordEvent(w.paths, { kind: "maintainer.contact", at, payload: { channel: "log", kind: "notification", label: "ci-red", text: "once" } });
+    const input = await buildReflectionInput({ paths: w.paths, gh: w.gh, botLogin: BOT.login, parameters: w.parameters, registry: w.registry, agentsDir, repoDir: w.pair.repo, now: w.deps.now }, w.registry["charter-reflection"], (await readAgentState(w.paths, "charter-reflection"))!);
+    const contacts = input.maintainer_contacts as { label: string; count: number; recurring: boolean }[];
+    expect(contacts.find((c) => c.label === "needs-decision")).toMatchObject({ count: 2, recurring: true });
+    expect(contacts.find((c) => c.label === "ci-red")).toMatchObject({ count: 1, recurring: false });
+    expect(input.console_present).toBe(false);
+    await runAgent(w, "charter-reflection");
+    const filed = w.issues.filter((i) => i.body.includes("Kind: automate_contact"));
+    expect(filed).toHaveLength(1);
+    expect(filed[0].labels.map((l) => l.name)).toEqual(["class:tooling", "validated"]);
+  }, 60000);
+
+  it("meta-reflection: a metric_change with its rationale is filed, one without is deferred; a charter change is marked", async () => {
+    const withRationale = item("Replace cost metric", { kind: "metric_change", body: `${body("Replace cost_per_merged_issue_usd")}\n\n## Rationale\nIt must include AWS cost.` });
+    const without = item("Add a metric", { kind: "metric_change" });
+    const charter = item("Ask for a charter change", { kind: "charter", body: `${body("The charter should change")} See docs/charter.md.` });
+    const w = await standingWorld({ "meta-reflection": [result([withRationale, without, charter])] });
+    await runAgent(w, "meta-reflection");
+    const filed = w.issues.filter((i) => i.labels.some((l) => l.name === "validated"));
+    expect(filed.map((i) => i.title)).toEqual(["Replace cost metric", "Ask for a charter change"]);
+    const planIssue = w.issues.find((i) => i.labels.some((l) => l.name === "reflection:meta"))!;
+    expect(planIssue.body).toContain("Add a metric: metric_change without a ## Rationale section");
+    expect(planIssue.body).toContain("charter change: needs the maintainer");
+    expect(planIssue.labels.map((l) => l.name)).not.toContain("validated");
+  }, 60000);
+
+  it("twelve items: eight filed, four deferred as over the plan bound, and a bad class or short body is deferred", async () => {
+    const items = Array.from({ length: 12 }, (_, i) => item(`Item ${i}`));
+    const w = await standingWorld({ "delivery-reflection": [result([...items, item("Wrong class", { class: "class:nope" }), { ...item("Short"), body: "short" }])] });
+    await runAgent(w, "delivery-reflection");
+    expect(w.issues.filter((i) => i.labels.some((l) => l.name === "validated"))).toHaveLength(8);
+    const planIssue = w.issues.find((i) => i.labels.some((l) => l.name === "reflection:delivery"))!;
+    expect((planIssue.body.match(/over the plan bound/g) ?? [])).toHaveLength(4);
+    expect(planIssue.body).toContain("Wrong class: class class:nope is not a class label");
+    expect(planIssue.body).toContain("Short: body is under 200 characters");
+    const stored = JSON.parse(readFileSync(join(w.paths.reflections, "delivery-reflection", (await readdir(join(w.paths.reflections, "delivery-reflection")))[0]), "utf8"));
+    expect(stored.filed).toHaveLength(8); expect(stored.plan.deferred).toHaveLength(6);
+  }, 60000);
+
+  it("a result with no items still creates the plan issue and says so", async () => {
+    const w = await standingWorld({ "meta-reflection": [result([])] });
+    await runAgent(w, "meta-reflection");
+    expect(w.issues.find((i) => i.labels.some((l) => l.name === "reflection:meta"))!.body).toContain("This plan has no items.");
+  }, 60000);
+
+  it("a crash after the plan issue: the retry creates no second plan issue and no duplicate items", async () => {
+    const r = result([item("First"), item("Second")]);
+    const w = await standingWorld({ "delivery-reflection": [r, r] });
+    w.hooks.failCreateAt = 3; // plan issue (1), first item (2), second item fails
+    await runAgent(w, "delivery-reflection");
+    expect((await readAgentState(w.paths, "delivery-reflection"))!.failures).toBe(1);
+    await runAgent(w, "delivery-reflection");
+    expect(w.issues.filter((i) => i.labels.some((l) => l.name === "reflection:delivery"))).toHaveLength(1);
+    expect(w.issues.filter((i) => i.labels.some((l) => l.name === "validated")).map((i) => i.title).sort()).toEqual(["First", "Second"]);
+    expect((await readAgentState(w.paths, "delivery-reflection"))!.last_run?.outcome).toBe("ok");
+  }, 60000);
+
+  it("refuses an action outside the agent's list and a level 2 action, and the plan lists what was applied", async () => {
+    const why = "Independently verified operational adjustment";
+    const w = await standingWorld({ "delivery-reflection": [result([item("One")], {}, { actions: [{ kind: "rerun_workflow", args: { run_id: 1 }, why }, { kind: "set_parameter", args: { name: "system_work_share", value: 0.6 }, why }] })] });
+    await runAgent(w, "delivery-reflection");
+    const rows = await new ActionLog(w.paths.actionsLog).list();
+    expect(rows.map((r) => [r.kind, r.status, r.reason])).toEqual([["rerun_workflow", "refused", "action not allowed"], ["set_parameter", "applied", undefined]]);
+    expect(w.issues.find((i) => i.labels.some((l) => l.name === "reflection:delivery"))!.body).toContain("rerun_workflow");
+    // Level 2 is refused and queued as a finding (spec 008 AC-8).
+    const ctx = { paths: w.paths, parameters: w.parameters, log: new ActionLog(w.paths.actionsLog), levels: { ...loadActionLevels(join(agentsDir, "actions.yaml")), set_parameter: 2 as const }, gh: w.gh, now: w.deps.now };
+    const row = await applyAction(ctx, { agent: "delivery-reflection", run_id: "x", kind: "set_parameter", args: { name: "slots", value: 2 }, why }, w.registry["delivery-reflection"].actions);
+    expect(row.reason).toBe("level 2");
+  }, 60000);
+
+  it("the next plan's input shows the fate of what the last plan filed, including an abandoned issue (AC-20)", async () => {
+    const w = await standingWorld({ "delivery-reflection": [result([item("Will be abandoned")]), result([])] });
+    await runAgent(w, "delivery-reflection");
+    const filed = w.issues.find((i) => i.labels.some((l) => l.name === "validated"))!;
+    filed.labels.push({ name: "abandoned" });
+    const input = await buildReflectionInput({ paths: w.paths, gh: w.gh, botLogin: BOT.login, parameters: w.parameters, registry: w.registry, agentsDir, repoDir: w.pair.repo, now: w.deps.now }, w.registry["delivery-reflection"], (await readAgentState(w.paths, "delivery-reflection"))!);
+    expect((input.previous_plans as { issues: { number: number; state: string }[] }[])[0].issues).toEqual([expect.objectContaining({ number: filed.number, state: "abandoned" })]);
+    expect(input.period).toMatchObject({ from: expect.any(String) });
+  }, 60000);
+});
+
+describe("every event kind is recorded across the recorded chains (spec 012 AC-2)", () => {
+  it("each kind except the unproduced ones appears in the events/ files of the worlds above", () => {
+    const kinds = new Set<string>();
+    for (const paths of worldPaths) {
+      if (!existsSync(paths.events)) continue;
+      const db = openIndex(paths, { readOnly: true });
+      for (const r of db.prepare("SELECT DISTINCT kind FROM events").all() as { kind: string }[]) kinds.add(r.kind);
+      db.close();
+    }
+    const missing = EVENT_KINDS.filter((k) => !UNPRODUCED_KINDS.includes(k) && !kinds.has(k));
+    expect(missing).toEqual([]);
+  });
+  it("question and notification maintainer contacts were recorded", () => {
+    const seen = new Set<string>();
+    for (const paths of worldPaths) {
+      if (!existsSync(paths.events)) continue;
+      const db = openIndex(paths, { readOnly: true });
+      for (const r of db.prepare("SELECT DISTINCT json_extract(payload,'$.kind') AS k FROM events WHERE kind='maintainer.contact'").all() as { k: string }[]) seen.add(r.k);
+      db.close();
+    }
+    expect([...seen]).toEqual(expect.arrayContaining(["notification", "question"]));
+  });
 });

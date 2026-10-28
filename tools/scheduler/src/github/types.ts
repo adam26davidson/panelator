@@ -25,6 +25,18 @@ export interface CheckSummary {
   failed: { name: string; id: number }[];
 }
 
+/** An issue as the REST list returns it, without the timeline reads `listOpenIssues` makes. */
+export interface RawIssue {
+  number: number;
+  title: string;
+  body: string;
+  author: string;
+  labels: string[];
+  state: "open" | "closed";
+  created_at: string;
+  closed_at: string | null;
+}
+
 export interface IssueComment {
   id: number;
   author: string;

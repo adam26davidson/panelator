@@ -12,6 +12,8 @@ export interface Config {
   slots: number;
   liveness_hours: number;
   retry_cost_limit_usd: number;
+  /** Spec 012 AC-17: the most issues one reflection plan files; the rest are written into the plan as deferred. */
+  reflection_max_issues: number;
   /** the strongest model, used for rescue attempts (spec 006 AC-1) */
   rescue_model: string;
   notify_rate_limit_hours: number;
@@ -64,6 +66,7 @@ export function loadConfig(path: string): Config {
     slots: num("slots", 1),
     liveness_hours: num("liveness_hours", 2),
     retry_cost_limit_usd: num("retry_cost_limit_usd", 1),
+    reflection_max_issues: num("reflection_max_issues", 8),
     rescue_model: typeof raw.rescue_model === "string" && raw.rescue_model ? raw.rescue_model : "claude-fable-5-1",
     notify_rate_limit_hours: num("notify_rate_limit_hours", 4),
     required_checks: Array.isArray(raw.required_checks) ? (raw.required_checks as string[]) : [],
@@ -77,6 +80,7 @@ export function loadConfig(path: string): Config {
     decide: { base_url: String(decide.base_url ?? ""), key_env: String(decide.key_env ?? "PANELATOR_DECIDE_KEY") },
   };
   if (cfg.slots < 1) throw new Error("config slots must be >= 1");
+  if (!Number.isInteger(cfg.reflection_max_issues) || cfg.reflection_max_issues < 1) throw new Error("config reflection_max_issues must be an integer >= 1");
   if (cfg.poll_interval_s < 5) throw new Error("config poll_interval_s must be >= 5");
   if (!cfg.app.bot_login) throw new Error("config app.bot_login is required");
   return cfg;

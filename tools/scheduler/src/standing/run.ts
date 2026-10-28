@@ -20,8 +20,10 @@ import {buildAuditInput} from './audit-input.ts';
 import {updateAgentState,type AgentState} from './state.ts';
 import {parseDuration} from './registry.ts';
 import {recordEvent} from '../events/store.ts';
+import {buildReflectionInput} from '../reflection/input.ts';
+import {applyReflectionResult,type ReflectionResult} from '../reflection/apply.ts';
 const exec=promisify(execFile);
-export interface StandingDeps extends DriverDeps {parameters:ParameterStore;botLogin:string}
+export interface StandingDeps extends DriverDeps {parameters:ParameterStore;botLogin:string;registry?:Record<string,StandingDefinition>}
 export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,state:AgentState):Promise<void> {
  const received=state.pending_events;
  let nActions=0,nFindings=0;
@@ -38,7 +40,8 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
    await mkdir(d.paths.worktrees,{recursive:true});
    await exec('git',['worktree','add','--detach',worktree,'origin/main'],{cwd:d.repoDir});created=true;
   }
-  const input=def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):null;
+  const reflect=def.output==='reflection-result';
+  const input=reflect?await buildReflectionInput({paths:d.paths,gh:d.gh,botLogin:d.botLogin,parameters:d.parameters,registry:d.registry??{[def.name]:def},agentsDir:d.agentsDir,repoDir:d.repoDir,now:d.now,log:d.log},def,state):def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):null;
   const parameters=await d.parameters.all();
   const inputCheck=validate(def.input as SchemaName,input??{events:received,since:state.last_run?.at??null,parameters});
   if(!inputCheck.ok)throw new Error(`standing input: ${inputCheck.errors.join('; ')}`);
@@ -56,10 +59,20 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   } else if(retry.kind==='postpone')throw new Error('rate limited (429); strong tier is not downgraded');
   if(result.outcome!=='ok'||!result.result)throw new Error(result.reason??result.resultErrors.join('; '));
   const body=result.result as {summary:string;actions?:{kind:string;args:Record<string,unknown>;why:string}[];findings?:unknown[]};
-  if(def.output==='filer-result')await applyFilerResult(filer,runId,input as Awaited<ReturnType<typeof buildFilerInput>>,body as FilerResult);
-  await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},body.findings??[]);
   const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog,d.paths),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now};
-  for(const action of body.actions??[])await applyAction(ctx,{...action,agent:def.name,run_id:runId},def.actions);
+  if(reflect) {
+   // The plan lists the direct actions applied in this run, so they are applied first (spec 012 AC-16).
+   const applied=[];for(const action of body.actions??[])applied.push(await applyAction(ctx,{...action,agent:def.name,run_id:runId},def.actions));
+   const ri=input as {period:{from:string};open_questions:{issue:number;asking_stage:string;question:string;sent_at:string}[]};
+   const planKey=`standing-${def.name}-${Date.parse(ri.period.from)}`;
+   const open=ri.open_questions.map(q=>({issue:q.issue,text:`${q.question||'(question text not recorded)'} (${q.asking_stage}, sent ${q.sent_at})`}));
+   await applyReflectionResult({paths:d.paths,gh:d.gh,botLogin:d.botLogin,now:d.now,classes:filer.classes,maxIssues:d.cfg.reflection_max_issues},def,runId,planKey,body as unknown as ReflectionResult,applied,open);
+   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},body.findings??[]);
+  } else {
+   if(def.output==='filer-result')await applyFilerResult(filer,runId,input as Awaited<ReturnType<typeof buildFilerInput>>,body as FilerResult);
+   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},body.findings??[]);
+   for(const action of body.actions??[])await applyAction(ctx,{...action,agent:def.name,run_id:runId},def.actions);
+  }
   nActions=body.actions?.length??0;nFindings=body.findings?.length??0;
   summary=body.summary;outcome='ok';
   await writeFile(join(d.paths.runs,result.runId,'summary.json'),JSON.stringify({summary}));
@@ -72,7 +85,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  const at=d.now().toISOString();
  await recordEvent(d.paths,{kind:'agent.run',at,agent:def.name,run_id:runId,payload:{outcome,summary:summary||error,events_received:received.length,actions:nActions,findings:nFindings}});
  const next=def.trigger.schedule?new Date(d.now().getTime()+parseDuration(String((await d.parameters.read(`schedule.${def.name}`)).value))).toISOString():null;
- await updateAgentState(d.paths,def.name,current=>({...current,last_run:{at,run_id:runId,outcome},summary:summary||error,next_run:next,failures:0,pending_events:current.pending_events.filter(e=>!received.some(r=>JSON.stringify(r)===JSON.stringify(e)))}));
+ await updateAgentState(d.paths,def.name,current=>({...current,last_run:{at,run_id:runId,outcome},...(outcome==='ok'?{last_success:{at,run_id:runId}}:{}),summary:summary||error,next_run:next,failures:0,pending_events:current.pending_events.filter(e=>!received.some(r=>JSON.stringify(r)===JSON.stringify(e)))}));
  if(outcome!=='ok') {
   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:at},[{what:`standing agent ${def.name} failed twice`,where:`agents/standing/${def.name}.md`,evidence:error,noticed_how:'standing run retry exhausted'}]);
   await filer.notify(`Standing agent ${def.name} failed twice: ${error}`);

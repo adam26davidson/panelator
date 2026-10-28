@@ -14,6 +14,15 @@
  "properties": {
   "plan": {
    "$ref": "reflection-plan.json"
+  },
+  "summary": {
+   "type": "string"
+  },
+  "actions": {
+   "type": "array"
+  },
+  "findings": {
+   "type": "array"
   }
  }
 }
