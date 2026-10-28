@@ -56,23 +56,30 @@ describe("recordEvent (spec 012 AC-1)", () => {
     const files: string[] = [];
     const walk = (d: string) => { for (const n of readdirSync(d)) { const f = join(d, n); statSync(f).isDirectory() ? walk(f) : f.endsWith(".ts") && files.push(f); } };
     walk(join(root, "src")); walk(join(root, "bin"));
-    const allowed = /\b(appendFile|appendFileSync|readFile|readFileSync|readdir|readdirSync|stat|statSync|existsSync|openSync|readSync|DatabaseSync|mkdir|mkdirSync)\b/;
-    const index = /\b(unlinkSync|removeIndex|writeFile)\b/;
+    const paths = statePaths("/s");
+    const members = Object.entries(paths).filter(([, value]) => value === "/s/events" || value.startsWith("/s/events/")).map(([key]) => key);
+    expect(members.sort()).toEqual(["events", "eventsBackfilled", "eventsIndex"]);
+    expect(members).not.toContain("eligibleMarks");
+    const reference = new RegExp(`\\.(?:${members.join("|")})\\b|[\"'\x60]events/`);
+    const unsafe = (f: string, line: string) => {
+      if (!reference.test(line) || /^\s*(import|export|\/\/|\*|\/\*)/.test(line)) return false;
+      // Only the index module may rebuild the derived database; only backfill may write its one-time marker.
+      if (f.endsWith("src/events/index.ts") && /\b(unlinkSync|DatabaseSync)\(paths\.eventsIndex\b/.test(line)) return false;
+      if (f.endsWith("src/events/backfill.ts") && /\bwriteFile\(paths\.eventsBackfilled,/.test(line)) return false;
+      if (/\b(writeFile(?:Sync)?|rename(?:Sync)?|unlink(?:Sync)?|truncate(?:Sync)?|rm(?:Sync)?|copyFile(?:Sync)?|DatabaseSync)\s*\(/.test(line)) return true;
+      if (/\bopen(?:Sync)?\s*\(/.test(line) && !/,[ ]*["']r["']/.test(line)) return true;
+      if (/\bappendFile(?:Sync)?\s*\(/.test(line)) return !f.endsWith("src/events/store.ts");
+      return false; // reads, mkdir, declarations and path construction
+    };
     const offenders: string[] = [];
-    for (const f of files) {
-      const text = readFileSync(f, "utf8").split("\n");
-      text.forEach((line, i) => {
-        if (!/paths\.events\w*|\bevents\//.test(line) || /^\s*(\/\/|\*|\/\*)/.test(line)) return;
-        const near = text.slice(Math.max(0, i - 1), i + 2).join(" ");
-        const write = /\b(writeFile|writeFileSync|rename|renameSync|unlink|unlinkSync|truncate|rm|rmSync|copyFile)\b/.test(line);
-        // The backfill marker and the derived index are the only non-append files; both are named exactly.
-        const exempt = /eventsBackfilled|eventsIndex/.test(line) || /^\s*(import|export)/.test(line) || /\/\/ events/.test(line);
-        if (write && !exempt) offenders.push(`${f}:${i + 1}: ${line.trim()}`);
-        else if (!allowed.test(near) && !exempt && !/join\(|statePaths|string;/.test(line)) offenders.push(`${f}:${i + 1}: ${line.trim()}`);
-        void index;
-      });
-    }
+    for (const f of files) readFileSync(f, "utf8").split("\n").forEach((line, i) => {
+      if (unsafe(f, line)) offenders.push(`${f}:${i + 1}: ${line.trim()}`);
+    });
     expect(offenders).toEqual([]);
+    // Guard the guard: derived paths are not blanket exemptions for arbitrary writers.
+    for (const member of members) expect(unsafe("src/service/loop.ts", `writeFile(paths.${member}, 'oops')`)).toBe(true);
+    expect(unsafe("src/service/loop.ts", "unlinkSync(paths.eventsIndex)")).toBe(true);
+    expect(unsafe("src/service/loop.ts", "writeFile('events/eligible.json', '{}')")).toBe(true);
   });
 });
 
