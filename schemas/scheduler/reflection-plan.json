@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "reflection-plan.json",
+  "type": "object",
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "agent": {
+      "type": "string"
+    },
+    "at": {
+      "type": "string"
+    },
+    "plan_issue": {
+      "type": "integer"
+    },
+    "plan": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "what": {
+                "type": "string"
+              },
+              "evidence": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "what",
+              "evidence"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "body": {
+                "type": "string"
+              },
+              "class": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "bottleneck",
+                  "charter",
+                  "automate_contact",
+                  "metric_change",
+                  "agent_change",
+                  "other"
+                ]
+              },
+              "existing_issue": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "title",
+              "body",
+              "class",
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "metrics_note": {
+          "type": "string"
+        },
+        "open_questions_note": {
+          "type": "string"
+        },
+        "deferred": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "why": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "why"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "title",
+        "summary",
+        "observations",
+        "items",
+        "metrics_note",
+        "open_questions_note",
+        "deferred"
+      ],
+      "additionalProperties": false
+    },
+    "filed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "issue": {
+            "type": "integer"
+          },
+          "existing": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "index",
+          "title",
+          "issue"
+        ]
+      }
+    },
+    "deferred": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "why"
+        ]
+      }
+    },
+    "actions": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "agent",
+    "at",
+    "plan_issue",
+    "plan",
+    "filed",
+    "deferred"
+  ],
+  "additionalProperties": false
+}

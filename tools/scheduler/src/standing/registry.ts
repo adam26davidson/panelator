@@ -21,9 +21,10 @@ export function parseStandingDefinition(markdown: string, events: readonly strin
   sharedDefinitionChecks(fm);
   if (fm.worktree !== 'fresh' && fm.worktree !== 'none') throw new Error('worktree must be fresh or none');
   const t = fm.trigger as StandingDefinition['trigger'];
-  if (!t || typeof t !== 'object' || Array.isArray(t) || !Object.keys(t).length || Object.keys(t).some(k => !['schedule','events'].includes(k))) throw new Error('trigger must have schedule or events');
+  if (!t || typeof t !== 'object' || Array.isArray(t) || !Object.keys(t).length || Object.keys(t).some(k => !['schedule','events','min_events'].includes(k))) throw new Error('trigger must have schedule or events');
   if (t.schedule !== undefined && (typeof t.schedule !== 'string' || parseDuration(t.schedule) < 3600000 || parseDuration(t.schedule) > 30*86400000)) throw new Error('trigger.schedule must be between 1h and 30d');
   if (t.events !== undefined && (!Array.isArray(t.events) || !t.events.length || t.events.some(e => !events.includes(e)))) throw new Error('trigger.events unknown or empty');
+  if (t.min_events !== undefined && (!Number.isInteger(t.min_events) || t.min_events < 1 || t.events === undefined)) throw new Error('trigger.min_events must be an integer >= 1 and needs trigger.events');
   const allowed = fm.actions ?? [];
   if (!Array.isArray(allowed) || allowed.some(k => typeof k !== 'string' || !actions.includes(k))) throw new Error('actions contains unknown kind');
   if(fm.effort!==undefined && typeof fm.effort!=='string')throw new Error('effort must be a string');

@@ -27,6 +27,8 @@ import { appendFindings } from "../state/findings.ts";
 import { archiveLedger, writeLedger } from "../state/ledger.ts";
 import { classifyWork } from '../shortlist/rank.ts';
 import { appendMerge } from "../state/merges.ts";
+import { record } from "../events/store.ts";
+import { recordChecks } from "../events/ci.ts";
 import { emptyTelegram, writePaused, type PausedRecord } from "../state/paused.ts";
 import { savePatch } from "../state/patches.ts";
 import type { StatePaths } from "../state/paths.ts";
@@ -39,6 +41,7 @@ import type {
 import { CLAIM_LABEL, NEEDS_DECISION_LABEL, POSTPONE_WAIT_S, branchOf, initialChainState, ledgerOf, transition } from "./machine.ts";
 import { formatQuestion, questionBody, questionMarker } from "./question.ts";
 import type { Action, ChainEvent, ChainState } from "./types.ts";
+import type { ReviewResult } from "../types.ts";
 
 const execFileP = promisify(execFile);
 
@@ -367,9 +370,10 @@ async function syncWorktree(deps: DriverDeps, claim: Claim): Promise<void> {
 }
 
 /** One line per check run on the PR head for the review prompt; a lookup failure leaves the summary at "(none)". */
-async function ciSummary(deps: DriverDeps, sha: string): Promise<string | undefined> {
+async function ciSummary(deps: DriverDeps, sha: string, pr?: number): Promise<string | undefined> {
   try {
     const s = await deps.gh.checks(sha, deps.cfg.required_checks);
+    await recordChecks(deps.paths, deps.now(), { sha, pr }, s);
     const lines = s.runs.map((r) => `${r.name}: ${r.status === "completed" ? r.conclusion ?? "unknown" : r.status}`);
     const head = s.status === "green" ? `All required checks passed for ${sha}.` : s.status === "failed" ? `Required checks failed for ${sha}.` : `Checks still pending for ${sha}.`;
     return [head, ...lines].join("\n");
@@ -413,7 +417,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   const sensitive = stage === "review" && (state.sensitive || isSensitive(diffBefore, sensitiveGlobs).length > 0);
   const security = sensitive && state.securityPass;
   const profile = pickProfile(deps, def, state, security);
-  const ci = stage === "review" && state.pr ? await ciSummary(deps, state.pr.head_sha) : undefined;
+  const ci = stage === "review" && state.pr ? await ciSummary(deps, state.pr.head_sha, state.pr.number) : undefined;
   // AC-10: review gets the diff's cited answers; C8: the question check gets the issue's answered questions.
   const answered = stage === "review" ? await answeredQuestions(deps, claim.issue, claim.worktree) : stage === "question-check" ? await issueAnswers(deps, claim.issue) : undefined;
   const input = await buildInput(deps, claim, issue.title, issue.body, specText, ci, answered);
@@ -493,8 +497,15 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
       }
       return { type: "stage_ok", stage: "plan", result };
     }
-    case "review":
-      return { type: "stage_ok", stage: "review", result: out.result as never, security, sensitive };
+    case "review": {
+      const r = out.result as ReviewResult;
+      await record(deps.paths, "review.result", deps.now(), {
+        pr: state.pr?.number ?? null, head_sha: state.pr?.head_sha ?? null, verdict: r.verdict, findings: r.findings_on_pr?.length ?? 0,
+        criteria_failed: [...new Set((r.findings_on_pr ?? []).map((f) => f.criterion))], independent: def.independent ?? false,
+        reviewer_model: out.usage.model, security,
+      }, { issue: claim.issue, run_id: out.runId });
+      return { type: "stage_ok", stage: "review", result: r as never, security, sensitive };
+    }
     case "question-check":
       return { type: "stage_ok", stage: "question-check", result: out.result as never };
     case "spec":
@@ -561,6 +572,7 @@ async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> 
   const pr = claim.state.pr;
   if (!pr) throw new Error(`verify without a PR (issue ${claim.issue})`);
   const summary = await deps.gh.checks(pr.head_sha, deps.cfg.required_checks);
+  await recordChecks(deps.paths, deps.now(), { sha: pr.head_sha, pr: pr.number }, summary);
   // R1: judge sensitivity on the pushed head (after head_moved the local copy is stale).
   await syncWorktree(deps, claim);
   const sensitive = isSensitive(await diffFilesAgainstBase(claim.worktree), readSensitiveGlobs(deps.agentsDir)).length > 0;
@@ -615,7 +627,9 @@ async function mergeEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> {
   const body = (await fetchIssue(deps,claim.issue)).body;
   const ctx = buildSelectContext(deps.repoDir,deps.cfg,new Set(),deps.cfg.app.bot_login);
   const work = classifyWork({number:claim.issue,title:'',author:'',body,labels,labelEvents:[],createdAt:''},ctx.readSpec);
-  await appendMerge(deps.paths, { issue: claim.issue, pr: pr.number, cls, work, at: deps.now().toISOString() });
+  const mergeRecord = { issue: claim.issue, pr: pr.number, cls, work, at: deps.now().toISOString() };
+  await appendMerge(deps.paths, mergeRecord);
+  await record(deps.paths, "merge", mergeRecord.at, mergeRecord, { issue: claim.issue });
   return { type: "merge_result", status: "merged" };
 }
 
@@ -638,6 +652,7 @@ async function pauseIssue(deps: DriverDeps, claim: Claim, a: Extract<Action, { t
     telegram:deps.telegram?{...emptyTelegram(),...claim.telegram_thread,sent:false,message_id:null,sent_at:null,reminder_message_id:null,channel:null,answer_update_id:null,ack_sent:false,send_failures:0}:null,
   };
   await writePaused(deps.paths, rec);
+  await record(deps.paths, "pause.started", deps.now(), { stage: a.asking, reason: a.question.kind }, { issue: claim.issue });
   await completePause(deps, rec);
 }
 
@@ -661,9 +676,10 @@ export async function completePause(deps: DriverDeps, rec: PausedRecord, adoptBy
   await deps.gh.addLabels(rec.issue, [NEEDS_DECISION_LABEL]);
   await deps.gh.removeLabel(rec.issue, CLAIM_LABEL);
   await deps.notifier.notify({ issue: rec.issue, gate: "question", label: NEEDS_DECISION_LABEL, text: `Issue #${rec.issue} has a question for the maintainer (${rec.question.kind}): ${rec.question.question}` });
-  await appendQuestionLog(deps.paths, { issue: rec.issue, at: deps.now().toISOString(), event: "sent", asking_stage: rec.asking_stage, question_comment_id: questionId,channel:asked.telegram?.sent?'telegram':'issue',...(asked.telegram?.message_id?{telegram_message_id:asked.telegram.message_id}:{}) });
+  await appendQuestionLog(deps.paths, { issue: rec.issue, at: deps.now().toISOString(), event: "sent", asking_stage: rec.asking_stage, question_comment_id: questionId,channel:asked.telegram?.sent?'telegram':'issue',...(asked.telegram?.message_id?{telegram_message_id:asked.telegram.message_id}:{}) }, rec.question.question);
   await writePaused(deps.paths, { ...asked, phase: "paused" });
   await removeClaim(deps.paths, rec.issue);
+  await record(deps.paths, "issue.released", deps.now(), { reason: "paused" }, { issue: rec.issue });
 }
 
 export async function sendPausedQuestion(deps:DriverDeps,rec:PausedRecord):Promise<PausedRecord>{
@@ -676,7 +692,7 @@ export async function sendPausedQuestion(deps:DriverDeps,rec:PausedRecord):Promi
   rec={...rec,telegram:{...tg,message_id:id,sent:true,sent_at:deps.now().toISOString(),thread_last_message_id:tg.thread_last_message_id??id,thread_message_ids:[...tg.thread_message_ids,id]}};
  }catch{deps.log({kind:'telegram-send-failed',issue:rec.issue});rec={...rec,telegram:{...tg,send_failures:tg.send_failures+1}};}
  await writePaused(deps.paths,rec);
- if(rec.phase==='paused'&&rec.telegram?.sent&&rec.telegram.message_id&&rec.question_comment_id)await appendQuestionLog(deps.paths,{issue:rec.issue,at:deps.now().toISOString(),event:'sent',asking_stage:rec.asking_stage,question_comment_id:rec.question_comment_id,channel:'telegram',telegram_message_id:rec.telegram.message_id});
+ if(rec.phase==='paused'&&rec.telegram?.sent&&rec.telegram.message_id&&rec.question_comment_id)await appendQuestionLog(deps.paths,{issue:rec.issue,at:deps.now().toISOString(),event:'sent',asking_stage:rec.asking_stage,question_comment_id:rec.question_comment_id,channel:'telegram',telegram_message_id:rec.telegram.message_id},rec.question.question);
  return rec;
 }
 
@@ -731,6 +747,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
       case "release":
         if (a.savePatch) await savePatch(deps.paths, claim.issue, await uncommittedPatch(claim.worktree).catch(() => ""), deps.now(), "release");
         await removeClaim(deps.paths, claim.issue);
+        await record(deps.paths, "issue.released", deps.now(), { reason: /chain error|ui design/.test(a.reason) ? "error" : "stopped" }, { issue: claim.issue });
         status = "ended";
         break;
       case "done":
@@ -744,11 +761,13 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         }
         await removeWorktree(deps.repoDir, claim.worktree).catch((e) => deps.log({ kind: "error", issue: claim.issue, error: `worktree remove: ${(e as Error).message}` }));
         await removeClaim(deps.paths, claim.issue);
+        await record(deps.paths, "issue.released", deps.now(), { reason: claim.state.stage === "abandoned" ? "abandoned" : "done" }, { issue: claim.issue });
         status = "ended";
         break;
       case "wait":
         claim.state.postponedUntil = a.seconds >= POSTPONE_WAIT_S ? new Date(deps.now().getTime() + a.seconds * 1000).toISOString() : null;
         status = "waiting";
+        if (claim.state.postponedUntil) await record(deps.paths, "issue.released", deps.now(), { reason: "postponed" }, { issue: claim.issue });
         break;
       case "close_pr": {
         // AC-2, AC-5, C10: the closed PR's own branch is saved, from the action's fields (the state no longer has the PR).
@@ -834,6 +853,14 @@ async function logQuestion(deps: DriverDeps, before: ChainState, after: ChainSta
   }
 }
 
+/** `chain.transition` on every change of stage, and `pr.opened` when the PR appears or changes (spec 012 AC-2). */
+export async function recordTransition(deps: DriverDeps, issue: number, before: ChainState, after: ChainState, event: string): Promise<void> {
+  if (before.stage !== after.stage) {
+    await record(deps.paths, "chain.transition", deps.now(), { from: before.stage, to: after.stage, event, attempt: after.attempt, fixes: after.fixes, track: after.track, rescue: after.rescueRun }, { issue });
+  }
+  if (after.pr && after.pr.number !== before.pr?.number) await record(deps.paths, "pr.opened", deps.now(), { pr: after.pr.number, track: after.track }, { issue });
+}
+
 /** Errors propagate to the caller; the service loop catches and logs them per chain. */
 export async function step(deps: DriverDeps, claim: Claim): Promise<{ claim: Claim; status: StepStatus }> {
   // An abandonment not yet finished: finish it, no transition (AC-5).
@@ -870,6 +897,7 @@ export async function step(deps: DriverDeps, claim: Claim): Promise<{ claim: Cla
   // AC-7: the ledger is written whenever a counter or the history changes, before any action.
   if (JSON.stringify(ledgerOf(before)) !== JSON.stringify(ledgerOf(state))) await writeLedger(deps.paths, claim.issue, ledgerOf(state));
   await logQuestion(deps, before, state, event);
+  await recordTransition(deps, claim.issue, before, state, event.type);
   if (state.stage === "abandoned") {
     // AC-5: the whole action list is on disk before the first action, so a crash finishes it from where it stopped.
     claim = { ...claim, pendingActions: actions };
