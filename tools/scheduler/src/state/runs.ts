@@ -9,7 +9,7 @@ export type RunOutcome = "ok" | "failed" | "timeout" | "bounds";
 export interface UsageRecord {
   run_id: string;
   issue: number;
-  stage: AgentStageName;
+  stage: string;
   attempt: number;
   outcome: RunOutcome;
   harness: Harness;

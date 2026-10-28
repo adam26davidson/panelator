@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "filer-result.json",
+  "allOf": [
+    {
+      "$ref": "standing-result.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "ref": {
+                "type": "string",
+                "minLength": 1
+              },
+              "outcome": {
+                "enum": [
+                  "discard",
+                  "file",
+                  "merge_into",
+                  "escalate",
+                  "security",
+                  "retry",
+                  "rewrite",
+                  "close",
+                  "defer"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "issue": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "body": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "class": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "title",
+                  "body",
+                  "class"
+                ],
+                "additionalProperties": false
+              },
+              "issue_number": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "question": {
+                "$ref": "question.json"
+              },
+              "advisory": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "severity": {
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high",
+                      "critical"
+                    ]
+                  }
+                },
+                "required": [
+                  "title",
+                  "description",
+                  "severity"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "ref",
+              "outcome",
+              "reason"
+            ],
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "outcome": {
+                      "enum": [
+                        "file",
+                        "rewrite",
+                        "escalate"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {"issue": {}},
+                  "required": ["issue"]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "outcome": {
+                      "const": "merge_into"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {"issue_number": {}},
+                  "required": ["issue_number"]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "outcome": {
+                      "const": "escalate"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {"question": {}},
+                  "required": ["question"]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "outcome": {
+                      "const": "security"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {"advisory": {}},
+                  "required": ["advisory"]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "decisions"
+      ],
+      "additionalProperties": true
+    }
+  ]
+}

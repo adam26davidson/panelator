@@ -22,6 +22,26 @@ function client(routes: Route[]) {
   return { c: new GitHubClient(octokit, "o/r"), gh };
 }
 
+describe('standing agent App writes',()=>{
+ it('creates issues and private advisories; reruns and cancels workflow runs',async()=>{
+  const {c,gh}=client([
+   {method:'POST',path:/^\/repos\/o\/r\/issues$/,reply:()=>({status:201,body:{number:42}})},
+   {method:'POST',path:/^\/repos\/o\/r\/security-advisories$/,reply:()=>({status:201,body:{ghsa_id:'GHSA-private'}})},
+   {method:'POST',path:/^\/repos\/o\/r\/actions\/runs\/7\/(rerun|cancel)$/,reply:()=>({status:202,body:{}})},
+   {method:'POST',path:/^\/repos\/o\/r\/issues\/42\/comments$/,reply:()=>({status:201,body:{id:1,created_at:'now'}})},
+   {method:'PATCH',path:/^\/repos\/o\/r\/issues\/42$/,reply:()=>({body:{}})},
+  ]);
+  expect(await c.createIssue('Bug','Evidence',['validated','class:bug'])).toBe(42);
+  expect(await c.createDraftSecurityAdvisory({title:'Private',description:'Details',severity:'high'})).toBe('GHSA-private');
+  await c.rerunWorkflowRun(7);await c.cancelWorkflowRun(7);await c.closeIssue(42,'Superseded');
+  expect(gh.calls[1].body).toMatchObject({summary:'Private',description:'Details',severity:'high'});expect(gh.unmatched).toEqual([]);
+ },20000);
+ it('surfaces actions:read permission failures without retrying a write',async()=>{
+  const {c,gh}=client([{method:'POST',path:/^\/repos\/o\/r\/actions\/runs\/7\/rerun$/,reply:()=>({status:403,body:{message:'Resource not accessible by integration'}})}]);
+  await expect(c.rerunWorkflowRun(7)).rejects.toThrow(/Resource not accessible/);expect(gh.calls).toHaveLength(1);
+ });
+});
+
 describe("listOpenIssues (process-spec 6.4)", () => {
   const issuesRoute = (pages: unknown[][]): Route => ({
     method: "GET", path: /^\/repos\/o\/r\/issues$/,

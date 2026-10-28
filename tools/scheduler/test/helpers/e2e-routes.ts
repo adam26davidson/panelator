@@ -15,12 +15,21 @@ import { ensureStateDirs, statePaths, type StatePaths } from "../../src/state/pa
 import { mockGitHub, pageLink, type Route } from "./mock-github.ts";
 import { git, repoPair } from "./repo-pair.ts";
 
+import {loadRegistry} from '../../src/standing/registry.ts';
+import {EVENT_NAMES} from '../../src/standing/events.ts';
+import {initializeAgents,readAgentState,writeAgentState} from '../../src/standing/state.ts';
+import {ParameterStore} from '../../src/parameters/store.ts';
+import {loadParameterDefinitions} from '../../src/parameters/definitions.ts';
+import {registryActionsCheck} from '../../src/actions/index.ts';
+
 const script = join(import.meta.dirname, "..", "fixtures", "stage-script.ts");
 const events = join(import.meta.dirname, "..", "fixtures", "streams", "claude-success.jsonl");
 export const BOT = "panelator-pipeline[bot]";
 
-/** A scripted result: a value, `undefined` for a failed run, or a function of the run that does the agent's git work first. */
+/** A scripted result: a value, `undefined` for a failed run, `RATE_LIMITED` for a 429, or a function of the run that does the agent's git work first. */
 export type Scripted = unknown | ((run: StageRun) => unknown);
+/** A scripted run the vendor rate-limited: the fake harness exits 2 and `judge` reports a 429. */
+export const RATE_LIMITED = Symbol("rate-limited");
 
 export interface RunSeen {
   stage: string;
@@ -45,13 +54,42 @@ export function scripted(results: Record<string, Scripted[]>): Adapter & { ran: 
       });
       const next = results[run.stage]?.shift();
       const r = typeof next === "function" ? (next as (run: StageRun) => unknown)(run) : next;
-      const argv = [process.execPath, script, events, run.resultPath, r === undefined ? "1" : "0", "0"];
-      if (r !== undefined) argv.push(JSON.stringify(r));
+      const argv = [process.execPath, script, events, run.resultPath, r === RATE_LIMITED ? "2" : r === undefined ? "1" : "0", "0"];
+      if (r !== undefined && r !== RATE_LIMITED) argv.push(JSON.stringify(r));
       return { argv, env: {} };
     },
-    judge: (_e, exit, t) => t ? { outcome: "timeout", reason: "t", apiErrorStatus: null, finalText: null } : exit === 0 ? { outcome: "ok", reason: null, apiErrorStatus: null, finalText: "x" } : { outcome: "failed", reason: "exit", apiErrorStatus: null, finalText: null },
+    judge: (_e, exit, t) => t ? { outcome: "timeout", reason: "t", apiErrorStatus: null, finalText: null } : exit === 0 ? { outcome: "ok", reason: null, apiErrorStatus: null, finalText: "x" } : exit === 2 ? { outcome: "failed", reason: "429", apiErrorStatus: 429, finalText: null } : { outcome: "failed", reason: "exit", apiErrorStatus: null, finalText: null },
     usage: () => ({ cost_usd: 0.1, input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0 }),
   };
+}
+
+export async function standingWorld(results:Record<string,Scripted[]>) {
+  const pair=repoPair({'README.md':'standing fixture'}),paths=statePaths(join(pair.root,'state'));await ensureStateDirs(paths);
+  const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,registryActionsCheck(join(agentsDir,'actions.yaml')));
+  registry.operator={...registry['action-audit'],name:'operator',trigger:{schedule:'1h'},actions:['set_parameter','rerun_workflow'],input:'audit-input'};
+  const cfg={...loadConfig(defaultConfigPath),repo:'o/r',required_checks:['test'],slots:1};
+  const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),cfg,registry));
+  let now=new Date('2026-10-01T00:00:00Z');await initializeAgents(paths,registry,parameters,now);
+  const issues:{number:number;title:string;body:string;user:{login:string};labels:{name:string}[];created_at:string}[]=[];
+  const comments=new Map<number,unknown[]>();
+  const routes:Route[]=[
+    {method:'GET',path:/^\/repos\/o\/r\/issues$/,reply:()=>({body:issues})},
+    {method:'POST',path:/^\/graphql$/,reply:()=>({body:{data:{repository:{issues:{totalCount:issues.length}}}}})},
+    {method:'GET',path:/^\/repos\/o\/r\/issues\/(\d+)\/timeline$/,reply:()=>({body:[]})},
+    {method:'GET',path:/^\/repos\/o\/r\/issues\/(\d+)\/comments$/,reply:m=>({body:comments.get(Number(m[1]))??[]})},
+    {method:'POST',path:/^\/repos\/o\/r\/issues\/(\d+)\/comments$/,reply:(m,b)=>{const cs=comments.get(Number(m[1]))??[];const c={id:cs.length+1,body:(b as {body:string}).body,user:{login:BOT},created_at:now.toISOString()};cs.push(c);comments.set(Number(m[1]),cs);return {body:c};}},
+    {method:'POST',path:/^\/repos\/o\/r\/issues$/,reply:(_m,b)=>{const i=b as {title:string;body:string;labels:string[]};const number=100+issues.length;issues.push({number,title:i.title,body:i.body,user:{login:BOT},labels:i.labels.map(name=>({name})),created_at:now.toISOString()});return {status:201,body:{number}};}},
+    {method:'DELETE',path:/^\/repos\/o\/r\/issues\/(\d+)\/labels\/abandoned$/,reply:m=>{const i=issues.find(i=>i.number===Number(m[1]));if(i)i.labels=i.labels.filter(l=>l.name!=='abandoned');return {status:204,body:null};}},
+    {method:'PATCH',path:/^\/repos\/o\/r\/issues\/(\d+)$/,reply:m=>{const i=issues.findIndex(i=>i.number===Number(m[1]));if(i>=0)issues.splice(i,1);return {body:{}};}},
+    {method:'POST',path:/^\/repos\/o\/r\/actions\/runs\/\d+\/(rerun|cancel)$/,reply:()=>({status:202,body:{}})},
+    {method:'GET',path:/^\/repos\/o\/r\/security-advisories$/,reply:()=>({body:[]})},
+    {method:'POST',path:/^\/repos\/o\/r\/security-advisories$/,reply:()=>({status:201,body:{ghsa_id:'GHSA-fixture'}})},
+    {method:'GET',path:/^\/repos\/o\/r\/commits\/[^/]+\/check-runs$/,reply:()=>({body:{total_count:1,check_runs:[{id:1,name:'test',status:'completed',conclusion:'success'}]}})},
+  ];
+  const mock=mockGitHub(routes),gh=new GitHubClient(new Octokit({auth:'x',request:{fetch:mock.fetch}}),'o/r'),adapter=scripted(results),notifications:Notification[]=[];
+  const deps:SchedulerDeps={cfg,paths,registry,parameters,gh,botLogin:BOT,notifier:{notify:async n=>{notifications.push(n);}},stages:loadStageDefinitions(join(agentsDir,'stages')),agentsDir,repoDir:pair.repo,binDir:join(pair.root,'bin'),adapterFor:()=>adapter,systemdScope:false,now:()=>now,log:()=>{},fetchOrigin:async()=>{},unitActive:async()=>false,stopUnit:async()=>{},serviceLog:new ServiceLog(paths.serviceLog),inhibitor:new SleepInhibitor({enabled:false}),fastForward:async()=>({moved:false,changedPaths:[]}),sleep:async()=>{},monotonic:()=>0,requestRestart:()=>{}};
+  const scheduler=new Scheduler(deps);
+  return {pair,paths,registry,parameters,deps,scheduler,adapter,mock,gh,issues,comments,notifications,setNow:(value:Date)=>{now=value;}};
 }
 
 export interface MockPr { number: number; head: string; sha: string; body: string; state: "open" | "closed"; merged: boolean }
@@ -181,8 +219,14 @@ export async function chainWorld(opts: { files: Record<string, string>; issueBod
   const adapter = scripted(opts.results);
   const notifications: Notification[] = [];
   const logs: Record<string, unknown>[] = [];
+  const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,registryActionsCheck(join(agentsDir,'actions.yaml')));
+  const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),cfg,registry));
+  await initializeAgents(paths,registry,parameters,new Date());
+  // AC-7: the recorded issue chains are unchanged when no standing agent can run.
+  // Keep the filer paused here; separate recorded runs below exercise its event delivery.
+  await writeAgentState(paths,'findings-filer',{...(await readAgentState(paths,'findings-filer'))!,paused:true,paused_by:'maintainer'});
   const deps: SchedulerDeps = {
-    cfg, paths, gh: new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r"),
+    cfg, paths, registry, parameters, gh: new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r"),
     notifier: { notify: async (n) => { notifications.push(n); } },
     stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: pair.repo, binDir: join(pair.root, "bin"),
     adapterFor: () => adapter, systemdScope: false, now: () => new Date(), log: (rec) => { logs.push(rec); },

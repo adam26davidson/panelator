@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "audit-input.json",
+  "type": "object",
+  "properties": {
+    "since": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "kinds": {
+      "type": "object"
+    },
+    "parameter_history": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "since",
+    "kinds",
+    "parameter_history"
+  ],
+  "additionalProperties": true
+}

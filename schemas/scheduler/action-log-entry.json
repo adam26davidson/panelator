@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "action-log-entry.json",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "agent": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "minLength": 1
+    },
+    "args": {
+      "type": "object"
+    },
+    "why": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "applied",
+        "refused",
+        "failed",
+        "undone"
+      ]
+    },
+    "reason": {
+      "type": "string"
+    },
+    "undo": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "undoes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "at",
+    "agent",
+    "run_id",
+    "kind",
+    "args",
+    "why",
+    "status",
+    "undo"
+  ],
+  "additionalProperties": false
+}

@@ -16,11 +16,25 @@ export interface StatePaths {
   paused: string;
   escalations: string;
   questionsLog: string;
+  parameters: string;
+  parametersHistory: string;
+  actionsLog: string;
+  agents: string;
+  mainChecks: string;
+  findingsCursor: string;
+  findingsTriage: string;
 }
 
 export function statePaths(root: string): StatePaths {
   return {
     root,
+    parameters: join(root, 'parameters.json'),
+    parametersHistory: join(root, 'parameters', 'history.jsonl'),
+    actionsLog: join(root, 'actions', 'log.jsonl'),
+    agents: join(root, 'agents'),
+    mainChecks: join(root, 'main-checks.json'),
+    findingsCursor: join(root, 'findings', 'cursor.json'),
+    findingsTriage: join(root, 'findings', 'triage.jsonl'),
     claims: join(root, "claims"),
     runs: join(root, "runs"),
     usage: join(root, "usage"),
@@ -38,5 +52,5 @@ export function statePaths(root: string): StatePaths {
 }
 
 export async function ensureStateDirs(p: StatePaths): Promise<void> {
-  for (const d of [p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog)]) await mkdir(d, { recursive: true });
+  for (const d of [p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), p.agents]) await mkdir(d, { recursive: true });
 }

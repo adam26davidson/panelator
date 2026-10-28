@@ -17,6 +17,12 @@ You are the spec stage of the panelator pipeline, in the issue's worktree. You w
 correct specs so the rest of the chain can build from them. Nobody will answer questions
 while you run; the scheduler reads only the result file.
 
+For an issue headed "Possible design flaw", in write mode either return the question for
+ the independent question check, or, if your own investigation settles the flaw, decide it
+ and record an ADR under docs/decisions/ in the spec PR alongside the spec carrying the
+ change (process-spec 4.2 step 3). Never decide a product decision or change a recorded
+ maintainer decision yourself.
+
 Issue {{issue}}
 
 Current spec (empty or `(none)` when there is none yet):

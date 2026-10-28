@@ -68,14 +68,31 @@ async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
 }
 
 describe("Scheduler.tick", () => {
+  it('a due standing agent takes the free slot before shortlist and never overlaps itself',async()=>{
+    const {s,deps,paths}=await setup(routes([issue(1)]));
+    const {loadRegistry}=await import('../src/standing/registry.ts');
+    const {EVENT_NAMES}=await import('../src/standing/events.ts');
+    const {registryActionsCheck}=await import('../src/actions/index.ts');
+    const {loadParameterDefinitions}=await import('../src/parameters/definitions.ts');
+    const {ParameterStore}=await import('../src/parameters/store.ts');
+    const {initializeAgents,readAgentState,writeAgentState}=await import('../src/standing/state.ts');
+    const all=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,registryActionsCheck(join(agentsDir,'actions.yaml')));
+    deps.registry={'action-audit':all['action-audit']};deps.parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),deps.cfg,deps.registry));
+    await initializeAgents(paths,deps.registry,deps.parameters,deps.now());
+    const state=(await readAgentState(paths,'action-audit'))!;await writeAgentState(paths,'action-audit',{...state,next_run:deps.now().toISOString()});
+    let calls=0,finish!:()=>void;const pending=new Promise<void>(r=>{finish=r;});deps.runStanding=async()=>{calls++;await pending;};
+    expect((await s.tick()).claimed).toEqual([]);expect(s.active).toBe(1);await s.tick();expect(calls).toBe(1);
+    finish();await new Promise(r=>setTimeout(r,20));expect(s.active).toBe(0);
+  },30000);
   it("claims only as many issues as there are slots, in rank order, and labels the rest of the decisions (AC-1, AC-2, AC-5)", async () => {
     const { s, gh, started, paths } = await setup(routes([issue(2), issue(1), issue(3, ["validated"])]));
     const t = await s.tick();
-    expect(t.claimed).toEqual([1]);
+    // No class/spec is system work, preferred at the initial 0.75 work share.
+    expect(t.claimed).toEqual([3]);
     await new Promise((r) => setTimeout(r, 50));
-    expect(started).toEqual([1]);
-    expect((await listClaims(paths)).map((c) => c.issue)).toEqual([1]);
-    expect(gh.calls.find((c) => c.method === "POST" && c.url === "/repos/o/r/issues/1/labels")?.body).toEqual({ labels: ["in-progress"] });
+    expect(started).toEqual([3]);
+    expect((await listClaims(paths)).map((c) => c.issue)).toEqual([3]);
+    expect(gh.calls.find((c) => c.method === "POST" && c.url === "/repos/o/r/issues/3/labels")?.body).toEqual({ labels: ["in-progress"] });
     const t2 = await s.tick();
     expect(t2.claimed).toEqual([]);
   }, 30_000);

@@ -1,10 +1,17 @@
 import { applyActions, completePause, driveChain as defaultDriveChain, step, type DriverDeps } from "../chain/driver.ts";
 import { CLAIM_LABEL, ENDED, HISTORY_ENTRY_MAX, NEEDS_DECISION_LABEL, initialChainState, ledgerOf, stuckOf as stuckStage, transition } from "../chain/machine.ts";
-import { appendFindings } from "../state/findings.ts";
+import {emit} from '../standing/events.ts';
+import { appendFindings, onFindingsQueued } from "../state/findings.ts";
 import { livenessGate } from "../gates/index.ts";
 import { ensureWorktree, uncommittedPatch } from "../runner/worktree.ts";
 import { buildSelectContext } from "../shortlist/fetch.ts";
-import { rankIssues } from "../shortlist/rank.ts";
+import {initializeAgents,readAgentState} from '../standing/state.ts';
+import {runStandingAgent} from '../standing/run.ts';
+import type {StandingDefinition} from '../types.ts';
+import type {ParameterStore} from '../parameters/store.ts';
+import {watchMainChecks} from '../standing/events.ts';
+import {execFileSync} from 'node:child_process';
+import { rankIssues, classifyWork } from "../shortlist/rank.ts";
 import { selectEligible } from "../shortlist/select.ts";
 import { listClaims, readClaim, removeClaim, writeClaim, type Claim } from "../state/claims.ts";
 import { readLedger, writeLedger } from "../state/ledger.ts";
@@ -19,6 +26,9 @@ import type { ServiceLog } from "./log.ts";
 import { schedulerChanged } from "./git.ts";
 
 export interface SchedulerDeps extends DriverDeps {
+  registry?:Record<string,StandingDefinition>;
+  parameters?:ParameterStore;
+  runStanding?:typeof runStandingAgent;
   botLogin: string;
   serviceLog: ServiceLog;
   inhibitor: SleepInhibitor;
@@ -58,6 +68,7 @@ export class Scheduler {
   #deps: SchedulerDeps;
   #drive: DriveFn;
   #active = new Map<number, Promise<void>>();
+  #activeStanding = new Map<string,Promise<void>>();
   #stopping = false;
   #stopReason = "";
   #ticking = false;
@@ -65,11 +76,15 @@ export class Scheduler {
 
   constructor(deps: SchedulerDeps, opts: { driveChain?: DriveFn } = {}) {
     this.#deps = deps;
+    if(deps.registry) {
+      deps.emitEvent ??= (event,payload)=>emit(deps.paths,deps.registry!,event,payload,deps.now());
+      onFindingsQueued(deps.paths,(count,offset)=>deps.emitEvent!('finding_queued',{count,offset}));
+    }
     this.#drive = opts.driveChain ?? defaultDriveChain;
   }
 
   get active(): number {
-    return this.#active.size;
+    return this.#active.size + this.#activeStanding.size;
   }
 
   stop(reason: string): void {
@@ -90,7 +105,7 @@ export class Scheduler {
       .catch((e) => d.log({ kind: "error", issue: claim.issue, error: `failure count: ${(e as Error).message}` }))
       .finally(() => {
         this.#active.delete(claim.issue);
-        if (this.#active.size === 0) {
+        if (this.active === 0) {
           d.inhibitor.release();
           // Mid-tick, the tick's own finally requests the restart once it is done.
           if (this.#restartPending && !this.#ticking) d.requestRestart();
@@ -226,6 +241,7 @@ export class Scheduler {
         started_at: d.now().toISOString(), last_activity_at: d.now().toISOString(), run_id: null,
         pendingEvent: { type: "answered", answer: rec.answer, questionId },
       };
+      await d.emitEvent?.('maintainer_reply',{issue:rec.issue,question_id:questionId});
       await writeClaim(d.paths, claim);
     }
     await d.gh.addLabels(rec.issue, [CLAIM_LABEL]);
@@ -241,6 +257,8 @@ export class Scheduler {
     const d = this.#deps;
     const info: TickInfo = { eligible: 0, claimed: [], released: [], errors: [], restartPending: this.#restartPending };
     try {
+      const slots = d.parameters ? Number((await d.parameters.read('slots')).value) : d.cfg.slots;
+      if(d.registry && d.parameters)await initializeAgents(d.paths,d.registry,d.parameters,d.now());
       const token = await readToken(d.paths).catch(() => null);
       if (token && new Date(token.expires_at).getTime() - d.now().getTime() < TOKEN_REFRESH_MARGIN_MS) await this.#refreshToken();
       try {
@@ -253,6 +271,10 @@ export class Scheduler {
       } catch (e) {
         info.errors.push(`freshness: ${(e as Error).message}`);
       }
+      if(d.registry && Object.keys(d.registry).length)try {
+        const sha=execFileSync('git',['rev-parse','origin/main'],{cwd:d.repoDir,encoding:'utf8'}).trim();
+        await watchMainChecks(d.gh,d.paths,d.registry,sha,d.cfg.required_checks,d.now());
+      }catch(e){info.errors.push(`main checks: ${(e as Error).message}`);}
       await pruneUsage(d.paths, d.now()).catch((e) => info.errors.push(`prune: ${(e as Error).message}`));
 
       // Step 2 owns the claims of paused issues (a crash mid-pause or mid-resume); a claim carrying pending work is the driver's.
@@ -278,12 +300,12 @@ export class Scheduler {
           info.released.push(claim.issue);
           continue;
         }
-        if (this.#active.size >= d.cfg.slots) break;
+        if (this.active >= slots) break;
         if (!(claim.state.stage === "waiting" && claim.state.postponedUntil && new Date(claim.state.postponedUntil) > d.now())) this.#start(claim);
       }
 
       // Counted here, as the slots the resumes above left; a resume below takes one.
-      let free = d.cfg.slots - this.#active.size;
+      let free = slots - this.active;
       const paused = await listPaused(d.paths);
       if (!paused.length && free <= 0) return info;
       let issues;
@@ -305,6 +327,20 @@ export class Scheduler {
         }
       }
 
+      if(d.registry && d.parameters && free>0) {
+        const states=await Promise.all(Object.values(d.registry).map(async def=>({def,state:(await readAgentState(d.paths,def.name))!})));
+        states.sort((a,b)=>(a.state.next_run??'').localeCompare(b.state.next_run??''));
+        for(const {def,state} of states) {
+          if(free<=0)break;
+          if(state.paused||this.#activeStanding.has(def.name)||!((state.next_run && Date.parse(state.next_run)<=d.now().getTime())||state.pending_events.length))continue;
+          if(state.running && await d.unitActive(`panelator-stage-${state.running.run_id}`))continue;
+          d.inhibitor.acquire();
+          const p=(d.runStanding??runStandingAgent)({...d,parameters:d.parameters},def,state)
+            .catch(e=>d.log({kind:'standing-error',agent:def.name,error:String(e)}))
+            .finally(()=>{this.#activeStanding.delete(def.name);if(this.active===0){d.inhibitor.release();if(this.#restartPending&&!this.#ticking)d.requestRestart();}});
+          this.#activeStanding.set(def.name,p);free--;
+        }
+      }
       if (free <= 0) return info;
       // AC-13: the shortlist treats an issue with a paused record as claimed.
       const claimed = new Set([...(await listClaims(d.paths)).map((c) => c.issue), ...(await listPaused(d.paths)).map((r) => r.issue)]);
@@ -318,7 +354,9 @@ export class Scheduler {
         await d.gh.comment(dec.issue, `${r.label}: ${r.reason}`).catch((e) => info.errors.push(`comment ${dec.issue}: ${(e as Error).message}`));
         await d.notifier.notify({ issue: dec.issue, gate: dec.gate, label: r.label, text: r.reason });
       }
-      const ranked = rankIssues(eligible, d.cfg.labels, await recentMerges(d.paths, d.now()));
+      const readSpec=buildSelectContext(d.repoDir,d.cfg,claimed,d.botLogin).readSpec;
+      const share=d.parameters?Number((await d.parameters.read('system_work_share')).value):0.75;
+      const ranked = rankIssues(eligible, d.cfg.labels, await recentMerges(d.paths, d.now()),share,i=>classifyWork(i,readSpec));
       for (const issue of ranked.slice(0, free)) {
         if (this.#stopping) break;
         try {
@@ -343,7 +381,7 @@ export class Scheduler {
     } finally {
       this.#ticking = false;
       d.serviceLog.tick({ ...info, active: [...this.#active.keys()] });
-      if (this.#restartPending && this.#active.size === 0) d.requestRestart();
+      if (this.#restartPending && this.active === 0) d.requestRestart();
     }
   }
 
@@ -364,7 +402,7 @@ export class Scheduler {
         await this.#refreshToken();
       }
     }
-    await Promise.allSettled([...this.#active.values()]);
+    await Promise.allSettled([...this.#active.values(),...this.#activeStanding.values()]);
     d.inhibitor.release();
     d.serviceLog.stopped(this.#stopReason);
   }

@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {execFileSync} from 'node:child_process';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
@@ -17,7 +18,14 @@ import type { Question } from "../src/types.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import type { Notification } from "../src/notify/types.ts";
 import { mockGitHub, pageLink, type Route } from "./helpers/mock-github.ts";
-import { chainWorld, scripted, type ChainWorld } from "./helpers/e2e-routes.ts";
+import {ActionLog} from '../src/actions/log.ts';
+import {undoAction} from '../src/actions/undo.ts';
+import {loadActionLevels,applyAction} from '../src/actions/index.ts';
+import {appendFindings} from '../src/state/findings.ts';
+import {readAgentState,writeAgentState} from '../src/standing/state.ts';
+import {runStandingAgent} from '../src/standing/run.ts';
+import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
+import { chainWorld, standingWorld, scripted, RATE_LIMITED, type ChainWorld } from "./helpers/e2e-routes.ts";
 import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
 
 const spec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
@@ -480,4 +488,73 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     expect(w.onMain("docs/charter.md")).toBe(CHARTER);
     expect(w.comments.map((c) => c.body.split("\n")[0])).toEqual(["### Issue abandoned by the scheduler"]);
   }, 120_000);
+});
+
+describe('standing agents: recorded runs through the real runner and mocked App',()=>{
+ const why='Independently verified operational adjustment';
+ const context=(w:Awaited<ReturnType<typeof standingWorld>>)=>({paths:w.paths,parameters:w.parameters,log:new ActionLog(w.paths.actionsLog),levels:loadActionLevels(join(agentsDir,'actions.yaml')),gh:w.gh,now:w.deps.now});
+ async function idle(w:Awaited<ReturnType<typeof standingWorld>>){for(let i=0;i<1000&&w.scheduler.active;i++)await new Promise(r=>setTimeout(r,25));expect(w.scheduler.active).toBe(0);}
+ it('takes a slot on a missed schedule once, applies a parameter and command undo, logs locked refusal',async()=>{
+  const w=await standingWorld({operator:[{summary:'adjusted',actions:[{kind:'set_parameter',args:{name:'system_work_share',value:0.5},why},{kind:'set_parameter',args:{name:'aws_cap_usd',value:1},why}]}]});
+  w.setNow(new Date('2026-10-01T12:00:00Z'));await w.scheduler.tick();await idle(w);
+  expect(w.adapter.ran).toEqual(['operator']);expect((await w.parameters.read('system_work_share')).value).toBe(0.5);
+  const rows=await context(w).log.list();expect(rows.map(r=>r.status)).toEqual(['applied','refused']);
+  const config=join(w.pair.root,'cli-config.json');writeFileSync(config,JSON.stringify({...w.deps.cfg,state_dir:w.paths.root,app:{...w.deps.cfg.app,id:0,installation_id:0}}));
+  const command=execFileSync(process.execPath,[join(agentsDir,'..','tools','scheduler','bin','scheduler.ts'),'action','undo',rows[0].id,'--config',config],{encoding:'utf8'});
+  expect(JSON.parse(command)).toMatchObject({status:'applied',agent:'maintainer',undoes:rows[0].id});expect((await w.parameters.read('system_work_share')).value).toBe(0.75);
+  await w.scheduler.tick();await idle(w);expect(w.adapter.ran).toEqual(['operator']);
+  expect(w.mock.unmatched).toEqual([]);
+ },30000);
+ it('wakes the filer on queued findings and records file, discard, merge and private advisory decisions',async()=>{
+  const issue={title:'Verified bug',body:'Evidence verified in source',class:'class:bug'};
+  const w=await standingWorld({'findings-filer':[{summary:'triaged five',decisions:[{ref:'1',outcome:'file',reason:'independently verified',issue},{ref:'2',outcome:'discard',reason:'not an issue'},{ref:'3',outcome:'merge_into',reason:'same cause',issue_number:90},{ref:'4',outcome:'file',reason:'security must stay private',issue},{ref:'5',outcome:'security',reason:'second private finding',advisory:{title:'Second',description:'Second advisory',severity:'low'}}]}]});
+  w.issues.push({number:90,title:'Existing bug',body:'Existing evidence',user:{login:BOT.login},labels:[{name:'validated'},{name:'class:bug'}],created_at:'2026-10-01T00:00:00Z'});
+  await appendFindings(w.paths,{issue:7,stage:'review',run_id:'merge-review',timestamp:w.deps.now().toISOString()},[1,2,3,4,5].map(n=>({what:`finding ${n}`,where:'a.txt',evidence:'observed',noticed_how:'merge review',...(n>=4?{security:true}:{})})));
+  expect((await w.scheduler.tick()).claimed).toEqual([]);await idle(w);
+  const triage=await readJsonLines<TriageEntry>(w.paths.findingsTriage);expect(triage.map(t=>t.outcome)).toEqual(['file','discard','merge_into','security','security']);
+  expect(w.mock.calls.filter(c=>c.method==='POST'&&c.url==='/repos/o/r/issues')).toHaveLength(1);
+  expect(w.mock.calls.filter(c=>c.method==='POST'&&c.url==='/repos/o/r/security-advisories')).toHaveLength(2);expect(w.mock.unmatched).toEqual([]);
+  // AC-22: each advisory notification has its own rate-limit key (issue:gate:label), so neither is dropped as a duplicate of the other.
+  const keys=w.notifications.map(n=>`${n.issue}:${n.gate}:${n.label}`);expect(keys).toHaveLength(2);expect(new Set(keys).size).toBe(2);expect(keys.every(k=>k.startsWith('0:standing:findings-filer:'))).toBe(true);
+ },30000);
+ it('retries abandoned work twice and then defers after re-abandonment',async()=>{
+  const result={summary:'retry with a corrected approach',decisions:[{ref:'issue:7',outcome:'retry',reason:'Read the new design before implementing'}]};
+  const w=await standingWorld({'findings-filer':[result,result,result]});
+  w.issues.push({number:7,title:'Abandoned',body:'No spec yet',user:{login:BOT.login},labels:[{name:'abandoned'}],created_at:'2026-10-01T00:00:00Z'});
+  for(let i=0;i<3;i++){
+   w.setNow(new Date(Date.UTC(2026,9,1+i*8)));w.issues[0].labels=[{name:'abandoned'}];
+   await runStandingAgent({...w.deps,parameters:w.parameters},w.registry['findings-filer'],(await readAgentState(w.paths,'findings-filer'))!);
+  }
+  expect((await readJsonLines<TriageEntry>(w.paths.findingsTriage)).map(t=>t.outcome)).toEqual(['retry','retry','defer']);expect(w.mock.unmatched).toEqual([]);
+ },30000);
+ it('a design-flaw intake issue starts at spec/write and reaches the independent question check',async()=>{
+  const question=ask('technical','Does this finding reveal a design flaw?');
+  const w=await chainWorld({files:repoFiles({spec:null}),issueBody:'Possible design flaw\n\nVerified investigation and options.',results:{spec:[{verdict:'question',question}],'question-check':[SEND]}});
+  await w.tick();expect(w.adapter.ran).toEqual(['spec','question-check']);expect(inputsOf(w,'spec')[0].mode).toBe('write');expect(await listPaused(w.paths)).toHaveLength(1);expect(w.gh.unmatched).toEqual([]);
+ },30000);
+ it('queues level-2 refusal and cannot resume a maintainer pause',async()=>{
+  const w=await standingWorld({});const ctx=context(w);
+  const request=(kind:string,args:Record<string,unknown>,maintainer=false)=>applyAction(ctx,{agent:maintainer?'maintainer':'operator',run_id:'fixture',kind,args,why},maintainer?'maintainer':['pause_agent','resume_agent','set_parameter']);
+  await request('pause_agent',{name:'action-audit'},true);expect((await request('resume_agent',{name:'action-audit'})).status).toBe('refused');
+  ctx.levels.set_parameter=2;expect((await request('set_parameter',{name:'slots',value:2})).reason).toBe('level 2');expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);
+ });
+ it('retries a failed standing run once and then records one finding and notification',async()=>{
+  const w=await standingWorld({operator:[undefined,undefined]});
+  const state=(await readAgentState(w.paths,'operator'))!;state.next_run=w.deps.now().toISOString();await writeAgentState(w.paths,'operator',state);
+  await w.scheduler.tick();await idle(w);expect((await readAgentState(w.paths,'operator'))?.failures).toBe(1);
+  await w.scheduler.tick();await idle(w);expect((await readAgentState(w.paths,'operator'))?.last_run?.outcome).toBe('failed');
+  expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);expect(w.notifications).toHaveLength(1);
+ },30000);
+ it('a rate-limited strong-tier standing run counts as a failure, backs off after the second and runs no more',async()=>{
+  const w=await standingWorld({operator:[RATE_LIMITED,RATE_LIMITED,{summary:'never reached'}]});
+  const state=(await readAgentState(w.paths,'operator'))!;state.next_run=w.deps.now().toISOString();await writeAgentState(w.paths,'operator',state);
+  await w.scheduler.tick();await idle(w);expect((await readAgentState(w.paths,'operator'))?.failures).toBe(1);
+  await w.scheduler.tick();await idle(w);
+  const after=(await readAgentState(w.paths,'operator'))!;expect(after.last_run?.outcome).toBe('failed');expect(after.failures).toBe(0);
+  expect(Date.parse(after.next_run!)).toBeGreaterThan(w.deps.now().getTime());
+  // AC-3: a third tick while the vendor still limits does not spawn another run; the agent waits for its next schedule.
+  // (The queued finding wakes the filer, which is the intended routing; only the operator's runs are counted.)
+  await w.scheduler.tick();await idle(w);expect(w.adapter.ran.filter(s=>s==='operator')).toEqual(['operator','operator']);
+  expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);expect(w.notifications).toHaveLength(1);expect(w.notifications[0].label).toMatch(/^operator:/);
+ },30000);
 });

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "filer-input.json",
+  "type": "object",
+  "properties": {
+    "records": {
+      "type": "array"
+    },
+    "abandoned": {
+      "type": "array"
+    },
+    "open_issues": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "records",
+    "abandoned",
+    "open_issues"
+  ],
+  "additionalProperties": true
+}

@@ -160,6 +160,32 @@ export class GitHubClient {
     return text.split("\n").filter((l) => l.length).slice(-lines).join("\n");
   }
 
+  async createIssue(title:string,body:string,labels:string[]):Promise<number> {
+    const {data}=await this.octokit.request('POST /repos/{owner}/{repo}/issues',{...this.base,title,body,labels,request:{retries:0}}); return data.number;
+  }
+  async listOpenIssuesByLabel(label:string):Promise<IssueData[]> {return (await this.listOpenIssues()).filter(i=>i.labels.includes(label));}
+  async listOpenIssuesByAuthor(login:string):Promise<IssueData[]> {return (await this.listOpenIssues()).filter(i=>i.author===login);}
+  async searchOpenIssuesByMarker(marker:string):Promise<IssueData[]> {return (await this.listOpenIssues()).filter(i=>i.body.includes(marker));}
+  async closeIssue(n:number,comment:string):Promise<void> {
+    await this.comment(n,comment);
+    await this.octokit.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}',{...this.base,issue_number:n,state:'closed'});
+  }
+  async findDraftSecurityAdvisory(marker:string):Promise<string|null> {
+    const rows=await this.octokit.paginate('GET /repos/{owner}/{repo}/security-advisories',{...this.base,state:'draft',per_page:100});
+    return rows.find(r=>r.description?.includes(marker))?.ghsa_id??null;
+  }
+  async createDraftSecurityAdvisory(input:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'}):Promise<string> {
+    const {data}=await this.octokit.request('POST /repos/{owner}/{repo}/security-advisories',{...this.base,summary:input.title,description:input.description,severity:input.severity,vulnerabilities:[],request:{retries:0}});return data.ghsa_id;
+  }
+
+  async rerunWorkflowRun(runId: number): Promise<void> {
+    await this.octokit.request('POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun', {...this.base,run_id:runId,request:{retries:0}});
+  }
+
+  async cancelWorkflowRun(runId: number): Promise<void> {
+    await this.octokit.request('POST /repos/{owner}/{repo}/actions/runs/{run_id}/cancel', {...this.base,run_id:runId,request:{retries:0}});
+  }
+
   async mergePullRequest(n: number, sha: string): Promise<{ merged: boolean; message: string }> {
     try {
       const { data } = await this.octokit.request("PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge", { ...this.base, pull_number: n, merge_method: "squash", sha, request: { retries: 0 } });
