@@ -2,6 +2,8 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export interface StatePaths {
+  telegramOffset: string;
+  telegramPending: string;
   root: string;
   claims: string;
   runs: string;
@@ -28,6 +30,8 @@ export interface StatePaths {
 export function statePaths(root: string): StatePaths {
   return {
     root,
+    telegramOffset:join(root,'telegram','offset.json'),
+    telegramPending:join(root,'telegram','pending.json'),
     parameters: join(root, 'parameters.json'),
     parametersHistory: join(root, 'parameters', 'history.jsonl'),
     actionsLog: join(root, 'actions', 'log.jsonl'),
@@ -52,5 +56,5 @@ export function statePaths(root: string): StatePaths {
 }
 
 export async function ensureStateDirs(p: StatePaths): Promise<void> {
-  for (const d of [p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), p.agents]) await mkdir(d, { recursive: true });
+  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), p.agents]) await mkdir(d, { recursive: true });
 }

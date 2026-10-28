@@ -6,6 +6,8 @@ import { validate } from "../schema/validate.ts";
 import type { StatePaths } from "./paths.ts";
 
 export interface Claim {
+  asking_session?: import('./paused.ts').AskingSession|null;
+  telegram_thread?: import('./paused.ts').TelegramThread|null;
   issue: number;
   slot: number;
   state: ChainState;

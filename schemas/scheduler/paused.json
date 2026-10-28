@@ -74,6 +74,111 @@
         "null"
       ],
       "minimum": 1
+    },
+    "session": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "harness",
+        "model",
+        "session_id",
+        "worktree"
+      ],
+      "properties": {
+        "harness": {
+          "enum": [
+            "claude",
+            "pi",
+            "fake"
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        }
+      }
+    },
+    "telegram": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "message_id",
+        "sent",
+        "sent_at",
+        "send_failures",
+        "reminder_message_id",
+        "thread_message_ids",
+        "thread_last_message_id",
+        "answer_update_id",
+        "ack_sent",
+        "channel"
+      ],
+      "properties": {
+        "message_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reminder_message_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "thread_last_message_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "answer_update_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sent": {
+          "type": "boolean"
+        },
+        "ack_sent": {
+          "type": "boolean"
+        },
+        "sent_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "send_failures": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "thread_message_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "channel": {
+          "enum": [
+            "telegram",
+            "issue",
+            null
+          ]
+        }
+      }
     }
   }
 }

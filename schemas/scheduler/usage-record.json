@@ -3,29 +3,104 @@
   "$id": "usage-record.json",
   "type": "object",
   "required": [
-    "run_id", "issue", "stage", "attempt", "outcome", "harness", "model", "cost_usd",
-    "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
-    "turns", "tool_calls", "wall_seconds", "started_at", "ended_at", "events_path"
+    "run_id",
+    "issue",
+    "stage",
+    "attempt",
+    "outcome",
+    "harness",
+    "model",
+    "cost_usd",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "turns",
+    "tool_calls",
+    "wall_seconds",
+    "started_at",
+    "ended_at",
+    "events_path"
   ],
   "additionalProperties": false,
   "properties": {
-    "run_id": { "type": "string", "minLength": 1 },
-    "issue": { "type": "integer", "minimum": 0 },
-    "stage": { "type": "string", "minLength": 1 },
-    "attempt": { "type": "integer", "minimum": 1 },
-    "outcome": { "enum": ["ok", "failed", "timeout", "bounds"] },
-    "harness": { "enum": ["claude", "pi", "fake"] },
-    "model": { "type": "string" },
-    "cost_usd": { "type": ["number", "null"] },
-    "input_tokens": { "type": "integer" },
-    "output_tokens": { "type": "integer" },
-    "cache_read_tokens": { "type": "integer" },
-    "cache_write_tokens": { "type": "integer" },
-    "turns": { "type": "integer" },
-    "tool_calls": { "type": "integer" },
-    "wall_seconds": { "type": "number" },
-    "started_at": { "type": "string", "format": "date-time" },
-    "ended_at": { "type": "string", "format": "date-time" },
-    "events_path": { "type": "string" }
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "issue": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "stage": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "outcome": {
+      "enum": [
+        "ok",
+        "failed",
+        "timeout",
+        "bounds"
+      ]
+    },
+    "harness": {
+      "enum": [
+        "claude",
+        "pi",
+        "fake"
+      ]
+    },
+    "model": {
+      "type": "string"
+    },
+    "cost_usd": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "input_tokens": {
+      "type": "integer"
+    },
+    "output_tokens": {
+      "type": "integer"
+    },
+    "cache_read_tokens": {
+      "type": "integer"
+    },
+    "cache_write_tokens": {
+      "type": "integer"
+    },
+    "turns": {
+      "type": "integer"
+    },
+    "tool_calls": {
+      "type": "integer"
+    },
+    "wall_seconds": {
+      "type": "number"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ended_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "events_path": {
+      "type": "string"
+    },
+    "resumed_session_id": {
+      "type": "string"
+    },
+    "resume_fallback": {
+      "type": "string"
+    }
   }
 }
