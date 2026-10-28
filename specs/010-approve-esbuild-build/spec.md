@@ -107,12 +107,12 @@ pnpm's default protection stays in force for every other dependency.
   under pnpm 10 would not catch because there the missing approval is only
   a warning.
 
-No other file is created or modified. `pnpm-workspace.yaml` and
-`tools/scheduler/` are sensitive paths (`agents/sensitive-paths.txt`: the
-test wiring and the scheduler), so the implementation PR gets the security
-review; the change adds one build-script approval and one test, and does
-not drop, skip or narrow what `pnpm test` runs. This spec plans no change
-to `docs/charter.md`, to a protected maintainer decision, to the
+No other file is created or modified. The workspace config and the
+scheduler package are sensitive paths (the test wiring and the scheduler,
+as the sensitive-path list records), so the implementation PR gets the
+security review; the change adds one build-script approval and one test,
+and does not drop, skip or narrow what pnpm test runs. This spec plans no
+change to the charter, to a protected maintainer decision, to the
 sensitive-path list, to the security review criteria, or to what routes a
 sensitive diff to the security review.
 
