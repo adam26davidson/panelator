@@ -1,7 +1,7 @@
 import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { adapterFor as defaultAdapterFor } from "../adapters/index.ts";
@@ -27,7 +27,7 @@ import { appendFindings } from "../state/findings.ts";
 import { archiveLedger, writeLedger } from "../state/ledger.ts";
 import { classifyWork } from '../shortlist/rank.ts';
 import { appendMerge } from "../state/merges.ts";
-import { writePaused, type PausedRecord } from "../state/paused.ts";
+import { emptyTelegram, writePaused, type PausedRecord } from "../state/paused.ts";
 import { savePatch } from "../state/patches.ts";
 import type { StatePaths } from "../state/paths.ts";
 import { answeredEntry, answeredForIssue, appendQuestionLog } from "../state/questions.ts";
@@ -43,6 +43,7 @@ import type { Action, ChainEvent, ChainState } from "./types.ts";
 const execFileP = promisify(execFile);
 
 export interface DriverDeps {
+  telegram?: import('../telegram/channel.ts').TelegramChannel|null;
   emitEvent?: (event:string,payload:unknown)=>Promise<void>;
   cfg: Config;
   paths: StatePaths;
@@ -390,11 +391,13 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
     return null;
   }
   const def = deps.stages[stage];
+  if(state.conversation&&state.decideInput!==null)throw new Error('conversation turn in decide mode');
+  if(state.resumeSession&&state.resumeSession.harness!==def.harness)deps.log({kind:'resume-fresh',issue:claim.issue,reason:'harness changed'});
   const sensitiveGlobs = readSensitiveGlobs(deps.agentsDir);
 
-  await syncWorktree(deps, claim);
+  if(!state.conversation&&!state.resumeSession)await syncWorktree(deps, claim);
   // The spec stage and the question check work from origin/main and are never rebased (spec section 4).
-  if (stage !== "spec" && stage !== "question-check" && state.pr !== null && !state.conflictPending) {
+  if (!state.conversation&&!state.resumeSession&&stage !== "spec" && stage !== "question-check" && state.pr !== null && !state.conflictPending) {
     const rebase = await rebaseOntoMain(claim.worktree, "origin/main", botIdentity(deps));
     if (!rebase.ok) return { type: "rebase_conflict", detail: rebase.conflict };
   }
@@ -415,6 +418,9 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   const answered = stage === "review" ? await answeredQuestions(deps, claim.issue, claim.worktree) : stage === "question-check" ? await issueAnswers(deps, claim.issue) : undefined;
   const input = await buildInput(deps, claim, issue.title, issue.body, specText, ci, answered);
 
+  input.decision=state.decision??undefined;
+  const beforePatch=state.conversation?await uncommittedPatch(claim.worktree):'';
+  const beforeIndex=state.conversation?await gitOut(claim.worktree,'diff','--cached','--binary'):'';
   const attempt = state.attempt;
   const exec = async (model?: string, harness?: Harness, tag?: string): Promise<StageOutcome> => {
     const h = harness ?? def.harness;
@@ -431,10 +437,17 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
           paths: deps.paths, adapter: deps.adapterFor(h), systemdScope: deps.systemdScope, systemdRunBin: deps.systemdRunBin, binDir: deps.binDir, now: deps.now,
           gitIdentity: botIdentity(deps),
         },
-        { def, input, issue: claim.issue, attempt, worktree: claim.worktree, profile, model, harness, runId },
+        { def, input, issue: claim.issue, attempt, worktree: claim.worktree, profile, model, harness, runId,
+          conversation:!!state.conversation,
+          resume:state.resumeSession&&(state.resumeSession.harness===h||state.resumeSession.harness===deps.adapterFor(h).harness)?{sessionId:state.resumeSession.session_id,harness:h,model:state.resumeSession.model}:undefined }, 
       );
       // I2: a killed run can leave processes behind in its scope; stop the unit (best-effort).
       if ((out.outcome === "timeout" || out.outcome === "bounds") && deps.systemdScope) await deps.stopUnit(stageUnit(runId)).catch(() => {});
+      if(stage!=='question-check'&&out.outcome==='ok'){
+        const r=out.result as {escalation?:unknown;question?:unknown};
+        if(r.escalation||r.question)claim.asking_session={harness:out.usage.harness,model:out.usage.model,session_id:out.sessionId,worktree:claim.worktree};
+      }
+      state.resumeSession=null;
       return out;
     } finally {
       // Persisted, not only in memory: a throw here or later in the step must not leave a run "in flight" on disk (AC-15).
@@ -446,6 +459,15 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   // AC-1: a rescue runs on the rescue model; the state is the only source of that.
   let out = state.rescueRun ? await exec(deps.cfg.rescue_model, harnessForModel(deps.cfg.rescue_model), "rescue") : await exec();
   deps.log({ kind: "stage", issue: claim.issue, stage, attempt, outcome: out.outcome, reason: out.reason, run_id: out.runId, rescue: state.rescueRun || undefined });
+  if(state.conversation){
+    if((await worktreeHead(claim.worktree))!==start||(await uncommittedPatch(claim.worktree))!==beforePatch||(await gitOut(claim.worktree,'diff','--cached','--binary'))!==beforeIndex){
+      await discardUncommitted(claim.worktree);await gitOut(claim.worktree,'reset','--hard',start);
+      if(beforePatch){const path=join(deps.paths.patches,`conversation-${randomUUID()}.patch`);await writeFile(path,beforePatch);await gitOut(claim.worktree,'apply',path);}
+      if(beforeIndex){const path=join(deps.paths.patches,`conversation-index-${randomUUID()}.patch`);await writeFile(path,beforeIndex);await gitOut(claim.worktree,'apply','--cached',path);}
+      return {type:'stage_failed',stage,reason:'conversation: worktree changed'};
+    }
+    return out.outcome==='ok'?{type:'stage_ok',stage,result:out.result} as ChainEvent:{type:'stage_failed',stage,reason:out.reason??out.outcome};
+  }
   if (out.outcome !== "ok") {
     // A rescue is never downgraded: like any strong-tier stage it is postponed on a rate limit (AC-27).
     const retryDef: StageDefinition = state.rescueRun ? { ...def, tier: "strong", independent: false, fallback: undefined } : def;
@@ -612,6 +634,8 @@ async function pauseIssue(deps: DriverDeps, claim: Claim, a: Extract<Action, { t
   const rec: PausedRecord = {
     issue: claim.issue, phase: "pausing", nonce: randomUUID(), state: claim.state, question: a.question, asking_stage: a.asking,
     question_comment_id: null, asked_at: null, reminded: false, answer: null, reply_comment_id: null,
+    session:a.asking==='verify'?null:claim.asking_session??null,
+    telegram:deps.telegram?{...emptyTelegram(),...claim.telegram_thread,sent:false,message_id:null,answer_update_id:null,ack_sent:false,send_failures:0}:null,
   };
   await writePaused(deps.paths, rec);
   await completePause(deps, rec);
@@ -628,17 +652,30 @@ export async function completePause(deps: DriverDeps, rec: PausedRecord, adoptBy
   if (questionId === null) {
     const marker = questionMarker(rec.nonce);
     const ours = adoptBy === undefined ? undefined : (await deps.gh.listComments(rec.issue)).find((c) => c.author === adoptBy && c.body.includes(marker));
-    const posted = ours ? { id: ours.id, created_at: ours.at } : await deps.gh.comment(rec.issue, formatQuestion(rec.question, deps.cfg.maintainer, rec.nonce));
+    const posted = ours ? { id: ours.id, created_at: ours.at } : await deps.gh.comment(rec.issue, formatQuestion(rec.question, deps.cfg.maintainer, rec.nonce,deps.telegram?'telegram':'issue'));
     questionId = posted.id;
     asked = { ...rec, question_comment_id: posted.id, asked_at: posted.created_at };
     await writePaused(deps.paths, asked);
   }
+  asked=await sendPausedQuestion(deps,asked);
   await deps.gh.addLabels(rec.issue, [NEEDS_DECISION_LABEL]);
   await deps.gh.removeLabel(rec.issue, CLAIM_LABEL);
   await deps.notifier.notify({ issue: rec.issue, gate: "question", label: NEEDS_DECISION_LABEL, text: `Issue #${rec.issue} has a question for the maintainer (${rec.question.kind}): ${rec.question.question}` });
-  await appendQuestionLog(deps.paths, { issue: rec.issue, at: deps.now().toISOString(), event: "sent", asking_stage: rec.asking_stage, question_comment_id: questionId });
+  await appendQuestionLog(deps.paths, { issue: rec.issue, at: deps.now().toISOString(), event: "sent", asking_stage: rec.asking_stage, question_comment_id: questionId,channel:asked.telegram?.sent?'telegram':'issue',...(asked.telegram?.message_id?{telegram_message_id:asked.telegram.message_id}:{}) });
   await writePaused(deps.paths, { ...asked, phase: "paused" });
   await removeClaim(deps.paths, rec.issue);
+}
+
+export async function sendPausedQuestion(deps:DriverDeps,rec:PausedRecord):Promise<PausedRecord>{
+ if(!deps.telegram||rec.telegram?.message_id||rec.telegram?.sent||(rec.telegram?.send_failures??0)>=2)return rec;
+ const tg=rec.telegram??emptyTelegram();
+ try{
+  const issue=await fetchIssue(deps,rec.issue);
+  rec={...rec,issue_title:issue.title};
+  const id=await deps.telegram.sendQuestion(rec,issue.title,`https://github.com/${deps.cfg.repo}/issues/${rec.issue}#issuecomment-${rec.question_comment_id}`);
+  rec={...rec,telegram:{...tg,message_id:id,sent:true,sent_at:deps.now().toISOString(),thread_message_ids:[...tg.thread_message_ids,id]}};
+ }catch{deps.log({kind:'telegram-send-failed',issue:rec.issue});rec={...rec,telegram:{...tg,send_failures:tg.send_failures+1}};}
+ await writePaused(deps.paths,rec);return rec;
 }
 
 /** AC-17: re-run, once, each pending required check that has a run; a refusal or a missing run is logged (the fix input names them). */
@@ -677,6 +714,12 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         for (const l of a.remove) await deps.gh.removeLabel(target, l);
         break;
       }
+      case 'thread_reply':
+        if(deps.telegram&&claim.telegram_thread?.thread_last_message_id){
+          try{const id=await deps.telegram.sendReply(a.text,claim.telegram_thread.thread_last_message_id);claim.telegram_thread.thread_message_ids.push(id);}
+          catch{deps.log({kind:'telegram-thread-reply-failed',issue:claim.issue});}
+        }
+        break;
       case "comment":
         await deps.gh.comment(claim.issue, claim.state.stage === "abandoned" ? `${a.text}\n\n${await runRecordList(deps, claim.issue)}` : a.text);
         break;

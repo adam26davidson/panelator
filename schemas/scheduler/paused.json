@@ -15,6 +15,7 @@
   ],
   "additionalProperties": false,
   "properties": {
+    "issue_title":{"type":"string"},
     "issue": {
       "type": "integer",
       "minimum": 1

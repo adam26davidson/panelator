@@ -56,7 +56,7 @@ describe("paused records", () => {
     await ensureStateDirs(p);
     const r = rec();
     await writePaused(p, r);
-    expect(await listPaused(p)).toEqual([r]);
+    expect(await listPaused(p)).toEqual([{...r,session:null,telegram:null}]);
     await removePaused(p, 7);
     expect(await listPaused(p)).toEqual([]);
     await removePaused(p, 7);

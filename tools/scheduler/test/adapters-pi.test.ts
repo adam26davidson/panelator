@@ -12,6 +12,10 @@ const run: StageRun = {
 };
 
 describe("piAdapter.buildCommand (AC-19)", () => {
+  it('uses --session, not the interactive resume picker, and removes write tools',()=>{
+    const {argv}=piAdapter.buildCommand({...run,resume:{sessionId:'old-session'},conversation:true});
+    expect(argv).not.toContain('--session-id');expect(argv).not.toContain('--resume');expect(argv[argv.indexOf('--session')+1]).toBe('old-session');expect(argv[argv.indexOf('--tools')+1]).toBe('read');
+  });
   it("selects json mode, provider/model, session id, non-interactive approval and the profile tools", () => {
     const { argv, env } = piAdapter.buildCommand(run);
     expect(argv[0]).toBe("pi");

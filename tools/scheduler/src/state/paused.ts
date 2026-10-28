@@ -16,6 +16,7 @@ export interface TelegramThread {
 }
 export const emptyTelegram = ():TelegramThread=>({message_id:null,sent:false,sent_at:null,send_failures:0,reminder_message_id:null,thread_message_ids:[],thread_last_message_id:null,answer_update_id:null,ack_sent:false,channel:null});
 export interface PausedRecord {
+  issue_title?:string;
   session?: AskingSession|null;
   telegram?: TelegramThread|null;
   issue: number;

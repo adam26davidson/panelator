@@ -2,6 +2,8 @@ import type { RunOutcome } from "../state/runs.ts";
 import type { AgentStageName, Bounds, Harness, Profile } from "../types.ts";
 
 export interface StageRun {
+  resume?:{sessionId:string};
+  conversation?:boolean;
   runId: string;
   stage: AgentStageName;
   attempt: number;

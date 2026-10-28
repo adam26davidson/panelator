@@ -24,6 +24,7 @@ export function questionBody(q: Question, maintainer: string): string {
 }
 
 /** The issue comment of AC-13: heading, mention, question, options with costs, recommendation, and the nonce last. */
-export function formatQuestion(q: Question, maintainer: string, nonce: string): string {
-  return `${questionBody(q, maintainer)}\n\n${questionMarker(nonce)}`;
+export function formatQuestion(q: Question, maintainer: string, nonce: string, channel:'telegram'|'issue'='issue'): string {
+  const body=channel==='telegram'?questionBody(q,maintainer).replace(`@${maintainer}\n`,'').replace('Reply in a comment on this issue; the scheduler resumes on your reply.','This question was asked on Telegram. Reply there or comment here to resume the work.'):questionBody(q,maintainer);
+  return `${body}\n\n${questionMarker(nonce)}`;
 }
