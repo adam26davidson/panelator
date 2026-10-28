@@ -2,3 +2,5 @@ packages:
   - "tools/*"
   - "web"
   - "sdk/assemblyscript"
+allowBuilds:
+  esbuild: true
