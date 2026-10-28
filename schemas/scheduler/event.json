@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "event.json",
+  "$defs": {
+    "envelope": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "kind": {
+          "enum": [
+            "run.ended",
+            "chain.transition",
+            "issue.eligible",
+            "issue.claimed",
+            "issue.released",
+            "merge",
+            "pr.opened",
+            "ci.check",
+            "review.result",
+            "finding.queued",
+            "finding.triaged",
+            "action",
+            "question",
+            "pause.started",
+            "pause.ended",
+            "slots.sample",
+            "maintainer.contact",
+            "parameter.changed",
+            "agent.run",
+            "issue.filed",
+            "reflection.plan",
+            "metrics.snapshot",
+            "aws.cost"
+          ]
+        },
+        "issue": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "at",
+        "kind",
+        "payload"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/envelope"
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "run.ended"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "usage-record.json"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "action"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "action-log-entry.json"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "question"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "question-log-entry.json"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "finding.triaged"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "triage-entry.json"
+          }
+        },
+        "type": "object"
+      }
+    }
+  ]
+}

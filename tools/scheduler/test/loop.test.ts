@@ -1,3 +1,4 @@
+import { openIndex } from "../src/events/index.ts";
 import {TelegramClient} from '../src/telegram/client.ts';
 import {telegramChannel} from '../src/telegram/channel.ts';
 import {fakeTelegram} from './helpers/fake-telegram.ts';
@@ -199,6 +200,14 @@ describe("Scheduler.tick", () => {
     expect(readdirSync(paths.patches)).toHaveLength(1);
     expect(gh.calls.find((c) => c.url === "/repos/o/r/issues/7/comments")).toBeTruthy();
     expect(gh.calls.find((c) => c.method === "DELETE" && c.url.endsWith("/labels/in-progress"))).toBeTruthy();
+    // Spec 012 AC-2: the expiry bypasses step(), and still records the chain's leaving implement.
+    const db = openIndex(paths);
+    const rows = db.prepare("SELECT kind, issue, payload FROM events WHERE kind IN ('chain.transition', 'issue.released') ORDER BY at, rowid").all() as { kind: string; issue: number; payload: string }[];
+    db.close();
+    expect(rows.map((r) => [r.kind, r.issue, JSON.parse(r.payload)])).toEqual([
+      ["chain.transition", 7, expect.objectContaining({ from: "implement", to: "released", event: "liveness_expired", track: "issue" })],
+      ["issue.released", 7, { reason: "stopped" }],
+    ]);
   }, 30_000);
 
   it("resumes a claim found on disk after a restart (AC-31)", async () => {

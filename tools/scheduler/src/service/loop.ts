@@ -1,6 +1,6 @@
 import {TelegramAnswers} from '../telegram/answers.ts';
 import {questionMessage,reminderText} from '../telegram/questions.ts';
-import { applyActions, sendPausedQuestion, completePause, driveChain as defaultDriveChain, step, type DriverDeps } from "../chain/driver.ts";
+import { applyActions, sendPausedQuestion, completePause, driveChain as defaultDriveChain, recordTransition, step, type DriverDeps } from "../chain/driver.ts";
 import { CLAIM_LABEL, ENDED, HISTORY_ENTRY_MAX, NEEDS_DECISION_LABEL, initialChainState, ledgerOf, stuckOf as stuckStage, transition } from "../chain/machine.ts";
 import {emit} from '../standing/events.ts';
 import { appendFindings, onFindingsQueued } from "../state/findings.ts";
@@ -13,7 +13,12 @@ import type {StandingDefinition} from '../types.ts';
 import type {ParameterStore} from '../parameters/store.ts';
 import {watchMainChecks} from '../standing/events.ts';
 import {execFileSync} from 'node:child_process';
-import { rankIssues, classifyWork } from "../shortlist/rank.ts";
+import {existsSync} from 'node:fs';
+import {readFile,writeFile,rename} from 'node:fs/promises';
+import {record} from '../events/store.ts';
+import {backfillEvents} from '../events/backfill.ts';
+import { rankIssues, classifyWork, classOf } from "../shortlist/rank.ts";
+import type { IssueData } from "../types.ts";
 import { selectEligible } from "../shortlist/select.ts";
 import { listClaims, readClaim, removeClaim, writeClaim, type Claim } from "../state/claims.ts";
 import { readLedger, writeLedger } from "../state/ledger.ts";
@@ -29,6 +34,7 @@ import { schedulerChanged } from "./git.ts";
 
 export interface SchedulerDeps extends DriverDeps {
   registry?:Record<string,StandingDefinition>;
+  metrics?:Record<string,import('../metrics/definitions.ts').MetricDefinition>;
   parameters?:ParameterStore;
   runStanding?:typeof runStandingAgent;
   botLogin: string;
@@ -104,6 +110,36 @@ export class Scheduler {
     this.wake();
   }
 
+  /** `slots.sample` (spec 012 AC-2): once per tick and on each change of occupancy within it. */
+  async #sample(): Promise<void> {
+    const d = this.#deps;
+    const slots = d.parameters ? Number((await d.parameters.read("slots")).value) : d.cfg.slots;
+    await record(d.paths, "slots.sample", d.now(), { active: this.active, slots, chains: this.#active.size, standing: this.#activeStanding.size });
+  }
+  #sampling = Promise.resolve();
+  #sampleLater(): void {
+    this.#sampling = this.#sampling.then(() => this.#sample()).catch((e) => this.#deps.log({ kind: "error", error: `slots.sample: ${(e as Error).message}` }));
+  }
+
+  /** `issue.eligible` once per period of eligibility; the marks live outside `events/` (spec 012 AC-1). */
+  async #recordEligible(ranked: IssueData[], eligible: IssueData[], claimed: Set<number>, classify: (i: IssueData) => "system" | "product"): Promise<void> {
+    const d = this.#deps;
+    let marks: number[] = [];
+    try { marks = JSON.parse(await readFile(d.paths.eligibleMarks, "utf8")); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
+    const live = new Set(eligible.map((i) => i.number));
+    const next = marks.filter((n) => live.has(n) && !claimed.has(n));
+    for (const [rank, issue] of ranked.entries()) {
+      if (next.includes(issue.number) || claimed.has(issue.number)) continue;
+      const validated = issue.labelEvents.find((e) => e.label === "validated" && e.action === "labeled");
+      await record(d.paths, "issue.eligible", d.now(), {
+        rank, work: classify(issue), cls: classOf(issue, d.cfg.labels), validated_at: validated?.at ?? null, created_at: issue.createdAt,
+      }, { issue: issue.number });
+      next.push(issue.number);
+    }
+    await writeFile(d.paths.eligibleMarks + ".tmp", JSON.stringify(next));
+    await rename(d.paths.eligibleMarks + ".tmp", d.paths.eligibleMarks);
+  }
+
   #start(claim: Claim): void {
     if (this.#active.has(claim.issue)) return;
     const d = this.#deps;
@@ -117,6 +153,7 @@ export class Scheduler {
       .catch((e) => d.log({ kind: "error", issue: claim.issue, error: `failure count: ${(e as Error).message}` }))
       .finally(() => {
         this.#active.delete(claim.issue);
+        this.#sampleLater();
         if(d.telegram)this.wake();
         if (this.active === 0) {
           d.inhibitor.release();
@@ -125,6 +162,7 @@ export class Scheduler {
         }
       });
     this.#active.set(claim.issue, p);
+    this.#sampleLater();
   }
 
   /**
@@ -187,6 +225,7 @@ export class Scheduler {
 
   async #expire(claim: Claim): Promise<void> {
     const { state, actions } = transition(claim.state, { type: "liveness_expired" });
+    await recordTransition(this.#deps, claim.issue, claim.state, state, "liveness_expired");
     await applyActions(this.#deps, { ...claim, state }, actions);
   }
 
@@ -202,6 +241,7 @@ export class Scheduler {
       // Review focus 5: a closed paused issue is dropped, with any claim a crash mid-pause or mid-resume left.
       await removePaused(d.paths, rec.issue);
       await removeClaim(d.paths, rec.issue);
+      await record(d.paths, "pause.ended", d.now(), { stage: rec.asking_stage, ...(rec.question_comment_id === null ? {} : { question_comment_id: rec.question_comment_id }), reason: "closed" }, { issue: rec.issue });
       d.serviceLog.write({ kind: "paused-dropped", issue: rec.issue, phase: rec.phase });
       return false;
     }
@@ -241,7 +281,7 @@ export class Scheduler {
         rec={...rec,reminded:true,telegram:{...rec.telegram,reminder_message_id:id,thread_message_ids:[...rec.telegram.thread_message_ids,id]}};await writePaused(d.paths,rec);
       }else await d.gh.comment(rec.issue, text);
       await d.notifier.notify({ issue: rec.issue, gate: "question-reminder", label: NEEDS_DECISION_LABEL, text });
-      await appendQuestionLog(d.paths, { issue: rec.issue, at: d.now().toISOString(), event: "reminded", asking_stage: rec.asking_stage,channel:rec.telegram?.message_id?'telegram':'issue',...(rec.telegram?.reminder_message_id?{telegram_message_id:rec.telegram.reminder_message_id}:{}), ...(rec.question_comment_id === null ? {} : { question_comment_id: rec.question_comment_id }) });
+      await appendQuestionLog(d.paths, { issue: rec.issue, at: d.now().toISOString(), event: "reminded", asking_stage: rec.asking_stage,channel:rec.telegram?.message_id?'telegram':'issue',...(rec.telegram?.reminder_message_id?{telegram_message_id:rec.telegram.reminder_message_id}:{}), ...(rec.question_comment_id === null ? {} : { question_comment_id: rec.question_comment_id }) }, rec.question.question);
     }
     return false;
   }
@@ -277,6 +317,8 @@ export class Scheduler {
     await d.gh.removeLabel(rec.issue, NEEDS_DECISION_LABEL);
     await this.telegramAnswers.archive(rec);
     await removePaused(d.paths, rec.issue);
+    await record(d.paths, "pause.ended", d.now(), { stage: rec.asking_stage, question_comment_id: questionId, reason: "answered" }, { issue: rec.issue });
+    await record(d.paths, "issue.claimed", d.now(), { slot: claim.slot }, { issue: rec.issue });
     info.claimed.push(rec.issue);
     this.#start(claim);
   }
@@ -288,6 +330,8 @@ export class Scheduler {
     const info: TickInfo = { eligible: 0, claimed: [], released: [], errors: [], restartPending: this.#restartPending };
     try {
       const slots = d.parameters ? Number((await d.parameters.read('slots')).value) : d.cfg.slots;
+      if(!existsSync(d.paths.eventsBackfilled))await backfillEvents(d.paths,rec=>d.serviceLog.write(rec));
+      await this.#sample();
       if(d.registry && d.parameters)await initializeAgents(d.paths,d.registry,d.parameters,d.now());
       const token = await readToken(d.paths).catch(() => null);
       if (token && new Date(token.expires_at).getTime() - d.now().getTime() < TOKEN_REFRESH_MARGIN_MS) await this.#refreshToken();
@@ -363,13 +407,13 @@ export class Scheduler {
         states.sort((a,b)=>(a.state.next_run??'').localeCompare(b.state.next_run??''));
         for(const {def,state} of states) {
           if(free<=0)break;
-          if(state.paused||this.#activeStanding.has(def.name)||!((state.next_run && Date.parse(state.next_run)<=d.now().getTime())||state.pending_events.length))continue;
+          if(state.paused||this.#activeStanding.has(def.name)||!((state.next_run && Date.parse(state.next_run)<=d.now().getTime())||state.pending_events.length>=(def.trigger.min_events??1)))continue;
           if(state.running && await d.unitActive(`panelator-stage-${state.running.run_id}`))continue;
           d.inhibitor.acquire();
           const p=(d.runStanding??runStandingAgent)({...d,parameters:d.parameters},def,state)
             .catch(e=>d.log({kind:'standing-error',agent:def.name,error:String(e)}))
-            .finally(()=>{this.#activeStanding.delete(def.name);if(this.active===0){d.inhibitor.release();if(this.#restartPending&&!this.#ticking)d.requestRestart();}});
-          this.#activeStanding.set(def.name,p);free--;
+            .finally(()=>{this.#activeStanding.delete(def.name);this.#sampleLater();if(this.active===0){d.inhibitor.release();if(this.#restartPending&&!this.#ticking)d.requestRestart();}});
+          this.#activeStanding.set(def.name,p);free--;this.#sampleLater();
         }
       }
       if (free <= 0) return info;
@@ -388,6 +432,7 @@ export class Scheduler {
       const readSpec=buildSelectContext(d.repoDir,d.cfg,claimed,d.botLogin).readSpec;
       const share=d.parameters?Number((await d.parameters.read('system_work_share')).value):0.75;
       const ranked = rankIssues(eligible, d.cfg.labels, await recentMerges(d.paths, d.now()),share,i=>classifyWork(i,readSpec));
+      await this.#recordEligible(ranked, eligible, claimed, i => classifyWork(i, readSpec));
       for (const issue of ranked.slice(0, free)) {
         if (this.#stopping) break;
         try {
@@ -402,6 +447,7 @@ export class Scheduler {
           };
           await writeClaim(d.paths, claim);
           await d.gh.addLabels(issue.number, [CLAIM_LABEL]);
+          await record(d.paths, "issue.claimed", d.now(), { slot: claim.slot }, { issue: issue.number });
           info.claimed.push(issue.number);
           this.#start(claim);
         } catch (e) {

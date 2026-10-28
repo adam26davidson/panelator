@@ -1,0 +1,18 @@
+name: rework_per_merge
+goal: quality
+description: Fix cycles plus rescues per merged issue
+unit: cycles
+direction: lower
+introduced: 2026-10-28
+rationale: >-
+  Quality shows up in the chain as work done twice: a review that sends the change back for a fix, or
+  a stage that fails until the strongest model is called as a rescue. Counting the transitions into
+  the fix stage and the transitions made while a rescue run was in force, per issue merged in the
+  week, measures how much of the effort was rework. It drives the question whether the implement
+  prompts, the specs or the review criteria need to change; a falling value with steady merges means
+  the first attempt is better.
+query: |-
+  WITH m AS (SELECT issue, at AS merged_at, date(at, 'weekday 0', '-6 days') AS bucket FROM events WHERE kind = 'merge' AND at >= :from AND at < :to),
+  r AS (SELECT issue, sum((json_extract(payload, '$.to') = 'fix') + (json_extract(payload, '$.rescue') IN (1, 'true'))) AS k
+        FROM events WHERE kind = 'chain.transition' AND issue IS NOT NULL GROUP BY issue)
+  SELECT m.bucket AS bucket, avg(coalesce(r.k, 0)) AS value, count(*) AS n FROM m LEFT JOIN r ON r.issue = m.issue GROUP BY m.bucket
