@@ -488,3 +488,4 @@ are stale and are corrected as part of B.
 - `specs/007-telegram-channel/spec.md`
 - `specs/008-agent-registry/spec.md`
 - `specs/009-postponed-chain-holds-slot/spec.md`
+- `specs/010-approve-esbuild-build/spec.md`
