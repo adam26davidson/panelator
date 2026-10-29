@@ -24,7 +24,7 @@ export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput
 const defaultClass=(classes:string[])=>classes.includes('class:bug')?'class:bug':classes[0]!;
 /**
  * The configured label a model-written class names, or null. Exact first; then, ignoring case and surrounding
- * space, the label itself or the label with its `class:` prefix left off. Only a single match counts (spec 017 AC-2).
+ * space, the label itself or the label with its `class:` prefix left off. Only a single match counts (spec 018 AC-2).
  */
 export function resolveClass(value:string,classes:string[]):string|null {
  if(classes.includes(value))return value;
@@ -73,13 +73,13 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   if(prior?.held&&prior.capability_issue!==undefined)touchedHeld=true;
   const row:TriageEntry={ref:dec.ref,outcome:dec.outcome,reason:dec.reason,run_id:runId,at:d.now().toISOString(),...(record?{finding:record.finding}:{})};
   const marker=`<!-- panelator-finding:${runId}:${dec.ref} -->`;
-  // Set when an issue is created with the default label because the model's class could not be resolved (spec 017 AC-3).
+  // Set when an issue is created with the default label because the model's class could not be resolved (spec 018 AC-3).
   const applied:{fallback?:{class:string;used:string}}={};
   const file=async()=>{
    const issue=dec.issue?{...dec.issue}:{title:record?.finding.what??abandoned!.issue.title,body:JSON.stringify(record?.finding??abandoned!.issue,null,2),class:defaultClass(d.classes)};
    const existing=(await d.gh.searchOpenIssuesByMarker('<!-- panelator-finding:')).find(i=>i.author===d.botLogin&&new RegExp(`<!-- panelator-finding:[^:]+:${dec.ref.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')} -->`).test(i.body));
    if(existing)return existing.number;
-   // The class is resolved only where it is applied, so one decision's label never decides the batch (spec 017 AC-2, AC-3).
+   // The class is resolved only where it is applied, so one decision's label never decides the batch (spec 018 AC-2, AC-3).
    const resolved=resolveClass(issue.class,d.classes);
    if(resolved===null){applied.fallback={class:issue.class,used:defaultClass(d.classes)};issue.class=applied.fallback.used;}
    else issue.class=resolved;
@@ -133,7 +133,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   const fb=applied.fallback;
   if(fb)row.reason+=` (class '${fb.class}' is not configured; labelled ${fb.used})`;
   await appendFile(d.paths.findingsTriage,JSON.stringify(row)+'\n');triage.push(row);
-  // Logged once the decision is kept, so a settled ref or a batch that aborts earlier logs nothing (spec 017 AC-3).
+  // Logged once the decision is kept, so a settled ref or a batch that aborts earlier logs nothing (spec 018 AC-3).
   if(fb)d.log?.({kind:'filer-class-fallback',run_id:runId,ref:dec.ref,class:fb.class,used:fb.used});
   // Advisories work again, so the capability question is settled (spec 014 AC-6); done after the row is kept, and
   // only when something was held under a permission failure.

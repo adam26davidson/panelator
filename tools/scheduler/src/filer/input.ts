@@ -6,7 +6,7 @@ import type {GitHubClient} from '../github/client.ts';
 import type {Finding,IssueData} from '../types.ts';
 export interface QueueRecord {ref:string; finding:Finding; repeat?:string; advisory_failed?:boolean; advisory_attempts?:number; [key:string]:unknown}
 export interface AbandonedRecord {ref:string;issue:IssueData;comments:unknown[];ledgers:unknown[];retries:number}
-/** `issue_classes`: the exact class labels an issue decision may carry, so the model need not guess them (spec 017 AC-1). */
+/** `issue_classes`: the exact class labels an issue decision may carry, so the model need not guess them (spec 018 AC-1). */
 export interface FilerInput {records:QueueRecord[];abandoned:AbandonedRecord[];open_issues:{number:number;title:string}[];cursor:number;issue_classes:string[]}
 export interface TriageEntry {ref:string;outcome:string;reason:string;run_id:string;at:string;issue?:number;advisory?:string;failed?:boolean;finding?:Finding;attempt?:number;failure?:AdvisoryFailure;held?:boolean;capability_issue?:number}
 /** `permission`: GitHub refused the App (403, the missing capability); `error`: anything else (spec 014 AC-5). */

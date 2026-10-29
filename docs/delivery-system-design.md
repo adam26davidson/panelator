@@ -495,4 +495,5 @@ are stale and are corrected as part of B.
 - `specs/014-filer-batch-integrity/spec.md`
 - `specs/015-chain-keeps-its-work/spec.md`
 - `specs/016-fair-slot-scheduling/spec.md`
-- `specs/017-filer-class-labels/spec.md`
+- `specs/017-read-only-stages-not-told-to-run-tests/spec.md`
+- `specs/018-filer-class-labels/spec.md`

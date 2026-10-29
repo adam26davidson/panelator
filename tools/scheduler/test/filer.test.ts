@@ -239,7 +239,7 @@ it('discarding the last held ref closes the capability issue; a close already co
  await applyFilerResult(d,'discard',probe,{summary:'s',decisions:[{ref:'1',outcome:'discard',reason:'false positive'}]});
  expect(gh.closeIssue).toHaveBeenCalledWith(42,'');expect(gh.comment).not.toHaveBeenCalled();
 });
-// Spec 017: the filer's class labels.
+// Spec 018: the filer's class labels.
 const live=['class:product','class:bug','class:tooling','class:dependency'];
 it('lists the accepted class labels in the filer input (AC-1)',async()=>{
  const {d,paths}=await setup();d.classes=live;await queue(paths,[finding]);

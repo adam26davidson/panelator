@@ -1,4 +1,4 @@
-# 017. The findings filer's class labels
+# 018. The findings filer's class labels
 
 Status: written 2026-10-29 from the delivery-system design for a live
 defect found right after specs 013 to 016 were deployed; specs derived from
