@@ -59,12 +59,15 @@ export async function buildFilerInput(d:FilerDeps):Promise<FilerInput> {
  // Each ref once: a retry is its queue record, and a settled record is never re-sent (spec 014 AC-1, AC-2).
  cursor=settledCursor(cursor,triage);
  // Identical unsettled records, anywhere after the cursor, ride on the first entry of their kind instead of taking
- // batch places of their own, so one investigation settles every copy (spec 019 AC-1).
- const byKey=new Map<string,QueueRecord>();for(const r of records)if(!byKey.has(recordKey(r)))byKey.set(recordKey(r),r);
+ // batch places of their own, so one investigation settles every copy (spec 019 AC-1). Copies of a failed advisory
+ // not in this batch (held, not probed today) wait for it: as entries of their own they would lose its privacy.
+ const byKey=new Map<string,QueueRecord|null>();for(const r of records)if(!byKey.has(recordKey(r)))byKey.set(recordKey(r),r);
+ for(const t of failed){const key=recordKey(queue[Number(t.ref)-1] as Record<string,unknown>);if(!byKey.has(key))byKey.set(key,null);}
  for(let i=cursor;i<queue.length;i++) {
   const ref=String(i+1);if(last.has(ref)||!queue[i])continue;
   const key=recordKey(queue[i] as Record<string,unknown>),same=byKey.get(key);
   if(same)(same.duplicate_refs??=[]).push(ref);
+  else if(same===null)continue;
   else if(records.length<BATCH){const r={...queue[i]!,ref};records.push(r);byKey.set(key,r);}
  }
  for(const r of records){const old=triage.find(t=>t.outcome==='discard'&&t.finding?.what===r.finding.what&&t.finding?.where===r.finding.where&&Date.parse(t.at)>d.now().getTime()-30*86400000);if(old)r.repeat=old.reason;}

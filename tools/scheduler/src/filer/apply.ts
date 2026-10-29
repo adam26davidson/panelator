@@ -1,7 +1,7 @@
 import {appendFile,writeFile,rename} from 'node:fs/promises';
 import type {Question} from '../types.ts';
 import {validate} from '../schema/validate.ts';
-import {readJsonLines,settledCursor,advisoryAttempts,isCapabilityIssue,stripCapabilityMarkers,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,CAPABILITY_TITLE,CAPABILITY_CLOSED_MARKER,type AdvisoryFailure,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
+import {readJsonLines,recordKey,settledCursor,advisoryAttempts,isCapabilityIssue,stripCapabilityMarkers,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,CAPABILITY_TITLE,CAPABILITY_CLOSED_MARKER,type AdvisoryFailure,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
 export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'}}
 export interface FilerResult {summary:string;decisions:Decision[]}
 export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput,result:FilerResult):Promise<void> {
@@ -90,8 +90,10 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
    return d.gh.createIssue(stripCapabilityMarkers(issue.title),stripCapabilityMarkers(`${body}\n\nFiler verification: ${dec.reason}`)+`\n\n${marker}`,[issue.class,'validated']);
   };
   // A security flag overrides every public outcome; a discard is private and stays a discard (AC-19). A record
-  // already judged security once (a retried advisory) is as private as a flagged one (spec 014 AC-9).
-  const confidential=!!record&&(record.finding.security||record.advisory_failed||triage.some(t=>t.ref===dec.ref&&t.outcome==='security'));
+  // already judged security once (a retried advisory) is as private as a flagged one (spec 014 AC-9), and so is a
+  // later copy of a finding once judged security (spec 019 AC-2).
+  const sameFinding=record&&recordKey({finding:record.finding});
+  const confidential=!!record&&(record.finding.security||record.advisory_failed||triage.some(t=>t.outcome==='security'&&(t.ref===dec.ref||(!!t.finding&&recordKey({finding:t.finding})===sameFinding))));
   if(dec.outcome==='security'||(confidential&&dec.outcome!=='discard')) {
    row.outcome='security';
    try {
@@ -132,14 +134,11 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   }
   const fb=applied.fallback;
   if(fb)row.reason+=` (class '${fb.class}' is not configured; labelled ${fb.used})`;
-  await appendFile(d.paths.findingsTriage,JSON.stringify(row)+'\n');triage.push(row);
-  // The decision settles the identical records it stood for, with no further effect; a failed advisory leaves them
-  // to ride on its retry (spec 019 AC-2).
-  if(record?.duplicate_refs?.length&&!row.failed) {
-   const settled=new Set(triage.filter(t=>!t.failed).map(t=>t.ref));
-   const copies=record.duplicate_refs.filter(ref=>!settled.has(ref)).map(ref=>({...row,ref,reason:`same record as ref ${dec.ref}: ${row.reason}`}));
-   if(copies.length){await appendFile(d.paths.findingsTriage,copies.map(c=>JSON.stringify(c)+'\n').join(''));triage.push(...copies);}
-  }
+  // The decision settles the identical records it stood for, with no further effect, in the same write as its own
+  // row so a crash cannot split them; a failed advisory leaves them to ride on its retry (spec 019 AC-2).
+  const settled=new Set(triage.filter(t=>!t.failed).map(t=>t.ref));
+  const copies=row.failed?[]:(record?.duplicate_refs??[]).filter(ref=>!settled.has(ref)).map(ref=>({...row,ref,reason:`same record as ref ${dec.ref}: ${row.reason}`}));
+  await appendFile(d.paths.findingsTriage,[row,...copies].map(c=>JSON.stringify(c)+'\n').join(''));triage.push(row,...copies);
   // Logged once the decision is kept, so a settled ref or a batch that aborts earlier logs nothing (spec 018 AC-3).
   if(fb)d.log?.({kind:'filer-class-fallback',run_id:runId,ref:dec.ref,class:fb.class,used:fb.used});
   // Advisories work again, so the capability question is settled (spec 014 AC-6); done after the row is kept, and

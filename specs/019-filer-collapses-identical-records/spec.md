@@ -19,8 +19,9 @@ A run of identical findings costs one decision, not one per copy.
 
 ### What happens today (observed live 2026-10-29)
 
-The 2026-10-28 rate-limit loop (fixed by spec 013 AC-7) queued 643 copies
-of the scheduler's own record `standing agent findings-filer failed twice`,
+The 2026-10-28 rate-limit loop (fixed by spec 013 AC-7) queued about 640
+`failed twice` records, almost all of them (about 630) copies of the
+scheduler's own record `standing agent findings-filer failed twice`,
 identical but for `run_id` and `timestamp`. `buildFilerInput` takes the next
 20 unsettled records oldest first, so each strong-tier filer run (about $3)
 spends its whole batch discarding 20 copies for the reason the run before
@@ -57,6 +58,10 @@ as in `tools/scheduler/test/filer.test.ts`.
   identical to an entry, anywhere in the queue, is listed in that entry's
   `duplicate_refs` instead of taking a place of its own. A retried advisory
   (spec 014) is an entry too, and collects its unsettled copies the same way.
+  Copies of a failed advisory that is not in this batch (held and not probed
+  today, or past the batch bound) are left out and unsettled: they ride on its
+  later probe or release rather than becoming entries that would lose its
+  privacy (spec 014 AC-9) or fail and hold one by one.
   Given the live shape (hundreds of copies ahead of distinct findings), then
   one batch holds one entry for the copies and the distinct findings behind
   them.
@@ -64,9 +69,13 @@ as in `tools/scheduler/test/filer.test.ts`.
   `duplicate_refs`, then after its own triage row each listed ref not already
   settled gets a row with the same outcome, issue and advisory and the reason
   `same record as ref <ref>: <reason>`, and no further GitHub call is made for
-  them. The cursor then moves past every consecutive settled ref (spec 014
-  AC-4). A decision whose advisory failed settles no copies; they ride on its
-  retry.
+  them. The entry's row and its copies' rows are appended in one write, so a
+  crash cannot keep the one without the others. The cursor then moves past
+  every consecutive settled ref (spec 014 AC-4). A decision whose advisory
+  failed settles no copies; they ride on its retry. A record whose finding
+  equals (field order ignored) the finding of a triage row with outcome
+  `security`, failed or not, is confidential like a retried advisory: any
+  outcome but discard becomes a draft advisory (spec 014 AC-9).
 - AC-3. **The model is told.** The filer prompt says a record with
   `duplicate_refs` stands for those identical records and that its one
   decision settles them all. Decisions still cover exactly the entries' refs
@@ -83,7 +92,9 @@ as in `tools/scheduler/test/filer.test.ts`.
   `QueueRecord.duplicate_refs`, the collapse in `buildFilerInput`.
 - `tools/scheduler/src/filer/apply.ts`: the copy rows after an entry's row.
 - `agents/standing/findings-filer.md`: `duplicate_refs`.
-- `tools/scheduler/test/filer.test.ts`: AC-1 to AC-3, including the live shape.
+- `tools/scheduler/test/filer.test.ts`: AC-1 to AC-3, including the live
+  shape, held advisories' copies, a crash between rows, and copies under
+  merge_into and escalate.
 - `docs/delivery-system-design.md`: this spec under `## Children`.
 
 `tools/scheduler/`, `agents/` and `docs/delivery-system-design.md` are
@@ -94,9 +105,12 @@ sensitive paths; the security review applies (spec 006 AC-9).
 - `pnpm test` from the repository root passes.
 - The live-shape test fails on `main` (20 copies fill the batch) and passes
   after the change.
-- Live check after deploy: the next findings-filer run's `input.json` has one
-  entry for the `failed twice` copies, and after it `findings/cursor.json`
-  is past line 724.
+- Live check after deploy: the next findings-filer run's `input.json` holds
+  one entry per distinct copied record (the hundreds of unsettled copies of
+  the one `failed twice` record under a single entry), and after that run
+  those copies are settled in `findings/triage.jsonl`. The cursor reaches the end of the backlog only
+  over several runs, since distinct unsettled records remain past the first
+  batch.
 
 ## 7. Open decisions
 

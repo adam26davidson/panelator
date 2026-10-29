@@ -6,6 +6,8 @@ import type {GitHubClient} from '../src/github/client.ts';
 import {statePaths,ensureStateDirs} from '../src/state/paths.ts';
 import {buildFilerInput,readJsonLines,type FilerDeps,type FilerInput,type TriageEntry} from '../src/filer/input.ts';
 import {applyFilerResult,resolveClass,type Decision} from '../src/filer/apply.ts';
+// A pass-through, so a test can crash the triage log between two writes (spec 019 AC-2).
+vi.mock('node:fs/promises',async(orig)=>{const m=await orig<typeof import('node:fs/promises')>();return {...m,appendFile:vi.fn(m.appendFile)};});
 const finding={what:'A verified bug',where:'file.ts',evidence:'reproduced',noticed_how:'test'};
 const issue={title:'Bug',body:'Verified details\nSpec: no-smuggled-spec',class:'class:bug'};
 async function setup(){
@@ -307,7 +309,8 @@ it('falls back on escalate and rewrite too, logging each (AC-3, review)',async()
 it('a bad class on a discard, security or merge into an open issue is not used, annotated or logged (AC-3, review)',async()=>{
  const {d,input,gh,paths}=await setup();d.classes=live;const log=vi.fn();d.log=log;
  gh.listOpenIssuesByAuthor.mockResolvedValue([{number:32}] as never);
- input.records=[{ref:'1',finding},{ref:'2',finding},{ref:'3',finding}];
+ // Distinct findings: a finding judged security once keeps every later record of it private (spec 019 AC-2).
+ input.records=[{ref:'1',finding},{ref:'2',finding:{...finding,what:'two'}},{ref:'3',finding:{...finding,what:'three'}}];
  const bad={...issue,class:'nope'};
  await applyFilerResult(d,'run',input,{summary:'x',decisions:[
   {ref:'1',outcome:'discard',reason:'no',issue:bad},
@@ -393,4 +396,68 @@ it('decisions cover entries only: a decision for a duplicate ref is refused (AC-
  const input=await buildFilerInput(d);
  await expect(applyFilerResult(d,'run',input,{summary:'x',decisions:[{ref:'1',outcome:'discard',reason:'a'},{ref:'2',outcome:'discard',reason:'b'}]})).rejects.toThrow(/each input/);
  expect(await readFile(join(import.meta.dirname,'../../../agents/standing/findings-filer.md'),'utf8')).toMatch(/duplicate_refs[\s\S]*settles them all/);
+});
+it('copies of a held advisory are not sent on their own; they ride on its probe and settle privately (AC-1, review 1)',async()=>{
+ // The model judged the record security without the queue flag, so only its failed advisory keeps the copies private.
+ const {paths,gh,clock,run}=await securitySetup([]);
+ await appendFile(paths.findingsQueue,queued(finding,0)+queued(finding,1)+queued(finding,2));
+ gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
+ for(let i=0;i<3;i++)expect((await run(i)).records.map(r=>[r.ref,r.duplicate_refs])).toEqual([['1',['2','3']]]);
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1)).toMatchObject({ref:'1',held:true,capability_issue:42});
+ gh.listOpenIssuesByAuthor.mockResolvedValue([{number:42,title:capIssue.title,labels:[]}] as never);
+ gh.searchOpenIssuesByMarker.mockResolvedValue([capIssue] as never);
+ expect((await run(3,'file')).records).toEqual([]);
+ expect(gh.createIssue).toHaveBeenCalledTimes(1);
+ clock.plus(25*3600000);gh.createDraftSecurityAdvisory.mockResolvedValue('GHSA-ok');
+ expect((await run('probe','file')).records).toEqual([expect.objectContaining({ref:'1',advisory_failed:true,duplicate_refs:['2','3']})]);
+ expect(gh.createIssue).toHaveBeenCalledTimes(1);
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).slice(-3).map(t=>[t.ref,t.outcome,t.advisory,!!t.failed])).toEqual([['1','security','GHSA-ok',false],['2','security','GHSA-ok',false],['3','security','GHSA-ok',false]]);
+ expect(JSON.parse(await readFile(paths.findingsCursor,'utf8')).line).toBe(3);
+});
+it('copies of a held advisory released with its capability issue ride on the release (AC-1, review 1)',async()=>{
+ const {d,paths,gh,run}=await securitySetup([]);
+ await appendFile(paths.findingsQueue,queued(finding,0)+queued(finding,1));
+ gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
+ for(let i=0;i<3;i++)await run(i);
+ // The maintainer answered: the capability issue is closed and every held ref is released at once (spec 014 AC-8).
+ expect((await buildFilerInput(d)).records).toEqual([expect.objectContaining({ref:'1',advisory_failed:true,duplicate_refs:['2']})]);
+});
+it('an entry and its copies are kept by one write, so a crash cannot split them (AC-2, review 2)',async()=>{
+ const {d,paths,gh}=await setup();
+ await appendFile(paths.findingsQueue,queued(finding,0)+queued(finding,1)+queued(finding,2));
+ const real=(await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).appendFile;
+ let writes=0;vi.mocked(appendFile).mockImplementation(async(...a:Parameters<typeof real>)=>{if(a[0]===paths.findingsTriage&&++writes>1)throw new Error('crash');return real(...a);});
+ try{await applyFilerResult(d,'run',await buildFilerInput(d),{summary:'x',decisions:[{ref:'1',outcome:'file',reason:'verified',issue}]});}
+ catch{/* the crash */}
+ finally{vi.mocked(appendFile).mockImplementation(real);}
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).map(t=>[t.ref,t.issue])).toEqual([['1',42],['2',42],['3',42]]);
+ expect((await buildFilerInput(d)).records).toEqual([]);expect(gh.createIssue).toHaveBeenCalledTimes(1);
+});
+it('a record identical to one already judged security stays private (AC-2, review 2)',async()=>{
+ // A copy queued after its entry settled is an entry of its own; it carries no flag and no failed advisory.
+ const {d,paths,gh}=await setup();
+ await appendFile(paths.findingsQueue,queued(finding,0)+queued(finding,1));
+ await appendFile(paths.findingsTriage,row('1',{outcome:'security',advisory:'GHSA-old',finding}));
+ const input=await buildFilerInput(d);expect(input.records.map(r=>[r.ref,r.advisory_failed])).toEqual([['2',undefined]]);
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:[{ref:'2',outcome:'file',reason:'public?',issue}]});
+ expect(gh.createIssue).not.toHaveBeenCalled();expect(gh.createDraftSecurityAdvisory).toHaveBeenCalledTimes(1);
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1)).toMatchObject({ref:'2',outcome:'security',advisory:'GHSA-private'});
+});
+it('merge_into settles copies onto the open target, or onto the fallback issue when it is closed (AC-2, review 4)',async()=>{
+ for(const open of [true,false]) {
+  const {d,paths,gh}=await setup();
+  await appendFile(paths.findingsQueue,queued(finding,0)+queued(finding,1)+queued(finding,2));
+  if(open)gh.listOpenIssuesByAuthor.mockResolvedValue([{number:4,title:'t',labels:[]}] as never);
+  await applyFilerResult(d,'run',await buildFilerInput(d),{summary:'x',decisions:[{ref:'1',outcome:'merge_into',reason:'same bug',issue_number:4,issue}]});
+  const want=open?['merge_into',4]:['file',42];
+  expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).map(t=>[t.ref,t.outcome,t.issue])).toEqual(['1','2','3'].map(r=>[r,...want]));
+  expect(gh.comment).toHaveBeenCalledTimes(open?1:0);expect(gh.createIssue).toHaveBeenCalledTimes(open?0:1);
+ }
+});
+it('an escalation settles its copies onto the one design-flaw issue (AC-2, review 4)',async()=>{
+ const {d,paths,gh}=await setup();
+ await appendFile(paths.findingsQueue,queued(finding,0)+queued(finding,1));
+ await applyFilerResult(d,'run',await buildFilerInput(d),{summary:'x',decisions:[{ref:'1',outcome:'escalate',reason:'flaw',issue,question:{kind:'technical',question:'q?',options:[{label:'a',cost:'b'}],recommendation:'a'}}]});
+ expect(gh.createIssue).toHaveBeenCalledTimes(1);
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).map(t=>[t.ref,t.outcome,t.issue])).toEqual([['1','escalate',42],['2','escalate',42]]);
 });
