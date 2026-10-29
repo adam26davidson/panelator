@@ -22,6 +22,8 @@ import { writeLedger } from "../src/state/ledger.ts";
 import { appendQuestionLog } from "../src/state/questions.ts";
 import type { Question } from "../src/types.ts";
 import { mockGitHub, type Route } from "./helpers/mock-github.ts";
+import { ParameterStore } from "../src/parameters/store.ts";
+import { loadParameterDefinitions } from "../src/parameters/definitions.ts";
 import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
 
 const script = join(import.meta.dirname, "fixtures", "stage-script.ts");
@@ -772,6 +774,90 @@ describe("driver: rate limits (spec 006 AC-26)", () => {
     expect(ran).toEqual(["question-check:openai/gpt-6.1-sol", "question-check:claude-fable-5-1"]);
     const usage = readdirSync(paths.usage).map((f) => JSON.parse(readFileSync(join(paths.usage, f), "utf8")));
     expect(usage.map((u) => [u.stage, u.model]).sort()).toEqual([["question-check", "claude-fable-5-1"], ["question-check", "openai/gpt-6.1-sol"]]);
+  }, 60_000);
+});
+
+describe("driver: quota (spec 013)", () => {
+  const SESSION = "You've hit your session limit · resets 8:10am (Europe/Berlin)";
+  const FABLE = "You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage, to continue.";
+  /** Each model answers from its own list: a string is a 429 with that message, an object a result. */
+  function quotaAdapter(answers: Record<string, unknown[]>): Adapter & { ran: string[] } {
+    const ran: string[] = [];
+    let last: unknown;
+    return {
+      harness: "fake", ran,
+      buildCommand: (run) => {
+        ran.push(`${run.stage}:${run.model}`);
+        last = answers[run.model]?.shift();
+        const argv = [process.execPath, script, events, run.resultPath, typeof last === "string" ? "2" : "0", "0"];
+        if (typeof last !== "string" && last !== undefined) argv.push(JSON.stringify(last));
+        return { argv, env: {} };
+      },
+      judge: (_e, exit) => exit === 2 ? { outcome: "failed", reason: String(last), apiErrorStatus: 429, finalText: null } : { outcome: "ok", reason: null, apiErrorStatus: null, finalText: "x" },
+      usage: () => ({ cost_usd: 0.5, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0 }),
+    };
+  }
+  async function world(answers: Record<string, unknown[]>, now: string) {
+    const t = await setup(() => ({}));
+    const adapter = quotaAdapter(answers);
+    let clock = new Date(now);
+    const logs: Record<string, unknown>[] = [];
+    t.deps.adapterFor = () => adapter;
+    t.deps.now = () => clock;
+    t.deps.log = (r) => { logs.push(r); };
+    t.deps.parameters = new ParameterStore(t.paths, loadParameterDefinitions(join(agentsDir, "parameters.yaml"), t.deps.cfg, {}));
+    return { ...t, adapter, logs, setNow: (v: string) => { clock = new Date(v); } };
+  }
+
+  it("postpones a strong stage to the stated reset and starts no run before it (AC-4, AC-5, AC-6)", async () => {
+    const w = await world({ "claude-fable-5-1": [SESSION, plan] }, "2026-10-29T02:58:53Z");
+    const c = at(w.claim, { stage: "plan" });
+    await writeClaim(w.paths, c);
+    let r = await step(w.deps, c);
+    expect(r.status).toBe("waiting");
+    expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "plan", postponedUntil: "2026-10-29T07:10:00.000Z" });
+    expect(w.logs.find((l) => l.kind === "quota-limit")).toMatchObject({ key: "claude", scope: "session", resets_at: "2026-10-29T07:10:00.000Z", source: "stated" });
+    // Before the reset nothing runs; at the reset a fresh plan run would be blocked no more.
+    w.setNow("2026-10-29T05:00:00Z");
+    r = await step(w.deps, r.claim);
+    expect(r.status).toBe("waiting");
+    // Even when the wait is bypassed (a restart, a manual start), the launch decision runs no blocked stage.
+    const again = at(r.claim, { stage: "plan", postponedUntil: null });
+    r = await step(w.deps, again);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", postponedUntil: "2026-10-29T07:10:00.000Z" });
+    expect(w.logs.find((l) => l.kind === "quota-wait")).toMatchObject({ issue: 7, stage: "plan", key: "claude" });
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(readdirSync(w.paths.usage)).toHaveLength(1);
+    w.setNow("2026-10-29T07:11:00Z");
+    r = await step(w.deps, r.claim);
+    r = await step(w.deps, r.claim);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1"]);
+    expect(r.claim.state.stage).toBe("implement");
+  }, 60_000);
+
+  it("moves a strong stage to the next-best Claude model on a model-only limit, then launches there directly (AC-9)", async () => {
+    const w = await world({ "claude-fable-5-1": [FABLE], "claude-opus-5-5": [plan, plan] }, "2026-10-29T07:15:00Z");
+    const c = at(w.claim, { stage: "plan" });
+    await writeClaim(w.paths, c);
+    const r = await step(w.deps, c);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5"]);
+    expect(r.claim.state.stage).toBe("implement");
+    expect(w.logs.filter((l) => l.kind === "quota-fallback")).toEqual([{ kind: "quota-fallback", issue: 7, stage: "plan", from: "claude-fable-5-1", to: "claude-opus-5-5", key: "claude:fable" }]);
+    const again = at(r.claim, { stage: "plan" });
+    await step(w.deps, again);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5", "plan:claude-opus-5-5"]);
+    const usage = readdirSync(w.paths.usage).map((f) => JSON.parse(readFileSync(join(w.paths.usage, f), "utf8")).model).sort();
+    expect(usage).toEqual(["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5-5"]);
+  }, 60_000);
+
+  it("waits instead when the model-limit fallback parameter is off (AC-9)", async () => {
+    const w = await world({ "claude-fable-5-1": [FABLE] }, "2026-10-29T07:15:00Z");
+    await w.deps.parameters!.setParameter("quota.model_limit_fallback", false, "maintainer");
+    const c = at(w.claim, { stage: "plan" });
+    await writeClaim(w.paths, c);
+    const r = await step(w.deps, c);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", postponedUntil: "2026-10-29T07:30:00.000Z" });
   }, 60_000);
 });
 

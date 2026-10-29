@@ -308,7 +308,13 @@ reminders.
   means slower, not stopped. Hitting the actual cap is an incident sent to the
   maintainer and treated by reflection as a planning failure.
 - Token spend is bounded by the maintainer's Anthropic and OpenAI
-  subscriptions (charter); no separate cap.
+  subscriptions (charter); no separate cap. Their limits are planned for, not
+  met as surprises: the scheduler waits for a limit's stated reset instead of
+  retrying, avoids starting strong-tier work a window is unlikely to finish,
+  and, when only one Claude model is limited, runs strong-tier stages on the
+  next-best Claude model rather than idling, a parameter that is on by
+  default as the maintainer asked on 2026-10-29. Spec 013 holds the rules.
+  *(author's call: the waiting and planning rules)*
 
 **Credentials** *(author's calls)*: kept in an encrypted store on the laptop;
 agents use them through wrappers, as with today's `gh` wrapper, and never see
@@ -491,3 +497,4 @@ are stale and are corrected as part of B.
 - `specs/010-approve-esbuild-build/spec.md`
 - `specs/011-asking-stage-keeps-its-work/spec.md`
 - `specs/012-metrics-reflection/spec.md`
+- `specs/013-quota-planning/spec.md`

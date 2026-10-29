@@ -14,6 +14,8 @@ import type { PullRequestInfo } from "../github/types.ts";
 import type { Notifier } from "../notify/types.ts";
 import { listProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
 import { afterFallback, harnessForModel, retryDecision } from "../runner/retry.ts";
+import type { ParameterStore } from "../parameters/store.ts";
+import { modelLimitFallback, planLaunch, quotaParams, readBook, waitAfterLimit } from "../quota/book.ts";
 import { runStage, type StageOutcome } from "../runner/run.ts";
 import {
   checkoutBranch, commitsPatch, deleteLocalBranch, diffFilesAgainstBase, discardUncommitted, rebaseOntoMain, removeWorktree, syncToRemote, uncommittedPatch,
@@ -43,6 +45,8 @@ import type { Action, ChainEvent, ChainState } from "./types.ts";
 const execFileP = promisify(execFile);
 
 export interface DriverDeps {
+  /** Spec 013: the quota parameters; defaults when absent. */
+  parameters?: ParameterStore;
   telegram?: import('../telegram/channel.ts').TelegramChannel|null;
   emitEvent?: (event:string,payload:unknown)=>Promise<void>;
   cfg: Config;
@@ -395,6 +399,33 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   if(state.resumeSession&&state.resumeSession.harness!==def.harness)deps.log({kind:'resume-fresh',issue:claim.issue,reason:'harness changed'});
   const sensitiveGlobs = readSensitiveGlobs(deps.agentsDir);
 
+  // Spec 013 AC-6, AC-8, AC-9: the quota book decides, before the worktree is touched, whether the stage starts now
+  // and on which model. A resumed session or conversation keeps its model and meets a limit as a 429.
+  const quota = await quotaParams(deps.parameters);
+  const what = `issue:${claim.issue}`;
+  const primaryModel = state.rescueRun ? deps.cfg.rescue_model : def.model;
+  const primaryHarness = state.rescueRun ? harnessForModel(primaryModel) : def.harness;
+  const tier = state.rescueRun ? "strong" : def.tier;
+  let firstRun: { model: string; harness: Harness } | null = null;
+  if (!state.conversation && !state.resumeSession) {
+    const launch = await planLaunch(deps.paths, {
+      what, stage, tier, harness: primaryHarness, model: primaryModel,
+      fallback: state.rescueRun ? undefined : def.fallback, independent: state.rescueRun ? false : def.independent,
+    }, quota, deps.now());
+    if (launch.kind === "wait") {
+      deps.log({ kind: launch.defer ? "quota-defer" : "quota-wait", issue: claim.issue, stage, model: primaryModel, key: launch.key, until: launch.until, reason: launch.reason, ...launch.defer });
+      return { type: "stage_failed", stage, reason: `quota: ${launch.reason}`, postpone: true, until: launch.until };
+    }
+    if (launch.model !== primaryModel) {
+      deps.log({ kind: "quota-fallback", issue: claim.issue, stage, from: primaryModel, to: launch.model, key: launch.note?.key });
+      firstRun = { model: launch.model, harness: launch.harness };
+    }
+  }
+  const postponed = async (reason: string): Promise<ChainEvent> => {
+    const w = await waitAfterLimit(deps.paths, what, primaryHarness, primaryModel, deps.now());
+    return { type: "stage_failed", stage, reason, postpone: true, until: w.until };
+  };
+
   if(!state.conversation&&!state.resumeSession)await syncWorktree(deps, claim);
   // The spec stage and the question check work from origin/main and are never rebased (spec section 4).
   if (!state.conversation&&!state.resumeSession&&stage !== "spec" && stage !== "question-check" && state.pr !== null && !state.conflictPending) {
@@ -457,8 +488,11 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   };
 
   // AC-1: a rescue runs on the rescue model; the state is the only source of that.
-  let out = state.rescueRun ? await exec(deps.cfg.rescue_model, harnessForModel(deps.cfg.rescue_model), "rescue") : await exec();
-  deps.log({ kind: "stage", issue: claim.issue, stage, attempt, outcome: out.outcome, reason: out.reason, run_id: out.runId, rescue: state.rescueRun || undefined });
+  // Spec 013 AC-9: a launch the quota book moved to another model runs there, as a fallback run.
+  let out = firstRun ? await exec(firstRun.model, firstRun.harness, state.rescueRun ? "rescue-fallback" : "fallback")
+    : state.rescueRun ? await exec(deps.cfg.rescue_model, harnessForModel(deps.cfg.rescue_model), "rescue") : await exec();
+  deps.log({ kind: "stage", issue: claim.issue, stage, attempt, outcome: out.outcome, reason: out.reason, run_id: out.runId, rescue: state.rescueRun || undefined, ...(firstRun ? { fallback: firstRun.model } : {}) });
+  if (out.limit) deps.log({ kind: "quota-limit", issue: claim.issue, stage, run_id: out.runId, key: out.limit.key, scope: out.limit.scope, resets_at: out.limit.resets_at, source: out.limit.source });
   if(state.conversation){
     if((await worktreeHead(claim.worktree))!==start||(await uncommittedPatch(claim.worktree))!==beforePatch||(await gitOut(claim.worktree,'diff','--cached','--binary'))!==beforeIndex){
       await discardUncommitted(claim.worktree);await gitOut(claim.worktree,'reset','--hard',start);
@@ -469,15 +503,24 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
     return out.outcome==='ok'?{type:'stage_ok',stage,result:out.result} as ChainEvent:{type:'stage_failed',stage,reason:out.reason??out.outcome};
   }
   if (out.outcome !== "ok") {
-    // A rescue is never downgraded: like any strong-tier stage it is postponed on a rate limit (AC-27).
+    // A rescue is treated as strong tier: postponed on a rate limit (AC-27), or moved to the next-best Claude model when
+    // only its own model is limited (spec 013 AC-9).
     const retryDef: StageDefinition = state.rescueRun ? { ...def, tier: "strong", independent: false, fallback: undefined } : def;
-    const retry = retryDecision(retryDef, out.judgement, out.usage.cost_usd ?? 0, deps.cfg.retry_cost_limit_usd);
-    if (retry.kind === "postpone") return { type: "stage_failed", stage, reason: out.reason ?? out.outcome, postpone: true };
-    if (retry.kind === "fallback") {
-      out = await exec(retry.model, retry.harness, "fallback");
-      deps.log({ kind: "stage", issue: claim.issue, stage, attempt, outcome: out.outcome, reason: out.reason, run_id: out.runId, fallback: retry.model });
-      // Only afterFallback judges the fallback run (AC-26).
-      if (out.outcome !== "ok" && afterFallback(def, out.judgement).kind === "postpone") return { type: "stage_failed", stage, reason: out.reason ?? out.outcome, postpone: true };
+    if (firstRun) {
+      // Already on the fallback: only afterFallback judges it (AC-26).
+      if (afterFallback(retryDef, out.judgement).kind === "postpone") return postponed(out.reason ?? out.outcome);
+    } else {
+      const toModel = modelLimitFallback(await readBook(deps.paths), { tier: retryDef.tier, harness: primaryHarness, model: primaryModel }, quota, deps.now());
+      const retry = retryDecision(retryDef, out.judgement, out.usage.cost_usd ?? 0, deps.cfg.retry_cost_limit_usd, toModel);
+      if (retry.kind === "postpone") return postponed(out.reason ?? out.outcome);
+      if (retry.kind === "fallback") {
+        if (retry.model === toModel) deps.log({ kind: "quota-fallback", issue: claim.issue, stage, from: primaryModel, to: toModel, key: out.limit?.key });
+        out = await exec(retry.model, retry.harness, "fallback");
+        deps.log({ kind: "stage", issue: claim.issue, stage, attempt, outcome: out.outcome, reason: out.reason, run_id: out.runId, fallback: retry.model });
+        if (out.limit) deps.log({ kind: "quota-limit", issue: claim.issue, stage, run_id: out.runId, key: out.limit.key, scope: out.limit.scope, resets_at: out.limit.resets_at, source: out.limit.source });
+        // Only afterFallback judges the fallback run (AC-26).
+        if (out.outcome !== "ok" && afterFallback(retryDef, out.judgement).kind === "postpone") return postponed(out.reason ?? out.outcome);
+      }
     }
   }
   if (out.outcome !== "ok") return { type: "stage_failed", stage, reason: out.reason ?? out.outcome };
@@ -747,7 +790,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         status = "ended";
         break;
       case "wait":
-        claim.state.postponedUntil = a.seconds >= POSTPONE_WAIT_S ? new Date(deps.now().getTime() + a.seconds * 1000).toISOString() : null;
+        claim.state.postponedUntil = a.until ?? (a.seconds >= POSTPONE_WAIT_S ? new Date(deps.now().getTime() + a.seconds * 1000).toISOString() : null);
         status = "waiting";
         break;
       case "close_pr": {

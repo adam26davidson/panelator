@@ -201,6 +201,18 @@ describe("Scheduler.tick", () => {
     expect(gh.calls.find((c) => c.method === "DELETE" && c.url.endsWith("/labels/in-progress"))).toBeTruthy();
   }, 30_000);
 
+  it("does not expire or start a chain postponed to a quota reset still ahead (spec 013 AC-5)", async () => {
+    const { s, paths, pair, setNow, started } = await setup(routes([]));
+    const wt = join(pair.worktrees, "issue-7");
+    git(pair.repo, "worktree", "add", "-q", "-B", "issue-7", wt, "origin/main");
+    await writeClaim(paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "waiting", resumeStage: "plan", postponedUntil: "2026-10-12T16:10:00Z" }, worktree: wt, started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T09:00:00Z", run_id: null });
+    setNow(new Date("2026-10-12T12:30:00Z"));
+    const t = await s.tick();
+    expect(t.released).toEqual([]);
+    expect(started).toEqual([]);
+    expect(await listClaims(paths)).toHaveLength(1);
+  }, 30_000);
+
   it("resumes a claim found on disk after a restart (AC-31)", async () => {
     const { s, deps, paths, pair, started } = await setup(routes([]));
     await writeClaim(paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });

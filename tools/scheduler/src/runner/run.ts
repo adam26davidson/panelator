@@ -15,6 +15,7 @@ import { renderStandingPrompt } from '../standing/registry.ts';
 import { stageEnv } from "./credentials.ts";
 import { spawnBounded, type SpawnResult } from "./process.ts";
 import { linkProfileSkills } from "./skills.ts";
+import { observeRun, type Limit } from "../quota/book.ts";
 
 export interface RunnerContext {
   paths: StatePaths;
@@ -26,6 +27,8 @@ export interface RunnerContext {
   binDir: string;
   /** Author and committer identity for stage commits (the App's bot user); supplied by plan 3. */
   gitIdentity?: { name: string; email: string };
+  /** Spec 013 AC-8: `quota.session_window`; the default when unset. */
+  sessionWindowMs?: number;
 }
 
 export interface StageRequest {
@@ -62,6 +65,8 @@ export interface StageOutcome {
   malformed: string[];
   /** Write errors on events.jsonl or stderr.log; also appended to reason and persisted in outcome.json. */
   ioErrors: string[];
+  /** Spec 013 AC-4: the limit a 429 recorded in the quota book. */
+  limit?: Limit | null;
 }
 
 const rec = (e: unknown): Record<string, unknown> => (typeof e === "object" && e !== null ? (e as Record<string, unknown>) : {});
@@ -215,6 +220,10 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
     ...(req.resumeFallback?{resume_fallback:req.resumeFallback}:{}),
   };
   await writeUsageRecord(ctx.paths, usage);
+  // Spec 013 AC-4, AC-8: the quota book sees every run; a book error never fails the run.
+  // The fake harness (tests) stands in for the harness the request names.
+  const quotaHarness = harness === "fake" ? (req.harness ?? req.def.harness) : harness;
+  const limit = await observeRun(ctx.paths, { ...usage, harness: quotaHarness }, judgement, endedAt, ctx.sessionWindowMs).catch(() => null);
 
   const ioMessages = ioErrors.map((e) => e.message);
   let reason = judgement.reason;
@@ -236,7 +245,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
       return runStage(ctx,{...req,resume:undefined,replyPrompt:undefined,runId:runId+'-fresh',resumeFallback:fallback,resumedSessionId:req.resume.sessionId});
     }
   }
-  return { sessionId:stageRun.sessionId,runId, outcome: judgement.outcome, reason, result, resultErrors, judgement, usage, findings, eventsPath, malformed, ioErrors: ioMessages };
+  return { sessionId:stageRun.sessionId,runId, outcome: judgement.outcome, reason, result, resultErrors, judgement, usage, findings, eventsPath, malformed, ioErrors: ioMessages, limit };
 }
 
 /**

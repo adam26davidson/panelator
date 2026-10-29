@@ -635,7 +635,7 @@ function baseTransition(state: ChainState, event: ChainEvent): Step {
     // AC-27: before every other failure rule; a postponed rescue stays a rescue and nothing is spent or noted.
     if (event.postpone) {
       if (!POSTPONABLE.includes(state.stage)) invalid(state, event);
-      return { state: { ...state, stage: "waiting", resumeStage: event.stage, postponedUntil: null }, actions: [{ type: "wait", seconds: POSTPONE_WAIT_S }] };
+      return { state: { ...state, stage: "waiting", resumeStage: event.stage, postponedUntil: null }, actions: [event.until ? { type: "wait", seconds: POSTPONE_WAIT_S, until: event.until } : { type: "wait", seconds: POSTPONE_WAIT_S }] };
     }
     const s = note(state, `${event.stage} attempt ${state.attempt} failed: ${event.reason}`);
     if (s.rescueRun && event.stage !== "question-check") return escalate(s, event.stage, `rescue run failed: ${event.reason}`, s.pendingFixInput ?? event.reason);
