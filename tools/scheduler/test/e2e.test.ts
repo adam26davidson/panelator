@@ -636,6 +636,9 @@ describe("end to end: the chain keeps its work (spec 015 AC-12)", () => {
     await w.tick();
     for (let i = 0; i < 2; i++) await w.tick();
     expect((await listClaims(w.paths))[0].state.chainFailures?.count).toBe(3);
+    // The second and third steps re-checked the recorded implement run (AC-10); implement ran once.
+    expect(w.logs.filter((r) => r.kind === "stage-result-kept")).toHaveLength(2);
+    expect(w.adapter.ran).toEqual(["plan", "implement"]);
     n.down = false;
     const t = await w.tick();
     expect(t.released).toEqual([7]);

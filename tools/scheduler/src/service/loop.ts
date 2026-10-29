@@ -17,7 +17,7 @@ import {execFileSync} from 'node:child_process';
 import { rankIssues, classifyWork } from "../shortlist/rank.ts";
 import { selectEligible } from "../shortlist/select.ts";
 import { listClaims, readClaim, removeClaim, writeClaim, type Claim, type Outage } from "../state/claims.ts";
-import { forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, transientCause } from "../chain/transient.ts";
+import { forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, transientCause } from "../chain/transient.ts";
 import { readLedger, writeLedger } from "../state/ledger.ts";
 import { listPaused, pausedDecision, removePaused, writePaused, type PausedRecord } from "../state/paused.ts";
 import { answeredEntry, appendQuestionLog } from "../state/questions.ts";
@@ -189,6 +189,21 @@ export class Scheduler {
     const outage: Outage = {
       since, count, last: error.slice(0, HISTORY_ENTRY_MAX), retry_at: new Date(now.getTime() + outageBackoffS(count) * 1000).toISOString(), alarmed: Boolean(prev?.alarmed) || alarm,
     };
+    if (now.getTime() - Date.parse(since) >= OUTAGE_CEILING_MS) {
+      // AC-13: past the ceiling the failure counts as genuine, toward MAX_CHAIN_FAILURES and the chain_error release.
+      const first = !prev?.ceiling;
+      const chainFailures = { count: (claim.state.chainFailures?.count ?? 0) + 1, last: outage.last };
+      const state = { ...claim.state, chainFailures };
+      await writeClaim(d.paths, { ...claim, state, outage: { ...outage, ceiling: true }, last_activity_at: now.toISOString() });
+      await writeLedger(d.paths, issue, ledgerOf(state));
+      if (!first) return;
+      d.serviceLog.write({ kind: "transient-outage-ceiling", issue, since, failures: count, cause });
+      await appendFindings(d.paths, { issue, stage: stuckStage(claim.state), run_id: "transient-outage", timestamp: now.toISOString() }, [{
+        what: "network outage outlasted the retry ceiling", where: `issue #${issue}, stage ${claim.state.stage}`,
+        evidence: `${count} transient failures since ${since} (${cause}); counted as genuine from now on; last: ${outage.last}`, noticed_how: "scheduler transient error",
+      }]);
+      return;
+    }
     await writeClaim(d.paths, { ...claim, outage, last_activity_at: now.toISOString() });
     if (!alarm) return;
     const hours = Math.floor((now.getTime() - Date.parse(since)) / 3600_000);

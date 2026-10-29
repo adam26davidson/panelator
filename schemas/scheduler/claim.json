@@ -631,7 +631,8 @@
         "count": { "type": "integer", "minimum": 1 },
         "last": { "type": "string" },
         "retry_at": { "type": "string", "format": "date-time" },
-        "alarmed": { "type": "boolean" }
+        "alarmed": { "type": "boolean" },
+        "ceiling": { "type": "boolean" }
       }
     }
   }

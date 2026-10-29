@@ -656,6 +656,27 @@ describe("Scheduler.tick: transient failures (spec 015)", () => {
     expect(t.notifications.filter((n) => n.gate === "chain_error")).toEqual([]);
   }, 60_000);
 
+  it("counts the failures of an outage past its 24-hour ceiling as genuine, with one finding, and then releases with chain_error (AC-13)", async () => {
+    const t = await outageSetup(async () => { throw dns(); });
+    const c0 = await t.claim();
+    const since = new Date(t.deps.now().getTime() - 25 * 3600_000).toISOString();
+    await writeClaim(t.paths, { ...c0, outage: { since, count: 40, last: "getaddrinfo EAI_AGAIN api.github.com", retry_at: since, alarmed: true } });
+    for (let i = 1; i <= MAX_CHAIN_FAILURES; i++) {
+      expect((await t.s.tick()).released).toEqual([]);
+      await settle();
+      const c = await t.claim();
+      expect(c.state.chainFailures).toEqual({ count: i, last: "getaddrinfo EAI_AGAIN api.github.com" });
+      expect(c.outage).toMatchObject({ since, count: 40 + i, ceiling: true });
+      t.advance(1800);
+    }
+    expect(JSON.parse(readFileSync(join(t.paths.escalations, "7.json"), "utf8")).chainFailures.count).toBe(MAX_CHAIN_FAILURES);
+    expect(serviceRecords(t.paths).filter((r) => r.kind === "transient-outage-ceiling")).toHaveLength(1);
+    const findings = readFileSync(t.paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(findings.filter((f) => f.finding.what === "network outage outlasted the retry ceiling")).toHaveLength(1);
+    expect((await t.s.tick()).released).toEqual([7]);
+    expect(serviceRecords(t.paths).filter((r) => r.kind === "chain-error")).toHaveLength(1);
+  }, 60_000);
+
   it("does not let liveness expire a claim that is retrying through an outage (AC-9)", async () => {
     const t = await outageSetup(async () => { throw dns(); });
     for (let i = 0; i < 4; i++) {

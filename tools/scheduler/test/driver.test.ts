@@ -1225,4 +1225,59 @@ describe("driver: the chain keeps its work (spec 015)", () => {
     expect(r.claim.state.stage).toBe("implement");
     expect(r.claim.stageRun).toBeUndefined();
   }, 60_000);
+
+  it("leaves the rebase alone when a postponed run left uncommitted changes (AC-1)", async () => {
+    const { deps, claim, paths, sha } = await setup(() => ({}), undefined, prBehindMain);
+    const adapter = rateLimited({ review: [(run: StageRun) => { writeFileSync(join(run.worktree, "scratch.txt"), "half done\n"); return undefined; }] });
+    deps.adapterFor = () => adapter;
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    const c = at(claim, { stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } });
+    await writeClaim(paths, c);
+    const r = await step(deps, c);
+    expect(r.claim.state.stage).toBe("waiting");
+    expect(logs.find((l) => l.kind === "rebase-undone")).toBeUndefined();
+    expect(head(claim.worktree)).not.toBe(sha);
+    expect(readFileSync(join(claim.worktree, "scratch.txt"), "utf8")).toBe("half done\n");
+  }, 60_000);
+
+  it("undoes the rebase after a failed (not postponed) run too, and the retry drops nothing (AC-1)", async () => {
+    const { deps, claim, paths, sha, adapter } = await setup(() => ({ review: [undefined, approve] }), undefined, prBehindMain);
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    const c = at(claim, { stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } });
+    await writeClaim(paths, c);
+    const r1 = await step(deps, c);
+    expect(r1.claim.state).toMatchObject({ stage: "review", attempt: 2 });
+    expect(head(claim.worktree)).toBe(sha);
+    expect(logs.filter((l) => l.kind === "rebase-undone")).toHaveLength(1);
+    await step(deps, r1.claim);
+    expect(adapter.ran).toHaveLength(2);
+    expect(logs.filter((l) => l.kind === "worktree-synced" && l.dropped)).toEqual([]);
+    expect(patchFiles(paths)).toEqual([]);
+  }, 60_000);
+
+  it("re-applies the recorded run's event when an action after the transition threw, without running the stage again (AC-10)", async () => {
+    let failures = 1;
+    const routes = (sha: string) => ghRoutes(sha).map((r) =>
+      r.method === "POST" && String(r.path) === String(/^\/repos\/o\/r\/issues\/\d+\/comments$/)
+        ? { ...r, reply: (m: RegExpExecArray, b: unknown, u: URL) => { if (u.pathname.endsWith("/issues/9/comments") && failures-- > 0) throw dnsFailure(); return r.reply(m, b, u); } } : r);
+    const { deps, claim, paths, adapter, gh, sha } = await setup(() => ({ review: [{ verdict: "changes_requested", findings_on_pr: [{ criterion: "AC-1", file: "a.txt", line: 1, scenario: "z" }], declined_to_judge: [] }] }), routes);
+    deps.gh = new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch }, retry: { enabled: false } }), "o/r");
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    // The fix loop is spent and so is the rescue: changes requested re-plan, closing PR 9 (its comment fails the first time).
+    const c = at(claim, { stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha }, fixes: 2, rescues: 1 });
+    await writeClaim(paths, c);
+    await expect(step(deps, c)).rejects.toThrow(/EAI_AGAIN/);
+    const kept = (await readClaim(paths, 7))!;
+    expect(kept.state.stage).toBe("review");
+    expect(kept.stageRun?.stage).toBe("review");
+    const r = await step(deps, kept);
+    expect(adapter.ran).toEqual(["review:claude-fable-5-1"]);
+    expect(logs).toContainEqual(expect.objectContaining({ kind: "stage-result-kept", stage: "review" }));
+    expect(logs).toContainEqual(expect.objectContaining({ kind: "pr-closed", pr: 9 }));
+    expect(r.claim.state).toMatchObject({ stage: "plan", replans: 1, pr: null });
+    expect(gh.calls.filter((x) => x.method === "POST" && x.url === "/repos/o/r/issues/9/comments")).toHaveLength(2);
+  }, 60_000);
 });

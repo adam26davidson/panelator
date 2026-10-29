@@ -6,13 +6,16 @@ section 11).
 Class: bug. Domain: backend.
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
-section 4 (the chain with no human stops: bounds count failures of the
-work, not of the infrastructure) and section 6.1 (infra health is woken by
-alarms); [001-scheduler-core](../001-scheduler-core/spec.md) AC-25 (a
-postponed stage waits with the claim held);
+section 4 (the chain with no human stops, and its per-issue bounds; this
+spec's own reading, not the design's words, is that those bounds are meant
+to count failures of the work, not of the infrastructure) and section 6.1
+(infra health is woken by alarms);
+[001-scheduler-core](../001-scheduler-core/spec.md) AC-15 (liveness) and
+AC-25 (a postponed stage waits with the claim held);
 [005-keep-unpushed-commits](../005-keep-unpushed-commits/spec.md) AC-3;
-[006-no-human-stops](../006-no-human-stops/spec.md) C7 and AC-7 (chain
-errors); amends 005 AC-3 and 006 C7 as section 4 records.
+[006-no-human-stops](../006-no-human-stops/spec.md) AC-7, its "Repeated
+chain errors" paragraph; amends 001 AC-15, 005 AC-3 and 006 AC-7 as section
+4 records.
 
 ## 1. Goal
 
@@ -64,8 +67,9 @@ network is back, as nothing touched the claim meanwhile.
   failure with one of these causes) is retried with backoff. It counts
   neither toward `MAX_CHAIN_FAILURES` nor `MAX_CHAIN_ERRORS`, keeps the
   claim alive, is logged once per outage, and after two hours raises one
-  notification, one finding and one `infra_alarm` event. Genuine errors
-  still count as today.
+  notification, one finding and one `infra_alarm` event. After 24 hours the
+  outage's failures count as genuine, so a failure that only looks
+  transient cannot retry forever. Genuine errors still count as today.
 - A stage run that finished with a result is recorded on the claim before
   its result is checked, so a step that then fails retries the check, not
   the run.
@@ -100,14 +104,17 @@ setup of the driver tests, as in spec 005.
 `status` or `cause` chain shows one of: the DNS codes `EAI_AGAIN`,
 `ENOTFOUND`; the socket codes `ECONNRESET`, `ECONNREFUSED`, `ECONNABORTED`,
 `ETIMEDOUT`, `EPIPE`, `ENETUNREACH`, `ENETDOWN`, `EHOSTUNREACH`, undici's
-`UND_ERR_CONNECT_TIMEOUT`, `UND_ERR_SOCKET`, `UND_ERR_HEADERS_TIMEOUT`;
-`socket hang up`; an HTTP status from 500 to 599; or the git transport
-messages `Could not resolve host`, `Could not resolve hostname`, `Temporary
-failure in name resolution`, `Connection timed out`, `Connection reset`,
-`Failed to connect to`, `The remote end hung up unexpectedly`, `early EOF`,
-`RPC failed` and `The requested URL returned error: 5xx`. Anything else,
-a GitHub 4xx (rate limits included) among it, is *genuine*. The *outage* of
-a claim is the record of its consecutive transient failures.
+`UND_ERR_CONNECT_TIMEOUT`, `UND_ERR_SOCKET`, `UND_ERR_HEADERS_TIMEOUT`,
+`UND_ERR_BODY_TIMEOUT`; a request aborted or timed out by its signal (error
+name `AbortError` or `TimeoutError`); `socket hang up`; an HTTP status from
+500 to 599; or the git transport messages, matched whatever their case,
+`Could not resolve host`, `Could not resolve hostname`, `Temporary failure
+in name resolution`, `Connection timed out`, `Connection reset`, `Failed to
+connect to`, `The remote end hung up unexpectedly`, `early EOF`, `RPC
+failed` and `The requested URL returned error: 5xx`. An error with an HTTP
+status from 400 to 499 is genuine whatever its message says (GitHub rate
+limits included), and so is anything else not listed. The *outage* of a
+claim is the record of its consecutive transient failures.
 
 ### Postponed runs and rebased heads (#35)
 
@@ -145,9 +152,11 @@ a claim is the record of its consecutive transient failures.
   message `getaddrinfo EAI_AGAIN api.github.com`, `cause.cause.code`), a
   GitHub 502 and 503, an `ECONNRESET` socket error, `socket hang up`, a
   failed `git fetch` (`Could not resolve host: github.com`), a failed `git
-  ls-remote` over SSH (`Could not resolve hostname`), and as genuine: a
-  GitHub 404 and 422, a 403 and a 429 with a rate-limit message, a `git`
-  merge conflict and a plain `TypeError`.
+  ls-remote` over SSH (`Could not resolve hostname`), git's lowercase `the
+  remote end hung up unexpectedly`, `UND_ERR_BODY_TIMEOUT`, an `AbortError`
+  and a `TimeoutError`, and as genuine: a GitHub 404 and 422, a 403 and a
+  429 with a rate-limit message, a 403 and a 404 whose message names a
+  network failure, a `git` merge conflict and a plain `TypeError`.
 - AC-5. **A transient step failure postpones the chain.** Given a running
   chain whose driver step throws a transient error, when the service loop
   handles the rejection, then the claim's `chainFailures` and the ledger are
@@ -165,7 +174,7 @@ a claim is the record of its consecutive transient failures.
   whose next step fails on a genuine error, then the outage is cleared and
   `chainFailures` counts the genuine error as today; after
   `MAX_CHAIN_FAILURES` genuine failures in a row the `chain_error` event is
-  raised as spec 006 C7 says. Transient failures between genuine ones
+  raised as spec 006 AC-7 ("Repeated chain errors") says. Transient failures between genuine ones
   neither count nor reset the count.
 - AC-8. **A long outage raises one alarm.** Given an outage whose `since`
   is two hours or more before a transient failure and `alarmed` false, then
@@ -186,7 +195,13 @@ a claim is the record of its consecutive transient failures.
   synced or rebased, the driver logs `{ kind: "stage-result-kept", issue,
   stage, run_id }`, and the recorded result is checked and turned into its
   event as if the run had just ended. Every transition clears `stageRun`;
-  a `stageRun` of another stage or attempt is ignored and cleared.
+  a `stageRun` of another stage or attempt is ignored and cleared. The claim
+  on disk keeps `stageRun` until the transition's claim write, so a step
+  whose actions throw after the transition (a failed PR comment while
+  closing a PR) re-checks the recorded run on the next step and applies the
+  event and its actions again, as a crash in the actions does today; no
+  agent runs again. A re-check that keeps throwing a genuine error counts as
+  AC-7 says and ends in `chain_error`.
 - AC-11. **Earlier transient chain errors are forgiven.** Given an issue
   ledger whose history holds `chain error in <stage>: <message>` entries
   with a transient message, when the issue is claimed, then `chainErrors`
@@ -205,12 +220,24 @@ a claim is the record of its consecutive transient failures.
     bound, the chain merges, and the service log has one `transient-outage`
     and one `transient-outage-over`;
   - the same chain with a genuine error thrown three times: `chain_error`
-    and a release, as today.
+    and a release, as today, with implement run once and its recorded
+    result re-checked twice.
+- AC-13. **An outage has a ceiling.** Given an outage whose `since` is 24
+  hours or more (`OUTAGE_CEILING_MS`) before a transient failure, then the
+  failure counts as genuine: `chainFailures` and the ledger count it, the
+  outage stays on the claim with `ceiling: true` (its backoff still
+  applies), and the first such failure logs `{ kind:
+  "transient-outage-ceiling", issue, since, failures, cause }` and appends
+  one finding (`what: "network outage outlasted the retry ceiling"`). After
+  `MAX_CHAIN_FAILURES` of them the `chain_error` release follows (AC-7). A
+  deterministic failure that looks transient (a host that never resolves, a
+  port that always refuses) therefore ends in a release after about a day
+  instead of retrying forever.
 
 ## 4. Amendments to earlier specs
 
-This spec's PR may not edit other specs (spec 006 AC-21 scope), so the
-readings below are recorded here; the earlier text stands with these
+The readings below are recorded here, and spec 001 AC-15 and spec 006 AC-7
+carry a one-line note pointing to them; the earlier text stands with these
 exceptions.
 
 - **Spec 005 AC-3.** "a patch of the commits reachable from the dropped
@@ -218,13 +245,19 @@ exceptions.
   dropped head carries a change the remote head lacks; a dropped head that
   is the remote head rebased writes no patch (AC-3 above), and the record
   gains the `rebased` field.
-- **Spec 006 C7 and AC-7.** "a chain whose driveChain rejects this many
-  times in a row" counts genuine errors only; a transient error postpones
-  the chain (AC-5 above). The ledger's `chainErrors` excludes chain-error
-  releases recorded for a transient cause (AC-11).
-- **Spec 001 AC-15** (a stage run is not repeated after a crash between its
-  end and the transition): extended to a step that throws after the run
-  (AC-10 above).
+- **Spec 006 AC-7, "Repeated chain errors."** "the scheduler's driver fails
+  on a chain three times in a row (`MAX_CHAIN_FAILURES`)" counts genuine
+  errors only; a transient error postpones the chain and counts nothing
+  (AC-5 above) until its outage passes the ceiling (AC-13). The ledger's
+  release count excludes chain-error releases recorded for a transient cause
+  (AC-11).
+- **Spec 001 AC-15 (liveness).** "no run in flight and no commit, comment or
+  label change for 2 hours" also requires no transient failure recorded on
+  the claim in that window: a claim retrying through an outage is active
+  (AC-9 above).
+
+AC-10 (a finished run is not run again after a step that throws) is new
+behaviour; no earlier clause covers a re-run after the run ended.
 
 ## 5. Interfaces and files
 
@@ -245,7 +278,11 @@ exceptions.
   the claim path forgives transient chain errors (AC-11).
 - Tests: `tools/scheduler/test/transient.test.ts` (new, AC-4, AC-11),
   `worktree.test.ts` (AC-3's helper), `driver.test.ts` (AC-1 to AC-3,
-  AC-10), `loop.test.ts` (AC-5 to AC-9, AC-11), `e2e.test.ts` (AC-12).
+  AC-10), `loop.test.ts` (AC-5 to AC-9, AC-11, AC-13), `e2e.test.ts`
+  (AC-12).
+- `specs/001-scheduler-core/spec.md` AC-15 and
+  `specs/006-no-human-stops/spec.md` AC-7: a one-line amendment note each,
+  pointing to section 4.
 
 `tools/scheduler/` is a sensitive path; the security review applies (spec
 006 AC-9).

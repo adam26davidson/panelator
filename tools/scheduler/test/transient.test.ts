@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RequestError } from "octokit";
-import { forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, transientCause } from "../src/chain/transient.ts";
+import { forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, transientCause } from "../src/chain/transient.ts";
 import { ledgerOf, initialChainState, POSTPONE_WAIT_S } from "../src/chain/machine.ts";
 
 const errno = (code: string, message = `${code} x`) => Object.assign(new Error(message), { code });
@@ -43,6 +43,25 @@ describe("transientCause (spec 015 AC-4)", () => {
     expect(transientCause(gitErr("fetch", "fatal: The remote end hung up unexpectedly"))).toBe("The remote end hung up unexpectedly");
   });
 
+  it("matches git's messages whatever their case", () => {
+    expect(transientCause(gitErr("fetch", "fatal: the remote end hung up unexpectedly"))).toBe("The remote end hung up unexpectedly");
+    expect(transientCause(gitErr("fetch", "fatal: unable to access 'https://github.com/o/r/': could not resolve host: github.com"))).toBe("Could not resolve host");
+  });
+
+  it("classifies undici's body timeout and an aborted or timed-out request as transient", () => {
+    expect(transientCause(errno("UND_ERR_BODY_TIMEOUT"))).toBe("UND_ERR_BODY_TIMEOUT");
+    expect(transientCause(Object.assign(new Error("This operation was aborted"), { name: "AbortError" }))).toBe("AbortError");
+    expect(transientCause(Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" }))).toBe("TimeoutError");
+    // Octokit wraps the fetch's AbortError as a 500 whose cause it is.
+    const wrapped = Object.assign(new RequestError("This operation was aborted", 500, { request: { method: "GET", url: "u", headers: {} } }), { cause: Object.assign(new Error("This operation was aborted"), { name: "AbortError" }) });
+    expect(transientCause(wrapped)).not.toBeNull();
+  });
+
+  it("never classifies a 4xx as transient, whatever its message says", () => {
+    expect(transientCause(gh(403, "upstream said ECONNRESET"))).toBeNull();
+    expect(transientCause(gh(404, "Could not resolve host"))).toBeNull();
+  });
+
   it("classifies everything else as genuine", () => {
     expect(transientCause(gitErr("rebase origin/main", "CONFLICT (content): Merge conflict in a.txt"))).toBeNull();
     expect(transientCause(new TypeError("Cannot read properties of undefined (reading 'x')"))).toBeNull();
@@ -62,6 +81,7 @@ describe("outageBackoffS (spec 015 AC-5)", () => {
   it("doubles from 60 s and caps at POSTPONE_WAIT_S", () => {
     expect([1, 2, 3, 4, 5, 6, 7, 20].map(outageBackoffS)).toEqual([60, 120, 240, 480, 960, POSTPONE_WAIT_S, POSTPONE_WAIT_S, POSTPONE_WAIT_S]);
     expect(OUTAGE_ALARM_MS).toBe(2 * 3600_000);
+    expect(OUTAGE_CEILING_MS).toBe(24 * 3600_000);
   });
 });
 
