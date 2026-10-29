@@ -9,6 +9,7 @@ import { ensureWorktree, uncommittedPatch } from "../runner/worktree.ts";
 import { buildSelectContext } from "../shortlist/fetch.ts";
 import {initializeAgents,readAgentState} from '../standing/state.ts';
 import {runStandingAgent} from '../standing/run.ts';
+import {CAPABILITY_CLOSED_MARKER,isCapabilityIssue} from '../filer/input.ts';
 import type {StandingDefinition} from '../types.ts';
 import type {ParameterStore} from '../parameters/store.ts';
 import {watchMainChecks} from '../standing/events.ts';
@@ -49,6 +50,8 @@ export interface TickInfo {
   eligible: number;
   claimed: number[];
   released: number[];
+  /** Claims holding a slot this tick (spec 009): every claim on disk whose issue is not paused. */
+  held: number;
   errors: string[];
   restartPending: boolean;
 }
@@ -211,13 +214,14 @@ export class Scheduler {
       return false;
     }
     if (rec.phase === "resuming") {
-      if (!slotFree) return false;
+      if (!slotFree && !this.#capabilityAnswer(rec)) return false;
       if(rec.telegram?.channel==='telegram'&&!rec.telegram.ack_sent){
         const {readFile}=await import('node:fs/promises');
         const offset=JSON.parse(await readFile(d.paths.telegramOffset,'utf8').catch(()=>'{"next_update_id":0}')).next_update_id;
         if(offset<=(rec.telegram.answer_update_id??0))return false;
         await this.telegramAnswers.acknowledge(rec);
       }
+      if(this.#capabilityAnswer(rec)){await this.#answerCapability(rec);return false;}
       await this.#resume(rec, info);
       return true;
     }
@@ -228,6 +232,7 @@ export class Scheduler {
     if (decision.kind === "resume") {
       const resuming: PausedRecord = { ...rec, phase: "resuming", answer: decision.answer, reply_comment_id: decision.replyId,telegram:rec.telegram?{...rec.telegram,channel:'issue'}:null };
       await writePaused(d.paths, resuming);
+      if(this.#capabilityAnswer(rec)){await this.#answerCapability(resuming);return false;}
       if(!slotFree)return false;
       await this.#resume(resuming, info);
       return true;
@@ -250,6 +255,42 @@ export class Scheduler {
    * AC-15 from the record marked `resuming`; each step is guarded, so a resume a crash interrupted is finished here
    * with one claim and one `answered` line. The chain's first step applies the `answered` event.
    */
+  /** Open bot issues raised by the findings filer for a missing App permission (spec 014 AC-8), refreshed each tick. */
+  #capabilityIssues = new Set<number>();
+  /** Only a capability question on a capability issue takes the closing path; any other question there resumes as usual. */
+  #capabilityAnswer(rec: PausedRecord): boolean {
+    return this.#capabilityIssues.has(rec.issue) && rec.question.kind === "capability";
+  }
+
+  /**
+   * Spec 014 AC-8: the answer to a capability-hold issue's question is the maintainer's action itself, and the issue
+   * needs no spec or code. The answer is logged as any answer is, the findings filer is woken to retry the held
+   * findings, and the issue is closed instead of resuming the chain.
+   */
+  async #answerCapability(rec: PausedRecord): Promise<void> {
+    const d = this.#deps;
+    if (rec.question_comment_id === null || rec.answer === null || rec.reply_comment_id === null) throw new Error("resuming record without its question or reply");
+    const questionId = rec.question_comment_id;
+    if (!(await answeredEntry(d.paths, questionId))) {
+      await appendQuestionLog(d.paths, {
+        issue: rec.issue, at: d.now().toISOString(), event: "answered", asking_stage: rec.asking_stage,
+        question_comment_id: questionId, reply_comment_id: rec.reply_comment_id, answer: rec.answer, question: rec.question,channel:rec.telegram?.channel??'issue',
+      });
+    }
+    // The closing comment carries a marker, so a close that failed after commenting does not comment again.
+    if (!(await d.gh.listComments(rec.issue)).some((c) => c.body.includes(CAPABILITY_CLOSED_MARKER)))
+      await d.gh.comment(rec.issue, `Answered: the scheduler closes this capability issue and retries the held security findings now. If the advisory still fails, they are held again under a new issue.\n\n${CAPABILITY_CLOSED_MARKER}`);
+    await d.gh.closeIssue(rec.issue, "");
+    await d.gh.removeLabel(rec.issue, NEEDS_DECISION_LABEL);
+    // Emitted once the issue is closed, so the filer woken by capability_answered sees it closed and releases the held refs.
+    await d.emitEvent?.('maintainer_reply',{issue:rec.issue,question_id:questionId});
+    await d.emitEvent?.('capability_answered',{issue:rec.issue,question_id:questionId});
+    if (rec.telegram) await this.telegramAnswers.archive(rec);
+    await removeClaim(d.paths, rec.issue);
+    await removePaused(d.paths, rec.issue);
+    d.serviceLog.write({ kind: "capability-answered", issue: rec.issue, question_id: questionId });
+  }
+
   async #resume(rec: PausedRecord, info: TickInfo): Promise<void> {
     const d = this.#deps;
     if (rec.question_comment_id === null || rec.answer === null || rec.reply_comment_id === null) throw new Error("resuming record without its question or reply");
@@ -282,10 +323,10 @@ export class Scheduler {
   }
 
   async tick(): Promise<TickInfo> {
-    if (this.#ticking) return { eligible: 0, claimed: [], released: [], errors: ["tick already in progress"], restartPending: this.#restartPending };
+    if (this.#ticking) return { eligible: 0, claimed: [], released: [], held: 0, errors: ["tick already in progress"], restartPending: this.#restartPending };
     this.#ticking = true;
     const d = this.#deps;
-    const info: TickInfo = { eligible: 0, claimed: [], released: [], errors: [], restartPending: this.#restartPending };
+    const info: TickInfo = { eligible: 0, claimed: [], released: [], held: 0, errors: [], restartPending: this.#restartPending };
     try {
       const slots = d.parameters ? Number((await d.parameters.read('slots')).value) : d.cfg.slots;
       if(d.registry && d.parameters)await initializeAgents(d.paths,d.registry,d.parameters,d.now());
@@ -335,8 +376,12 @@ export class Scheduler {
         if (!(claim.state.stage === "waiting" && claim.state.postponedUntil && new Date(claim.state.postponedUntil) > d.now())) this.#start(claim);
       }
 
-      // Counted here, as the slots the resumes above left; a resume below takes one.
-      let free = slots - this.active;
+      // Spec 009: claims held on disk reserve slots even while waiting; paused issues hold none.
+      // Standing agents have no issue claim, so retain their running-slot reservation separately.
+      // A chain still running in this process holds its slot even after a pause removed its claim file.
+      const held = new Set([...(await listClaims(d.paths)).filter((c) => !pausedIssues.has(c.issue)).map((c) => c.issue), ...this.#active.keys()]).size;
+      info.held = held;
+      let free = Math.max(0, slots - held - this.#activeStanding.size);
       const paused = await listPaused(d.paths);
       if (!paused.length && free <= 0) return info;
       let issues;
@@ -349,10 +394,11 @@ export class Scheduler {
 
       // AC-15: a paused issue answered takes a free slot before any shortlisted issue.
       const open = new Set(issues.map((i) => i.number));
+      this.#capabilityIssues = new Set(issues.filter((i) => isCapabilityIssue(i, d.botLogin)).map((i) => i.number));
       for (const rec of paused) {
         if (this.#active.has(rec.issue) || this.#stopping) continue;
         try {
-          if (await this.#handlePaused(rec, open.has(rec.issue), free > 0, info)) free--;
+          if (await this.#handlePaused(rec, open.has(rec.issue), free > 0 && this.active < slots, info)) free--;
         } catch (e) {
           info.errors.push(`paused ${rec.issue}: ${(e as Error).message}`);
         }
