@@ -491,3 +491,4 @@ are stale and are corrected as part of B.
 - `specs/010-approve-esbuild-build/spec.md`
 - `specs/011-asking-stage-keeps-its-work/spec.md`
 - `specs/012-metrics-reflection/spec.md`
+- `specs/015-chain-keeps-its-work/spec.md`
