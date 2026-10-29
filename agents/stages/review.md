@@ -28,7 +28,8 @@ Plan:
 Pull request: {{pr}}
 
 CI summary (each required check's conclusion for the pull request head; you have no shell, so
-when every check succeeded do not try to run the suite yourself, judge by reading):
+do not try to run the suite yourself whatever the checks say: judge by reading, and take a
+failed or pending check as the summary reports it):
 {{ci}}
 
 {{profile_instructions}}
