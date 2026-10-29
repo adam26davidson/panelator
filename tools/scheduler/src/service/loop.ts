@@ -51,6 +51,8 @@ export interface TickInfo {
   released: number[];
   /** Claims holding a slot this tick (spec 009): every claim on disk whose issue is not paused. */
   held: number;
+  /** Standing agents started this tick (spec 016). */
+  standing: string[];
   errors: string[];
   restartPending: boolean;
 }
@@ -77,6 +79,8 @@ export class Scheduler {
   #stopReason = "";
   #ticking = false;
   #restartPending = false;
+  /** Spec 016: the kind of the last running slot granted; a standing agent goes first after a start. */
+  #lastGrant: "standing" | "chain" = "chain";
   #questionOperation:Promise<unknown>=Promise.resolve();
   #serializeQuestions<T>(fn:()=>Promise<T>):Promise<T>{const p=this.#questionOperation.then(fn);this.#questionOperation=p.catch(()=>{});return p;}
   #wakeRequested=false;
@@ -284,10 +288,10 @@ export class Scheduler {
   }
 
   async tick(): Promise<TickInfo> {
-    if (this.#ticking) return { eligible: 0, claimed: [], released: [], held: 0, errors: ["tick already in progress"], restartPending: this.#restartPending };
+    if (this.#ticking) return { eligible: 0, claimed: [], released: [], held: 0, standing: [], errors: ["tick already in progress"], restartPending: this.#restartPending };
     this.#ticking = true;
     const d = this.#deps;
-    const info: TickInfo = { eligible: 0, claimed: [], released: [], held: 0, errors: [], restartPending: this.#restartPending };
+    const info: TickInfo = { eligible: 0, claimed: [], released: [], held: 0, standing: [], errors: [], restartPending: this.#restartPending };
     try {
       const slots = d.parameters ? Number((await d.parameters.read('slots')).value) : d.cfg.slots;
       if(d.registry && d.parameters)await initializeAgents(d.paths,d.registry,d.parameters,d.now());
@@ -319,6 +323,8 @@ export class Scheduler {
       // A pending self-update stops resuming and claiming, like a stop, so the restart is not held up by new chains.
       if (this.#stopping || this.#restartPending) return info;
 
+      // Claims that may start, in listing order; chain errors are handed out first, whatever the slots.
+      const startable: Claim[] = [];
       for (const claim of await listClaims(d.paths)) {
         if (this.#active.has(claim.issue) || pausedIssues.has(claim.issue)) continue;
         const failures = claim.state.chainFailures?.count ?? 0;
@@ -333,86 +339,131 @@ export class Scheduler {
           info.released.push(claim.issue);
           continue;
         }
-        if (this.active >= slots) break;
-        if (!(claim.state.stage === "waiting" && claim.state.postponedUntil && new Date(claim.state.postponedUntil) > d.now())) this.#start(claim);
+        if (!(claim.state.stage === "waiting" && claim.state.postponedUntil && new Date(claim.state.postponedUntil) > d.now())) startable.push(claim);
       }
 
-      // Spec 009: claims held on disk reserve slots even while waiting; paused issues hold none.
-      // Standing agents have no issue claim, so retain their running-slot reservation separately.
-      // A chain still running in this process holds its slot even after a pause removed its claim file.
-      const held = new Set([...(await listClaims(d.paths)).filter((c) => !pausedIssues.has(c.issue)).map((c) => c.issue), ...this.#active.keys()]).size;
-      info.held = held;
-      let free = Math.max(0, slots - held - this.#activeStanding.size);
+      let issues: Awaited<ReturnType<typeof d.gh.listOpenIssues>> | null = null;
+      let listed = false;
+      const openIssues = async () => {
+        if (listed) return issues;
+        listed = true;
+        try {
+          issues = await d.gh.listOpenIssues();
+        } catch (e) {
+          info.errors.push((e as Error).message);
+        }
+        return issues;
+      };
+
+      // Spec 016 AC-1 to AC-3 (spec 006 AC-15): an answered question takes a free running slot before anything else.
       const paused = await listPaused(d.paths);
-      if (!paused.length && free <= 0) return info;
-      let issues;
-      try {
-        issues = await d.gh.listOpenIssues();
-      } catch (e) {
-        info.errors.push((e as Error).message);
-        return info;
-      }
-
-      // AC-15: a paused issue answered takes a free slot before any shortlisted issue.
-      const open = new Set(issues.map((i) => i.number));
-      for (const rec of paused) {
-        if (this.#active.has(rec.issue) || this.#stopping) continue;
-        try {
-          if (await this.#handlePaused(rec, open.has(rec.issue), free > 0 && this.active < slots, info)) free--;
-        } catch (e) {
-          info.errors.push(`paused ${rec.issue}: ${(e as Error).message}`);
+      if (paused.length && (await openIssues())) {
+        const open = new Set(issues!.map((i) => i.number));
+        for (const rec of paused) {
+          if (this.#active.has(rec.issue) || this.#stopping) continue;
+          try {
+            await this.#handlePaused(rec, open.has(rec.issue), this.active < slots, info);
+          } catch (e) {
+            info.errors.push(`paused ${rec.issue}: ${(e as Error).message}`);
+          }
         }
       }
 
-      if(d.registry && d.parameters && free>0) {
-        const states=await Promise.all(Object.values(d.registry).map(async def=>({def,state:(await readAgentState(d.paths,def.name))!})));
-        states.sort((a,b)=>(a.state.next_run??'').localeCompare(b.state.next_run??''));
-        for(const {def,state} of states) {
-          if(free<=0)break;
-          if(state.paused||this.#activeStanding.has(def.name)||!((state.next_run && Date.parse(state.next_run)<=d.now().getTime())||state.pending_events.length))continue;
-          if(state.running && await d.unitActive(`panelator-stage-${state.running.run_id}`))continue;
+      // Spec 009: every claim on disk of an issue not paused holds a slot against new claims, and so does a chain
+      // still running in this process after a pause removed its claim file.
+      const stillPaused = new Set((await listPaused(d.paths)).map((r) => r.issue));
+      let held = new Set([...(await listClaims(d.paths)).filter((c) => !stillPaused.has(c.issue)).map((c) => c.issue), ...this.#active.keys()]).size;
+      info.held = held;
+
+      const dueStanding: { def: StandingDefinition; state: NonNullable<Awaited<ReturnType<typeof readAgentState>>> }[] = [];
+      if (d.registry && d.parameters) {
+        const states = await Promise.all(Object.values(d.registry).map(async (def) => ({ def, state: (await readAgentState(d.paths, def.name))! })));
+        states.sort((a, b) => (a.state.next_run ?? "").localeCompare(b.state.next_run ?? ""));
+        for (const s of states) {
+          const due = (s.state.next_run && Date.parse(s.state.next_run) <= d.now().getTime()) || s.state.pending_events.length;
+          if (!s.state.paused && !this.#activeStanding.has(s.def.name) && due) dueStanding.push(s);
+        }
+      }
+      const grantStanding = async (): Promise<boolean> => {
+        for (let next = dueStanding.shift(); next; next = dueStanding.shift()) {
+          const { def, state } = next;
+          if (state.running && await d.unitActive(`panelator-stage-${state.running.run_id}`)) continue;
           d.inhibitor.acquire();
-          const p=(d.runStanding??runStandingAgent)({...d,parameters:d.parameters},def,state)
-            .catch(e=>d.log({kind:'standing-error',agent:def.name,error:String(e)}))
-            .finally(()=>{this.#activeStanding.delete(def.name);if(this.active===0){d.inhibitor.release();if(this.#restartPending&&!this.#ticking)d.requestRestart();}});
-          this.#activeStanding.set(def.name,p);free--;
+          const p = (d.runStanding ?? runStandingAgent)({ ...d, parameters: d.parameters! }, def, state)
+            .catch((e) => d.log({ kind: "standing-error", agent: def.name, error: String(e) }))
+            .finally(() => { this.#activeStanding.delete(def.name); if (this.active === 0) { d.inhibitor.release(); if (this.#restartPending && !this.#ticking) d.requestRestart(); } });
+          this.#activeStanding.set(def.name, p);
+          info.standing.push(def.name);
+          return true;
         }
-      }
-      if (free <= 0) return info;
-      // AC-13: the shortlist treats an issue with a paused record as claimed.
-      const claimed = new Set([...(await listClaims(d.paths)).map((c) => c.issue), ...(await listPaused(d.paths)).map((r) => r.issue)]);
-      const { eligible, decisions, specProblems } = selectEligible(issues, buildSelectContext(d.repoDir, d.cfg, claimed, d.botLogin));
-      info.eligible = eligible.length;
-      // Only needs-design-stage labels now (AC-20); the needs- prefix then hides the issue, so it is applied once.
-      for (const dec of decisions) {
-        if (dec.result.ok || dec.result.action !== "label") continue;
-        const r = dec.result;
-        await d.gh.addLabels(dec.issue, [r.label]).catch((e) => info.errors.push(`label ${dec.issue}: ${(e as Error).message}`));
-        await d.gh.comment(dec.issue, `${r.label}: ${r.reason}`).catch((e) => info.errors.push(`comment ${dec.issue}: ${(e as Error).message}`));
-        await d.notifier.notify({ issue: dec.issue, gate: dec.gate, label: r.label, text: r.reason });
-      }
-      const readSpec=buildSelectContext(d.repoDir,d.cfg,claimed,d.botLogin).readSpec;
-      const share=d.parameters?Number((await d.parameters.read('system_work_share')).value):0.75;
-      const ranked = rankIssues(eligible, d.cfg.labels, await recentMerges(d.paths, d.now()),share,i=>classifyWork(i,readSpec));
-      for (const issue of ranked.slice(0, free)) {
-        if (this.#stopping) break;
-        try {
-          // Claim file before the label: a failure in between leaves a claim without in-progress, which the
-          // next tick's stale-claim check drops (GitHub wins), never an in-progress label with no claim file.
-          const wt = await ensureWorktree(d.repoDir, d.paths.worktrees, issue.number);
-          // AC-19: a spec-present failure starts at the spec stage; AC-7: the counters and history carry over.
-          const state = initialChainState(issue.number, specProblems.get(issue.number) ?? null, await readLedger(d.paths, issue.number));
-          const claim: Claim = {
-            issue: issue.number, slot: this.#active.size, state, worktree: wt.path,
-            started_at: d.now().toISOString(), last_activity_at: d.now().toISOString(), run_id: null,
-          };
-          await writeClaim(d.paths, claim);
-          await d.gh.addLabels(issue.number, [CLAIM_LABEL]);
-          info.claimed.push(issue.number);
+        return false;
+      };
+
+      // The ranked shortlist, computed once and only when a new claim fits under the held count.
+      let ranked: Awaited<ReturnType<typeof d.gh.listOpenIssues>> | null = null;
+      let specProblems = new Map<number, string>();
+      const shortlist = async () => {
+        if (ranked) return ranked;
+        if (!(await openIssues())) return (ranked = []);
+        // AC-13: the shortlist treats an issue with a paused record as claimed.
+        const claimed = new Set([...(await listClaims(d.paths)).map((c) => c.issue), ...(await listPaused(d.paths)).map((r) => r.issue)]);
+        const ctx = buildSelectContext(d.repoDir, d.cfg, claimed, d.botLogin);
+        const sel = selectEligible(issues!, ctx);
+        specProblems = sel.specProblems;
+        info.eligible = sel.eligible.length;
+        // Only needs-design-stage labels now (AC-20); the needs- prefix then hides the issue, so it is applied once.
+        for (const dec of sel.decisions) {
+          if (dec.result.ok || dec.result.action !== "label") continue;
+          const r = dec.result;
+          await d.gh.addLabels(dec.issue, [r.label]).catch((e) => info.errors.push(`label ${dec.issue}: ${(e as Error).message}`));
+          await d.gh.comment(dec.issue, `${r.label}: ${r.reason}`).catch((e) => info.errors.push(`comment ${dec.issue}: ${(e as Error).message}`));
+          await d.notifier.notify({ issue: dec.issue, gate: dec.gate, label: r.label, text: r.reason });
+        }
+        const share = d.parameters ? Number((await d.parameters.read('system_work_share')).value) : 0.75;
+        return (ranked = rankIssues(sel.eligible, d.cfg.labels, await recentMerges(d.paths, d.now()), share, (i) => classifyWork(i, ctx.readSpec)));
+      };
+      const grantChain = async (): Promise<boolean> => {
+        const claim = startable.shift();
+        if (claim) {
           this.#start(claim);
-        } catch (e) {
-          info.errors.push(`claim ${issue.number}: ${(e as Error).message}`);
+          return true;
         }
+        if (held + this.#activeStanding.size >= slots) return false;
+        for (let issue = (await shortlist()).shift(); issue; issue = ranked!.shift()) {
+          if (this.#stopping) return false;
+          try {
+            // Claim file before the label: a failure in between leaves a claim without in-progress, which the
+            // next tick's stale-claim check drops (GitHub wins), never an in-progress label with no claim file.
+            const wt = await ensureWorktree(d.repoDir, d.paths.worktrees, issue.number);
+            // AC-19: a spec-present failure starts at the spec stage; AC-7: the counters and history carry over.
+            const state = initialChainState(issue.number, specProblems.get(issue.number) ?? null, await readLedger(d.paths, issue.number));
+            const c: Claim = {
+              issue: issue.number, slot: this.#active.size, state, worktree: wt.path,
+              started_at: d.now().toISOString(), last_activity_at: d.now().toISOString(), run_id: null,
+            };
+            await writeClaim(d.paths, c);
+            held++;
+            await d.gh.addLabels(issue.number, [CLAIM_LABEL]);
+            info.claimed.push(issue.number);
+            this.#start(c);
+            return true;
+          } catch (e) {
+            info.errors.push(`claim ${issue.number}: ${(e as Error).message}`);
+          }
+        }
+        return false;
+      };
+
+      // Spec 016 AC-4 to AC-8: standing agents and chains take turns for the running slots, one grant each; the
+      // kind whose turn it is passes the slot on when it has nothing ready.
+      while (this.active < slots && !this.#stopping) {
+        const order: ("standing" | "chain")[] = this.#lastGrant === "chain" ? ["standing", "chain"] : ["chain", "standing"];
+        let granted: "standing" | "chain" | null = null;
+        for (const kind of order) {
+          if (await (kind === "standing" ? grantStanding() : grantChain())) { granted = kind; break; }
+        }
+        if (!granted) break;
+        this.#lastGrant = granted;
       }
       return info;
     } finally {
