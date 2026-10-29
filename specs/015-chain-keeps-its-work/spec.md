@@ -80,9 +80,9 @@ network is back, as nothing touched the claim meanwhile.
 
 - Rate limits of any kind: the model provider's quota (spec 001 AC-25 to
   AC-27) and GitHub's primary and secondary rate limits (HTTP 403 or 429
-  with a rate-limit message). Spec 013 plans quota and rate-limit retries;
-  this spec classifies a GitHub rate-limit response as a genuine error, as
-  today.
+  with a rate-limit message). Spec 013 plans the model provider's quota;
+  no spec plans GitHub rate-limit retries, and this spec classifies a GitHub
+  rate-limit response as a genuine error, as today.
 - Network failures inside an agent's own run (the harness losing its API
   connection, the agent's `git push` failing). They end the run as a failed
   or rate-limited outcome, judged by the adapter as today.
@@ -209,7 +209,12 @@ claim is the record of its consecutive transient failures.
   rewritten to `chain error in <stage> (transient, not counted): <message>`
   so it is forgiven once, the ledger is written, and the service log carries
   `{ kind: "chain-errors-forgiven", issue, forgiven }`. A genuine chain
-  error entry is left as it is.
+  error entry is left as it is. A chain-error release recorded since this
+  spec writes its history entry as `chain error in <stage> (counted):
+  <error>` (a genuine error, or one past the outage ceiling, AC-13), which
+  forgiveness never matches: it applies to entries written before this
+  spec only, so neither a release past the ceiling nor a genuine 4xx whose
+  message names a network code is ever forgiven.
 - AC-12. **End to end.** Recorded end-to-end chains (fake adapter, mocked
   GitHub) drive and assert:
   - review postponed three times on a PR whose base moved, then run:
@@ -224,15 +229,27 @@ claim is the record of its consecutive transient failures.
     result re-checked twice.
 - AC-13. **An outage has a ceiling.** Given an outage whose `since` is 24
   hours or more (`OUTAGE_CEILING_MS`) before a transient failure, then the
-  failure counts as genuine: `chainFailures` and the ledger count it, the
+  failure is recorded in `outage.past_ceiling: { since, failures }`. The
+  outage's age is wall-clock time and counts a laptop asleep, so failures
+  past the ceiling count as genuine only from the one that makes at least
+  three (`CEILING_MIN_FAILURES`) spanning at least 30 minutes
+  (`CEILING_MIN_SPAN_MS`). From then on `chainFailures` and the ledger
+  count each failure, with the error prefixed `outage past ceiling: `; the
   outage stays on the claim with `ceiling: true` (its backoff still
-  applies), and the first such failure logs `{ kind:
+  applies); and the first counted failure logs `{ kind:
   "transient-outage-ceiling", issue, since, failures, cause }` and appends
-  one finding (`what: "network outage outlasted the retry ceiling"`). After
-  `MAX_CHAIN_FAILURES` of them the `chain_error` release follows (AC-7). A
-  deterministic failure that looks transient (a host that never resolves, a
-  port that always refuses) therefore ends in a release after about a day
-  instead of retrying forever.
+  one finding (`what: "network outage outlasted the retry ceiling"`). For a
+  claim carrying work it must not drop (a pending event or abandonment,
+  which is never released), the first counted failure also logs
+  `pending-work-failing`, appends that finding and sends the one
+  `chain_error` notification, as a genuine failure would. After
+  `MAX_CHAIN_FAILURES` counted failures the `chain_error` release follows
+  (AC-7), recorded as `chain error in <stage> (counted): outage past
+  ceiling: ...`, which AC-11 never forgives: the next such release abandons
+  the issue. A deterministic failure that looks transient (a host that never
+  resolves, a port that always refuses) therefore ends in a release after
+  about a day, and in abandonment on the next claim, instead of retrying
+  forever.
 
 ## 4. Amendments to earlier specs
 
@@ -250,7 +267,9 @@ exceptions.
   errors only; a transient error postpones the chain and counts nothing
   (AC-5 above) until its outage passes the ceiling (AC-13). The ledger's
   release count excludes chain-error releases recorded for a transient cause
-  (AC-11).
+  (AC-11). The history entry a chain-error release writes reads `chain
+  error in <stage> (counted): <error>` (`chainError` in
+  `tools/scheduler/src/chain/machine.ts`).
 - **Spec 001 AC-15 (liveness).** "no run in flight and no commit, comment or
   label change for 2 hours" also requires no transient failure recorded on
   the claim in that window: a claim retrying through an outage is active
@@ -270,6 +289,8 @@ behaviour; no earlier clause covers a re-run after the run ended.
   (AC-3); `runAgentStage` undoes its rebase after a run without a result
   (AC-1), records `stageRun` and resumes from it (AC-10); `step` clears
   `stageRun`.
+- `tools/scheduler/src/chain/machine.ts`: `chainError` writes its history
+  entry with the `(counted)` mark (AC-11, AC-13).
 - `tools/scheduler/src/state/claims.ts`: the optional `stageRun` and
   `outage` fields of `Claim`.
 - `schemas/scheduler/claim.json`: the `stageRun` and `outage` properties.

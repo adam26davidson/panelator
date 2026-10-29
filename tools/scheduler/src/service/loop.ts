@@ -18,7 +18,7 @@ import {execFileSync} from 'node:child_process';
 import { rankIssues, classifyWork } from "../shortlist/rank.ts";
 import { selectEligible } from "../shortlist/select.ts";
 import { listClaims, readClaim, removeClaim, writeClaim, type Claim, type Outage } from "../state/claims.ts";
-import { forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, transientCause } from "../chain/transient.ts";
+import { CEILING_MIN_FAILURES, CEILING_MIN_SPAN_MS, forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, PAST_CEILING, transientCause } from "../chain/transient.ts";
 import { readLedger, writeLedger } from "../state/ledger.ts";
 import { listPaused, pausedDecision, removePaused, writePaused, type PausedRecord } from "../state/paused.ts";
 import { answeredEntry, appendQuestionLog } from "../state/questions.ts";
@@ -195,11 +195,19 @@ export class Scheduler {
       since, count, last: error.slice(0, HISTORY_ENTRY_MAX), retry_at: new Date(now.getTime() + outageBackoffS(count) * 1000).toISOString(), alarmed: Boolean(prev?.alarmed) || alarm,
     };
     if (now.getTime() - Date.parse(since) >= OUTAGE_CEILING_MS) {
-      // AC-13: past the ceiling the failure counts as genuine, toward MAX_CHAIN_FAILURES and the chain_error release.
+      // AC-13: past the ceiling the failure counts as genuine, toward MAX_CHAIN_FAILURES and the chain_error release, once
+      // enough failures past it show the outage is real and not a laptop that slept through the day.
+      const past = { since: prev?.past_ceiling?.since ?? now.toISOString(), failures: (prev?.past_ceiling?.failures ?? 0) + 1 };
+      const counts = past.failures >= CEILING_MIN_FAILURES && now.getTime() - Date.parse(past.since) >= CEILING_MIN_SPAN_MS;
+      if (!counts) {
+        await writeClaim(d.paths, { ...claim, outage: { ...outage, past_ceiling: past }, last_activity_at: now.toISOString() });
+        return;
+      }
       const first = !prev?.ceiling;
-      const chainFailures = { count: (claim.state.chainFailures?.count ?? 0) + 1, last: outage.last };
+      const last = `${PAST_CEILING}${outage.last}`.slice(0, HISTORY_ENTRY_MAX);
+      const chainFailures = { count: (claim.state.chainFailures?.count ?? 0) + 1, last };
       const state = { ...claim.state, chainFailures };
-      await writeClaim(d.paths, { ...claim, state, outage: { ...outage, ceiling: true }, last_activity_at: now.toISOString() });
+      await writeClaim(d.paths, { ...claim, state, outage: { ...outage, past_ceiling: past, ceiling: true }, last_activity_at: now.toISOString() });
       await writeLedger(d.paths, issue, ledgerOf(state));
       if (!first) return;
       d.serviceLog.write({ kind: "transient-outage-ceiling", issue, since, failures: count, cause });
@@ -207,6 +215,16 @@ export class Scheduler {
         what: "network outage outlasted the retry ceiling", where: `issue #${issue}, stage ${claim.state.stage}`,
         evidence: `${count} transient failures since ${since} (${cause}); counted as genuine from now on; last: ${outage.last}`, noticed_how: "scheduler transient error",
       }]);
+      if (carriesPending(claim)) {
+        // C7, CM3: a claim carrying work it must not drop is never released; it is reported once, as #countFailure does.
+        const what = claim.pendingEvent ? `the ${claim.pendingEvent.type} event` : "an abandonment";
+        d.serviceLog.write({ kind: "pending-work-failing", issue, failures: count, error: last });
+        await appendFindings(d.paths, { issue, stage: stuckStage(claim.state), run_id: "chain-error", timestamp: now.toISOString() }, [{
+          what: "pending work keeps failing", where: `issue #${issue}, ${claim.pendingEvent ? `pending ${claim.pendingEvent.type} event` : "pending abandonment actions"}`,
+          evidence: last, noticed_how: "scheduler chain error",
+        }]);
+        await d.notifier.notify({ issue, gate: "chain_error", label: "", text: `Issue #${issue}: a network outage past its 24-hour ceiling keeps the scheduler from finishing work it must not drop (${what}); it keeps retrying. Last error: ${outage.last}` });
+      }
       return;
     }
     await writeClaim(d.paths, { ...claim, outage, last_activity_at: now.toISOString() });

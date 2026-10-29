@@ -632,7 +632,13 @@
         "last": { "type": "string" },
         "retry_at": { "type": "string", "format": "date-time" },
         "alarmed": { "type": "boolean" },
-        "ceiling": { "type": "boolean" }
+        "ceiling": { "type": "boolean" },
+        "past_ceiling": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["since", "failures"],
+          "properties": { "since": { "type": "string", "format": "date-time" }, "failures": { "type": "integer", "minimum": 1 } }
+        }
       }
     }
   }

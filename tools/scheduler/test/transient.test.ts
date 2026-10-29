@@ -103,4 +103,11 @@ describe("forgiveTransientChainErrors (spec 015 AC-11)", () => {
     expect(r.ledger.chainErrors).toBe(0);
     expect(r.ledger.history[0]).toBe("chain error in fix: boom");
   });
+  it("never forgives a chain error recorded since spec 015: past the ceiling, or a genuine 4xx naming a network code (AC-11, AC-13)", () => {
+    const ledger = { ...base, chainErrors: 1, history: [
+      "chain error in verify (counted): outage past ceiling: getaddrinfo EAI_AGAIN api.github.com",
+      "chain error in fix (counted): upstream said ECONNRESET",
+    ] };
+    expect(forgiveTransientChainErrors(ledger)).toEqual({ ledger, forgiven: 0 });
+  });
 });

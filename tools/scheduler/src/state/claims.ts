@@ -50,6 +50,8 @@ export interface Outage {
   alarmed: boolean;
   /** Spec 015 AC-13: the outage passed its ceiling; its failures count as genuine. */
   ceiling?: boolean;
+  /** Spec 015 AC-13: the failures since the outage passed its ceiling, and when the first of them was. */
+  past_ceiling?: { since: string; failures: number };
 }
 
 /** Pre-006 claims carry `securityFinding` and lack the new fields; fill them on read. */
