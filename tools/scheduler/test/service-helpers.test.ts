@@ -1,3 +1,6 @@
+import {startTelegram,telegramCheck} from '../src/service/telegram-start.ts';
+import {loadConfig,defaultConfigPath} from '../src/config.ts';
+import {fakeTelegram} from './helpers/fake-telegram.ts';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +10,19 @@ import { SleepInhibitor } from "../src/service/inhibit.ts";
 import { systemdStopUnit, systemdUnitActive } from "../src/service/units.ts";
 import { ServiceLog } from "../src/service/log.ts";
 import { git, repoPair } from "./helpers/repo-pair.ts";
+
+describe('Telegram startup and delivery check',()=>{
+ it('fails closed for missing/unauthorized credentials and never logs the token',async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'tg-start-'));const path=join(dir,'telegram.json');const cfg={...loadConfig(defaultConfigPath),telegram:{credentials_path:path,long_poll_timeout_s:50}};const logs:unknown[]=[];
+  expect(await startTelegram(cfg,r=>logs.push(r))).toBeNull();
+  writeFileSync(path,JSON.stringify({bot_token:'PRIVATE-TOKEN',chat_id:42}));const server=await fakeTelegram();try{
+   server.fail('getMe',401);expect(await startTelegram(cfg,r=>logs.push(r),server.url)).toBeNull();
+   expect(await telegramCheck(cfg,server.url)).toBe('bot @test_bot, chat 42');expect(server.sent[0].text).toBe('panelator: Telegram channel connected');
+   expect(await startTelegram(cfg,r=>logs.push(r),server.url)).not.toBeNull();expect(JSON.stringify(logs)).not.toContain('PRIVATE-TOKEN');
+   server.fail('sendMessage',500);await expect(telegramCheck(cfg,server.url)).rejects.toThrow('sendMessage');
+  }finally{await server.close();}
+ });
+});
 
 describe("fastForwardMain (AC-17)", () => {
   it("fast-forwards and reports changed paths", async () => {

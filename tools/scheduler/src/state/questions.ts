@@ -4,6 +4,8 @@ import type { AskingStage, Question } from "../types.ts";
 import type { StatePaths } from "./paths.ts";
 
 export interface QuestionLogEntry {
+  channel?: 'telegram'|'issue';
+  telegram_message_id?: number;
   issue: number;
   at: string;
   event: "asked" | "checked" | "sent" | "reminded" | "answered";

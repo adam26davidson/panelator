@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentsDir } from "../src/config.ts";
 import { loadStageDefinitions, parseStageDefinition } from "../src/stages/definition.ts";
-import { renderPrompt } from "../src/stages/prompt.ts";
+import { renderReplyPrompt,renderPrompt } from "../src/stages/prompt.ts";
 
 const minimal = `---
 name: review
@@ -20,6 +20,13 @@ output: review-result
 ---
 Review {{issue}} and write {{result_path}}.
 `;
+
+describe('resumed reply prompt',()=>{
+ it('keeps the cited answers, conversation rules and the new result path',()=>{
+  const text=renderReplyPrompt({answer:'Question #10: why not the second?\n\nQuestion #11: Use second',mode:'work',result_path:'/new/result.json',conversation:true,stage:'plan'});
+  expect(text).toContain('Question #10:');expect(text).toContain('Question #11:');expect(text).toContain('change nothing');expect(text).toContain('"conversation":"settled"');expect(text).toContain('/new/result.json');
+ });
+});
 
 describe("parseStageDefinition", () => {
   it("parses frontmatter and body", () => {

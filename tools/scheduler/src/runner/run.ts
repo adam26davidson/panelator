@@ -6,7 +6,7 @@ import { finished } from "node:stream/promises";
 import { JsonlSplitter } from "../adapters/jsonl.ts";
 import type { Adapter, Judgement, RunOutcome, StageRun } from "../adapters/types.ts";
 import { validate, type SchemaName } from "../schema/validate.ts";
-import { renderPrompt, type StageInput } from "../stages/prompt.ts";
+import { renderReplyPrompt, renderPrompt, type StageInput } from "../stages/prompt.ts";
 import { appendFindings } from "../state/findings.ts";
 import type { StatePaths } from "../state/paths.ts";
 import { newRunId, runDir, writeUsageRecord, type UsageRecord } from "../state/runs.ts";
@@ -29,6 +29,11 @@ export interface RunnerContext {
 }
 
 export interface StageRequest {
+  resume?:{sessionId:string;harness:Harness;model:string};
+  conversation?:boolean;
+  replyPrompt?:string;
+  resumeFallback?:string;
+  resumedSessionId?:string;
   def: AgentDefinition;
   standingInput?: Record<string, unknown>;
   input: StageInput;
@@ -43,6 +48,7 @@ export interface StageRequest {
 }
 
 export interface StageOutcome {
+  sessionId:string;
   runId: string;
   outcome: RunOutcome;
   reason: string | null;
@@ -81,9 +87,14 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   const input: StageInput = { ...req.input, result_path: resultPath, profile_instructions: profileInstructions };
   const iv = req.def.kind === 'standing' ? {ok:true as const} : validate("stage-input", input);
   if (!iv.ok) throw new Error(`stage input invalid: ${iv.errors.join("; ")}`);
-  const prompt = req.def.kind === 'standing'
-    ? renderStandingPrompt(req.def.prompt, {...req.standingInput,result_path:resultPath,profile_instructions:profileInstructions}) + '\nIf no write tool is available, return the result JSON as your final response. Never post to GitHub or modify repository content.'
-    : renderPrompt(req.def.prompt, input);
+  const prompt = req.replyPrompt ?? (req.resume || req.conversation
+    ? renderReplyPrompt({
+      answer: req.resume ? input.answer ?? '' : `${input.question ?? ''}\n\n${input.answer ?? ''}`,
+      mode: input.mode ?? 'work', result_path: resultPath, conversation: req.conversation, stage: req.def.name,
+    })
+    : req.def.kind === 'standing'
+      ? renderStandingPrompt(req.def.prompt, {...req.standingInput,result_path:resultPath,profile_instructions:profileInstructions}) + '\nIf no write tool is available, return the result JSON as your final response. Never post to GitHub or modify repository content.'
+      : renderPrompt(req.def.prompt, input));
   await writeFile(join(dir, "prompt.md"), prompt);
   await writeFile(join(dir, "input.json"), JSON.stringify(req.standingInput ?? input, null, 2));
 
@@ -91,7 +102,8 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
 
   const stageRun: StageRun = {
     runId, stage: req.def.name as AgentStageName, attempt: req.attempt, issue: req.issue, prompt, model, bounds: req.def.bounds,
-    worktree: req.worktree, sessionId: (ctx.sessionId ?? randomUUID)(), resultPath, profile: req.profile, effort: req.def.effort,
+    worktree: req.worktree, sessionId: req.resume?.sessionId??(ctx.sessionId ?? randomUUID)(), resultPath, profile: req.profile, effort: req.def.effort,
+    resume:req.resume,conversation:req.conversation,
   };
   const cmd = ctx.adapter.buildCommand(stageRun);
   if(req.def.kind === 'standing' && harness === 'claude') {
@@ -170,7 +182,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   if (spawned !== null && judgement.outcome !== "timeout" && judgement.outcome !== "bounds") {
     let raw = await readFile(resultPath, "utf8").catch(() => null);
     // T1: a read-only stage on a harness that gives it no write tool returns its result in the final text.
-    if (raw === null && judgement.finalText && (req.def.kind === 'standing' || ctx.adapter.resultInText?.(req.def.name))) {
+    if (raw === null && judgement.finalText && (req.conversation || req.def.kind === 'standing' || ctx.adapter.resultInText?.(req.def.name))) {
       raw = lastJsonObject(judgement.finalText);
       if (raw !== null) await writeFile(resultPath, raw);
     }
@@ -199,6 +211,8 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
     run_id: runId, issue: req.issue, stage: req.def.name, attempt: req.attempt, outcome: judgement.outcome, harness, model,
     ...u, wall_seconds: Math.max(0.001, wallMs / 1000), started_at: startedAt.toISOString(), ended_at: endedAt.toISOString(),
     events_path: relative(ctx.paths.root, eventsPath),
+    ...((req.resume?.sessionId??req.resumedSessionId)?{resumed_session_id:req.resume?.sessionId??req.resumedSessionId}:{}),
+    ...(req.resumeFallback?{resume_fallback:req.resumeFallback}:{}),
   };
   await writeUsageRecord(ctx.paths, usage);
 
@@ -211,7 +225,18 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   };
   await writeFile(join(dir, "outcome.json"), JSON.stringify(persisted, null, 2));
 
-  return { runId, outcome: judgement.outcome, reason, result, resultErrors, judgement, usage, findings, eventsPath, malformed, ioErrors: ioMessages };
+  if(req.resume&&(judgement.outcome==='failed'||judgement.outcome==='ok')){
+    const turn=events.some(e=>['assistant','message_start','message_end'].includes(String(rec(e).type)));
+    const init=events.some(e=>rec(e).type==='system'&&rec(e).subtype==='init'||['agent_start','message_start'].includes(String(rec(e).type)));
+    const stderr=await readFile(join(dir,'stderr.log'),'utf8').catch(()=>'');
+    const namesSession=[stderr,judgement.finalText??''].some(t=>t.includes(req.resume!.sessionId));
+    if(!turn&&(!init||(namesSession&&judgement.outcome==='failed'))){
+      const fallback=!init?'resume: no init event':'resume: session unavailable';
+      await writeFile(join(dir,'outcome.json'),JSON.stringify({...persisted,resume_fallback:fallback},null,2));
+      return runStage(ctx,{...req,resume:undefined,replyPrompt:undefined,runId:runId+'-fresh',resumeFallback:fallback,resumedSessionId:req.resume.sessionId});
+    }
+  }
+  return { sessionId:stageRun.sessionId,runId, outcome: judgement.outcome, reason, result, resultErrors, judgement, usage, findings, eventsPath, malformed, ioErrors: ioMessages };
 }
 
 /**

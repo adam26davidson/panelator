@@ -604,7 +604,34 @@ function chainError(state: ChainState, error: string): Step {
   return releaseClaim({ ...s, chainErrors: s.chainErrors + 1 }, "after repeated scheduler errors", text, "chain_error", "chain error", [finding]);
 }
 
-export function transition(state: ChainState, event: ChainEvent): Step {
+export function transition(state:ChainState,event:ChainEvent):Step {
+ if(state.conversation&&(event.type==='stage_ok'||event.type==='stage_failed')){
+  const c=state.conversation;
+  const result=event.type==='stage_ok'?event.result as unknown as {conversation?:string;decision?:string;escalation?:Question}:null;
+  if(result?.escalation&&isFollowUp(state,result.escalation))return pause({...state,conversation:null},result.escalation,c.asking);
+  if(result?.conversation==='settled'||c.retried){
+   const decision=result?.conversation==='settled'?result.decision??null:null;
+   return {state:{...c.next,decision,conversation:null,resumeSession:null},actions:[{type:'thread_reply',text:decision?`Settled: ${decision.split('\n')[0]}; recording it next`:'Settled: continuing with your answer'},...c.actions]};
+  }
+  return {state:{...state,conversation:{...c,retried:true}},actions:[{type:'thread_reply',text:`The ${c.asking} run failed; the chain retries`},{type:'run_stage',stage:c.asking,attempt:state.attempt,conversation:true}]};
+ }
+ const next=baseTransition(state,event);
+ if(event.type==='answered'&&state.resumeSession&&state.askingStage!=='verify'){
+  const asking=state.askingStage!;
+  const action=next.actions.find(a=>a.type==='run_stage');
+  if(!action||(action.type==='run_stage'&&action.stage!==asking)){
+   return {state:{...next.state,stage:asking,track:state.track,pr:state.pr,specMode:state.specMode,askingStage:asking,conversation:{asking,retried:false,next:{...next.state,resumeSession:null},actions:next.actions},resumeSession:state.resumeSession},actions:[{type:'run_stage',stage:asking,attempt:state.attempt,conversation:true}]};
+  }
+ }
+ if(state.answer&&(event.type==='stage_ok'||event.type==='stage_failed')&&!(event.type==='stage_ok'&&'escalation' in event.result&&event.result.escalation)&&!next.actions.some(a=>a.type==='pause')&&next.state.stage!=='question-check'){
+  const result=event.type==='stage_ok'?event.result as unknown as {pr_number?:number}:null;
+  const text=event.type==='stage_failed'?`The ${event.stage} run failed; the chain retries`:event.stage==='spec'&&result?.pr_number?`Done: recorded in PR #${result.pr_number}`:'Done: continuing with your answer';
+  next.actions.unshift({type:'thread_reply',text});
+ }
+ return next;
+}
+
+function baseTransition(state: ChainState, event: ChainEvent): Step {
   if (event.type === "liveness_expired" || event.type === "chain_error") {
     if (ENDED.includes(state.stage)) invalid(state, event);
     if (event.type === "chain_error") return chainError(state, event.error);

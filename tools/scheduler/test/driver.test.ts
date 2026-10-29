@@ -1,3 +1,8 @@
+import {TelegramClient} from '../src/telegram/client.ts';
+import {telegramChannel} from '../src/telegram/channel.ts';
+import {fakeTelegram} from './helpers/fake-telegram.ts';
+import {emptyTelegram,listPaused,type PausedRecord} from '../src/state/paused.ts';
+import {completePause} from '../src/chain/driver.ts';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Octokit } from "octokit";
@@ -105,6 +110,26 @@ async function setup(
   await writeClaim(paths, claim);
   return { deps, claim, gh, notifications, adapter, pair, paths, sha };
 }
+
+describe('Telegram pause and conversation protection',()=>{
+ const q:Question={kind:'product',question:'Which layout?',options:[{label:'second',cost:'none'}],recommendation:'second'};
+ function pausing():PausedRecord{return {issue:7,phase:'pausing',nonce:'nonce',state:initialChainState(7),question:q,asking_stage:'plan',question_comment_id:null,asked_at:null,reminded:false,answer:null,reply_comment_id:null,telegram:emptyTelegram()};}
+ it('posts the record then sends once, and a pausing record with a message id is not resent',async()=>{
+  const {deps,paths,gh}=await setup(()=>({}));const server=await fakeTelegram();deps.telegram=telegramChannel(new TelegramClient('SECRET',42,server.url));try{
+   await completePause(deps,pausing());const [r]=await listPaused(paths);expect(r.telegram?.message_id).toBe(1);expect(r.telegram?.sent).toBe(true);expect(gh.calls.find(c=>c.method==='POST'&&c.url.endsWith('/comments'))?.body).toEqual({body:expect.stringContaining('asked on Telegram')});await completePause(deps,{...r,phase:'pausing'});expect(server.sent).toHaveLength(1);
+  }finally{await server.close();}
+ },30000);
+ it('completes a pause even when Telegram fails, retaining the retry state',async()=>{
+  const {deps,paths}=await setup(()=>({}));const server=await fakeTelegram();deps.telegram=telegramChannel(new TelegramClient('SECRET',42,server.url));try{server.fail('sendMessage',500);await completePause(deps,pausing());const [r]=await listPaused(paths);expect(r.phase).toBe('paused');expect(r.telegram?.send_failures).toBe(1);expect(r.telegram?.sent).toBe(false);}finally{await server.close();}
+ },30000);
+ it('reverts a conversation write while preserving the work already present when it asked',async()=>{
+  const {deps,claim}=await setup(()=>({plan:[(run:StageRun)=>{writeFileSync(join(run.worktree,'a.txt'),'forbidden\n');return {conversation:'settled',decision:'second'};}]}));
+  writeFileSync(join(claim.worktree,'a.txt'),'kept\n');writeFileSync(join(claim.worktree,'untracked.txt'),'kept untracked\n');
+  const paused={...claim.state,stage:'paused' as const,question:q,askingStage:'plan' as const,resumeSession:{harness:'fake' as const,model:'m',session_id:'s',worktree:claim.worktree}};
+  claim.state=transition(paused,{type:'answered',answer:'second',questionId:1}).state;
+  const r=await step(deps,claim);expect(r.claim.state.conversation?.retried).toBe(true);expect(r.claim.state.rescues).toBe(0);expect(readFileSync(join(claim.worktree,'a.txt'),'utf8')).toBe('kept\n');expect(readFileSync(join(claim.worktree,'untracked.txt'),'utf8')).toBe('kept untracked\n');
+ },30000);
+});
 
 const plan = { verdict: "ready", domain: "backend", tasks: [{ id: "T1", description: "d", files: ["a.txt"] }] };
 const impl = (sha: string) => ({ pr_number: 9, head_sha: sha, tasks_done: ["T1"] });

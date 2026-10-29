@@ -11,6 +11,7 @@ export interface StageInput {
   history?: string;
   question?: string;
   answer?: string;
+  decision?: string;
   mode?: SpecMode;
   decide_input?: string;
   spec_problem?: string;
@@ -20,6 +21,9 @@ export interface StageInput {
   profile_instructions: string;
 }
 
+export function renderReplyPrompt(input:{answer:string;mode:string;result_path:string;conversation?:boolean;stage:string}):string {
+ return [input.answer,`Continue ${input.stage} in ${input.mode} mode.`,input.conversation?'This is a conversation turn: read only; change nothing in the worktree. Answer using what you learned before asking. Return a follow-up escalation only when the reply asks a question or requests detail (follow_up: true, reply_quote copied exactly, at least 15 characters); otherwise return {"conversation":"settled","decision":"the decision in the maintainer’s terms, with its reasons","findings":[]}.':'Continue your work with the answer, following the stage result schema.',`Write the result to ${input.result_path}. If you have no write tool return the JSON as your final response.`].join('\n\n');
+}
 const NONE = "(none)";
 
 export function renderPrompt(template: string, input: StageInput): string {
@@ -34,6 +38,7 @@ export function renderPrompt(template: string, input: StageInput): string {
     history: input.history ?? NONE,
     question: input.question ?? NONE,
     answer: input.answer ?? NONE,
+    decision: input.decision ?? NONE,
     mode: input.mode ?? NONE,
     decide_input: input.decide_input ?? NONE,
     spec_problem: input.spec_problem ?? NONE,

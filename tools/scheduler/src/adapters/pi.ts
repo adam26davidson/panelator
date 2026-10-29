@@ -27,9 +27,9 @@ export function piToolNames(tools: string[]): string[] {
 const READ_ONLY_STAGES: AgentStageName[] = ["plan", "review", "question-check"];
 
 function buildCommand(run: PiStageRun): Command {
-  const argv = ["pi", "--mode", "json", "--model", run.model, "--session-id", run.sessionId, "--approve"];
+  const argv = ["pi", "--mode", "json", "--model", run.model, ...(run.resume?['--session',run.resume.sessionId]:['--session-id',run.sessionId]), "--approve"];
   if (run.effort) argv.push("--thinking", run.effort);
-  const readOnly = READ_ONLY_STAGES.includes(run.stage);
+  const readOnly = run.conversation || READ_ONLY_STAGES.includes(run.stage);
   let tools: string[] = [];
   if (run.profile) {
     tools = piToolNames(run.profile.tools);

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 
 export interface Config {
+  telegram?: {credentials_path:string;long_poll_timeout_s:number};
   repo: string;
   maintainer: string;
   app: { id: number; installation_id: number; private_key_path: string; bot_login: string };
@@ -51,7 +52,15 @@ export function loadConfig(path: string): Config {
   const labels = (raw.labels ?? {}) as Record<string, unknown>;
   const systemd = (raw.systemd ?? {}) as Record<string, unknown>;
   const decide = (raw.decide ?? {}) as Record<string, unknown>;
+  const telegram = raw.telegram ?? {};
+  if(typeof telegram!=='object'||telegram===null||Array.isArray(telegram))throw new Error('config telegram must be an object');
+  const tg=telegram as Record<string,unknown>;
+  if(Object.keys(tg).some(k=>!['credentials_path','long_poll_timeout_s'].includes(k)))throw new Error('config telegram unknown key');
+  if(tg.credentials_path!==undefined&&(typeof tg.credentials_path!=='string'||!tg.credentials_path))throw new Error('config telegram credentials_path must be a string');
+  const timeout=tg.long_poll_timeout_s??50;
+  if(typeof timeout!=='number'||!Number.isFinite(timeout)||timeout<1)throw new Error('config telegram long_poll_timeout_s must be >= 1');
   const cfg: Config = {
+    telegram:{credentials_path:expandHome(String(tg.credentials_path??'~/.config/panelator/telegram.json')),long_poll_timeout_s:timeout},
     repo: str("repo"),
     maintainer: str("maintainer"),
     app: {

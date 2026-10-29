@@ -98,6 +98,9 @@
         "decide",
         "record"
       ]
+    },
+    "decision": {
+      "type": "string"
     }
   }
 }

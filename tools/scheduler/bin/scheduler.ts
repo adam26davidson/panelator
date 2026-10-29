@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import {startTelegram,telegramCheck} from '../src/service/telegram-start.ts';
+import {TelegramPoller} from '../src/telegram/poller.ts';
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -36,6 +38,9 @@ const paths = statePaths(cfg.state_dir);
 await ensureStateDirs(paths);
 const serviceLog = new ServiceLog(paths.serviceLog);
 const binDir = dirname(fileURLToPath(import.meta.url));
+if(args[0]==='telegram-check'){
+ try{console.log(await telegramCheck(cfg));process.exit(0);}catch(e){console.error((e as Error).message);process.exit(1);}
+}
 
 /** I7: a configuration error the service cannot recover from by restarting; the unit's RestartPreventExitStatus=78 stops the loop. */
 function fail(reason: string): never {
@@ -115,10 +120,11 @@ if (has("--check-auth")) {
 const stopRefresh = app.startTokenRefresh(paths);
 const gh = new GitHubClient(app.octokit, cfg.repo);
 
+const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec));
 let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
-  cfg, paths, gh, registry, parameters, emitEvent, notifier: rateLimited(new LogNotifier(paths.serviceLog), cfg.notify_rate_limit_hours),
+  cfg, paths, gh, telegram,registry, parameters, emitEvent, notifier: rateLimited(new LogNotifier(paths.serviceLog), cfg.notify_rate_limit_hours),
   stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: repoRoot, binDir,
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),
@@ -137,10 +143,13 @@ const scheduler: Scheduler = new Scheduler({
     exitCode = 75;
     stopRefresh();
     scheduler.stop("restart");
+    void telegramPoller?.stop();
   },
 });
 
-for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => scheduler.stop(sig));
+const telegramPoller=telegram?new TelegramPoller(telegram.client,paths.telegramOffset,cfg.telegram!.long_poll_timeout_s,u=>scheduler.handleTelegramUpdate(u),rec=>serviceLog.write(rec),undefined,u=>scheduler.confirmTelegramUpdate(u)):null;
+telegramPoller?.start();
+for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => {scheduler.stop(sig);void telegramPoller?.stop();});
 
 if (has("--once")) {
   const info = await scheduler.tick();
@@ -149,5 +158,6 @@ if (has("--once")) {
   scheduler.stop("once");
 }
 await scheduler.run();
+await telegramPoller?.stop();
 stopRefresh();
 process.exit(exitCode);
