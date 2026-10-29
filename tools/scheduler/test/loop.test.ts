@@ -57,7 +57,7 @@ async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
   let mono = 0;
   const cfg = { ...loadConfig(defaultConfigPath), repo: "o/r", slots, state_dir: paths.root, poll_interval_s: 5 };
   const deps: SchedulerDeps = {
-    cfg, paths, gh: new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r"),
+    cfg, paths, gh: new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r", { settleDelaysMs: [0, 0, 0] }),
     notifier: { notify: async (n) => { notifications.push(n); } },
     stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: pair.repo, binDir: join(pair.root, "bin"),
     // the "chain" here is a stub: it records the issue and parks the claim in verify so the test controls time
@@ -342,6 +342,41 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     expect(await listPaused(paths)).toEqual([]);
     const answered = logLines(paths).filter((e) => e.event === "answered");
     expect(answered).toEqual([{ issue: 7, at: deps.now().toISOString(), event: "answered", asking_stage: "plan", question_comment_id: 500, reply_comment_id: 501, answer: "Use the file store.", question: Q,channel:'issue' }]);
+  }, 30_000);
+
+  it("closes a capability-hold issue on the maintainer's answer instead of resuming it (spec 014 AC-8)", async () => {
+    const capability = { ...waiting(), title: "The GitHub App cannot create draft security advisories", body: "Capability needed\n\n<!-- panelator-capability:security-advisories -->" };
+    const rs = routes([capability], {}, { 7: [comment(500, BOT_LOGIN, "2026-10-12T08:00:00Z", "q"), comment(501, ME, "2026-10-12T09:00:00Z", "Granted.")] });
+    rs.push({ method: "PATCH", path: /^\/repos\/o\/r\/issues\/7$/, reply: () => ({ body: {} }) });
+    const { s, gh, paths, deps } = await setup(rs, 1, firstStep);
+    const events: unknown[] = [];
+    // Each event records whether the issue was already closed when it was emitted (round 2, 4).
+    deps.emitEvent = async (event, payload) => { events.push({ event, payload, closed: gh.calls.some((c) => c.method === "PATCH" && c.url === "/repos/o/r/issues/7") }); };
+    const capQ: Question = { kind: "capability", question: "Grant the App security advisories write?", options: [{ label: "grant", cost: "two minutes" }], recommendation: "grant" };
+    await writePaused(paths, record({ question: capQ, asking_stage: "spec", state: { ...pausedState(), askingStage: "spec", question: capQ } }));
+    const t = await s.tick();
+    await settle();
+    expect(t.claimed).toEqual([]);
+    expect(await listClaims(paths)).toEqual([]);
+    expect(await listPaused(paths)).toEqual([]);
+    expect(gh.calls.filter((c) => c.method === "PATCH" && c.url === "/repos/o/r/issues/7")).toEqual([expect.objectContaining({ body: expect.objectContaining({ state: "closed" }) })]);
+    expect(labelCalls(gh, 7)).toEqual(["-needs-decision"]);
+    expect(logLines(paths).filter((e) => e.event === "answered")).toEqual([expect.objectContaining({ issue: 7, question_comment_id: 500, reply_comment_id: 501, answer: "Granted." })]);
+    expect(events).toEqual([{ event: "maintainer_reply", payload: { issue: 7, question_id: 500 }, closed: true }, { event: "capability_answered", payload: { issue: 7, question_id: 500 }, closed: true }]);
+    expect(gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues/7/comments")).toHaveLength(1);
+  }, 30_000);
+
+  it("resumes a capability issue whose paused question is not a capability question (round 2, 1)", async () => {
+    const capability = { ...waiting(), title: "The GitHub App cannot create draft security advisories", body: "Capability needed\n\n<!-- panelator-capability:security-advisories -->" };
+    const rs = routes([capability], {}, { 7: [comment(500, BOT_LOGIN, "2026-10-12T08:00:00Z", "q"), comment(501, ME, "2026-10-12T09:00:00Z", "Yes, build the fallback.")] });
+    rs.push({ method: "PATCH", path: /^\/repos\/o\/r\/issues\/7$/, reply: () => ({ body: {} }) });
+    const { s, gh, paths } = await setup(rs, 1, firstStep);
+    await writePaused(paths, record({ asking_stage: "spec", state: { ...pausedState(), askingStage: "spec" } }));
+    const t = await s.tick();
+    await settle();
+    expect(t.claimed).toEqual([7]);
+    expect(gh.calls.filter((c) => c.method === "PATCH" && c.url === "/repos/o/r/issues/7")).toEqual([]);
+    expect(logLines(paths).filter((e) => e.event === "answered")).toEqual([expect.objectContaining({ answer: "Yes, build the fallback." })]);
   }, 30_000);
 
   it("does not resume on a maintainer comment older than the question (review focus 1)", async () => {
