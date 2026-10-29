@@ -73,7 +73,7 @@ async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
 
 describe('Telegram answers and watchdog fallback',()=>{
  it('wake interrupts the watchdog sleep without waiting for its timer',async()=>{
-  const {s,deps}=await setup(routes([]));let ticks=0;deps.sleep=()=>new Promise<void>(()=>{});s.tick=async()=>{ticks++;if(ticks===2)s.stop('test');return {eligible:0,claimed:[],released:[],held:0,errors:[],restartPending:false};};const running=s.run();await new Promise(r=>setTimeout(r,10));expect(ticks).toBe(1);s.wake();await running;expect(ticks).toBe(2);
+  const {s,deps}=await setup(routes([]));let ticks=0;deps.sleep=()=>new Promise<void>(()=>{});s.tick=async()=>{ticks++;if(ticks===2)s.stop('test');return {eligible:0,claimed:[],released:[],held:0,standing:[],errors:[],restartPending:false};};const running=s.run();await new Promise(r=>setTimeout(r,10));expect(ticks).toBe(1);s.wake();await running;expect(ticks).toBe(2);
  },30000);
  const tgRecord=(issue=7):PausedRecord=>({...record(),issue,nonce:`nonce-${issue}`,telegram:{...emptyTelegram(),message_id:issue*10,sent:true,sent_at:'2026-10-10T00:00:00Z',thread_message_ids:[issue*10]}});
  const message=(id:number,text:string)=>({update_id:id,message:{message_id:1000+id,date:Date.parse('2026-10-12T11:00:00Z')/1000,chat:{id:42},text}});
@@ -200,6 +200,18 @@ describe("Scheduler.tick", () => {
     expect(readdirSync(paths.patches)).toHaveLength(1);
     expect(gh.calls.find((c) => c.url === "/repos/o/r/issues/7/comments")).toBeTruthy();
     expect(gh.calls.find((c) => c.method === "DELETE" && c.url.endsWith("/labels/in-progress"))).toBeTruthy();
+  }, 30_000);
+
+  it("does not expire or start a chain postponed to a quota reset still ahead (spec 013 AC-5)", async () => {
+    const { s, paths, pair, setNow, started } = await setup(routes([]));
+    const wt = join(pair.worktrees, "issue-7");
+    git(pair.repo, "worktree", "add", "-q", "-B", "issue-7", wt, "origin/main");
+    await writeClaim(paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "waiting", resumeStage: "plan", postponedUntil: "2026-10-12T16:10:00Z" }, worktree: wt, started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T09:00:00Z", run_id: null });
+    setNow(new Date("2026-10-12T12:30:00Z"));
+    const t = await s.tick();
+    expect(t.released).toEqual([]);
+    expect(started).toEqual([]);
+    expect(await listClaims(paths)).toHaveLength(1);
   }, 30_000);
 
   it("resumes a claim found on disk after a restart (AC-31)", async () => {
@@ -480,6 +492,8 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     const drive: Drive = async (_d, claim) => { await new Promise<void>((r) => { hold = r; }); return claim; };
     const { s, paths, pair, deps } = await setup(rs, 1, drive);
     await writeClaim(paths, { issue: 3, slot: 0, state: { ...initialChainState(3), stage: "verify" }, worktree: join(pair.worktrees, "issue-3"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    // Issue 3's chain runs first; an answer resumes ahead of a claim that has not started (spec 016 AC-1).
+    await s.tick();
     await writePaused(paths, record());
     await s.tick();
     expect(await listPaused(paths)).toEqual([expect.objectContaining({ phase: "resuming",answer:'Use the file store.' })]);
@@ -772,21 +786,14 @@ describe("Scheduler.tick: a postponed chain holds its slot (spec 009)", () => {
     expect((await h2.s.tick()).claimed).toEqual([1]);
   }, 30_000);
 
-  it("keeps an answered paused issue paused while a waiting claim holds the slot, then resumes it before a shortlisted issue (AC-4)", async () => {
+  it("resumes an answered paused issue before a shortlisted issue (AC-4, as amended by spec 016 AC-2)", async () => {
     const rs = routes([waiting(), issue(8, ["validated", "class:product", "priority"])], {}, { 7: [comment(500, BOT_LOGIN, "2026-10-12T08:00:00Z", "q"), comment(501, ME, "2026-10-12T09:00:00Z", "Use the file store.")] });
     const h = await setup(rs, 1, firstStep);
     await writeWaiting(h, 3, FUTURE);
     await writePaused(h.paths, record());
     const t = await h.s.tick();
-    expect(t.claimed).toEqual([]);
-    // The record is kept (marked resuming once the answer is read), and nothing is resumed.
-    expect(await listPaused(h.paths)).toEqual([expect.objectContaining({ issue: 7 })]);
-    expect(await readClaim(h.paths, 7)).toBeNull();
-    expect(labelCalls(h.gh, 7)).toEqual([]);
-    await rmClaim(h, 3);
-    const t2 = await h.s.tick();
     await settle();
-    expect(t2.claimed).toEqual([7]);
+    expect(t.claimed).toEqual([7]);
     expect(labelCalls(h.gh, 8)).toEqual([]);
   }, 30_000);
 
@@ -817,6 +824,229 @@ describe("Scheduler.tick: a postponed chain holds its slot (spec 009)", () => {
     expect((await h.s.tick()).claimed).toEqual([]);
     await rmClaim(h, 7);
     expect((await h.s.tick()).claimed).toEqual([1]);
+  }, 30_000);
+});
+
+/** A run log shared by a chain stub and a standing-agent stub, each held until the test releases it. */
+const grantLog = () => {
+  const grants: string[] = [];
+  const held = new Map<string, () => void>();
+  const hold = (key: string) => new Promise<void>((r) => { grants.push(key); held.set(key, r); });
+  const release = async (key: string) => { held.get(key)?.(); held.delete(key); await settle(); };
+  const drive: Drive = async (_d, claim) => { await hold(`chain:${claim.issue}`); return claim; };
+  return { grants, hold, release, drive };
+};
+const readyClaim = (h: Harness, n: number) =>
+  writeClaim(h.paths, { issue: n, slot: 0, state: { ...initialChainState(n), stage: "verify" }, worktree: join(h.pair.worktrees, `issue-${n}`), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null });
+/** Registers the action-audit agent; `due` puts its next_run at now. The stub never updates its state, so it stays due after each run. */
+async function withStanding(h: Harness, log: ReturnType<typeof grantLog>, due = true) {
+  const { loadRegistry } = await import("../src/standing/registry.ts");
+  const { EVENT_NAMES } = await import("../src/standing/events.ts");
+  const { registryActionsCheck } = await import("../src/actions/index.ts");
+  const { loadParameterDefinitions } = await import("../src/parameters/definitions.ts");
+  const { ParameterStore } = await import("../src/parameters/store.ts");
+  const { initializeAgents, readAgentState, writeAgentState } = await import("../src/standing/state.ts");
+  const all = loadRegistry(join(agentsDir, "standing"), EVENT_NAMES, registryActionsCheck(join(agentsDir, "actions.yaml")));
+  h.deps.registry = { "action-audit": all["action-audit"] };
+  h.deps.parameters = new ParameterStore(h.paths, loadParameterDefinitions(join(agentsDir, "parameters.yaml"), h.deps.cfg, h.deps.registry));
+  await initializeAgents(h.paths, h.deps.registry, h.deps.parameters, h.deps.now());
+  const state = (await readAgentState(h.paths, "action-audit"))!;
+  if (due) await writeAgentState(h.paths, "action-audit", { ...state, next_run: h.deps.now().toISOString() });
+  h.deps.runStanding = async () => { await log.hold("standing"); };
+}
+const answeredRoutes = (shortlist: unknown[] = []) =>
+  routes([waiting(), ...shortlist], {}, { 7: [comment(500, BOT_LOGIN, "2026-10-12T08:00:00Z", "q"), comment(501, ME, "2026-10-12T09:00:00Z", "Use the file store.")] });
+
+describe("Scheduler.tick: fair slot scheduling (spec 016)", () => {
+  it("resumes an answered question before a claim on disk, then starts the claim once it ends (AC-1)", async () => {
+    const log = grantLog();
+    const h = await setup(answeredRoutes(), 1, log.drive);
+    await readyClaim(h, 3);
+    await writePaused(h.paths, record());
+    const t = await h.s.tick();
+    await settle();
+    expect(t.claimed).toEqual([7]);
+    expect(log.grants).toEqual(["chain:7"]);
+    expect(h.s.active).toBe(1);
+    await rmClaim(h, 7);
+    await log.release("chain:7");
+    await h.s.tick();
+    await settle();
+    expect(log.grants).toEqual(["chain:7", "chain:3"]);
+    await log.release("chain:3");
+  }, 30_000);
+
+  it("resumes an answered question while a postponed claim holds the slot, and claims nothing new (AC-2)", async () => {
+    const log = grantLog();
+    const h = await setup(answeredRoutes([issue(8, ["validated", "class:product", "priority"])]), 1, log.drive);
+    await writeWaiting(h, 3, FUTURE);
+    await writePaused(h.paths, record());
+    const t = await h.s.tick();
+    await settle();
+    expect(t.claimed).toEqual([7]);
+    expect(t.held).toBe(2);
+    expect(labelCalls(h.gh, 8)).toEqual([]);
+    h.setNow(new Date("2026-10-12T14:00:00Z"));
+    expect((await h.s.tick()).claimed).toEqual([]);
+    await settle();
+    expect(log.grants).toEqual(["chain:7"]);
+    await rmClaim(h, 7);
+    await log.release("chain:7");
+    await h.s.tick();
+    await settle();
+    expect(log.grants).toEqual(["chain:7", "chain:3"]);
+    expect(labelCalls(h.gh, 8)).toEqual([]);
+    await log.release("chain:3");
+  }, 30_000);
+
+  it("waits for a running slot, then resumes the answer before a claim, a standing agent or the shortlist (AC-3)", async () => {
+    const log = grantLog();
+    const h = await setup(answeredRoutes([issue(8, ["validated", "class:product", "priority"])]), 1, log.drive);
+    await withStanding(h, log, false);
+    await readyClaim(h, 3);
+    await h.s.tick();
+    await settle();
+    expect(log.grants).toEqual(["chain:3"]);
+    await writePaused(h.paths, record());
+    await withStanding(h, log, true);
+    expect((await h.s.tick()).claimed).toEqual([]);
+    expect(await listPaused(h.paths)).toEqual([expect.objectContaining({ issue: 7 })]);
+    await rmClaim(h, 3);
+    await readyClaim(h, 4);
+    await log.release("chain:3");
+    const t = await h.s.tick();
+    await settle();
+    expect(t.claimed).toEqual([7]);
+    expect(t.standing).toEqual([]);
+    expect(log.grants).toEqual(["chain:3", "chain:7"]);
+    expect(labelCalls(h.gh, 8)).toEqual([]);
+    await log.release("chain:7");
+  }, 30_000);
+
+  it("runs a due standing agent although claims on disk fill the held count, then the first claim (AC-4, AC-8)", async () => {
+    const log = grantLog();
+    const h = await setup(routes([]), 1, log.drive);
+    await withStanding(h, log);
+    for (const n of [5, 6, 7]) await readyClaim(h, n);
+    const t = await h.s.tick();
+    await settle();
+    expect(t.held).toBe(3);
+    expect(t.standing).toEqual(["action-audit"]);
+    expect(log.grants).toEqual(["standing"]);
+    expect(h.s.active).toBe(1);
+    await log.release("standing");
+    const t2 = await h.s.tick();
+    await settle();
+    expect(t2.standing).toEqual([]);
+    expect(log.grants).toEqual(["standing", "chain:5"]);
+    expect(h.s.active).toBe(1);
+    await log.release("chain:5");
+  }, 30_000);
+
+  it("alternates an always-due standing agent with ready chains (AC-5, AC-8)", async () => {
+    const log = grantLog();
+    const h = await setup(routes([]), 1, log.drive);
+    await withStanding(h, log);
+    await readyClaim(h, 5);
+    await readyClaim(h, 6);
+    for (let i = 0; i < 4; i++) {
+      await h.s.tick();
+      await settle();
+      expect(h.s.active).toBe(1);
+      await log.release(log.grants[log.grants.length - 1]);
+    }
+    expect(log.grants).toEqual(["standing", "chain:5", "standing", "chain:5"]);
+  }, 30_000);
+
+  it("gives the slot to the other kind when the one whose turn it is has nothing ready, and grants nothing when neither has (AC-6)", async () => {
+    const log = grantLog();
+    const h = await setup(routes([]), 1, log.drive);
+    await withStanding(h, log);
+    await writeWaiting(h, 3, FUTURE);
+    await h.s.tick();
+    await settle();
+    await log.release("standing");
+    // The turn favours a chain now, but the only claim waits into the future.
+    await h.s.tick();
+    await settle();
+    expect(log.grants).toEqual(["standing", "standing"]);
+    await log.release("standing");
+
+    const log2 = grantLog();
+    const h2 = await setup(routes([]), 1, log2.drive);
+    await withStanding(h2, log2, false);
+    await readyClaim(h2, 4);
+    await h2.s.tick();
+    await settle();
+    expect(log2.grants).toEqual(["chain:4"]);
+    await rmClaim(h2, 4);
+    await log2.release("chain:4");
+    const t = await h2.s.tick();
+    await settle();
+    expect(log2.grants).toEqual(["chain:4"]);
+    expect(t.standing).toEqual([]);
+    expect(h2.s.active).toBe(0);
+  }, 30_000);
+
+  it("keeps a postponed claim's slot against new claims while a standing agent runs, and shares slots: 2 (AC-7, AC-8)", async () => {
+    const log = grantLog();
+    const h = await setup(routes([issue(1)]), 1, log.drive);
+    await withStanding(h, log);
+    await writeWaiting(h, 3, FUTURE);
+    const t = await h.s.tick();
+    await settle();
+    expect(t.standing).toEqual(["action-audit"]);
+    expect(t.claimed).toEqual([]);
+    expect(t.held).toBe(1);
+    await log.release("standing");
+
+    const log2 = grantLog();
+    const h2 = await setup(routes([issue(2), issue(1)]), 2, log2.drive);
+    await withStanding(h2, log2);
+    const t2 = await h2.s.tick();
+    await settle();
+    expect(t2.standing).toEqual(["action-audit"]);
+    expect(t2.claimed).toEqual([1]);
+    expect(h2.s.active).toBe(2);
+    await log2.release("standing");
+    await log2.release("chain:1");
+  }, 30_000);
+});
+
+describe("Scheduler.tick: fair slot scheduling, failure and crash windows (spec 016)", () => {
+  it("claims no second issue in the same grant when the first claim's label fails after its claim file (AC-7, AC-8)", async () => {
+    const log = grantLog();
+    const failLabel: Route = { method: "POST", path: /^\/repos\/o\/r\/issues\/1\/labels$/, reply: () => ({ status: 422, body: { message: "Validation Failed" } }) };
+    const h = await setup([failLabel, ...routes([issue(1), issue(2)])], 1, log.drive);
+    const t = await h.s.tick();
+    await settle();
+    expect(t.claimed).toEqual([]);
+    expect(t.errors).toEqual([expect.stringContaining("claim 1:")]);
+    expect((await listClaims(h.paths)).map((c) => c.issue)).toEqual([1]);
+    expect(log.grants).toEqual([]);
+    expect(labelCalls(h.gh, 2)).toEqual([]);
+  }, 30_000);
+
+  it("starts a claim carrying an answered event, left by a crash after a resume, before a standing agent and other claims (AC-1)", async () => {
+    const log = grantLog();
+    const h = await setup(routes([]), 1, log.drive);
+    await withStanding(h, log);
+    await readyClaim(h, 4);
+    await writeClaim(h.paths, {
+      issue: 9, slot: 0, state: pausedState(), worktree: join(h.pair.worktrees, "issue-9"), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null,
+      pendingEvent: { type: "answered", answer: "Use the file store.", questionId: 500 },
+    });
+    const t = await h.s.tick();
+    await settle();
+    expect(t.standing).toEqual([]);
+    expect(log.grants).toEqual(["chain:9"]);
+    await rmClaim(h, 9);
+    await log.release("chain:9");
+    // The answered start did not take a turn: the standing agent still goes first.
+    await h.s.tick();
+    await settle();
+    expect(log.grants).toEqual(["chain:9", "standing"]);
+    await log.release("standing");
   }, 30_000);
 });
 

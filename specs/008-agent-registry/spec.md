@@ -123,7 +123,10 @@ records as chain stages.
   tick; a second failure writes `last_run` with the outcome, schedules the
   next run as if it had succeeded, appends one finding naming the agent and
   the error, and sends one notification. An agent whose schedule was missed
-  (the laptop slept) runs once, not once per missed interval.
+  (the laptop slept) runs once, not once per missed interval. (Amended by
+  spec 013 AC-7: a run that hits a quota or rate limit is not a failure and
+  is not retried at the next tick; the agent is postponed to the limit's
+  reset, keeping its failure count and pending events.)
 - AC-4. **Events wake agents.** The scheduler emits these events in code,
   each with a payload: `merge` (an issue PR or spec PR merged: issue, PR,
   SHA), `finding_queued` (lines appended to the findings queue: the count),

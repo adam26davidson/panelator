@@ -61,6 +61,13 @@ const emitEvent=(event:string,payload:unknown)=>emit(paths,registry,event,payloa
 onFindingsQueued(paths,(count,offset)=>emitEvent('finding_queued',{count,offset}));
 
 // Local administration works without service auth or the main-only checkout requirement.
+if(args[0]==='quota') {
+  // Spec 013 AC-10: the quota book, with the claims and agents waiting on it.
+  const {readBook,quotaSummary}=await import('../src/quota/book.ts');
+  const book=await readBook(paths);
+  console.log(JSON.stringify({...book,summary:await quotaSummary(paths,new Date())},null,2));
+  process.exit(0);
+}
 if(['param','agent','action'].includes(args[0])) {
   let client:GitHubClient|undefined;
   const remote=async()=>client??=new GitHubClient(createAppClient(cfg.app,readFileSync(cfg.app.private_key_path,'utf8')).octokit,cfg.repo);
@@ -86,7 +93,7 @@ if(['param','agent','action'].includes(args[0])) {
       if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
     } else if(command==='action'&&verb==='undo') {
       const row=await undoAction(ctx,name,'maintainer');if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
-    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>');
+    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; quota');
     process.exit(0);
   }catch(e){console.error((e as Error).message);process.exit(1);}
 }
