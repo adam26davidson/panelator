@@ -49,6 +49,8 @@ export interface TickInfo {
   eligible: number;
   claimed: number[];
   released: number[];
+  /** Claims holding a slot this tick (spec 009): every claim on disk whose issue is not paused. */
+  held: number;
   errors: string[];
   restartPending: boolean;
 }
@@ -282,10 +284,10 @@ export class Scheduler {
   }
 
   async tick(): Promise<TickInfo> {
-    if (this.#ticking) return { eligible: 0, claimed: [], released: [], errors: ["tick already in progress"], restartPending: this.#restartPending };
+    if (this.#ticking) return { eligible: 0, claimed: [], released: [], held: 0, errors: ["tick already in progress"], restartPending: this.#restartPending };
     this.#ticking = true;
     const d = this.#deps;
-    const info: TickInfo = { eligible: 0, claimed: [], released: [], errors: [], restartPending: this.#restartPending };
+    const info: TickInfo = { eligible: 0, claimed: [], released: [], held: 0, errors: [], restartPending: this.#restartPending };
     try {
       const slots = d.parameters ? Number((await d.parameters.read('slots')).value) : d.cfg.slots;
       if(d.registry && d.parameters)await initializeAgents(d.paths,d.registry,d.parameters,d.now());
@@ -335,8 +337,12 @@ export class Scheduler {
         if (!(claim.state.stage === "waiting" && claim.state.postponedUntil && new Date(claim.state.postponedUntil) > d.now())) this.#start(claim);
       }
 
-      // Counted here, as the slots the resumes above left; a resume below takes one.
-      let free = slots - this.active;
+      // Spec 009: claims held on disk reserve slots even while waiting; paused issues hold none.
+      // Standing agents have no issue claim, so retain their running-slot reservation separately.
+      // A chain still running in this process holds its slot even after a pause removed its claim file.
+      const held = new Set([...(await listClaims(d.paths)).filter((c) => !pausedIssues.has(c.issue)).map((c) => c.issue), ...this.#active.keys()]).size;
+      info.held = held;
+      let free = Math.max(0, slots - held - this.#activeStanding.size);
       const paused = await listPaused(d.paths);
       if (!paused.length && free <= 0) return info;
       let issues;
@@ -352,7 +358,7 @@ export class Scheduler {
       for (const rec of paused) {
         if (this.#active.has(rec.issue) || this.#stopping) continue;
         try {
-          if (await this.#handlePaused(rec, open.has(rec.issue), free > 0, info)) free--;
+          if (await this.#handlePaused(rec, open.has(rec.issue), free > 0 && this.active < slots, info)) free--;
         } catch (e) {
           info.errors.push(`paused ${rec.issue}: ${(e as Error).message}`);
         }
