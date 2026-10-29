@@ -100,6 +100,7 @@ it('moves the cursor past the applied part of a batch aborted half way (AC-4)',a
  expect(JSON.parse(await readFile(paths.findingsCursor,'utf8')).line).toBe(1);
  expect((await buildFilerInput(d)).records.map(r=>r.ref)).toEqual(['2','3']);
 });
+const capIssue={number:42,author:'bot',title:'The GitHub App cannot create draft security advisories',body:'Capability needed\n\n<!-- panelator-capability:security-advisories -->'};
 const denied=(extra='')=>Object.assign(new Error(`Resource not accessible by integration${extra}`),{status:403});
 const advisory={title:'Secret title',description:'Secret description',severity:'high' as const};
 const secret={...finding,what:'Token leaks in logs',evidence:'secret-evidence',security:true};
@@ -141,10 +142,8 @@ it('holds a permission failure after three attempts and raises one content-free 
 it('holds other advisory errors privately, with no capability issue (review 3)',async()=>{
  const {paths,gh,notify,run}=await securitySetup([secret]);
  gh.createDraftSecurityAdvisory.mockRejectedValueOnce(denied()).mockRejectedValue(Object.assign(new Error('Validation failed: Secret title'),{status:422}));
- // A permission failure does not count toward an error streak: three more are needed.
+ // Every failure counts toward the bound; the kind of the holding failure decides whether an issue is filed (round 2, 3).
  for(let i=0;i<3;i++)await run(i);
- expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1)).toMatchObject({ref:'1',attempt:2,failure:'error'});
- await run(3);
  const last=(await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1);
  expect(last).toMatchObject({ref:'1',attempt:3,held:true,failure:'error'});expect(last?.capability_issue).toBeUndefined();
  expect(gh.createIssue).not.toHaveBeenCalled();
@@ -155,7 +154,7 @@ it('probes one held ref a day while the capability issue is open, re-holding on 
  gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
  for(let i=0;i<3;i++)await run(i);
  gh.listOpenIssuesByAuthor.mockResolvedValue([{number:42,title:'cap',labels:[]}] as never);
- gh.searchOpenIssuesByMarker.mockResolvedValue([{number:42,author:'bot',body:'<!-- panelator-capability:security-advisories -->'}] as never);
+ gh.searchOpenIssuesByMarker.mockResolvedValue([capIssue] as never);
  expect((await buildFilerInput(d)).records).toEqual([]);
  clock.plus(25*3600000);
  const probe=await buildFilerInput(d);expect(probe.records.map(r=>[r.ref,r.advisory_attempts])).toEqual([['1',2]]);
@@ -170,7 +169,7 @@ it('probes one held ref a day while the capability issue is open, re-holding on 
  // A probe that succeeds closes the capability issue once, listing it once per batch (review 6).
  gh.createDraftSecurityAdvisory.mockResolvedValue('GHSA-ok');gh.searchOpenIssuesByMarker.mockClear();
  await run('ok');
- expect(gh.searchOpenIssuesByMarker).toHaveBeenCalledTimes(1);expect(gh.closeIssue).toHaveBeenCalledTimes(1);expect(gh.closeIssue.mock.calls[0]).toEqual([42,expect.stringMatching(/advisor/i)]);
+ expect(gh.searchOpenIssuesByMarker).toHaveBeenCalledTimes(1);expect(gh.closeIssue).toHaveBeenCalledTimes(1);expect(gh.closeIssue.mock.calls[0]).toEqual([42,'']);expect(gh.comment).toHaveBeenCalledWith(42,expect.stringMatching(/advisor/i));
  expect((await buildFilerInput(d)).records).toEqual([]);
 });
 it('a successful advisory with no held row does not list issues (review 6)',async()=>{
@@ -182,8 +181,61 @@ it('the last held ref succeeding still closes the capability issue (review 6)',a
  gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
  for(let i=0;i<3;i++)await run(i);
  gh.listOpenIssuesByAuthor.mockResolvedValue([{number:42,title:'cap',labels:[]}] as never);
- gh.searchOpenIssuesByMarker.mockResolvedValue([{number:42,author:'bot',body:'<!-- panelator-capability:security-advisories -->'}] as never);
+ gh.searchOpenIssuesByMarker.mockResolvedValue([capIssue] as never);
  clock.plus(25*3600000);gh.createDraftSecurityAdvisory.mockResolvedValue('GHSA-ok');
  expect((await run('probe')).records.map(r=>r.ref)).toEqual(['1']);
- expect(gh.closeIssue).toHaveBeenCalledWith(42,expect.stringMatching(/advisor/i));
+ expect(gh.closeIssue).toHaveBeenCalledWith(42,'');expect(gh.comment).toHaveBeenCalledWith(42,expect.stringMatching(/advisor/i));
+});
+// Review round 2.
+const failing=(status:number,message:string,headers:Record<string,string>={})=>Object.assign(new Error(message),{status,response:{headers}});
+it('a held ref stays held when the failure kind changes, keeping its capability issue (round 2, 3)',async()=>{
+ const {d,paths,gh,clock,run}=await securitySetup([secret]);
+ gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
+ for(let i=0;i<3;i++)await run(i);
+ gh.listOpenIssuesByAuthor.mockResolvedValue([{number:42,title:capIssue.title,labels:[]}] as never);
+ gh.searchOpenIssuesByMarker.mockResolvedValue([capIssue] as never);
+ clock.plus(25*3600000);gh.createDraftSecurityAdvisory.mockRejectedValue(failing(502,'Bad gateway'));
+ expect((await run('probe')).records.map(r=>r.ref)).toEqual(['1']);
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1)).toMatchObject({ref:'1',held:true,failure:'error',capability_issue:42,attempt:3});
+ expect((await buildFilerInput(d)).records).toEqual([]);
+});
+it('alternating failure kinds still reach the hold (round 2, 3)',async()=>{
+ const {paths,gh,run}=await securitySetup([secret]);
+ gh.createDraftSecurityAdvisory.mockRejectedValueOnce(denied()).mockRejectedValueOnce(failing(502,'Bad gateway')).mockRejectedValueOnce(denied());
+ for(let i=0;i<3;i++)await run(i);
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1)).toMatchObject({ref:'1',attempt:3,held:true,failure:'permission',capability_issue:42});
+});
+it.each([
+ ['a secondary rate limit',failing(403,'You have exceeded a secondary rate limit')],
+ ['a 403 with retry-after',failing(403,'Forbidden',{'retry-after':'60'})],
+])('%s is not a missing permission (round 2, 5)',async(_name,error)=>{
+ const {paths,gh,run}=await securitySetup([secret]);
+ gh.createDraftSecurityAdvisory.mockRejectedValue(error);
+ for(let i=0;i<3;i++)await run(i);
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1)).toMatchObject({held:true,failure:'error'});
+ expect(gh.createIssue).not.toHaveBeenCalled();
+});
+it('the capability marker cannot be smuggled into filed issues or merge comments, and only the fixed title counts (round 2, 2)',async()=>{
+ const {d,input,gh}=await setup();const smuggled='<!-- panelator-capability:security-advisories -->';
+ input.records=[{ref:'1',finding:{...finding,what:`x ${smuggled}`}},{ref:'2',finding:{...finding,what:`y ${smuggled}`}}];
+ gh.listOpenIssuesByAuthor.mockResolvedValue([{number:4}] as never);
+ await applyFilerResult(d,'run',input,{summary:'s',decisions:[{ref:'1',outcome:'file',reason:`ok ${smuggled}`,issue:{...issue,body:`body ${smuggled}`}},{ref:'2',outcome:'merge_into',reason:`same ${smuggled}`,issue_number:4}]});
+ expect(gh.createIssue.mock.calls[0][1]).not.toContain('<!-- panelator-capability:');expect(String((gh.comment.mock.calls[0] as unknown[])[1])).not.toContain('<!-- panelator-capability:');
+ // A bot issue carrying the marker under another title is not the capability issue.
+ const x=await securitySetup([secret]);x.gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
+ x.gh.searchOpenIssuesByMarker.mockResolvedValue([{...capIssue,number:9,title:'Some finding'}] as never);
+ for(let i=0;i<3;i++)await x.run(i);
+ expect(x.gh.createIssue).toHaveBeenCalledTimes(1);expect((await readJsonLines<TriageEntry>(x.paths.findingsTriage)).at(-1)?.capability_issue).toBe(42);
+});
+it('discarding the last held ref closes the capability issue; a close already commented is not commented again (round 2, nits)',async()=>{
+ const {d,gh,clock,run}=await securitySetup([secret]);
+ gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
+ for(let i=0;i<3;i++)await run(i);
+ gh.listOpenIssuesByAuthor.mockResolvedValue([{number:42,title:capIssue.title,labels:[]}] as never);
+ gh.searchOpenIssuesByMarker.mockResolvedValue([capIssue] as never);
+ clock.plus(25*3600000);
+ gh.listComments.mockResolvedValue([{body:'done <!-- panelator-capability-closed -->'}] as never);
+ const probe=await buildFilerInput(d);
+ await applyFilerResult(d,'discard',probe,{summary:'s',decisions:[{ref:'1',outcome:'discard',reason:'false positive'}]});
+ expect(gh.closeIssue).toHaveBeenCalledWith(42,'');expect(gh.comment).not.toHaveBeenCalled();
 });

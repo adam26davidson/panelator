@@ -35,6 +35,8 @@ describe('standing agent App writes',()=>{
   expect(await c.createDraftSecurityAdvisory({title:'Private',description:'Details',severity:'high'})).toBe('GHSA-private');
   await c.rerunWorkflowRun(7);await c.cancelWorkflowRun(7);await c.closeIssue(42,'Superseded');
   expect(gh.calls[1].body).toMatchObject({summary:'Private',description:'Details',severity:'high'});expect(gh.unmatched).toEqual([]);
+  const before=gh.calls.length;await c.closeIssue(42,'');
+  expect(gh.calls.slice(before).map(x=>x.method)).toEqual(['PATCH']);
  },20000);
  it('surfaces actions:read permission failures without retrying a write',async()=>{
   const {c,gh}=client([{method:'POST',path:/^\/repos\/o\/r\/actions\/runs\/7\/rerun$/,reply:()=>({status:403,body:{message:'Resource not accessible by integration'}})}]);

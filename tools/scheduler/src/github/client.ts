@@ -179,8 +179,9 @@ export class GitHubClient {
   async listOpenIssuesByLabel(label:string):Promise<IssueData[]> {return (await this.listOpenIssues()).filter(i=>i.labels.includes(label));}
   async listOpenIssuesByAuthor(login:string):Promise<IssueData[]> {return (await this.listOpenIssues()).filter(i=>i.author===login);}
   async searchOpenIssuesByMarker(marker:string):Promise<IssueData[]> {return (await this.listOpenIssues()).filter(i=>i.body.includes(marker));}
+  /** An empty comment closes without commenting (a caller that already posted its comment, spec 014). */
   async closeIssue(n:number,comment:string):Promise<void> {
-    await this.comment(n,comment);
+    if(comment)await this.comment(n,comment);
     await this.octokit.request('PATCH /repos/{owner}/{repo}/issues/{issue_number}',{...this.base,issue_number:n,state:'closed'});
   }
   async findDraftSecurityAdvisory(marker:string):Promise<string|null> {

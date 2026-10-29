@@ -75,13 +75,16 @@ permission works.
 as in `tools/scheduler/test/filer.test.ts`.
 
 **Definitions.** A ref is *settled* when `triage.jsonl` holds a row for it.
-An advisory failure is a *permission* failure when GitHub answered 403 (or
-"Resource not accessible by integration"), else an *error*. A queue ref's
-*advisory attempts* of a kind is, when its last triage row is a failed
-`security` row of that kind, that row's `attempt` (or `ADVISORY_ATTEMPTS - 1`
-= 2 when the row is held), else 0. A *capability issue* is an open
-bot-authored issue carrying the marker
-`<!-- panelator-capability:security-advisories -->`.
+An advisory failure is a *permission* failure when GitHub's message is
+"Resource not accessible by integration", or the status is 403 and the
+failure is not a rate limit (no "rate limit" in the message and no
+`retry-after` header; GitHub's secondary rate limit also answers 403); every
+other failure is an *error*. A queue ref's *advisory attempts* is, when its
+last triage row is a failed `security` row, that row's `attempt` (or
+`ADVISORY_ATTEMPTS - 1` = 2 when the row is held), else 0; failures of both
+kinds count. A *capability issue* is an open bot-authored issue with the
+fixed title "The GitHub App cannot create draft security advisories" whose
+body carries the marker `<!-- panelator-capability:security-advisories -->`.
 
 - AC-1. **Each ref appears once in a batch.** Given a queue record whose
   last triage row is a failed `security` row, and that record also inside
@@ -104,36 +107,43 @@ bot-authored issue carrying the marker
   cursor still moves").
 - AC-5. **Advisory retries are bounded.** Given a `security` decision whose
   advisory call fails, then the row records `failed: true`, `failure`
-  (`permission` or `error`) and `attempt: <advisory attempts of that kind +
-  1>`; a failure of the other kind starts again at 1. Given the attempt
-  reaches 3, then the row also records `held: true`, and for a permission
-  failure `capability_issue: <number>` (AC-6). A held ref is offered again:
+  (`permission` or `error`) and `attempt: <advisory attempts + 1>`, whatever
+  the kind. Given the attempt reaches 3, then the row also records
+  `held: true`, and `capability_issue: <number>` when a capability issue is
+  open or is filed for it (AC-6). Once held, a ref stays held whatever the
+  kind of its next failure, and keeps the link to the open capability
+  issue. A held ref is offered again:
   - all at once, when its `capability_issue` is no longer open (AC-8);
   - otherwise as a *probe*: at most one held ref per batch, the one whose
     held row is oldest, and only when that row is at least a day old.
 
-  A ref offered again starts at 2 attempts, so its first failure holds it
-  again (under the open capability issue, or a new one when that issue is
-  closed): a held ref costs at most one batch slot a day. A probe that fails
-  again sends no notification; a new hold, or a hold that files a new
-  issue, sends one, with the full error (notifications are private).
+  A ref offered again starts at 2 attempts, so its first failure of any kind
+  holds it again: a held ref costs at most one batch slot a day. A probe
+  that fails again sends no notification; a new hold, or a hold that files a
+  new issue, sends one, with the full error (notifications are private).
 - AC-6. **A held permission failure becomes a capability question.** Given
-  a permission failure held under AC-5, then the scheduler files, as the
-  App, an issue carrying the capability marker, unless one is already open:
-  it looks the capability issue up at most once per batch and remembers the
-  one it creates, so two holds in a batch file one issue. The issue is
-  labelled `validated` and `class:tooling` (or the first configured class
-  when that label is not configured). Its body names the missing capability
-  (the App's "repository security advisories: write" permission), the HTTP
-  status and a fixed phrase, and the count of findings held; it never
-  carries GitHub's error message, which can echo the advisory payload, nor
-  any finding's title, description or evidence. It says the spec stage
-  should return it as a question of kind `capability`. An `error` hold files
-  no issue and is reported only in the private notification. Given an
-  advisory that succeeds while something is held under a capability issue,
-  then the scheduler looks the issue up once in that batch and closes it
-  with a comment saying advisories work again; a success with nothing held
-  lists no issues.
+  a ref held by a permission failure and no capability issue open, then the
+  scheduler files, as the App, the capability issue: it looks the issue up
+  at most once per batch and remembers the one it creates, so two holds in a
+  batch file one issue. The issue is labelled `validated` and
+  `class:tooling` (or the first configured class when that label is not
+  configured). Its body names the missing capability (the App's
+  "repository security advisories: write" permission), the HTTP status and
+  a fixed phrase, and the count of findings held; it never carries GitHub's
+  error message, which can echo the advisory payload, nor any finding's
+  title, description or evidence. It says the spec stage should return it
+  as a question of kind `capability`. A hold by an `error` files no issue
+  (it links an open one) and is reported only in the private notification.
+  Text the filer model wrote (filed issue titles and bodies, merge, retry
+  and close comments) has every `<!-- panelator-capability` prefix
+  defused, as `Spec:` lines are stripped, so no other issue can pass for the
+  capability issue. Given an advisory that succeeds while something is
+  held under a capability issue, or a batch after which nothing is held any
+  more (the last held ref was discarded), then the scheduler looks the
+  issue up once in that batch and closes it with a comment. The comment
+  carries `<!-- panelator-capability-closed -->`, and is not posted again
+  when the issue already has it (a close that failed after commenting). A
+  success with nothing held lists no issues.
 - AC-7. **The issue list re-lists before it fails.** Given the REST listing
   and the GraphQL total disagree, then `listOpenIssues` waits and lists both
   again, up to three more times with growing delays (1 s, 3 s, 9 s by
@@ -144,16 +154,21 @@ bot-authored issue carrying the marker
   `Spec:` line, so the chain claims it at the spec stage in `write` mode
   (spec 006 AC-19), which returns the capability question; the question
   check judges it and the issue pauses (spec 006 AC-12 to AC-16). Given the
-  maintainer's answer to a paused issue that is a capability issue (by
-  issue comment or Telegram), then the scheduler does not resume the chain:
-  it writes the `answered` line to the questions log as for any answer,
-  emits `maintainer_reply` (which wakes the findings filer, whose trigger
-  now includes it), closes the issue with a comment, removes
-  `needs-decision`, the paused record and any claim, and logs
-  `capability-answered`. The filer's next input then offers every ref held
-  under that issue (AC-5). Given the permission was granted without an
-  answer, the daily probe succeeds and closes the issue (AC-6); the paused
-  record of a closed issue is dropped as today (spec 006, review focus 5).
+  maintainer's answer to a paused question of kind `capability` on a
+  capability issue (by issue comment or Telegram), then the scheduler does
+  not resume the chain: it writes the `answered` line to the questions log
+  as for any answer, closes the issue with a comment (idempotent as in
+  AC-6), removes `needs-decision`, the paused record and any claim, then
+  emits `maintainer_reply` and `capability_answered`, and logs
+  `capability-answered`. Only `capability_answered` wakes the findings
+  filer, whose trigger includes it, and it is emitted after the close, so
+  the filer's next input offers every ref held under that issue (AC-5).
+  Given any other question paused on a capability issue (for example a
+  technical question after the question check sent the capability question
+  back), then the answer resumes the chain as for any issue. Given the
+  permission was granted without an answer, the daily probe succeeds and
+  closes the issue (AC-6); the paused record of a closed issue is dropped as
+  today (spec 006, review focus 5).
 - AC-9. **A record once judged security stays private.** Given a record in
   the batch with `advisory_failed: true`, or whose ref has any earlier
   `security` triage row, or whose finding has `security: true`, then any
@@ -175,7 +190,8 @@ bot-authored issue carrying the marker
   outcome" extends to records already judged security (AC-9).
 - Spec 006 AC-15 and AC-18: an answer to a capability issue's question does
   not resume the asking stage; the issue is closed instead (AC-8 here).
-- Spec 008 section on the filer's trigger: `maintainer_reply` is added.
+- Spec 008 AC-4's event list gains `capability_answered`, and the filer's
+  trigger includes it.
 
 ## 5. Interfaces and files
 
@@ -190,7 +206,10 @@ bot-authored issue carrying the marker
   (AC-9).
 - `tools/scheduler/src/service/loop.ts`: the capability issues of each tick
   and the answer path of AC-8.
-- `agents/standing/findings-filer.md`: `maintainer_reply` in the trigger;
+- `tools/scheduler/src/standing/events.ts`: the `capability_answered` event.
+- `tools/scheduler/src/github/client.ts`: `closeIssue` with an empty comment
+  closes without commenting.
+- `agents/standing/findings-filer.md`: `capability_answered` in the trigger;
   distinct refs; a retried record is decided only as `security` or
   `discard`.
 - `tools/scheduler/src/github/client.ts`: `listOpenIssues` re-lists (AC-7);

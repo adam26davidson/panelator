@@ -16,10 +16,16 @@ export const ADVISORY_ATTEMPTS=3;
 export const PROBE_MS=86400000;
 export const BATCH=20;
 export const CAPABILITY_MARKER='<!-- panelator-capability:security-advisories -->';
+export const CAPABILITY_TITLE='The GitHub App cannot create draft security advisories';
+/** Carried by the scheduler's closing comment, so a close that failed after commenting does not comment twice. */
+export const CAPABILITY_CLOSED_MARKER='<!-- panelator-capability-closed -->';
+/** The capability issue is the bot's issue with the fixed title and the marker; model-written text cannot carry the marker (spec 014 AC-6). */
+export const isCapabilityIssue=(i:{author:string;title:string;body:string},botLogin:string)=>i.author===botLogin&&i.title===CAPABILITY_TITLE&&i.body.includes(CAPABILITY_MARKER);
+export const stripCapabilityMarkers=(text:string)=>text.replace(/<!--\s*panelator-capability[:-]/gi,'<!-- ');
 export const isFailedAdvisory=(t:TriageEntry|undefined):t is TriageEntry=>!!t&&t.outcome==='security'&&!!t.failed;
-/** Consecutive failures of `kind` so far. A held ref resumes one short of the bound, so its next failure holds it again (spec 014 AC-5). */
-export function advisoryAttempts(t:TriageEntry|undefined,kind?:AdvisoryFailure):number {
- if(!isFailedAdvisory(t)||(kind&&(t.failure??'permission')!==kind))return 0;
+/** Consecutive failed advisory attempts, of any kind. A held ref resumes one short of the bound, so its next failure of any kind holds it again (spec 014 AC-5). */
+export function advisoryAttempts(t:TriageEntry|undefined):number {
+ if(!isFailedAdvisory(t))return 0;
  return t.held?ADVISORY_ATTEMPTS-1:(t.attempt??1);
 }
 /** The stored cursor advanced past every consecutive settled queue ref (spec 014 AC-2, AC-4). */

@@ -1,7 +1,7 @@
 ---
 name: findings-filer
 kind: standing
-trigger: {events: [finding_queued, issue_abandoned, maintainer_reply], schedule: 1d}
+trigger: {events: [finding_queued, issue_abandoned, capability_answered], schedule: 1d}
 harness: claude
 model: claude-fable-5-1
 tier: strong
