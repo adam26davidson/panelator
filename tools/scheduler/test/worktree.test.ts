@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { linkProfileSkills } from "../src/runner/skills.ts";
-import { checkoutBranch, commitsPatch, deleteLocalBranch, diffFilesAgainstBase, discardUncommitted, ensureWorktree, rebaseOntoMain, removeWorktree, resetToBase, syncToRemote, uncommittedPatch } from "../src/runner/worktree.ts";
+import { checkoutBranch, commitsPatch, deleteLocalBranch, onlyRebased, diffFilesAgainstBase, discardUncommitted, ensureWorktree, rebaseOntoMain, removeWorktree, resetToBase, syncToRemote, uncommittedPatch } from "../src/runner/worktree.ts";
 import { git, repoPair } from "./helpers/repo-pair.ts";
 
 describe("worktrees (AC-16)", () => {
@@ -282,5 +282,51 @@ describe("branch helpers (spec 006)", () => {
     expect(git(origin, "rev-parse", "refs/heads/spec-7").trim()).toBe(git(w.path, "rev-parse", "HEAD").trim());
     expect(git(origin, "rev-parse", "refs/heads/main").trim()).toBe(git(repo, "rev-parse", "main").trim());
     expect(git(w.path, "rev-parse", "--abbrev-ref", "spec-7@{upstream}").trim()).toBe("origin/spec-7");
+  });
+});
+
+describe("onlyRebased (spec 015 AC-3)", () => {
+  const commit = (cwd: string, file: string, text: string) => {
+    writeFileSync(join(cwd, file), text);
+    git(cwd, "add", file);
+    git(cwd, "commit", "-q", "-m", file);
+    return git(cwd, "rev-parse", "HEAD").trim();
+  };
+  const moveMain = (repo: string, wt: string, file: string) => {
+    commit(repo, file, `${file}\n`);
+    git(repo, "push", "-q", "origin", "main");
+    git(wt, "fetch", "-q", "origin");
+  };
+
+  it("is true for the remote head rebased onto a moved main, and stays true after main moves again", async () => {
+    const { repo, worktrees } = repoPair();
+    const w = await ensureWorktree(repo, worktrees, 7);
+    commit(w.path, "b.txt", "b\n");
+    commit(w.path, "b2.txt", "b2\n");
+    git(w.path, "push", "-q", "origin", "issue-7");
+    git(w.path, "fetch", "-q", "origin");
+    moveMain(repo, w.path, "m1.txt");
+    expect(await rebaseOntoMain(w.path, "origin/main")).toEqual({ ok: true, moved: true });
+    const rebased = git(w.path, "rev-parse", "HEAD").trim();
+    expect(await onlyRebased(w.path, rebased, "origin/issue-7", "origin/main")).toBe(true);
+    moveMain(repo, w.path, "m2.txt");
+    expect(await onlyRebased(w.path, rebased, "origin/issue-7", "origin/main")).toBe(true);
+  });
+
+  it("is false when the dropped head carries a change the remote head lacks, rebased or not", async () => {
+    const { repo, worktrees } = repoPair();
+    const w = await ensureWorktree(repo, worktrees, 7);
+    commit(w.path, "b.txt", "b\n");
+    git(w.path, "push", "-q", "origin", "issue-7");
+    git(w.path, "fetch", "-q", "origin");
+    moveMain(repo, w.path, "m1.txt");
+    await rebaseOntoMain(w.path, "origin/main");
+    const extra = commit(w.path, "local.txt", "local\n");
+    expect(await onlyRebased(w.path, extra, "origin/issue-7", "origin/main")).toBe(false);
+    // A local amend of the remote's commit (a different change, same message) is not a rebase either.
+    git(w.path, "reset", "-q", "--hard", "origin/issue-7");
+    writeFileSync(join(w.path, "b.txt"), "b changed\n");
+    git(w.path, "commit", "-q", "-a", "--amend", "--no-edit");
+    expect(await onlyRebased(w.path, git(w.path, "rev-parse", "HEAD").trim(), "origin/issue-7", "origin/main")).toBe(false);
   });
 });

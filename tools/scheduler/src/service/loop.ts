@@ -15,7 +15,8 @@ import {watchMainChecks} from '../standing/events.ts';
 import {execFileSync} from 'node:child_process';
 import { rankIssues, classifyWork } from "../shortlist/rank.ts";
 import { selectEligible } from "../shortlist/select.ts";
-import { listClaims, readClaim, removeClaim, writeClaim, type Claim } from "../state/claims.ts";
+import { listClaims, readClaim, removeClaim, writeClaim, type Claim, type Outage } from "../state/claims.ts";
+import { forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, transientCause } from "../chain/transient.ts";
 import { readLedger, writeLedger } from "../state/ledger.ts";
 import { listPaused, pausedDecision, removePaused, writePaused, type PausedRecord } from "../state/paused.ts";
 import { answeredEntry, appendQuestionLog } from "../state/questions.ts";
@@ -109,10 +110,14 @@ export class Scheduler {
     const d = this.#deps;
     d.inhibitor.acquire();
     const p = this.#drive(d, claim, () => this.#stopping)
-      .then(() => this.#countFailure(claim.issue, null))
+      .then(() => this.#countFailure(claim.issue, null, claim.outage))
       .catch(async (e) => {
-        d.log({ kind: "error", issue: claim.issue, error: (e as Error).message });
-        await this.#countFailure(claim.issue, (e as Error).message);
+        const message = String((e as Error)?.message ?? e);
+        // Spec 015 AC-5: the network's failure is not the chain's; it postpones the chain and counts toward no bound.
+        const cause = transientCause(e);
+        if (cause !== null) return this.#countTransient(claim.issue, cause, message);
+        d.log({ kind: "error", issue: claim.issue, error: message });
+        await this.#countFailure(claim.issue, message);
       })
       .catch((e) => d.log({ kind: "error", issue: claim.issue, error: `failure count: ${(e as Error).message}` }))
       .finally(() => {
@@ -131,12 +136,22 @@ export class Scheduler {
    * C7: the consecutive driver errors live in the claim's state and the ledger, so a restart keeps them. `error` null
    * (a drive that returned) resets them. A claim carrying pending work is never expired; it is reported once instead.
    */
-  async #countFailure(issue: number, error: string | null): Promise<void> {
+  async #countFailure(issue: number, error: string | null, startOutage?: Outage): Promise<void> {
     const d = this.#deps;
-    const claim = await readClaim(d.paths, issue);
-    if (!claim) return;
+    const read = await readClaim(d.paths, issue);
+    if (!read) {
+      // The chain ended (done, released, paused) in the drive that ended the outage.
+      if (startOutage) d.serviceLog.write({ kind: "transient-outage-over", issue, since: startOutage.since, failures: startOutage.count });
+      return;
+    }
+    // AC-6, AC-7: a step that returned, or failed on a genuine error, ends the outage.
+    const { outage, ...claim } = read;
+    if (outage) d.serviceLog.write({ kind: "transient-outage-over", issue, since: outage.since, failures: outage.count });
     const before = claim.state.chainFailures;
-    if (error === null && before === null) return;
+    if (error === null && before === null) {
+      if (outage) await writeClaim(d.paths, claim);
+      return;
+    }
     const chainFailures = error === null ? null : { count: (before?.count ?? 0) + 1, last: error.slice(0, HISTORY_ENTRY_MAX) };
     const state = { ...claim.state, chainFailures };
     await writeClaim(d.paths, { ...claim, state });
@@ -151,6 +166,36 @@ export class Scheduler {
       }]);
       await d.notifier.notify({ issue, gate: "chain_error", label: "", text });
     }
+  }
+
+  /**
+   * Spec 015 AC-5, AC-6, AC-8: a step failed on a transient error. The claim records the outage and the time of the next
+   * try, and counts as active for liveness; the chain-failure count is left as it is. The first failure of an outage is
+   * logged; one that finds the outage two hours old raises the alarm, once.
+   */
+  async #countTransient(issue: number, cause: string, error: string): Promise<void> {
+    const d = this.#deps;
+    const claim = await readClaim(d.paths, issue);
+    if (!claim) return;
+    const now = d.now();
+    const prev = claim.outage;
+    if (!prev) d.serviceLog.write({ kind: "transient-outage", issue, cause, error });
+    const count = (prev?.count ?? 0) + 1;
+    const since = prev?.since ?? now.toISOString();
+    const alarm = !prev?.alarmed && now.getTime() - Date.parse(since) >= OUTAGE_ALARM_MS;
+    const outage: Outage = {
+      since, count, last: error.slice(0, HISTORY_ENTRY_MAX), retry_at: new Date(now.getTime() + outageBackoffS(count) * 1000).toISOString(), alarmed: Boolean(prev?.alarmed) || alarm,
+    };
+    await writeClaim(d.paths, { ...claim, outage, last_activity_at: now.toISOString() });
+    if (!alarm) return;
+    const hours = Math.floor((now.getTime() - Date.parse(since)) / 3600_000);
+    d.serviceLog.write({ kind: "transient-outage-alarm", issue, since, failures: count, cause });
+    await appendFindings(d.paths, { issue, stage: stuckStage(claim.state), run_id: "transient-outage", timestamp: now.toISOString() }, [{
+      what: "network outage blocks the chain", where: `issue #${issue}, stage ${claim.state.stage}`,
+      evidence: `${count} transient failures since ${since} (${cause}); last: ${outage.last}`, noticed_how: "scheduler transient error",
+    }]);
+    await d.notifier.notify({ issue, gate: "infra", label: "", text: `Issue #${issue}: the scheduler has failed on a transient network error for ${hours} h (${cause}); it keeps retrying. Last error: ${outage.last}` });
+    await d.emitEvent?.("infra_alarm", { issue, since, failures: count, cause });
   }
 
   /** C7: the chain's `chain_error` event, written into the claim first so a crash finishes it, then applied by the driver. */
@@ -332,6 +377,8 @@ export class Scheduler {
           continue;
         }
         if (this.active >= slots) break;
+        // Spec 015 AC-5: a claim in a transient outage waits for its retry time, like a postponed one.
+        if (claim.outage && new Date(claim.outage.retry_at) > d.now()) continue;
         if (!(claim.state.stage === "waiting" && claim.state.postponedUntil && new Date(claim.state.postponedUntil) > d.now())) this.#start(claim);
       }
 
@@ -395,7 +442,17 @@ export class Scheduler {
           // next tick's stale-claim check drops (GitHub wins), never an in-progress label with no claim file.
           const wt = await ensureWorktree(d.repoDir, d.paths.worktrees, issue.number);
           // AC-19: a spec-present failure starts at the spec stage; AC-7: the counters and history carry over.
-          const state = initialChainState(issue.number, specProblems.get(issue.number) ?? null, await readLedger(d.paths, issue.number));
+          let ledger = await readLedger(d.paths, issue.number);
+          // Spec 015 AC-11: a chain-error release a network outage caused (before spec 015) does not count.
+          if (ledger) {
+            const f = forgiveTransientChainErrors(ledger);
+            if (f.forgiven) {
+              ledger = f.ledger;
+              await writeLedger(d.paths, issue.number, ledger);
+              d.serviceLog.write({ kind: "chain-errors-forgiven", issue: issue.number, forgiven: f.forgiven });
+            }
+          }
+          const state = initialChainState(issue.number, specProblems.get(issue.number) ?? null, ledger);
           const claim: Claim = {
             issue: issue.number, slot: this.#active.size, state, worktree: wt.path,
             started_at: d.now().toISOString(), last_activity_at: d.now().toISOString(), run_id: null,

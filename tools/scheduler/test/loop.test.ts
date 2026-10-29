@@ -2,7 +2,7 @@ import {TelegramClient} from '../src/telegram/client.ts';
 import {telegramChannel} from '../src/telegram/channel.ts';
 import {fakeTelegram} from './helpers/fake-telegram.ts';
 import {emptyTelegram} from '../src/state/paused.ts';
-import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
@@ -525,6 +525,124 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     expect(await listClaims(paths)).toEqual([]);
     expect(readFileSync(paths.serviceLog, "utf8")).toContain('"kind":"paused-dropped"');
     expect(logLines(paths)).toEqual([]);
+  }, 30_000);
+});
+
+const dns = () => Object.assign(new Error("getaddrinfo EAI_AGAIN api.github.com"), { code: "EAI_AGAIN" });
+const serviceRecords = (paths: { serviceLog: string }) => readFileSync(paths.serviceLog, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+
+describe("Scheduler.tick: transient failures (spec 015)", () => {
+  async function outageSetup(drive: Drive) {
+    const t = await setup(routes([]), 1, drive);
+    const events: { event: string; payload: unknown }[] = [];
+    t.deps.emitEvent = async (event, payload) => { events.push({ event, payload }); };
+    await writeClaim(t.paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "verify" }, worktree: join(t.pair.worktrees, "issue-7"), started_at: t.deps.now().toISOString(), last_activity_at: t.deps.now().toISOString(), run_id: null });
+    let now = t.deps.now();
+    const advance = (s: number) => { now = new Date(now.getTime() + s * 1000); t.setNow(now); };
+    return { ...t, events, advance, claim: async () => (await listClaims(t.paths))[0] };
+  }
+
+  it("postpones a chain that fails on EAI_AGAIN with backoff, spends no chain-failure count and logs the outage once (AC-5, AC-6; issue #29)", async () => {
+    let calls = 0;
+    let failing = true;
+    const t = await outageSetup(async (_d, c) => { calls++; if (failing) throw dns(); return c; });
+    const errors: unknown[] = [];
+    t.deps.log = (r) => { if (r.kind === "error") errors.push(r); };
+    const waits: number[] = [];
+    for (let i = 1; i <= MAX_CHAIN_FAILURES + 2; i++) {
+      const tick = await t.s.tick();
+      await settle();
+      expect(tick.released).toEqual([]);
+      expect(calls).toBe(i);
+      const c = await t.claim();
+      expect(c.state.chainFailures).toBeNull();
+      expect(c.outage).toMatchObject({ count: i, since: "2026-10-12T12:00:00.000Z", last: "getaddrinfo EAI_AGAIN api.github.com", alarmed: false });
+      expect(c.last_activity_at).toBe(t.deps.now().toISOString());
+      waits.push((Date.parse(c.outage!.retry_at) - t.deps.now().getTime()) / 1000);
+      // Not started again before retry_at.
+      t.advance(waits.at(-1)! - 1);
+      await t.s.tick();
+      await settle();
+      expect(calls).toBe(i);
+      t.advance(1);
+    }
+    expect(waits).toEqual([60, 120, 240, 480, 960]);
+    expect(errors).toEqual([]);
+    // The ledger was never written: no counter moved.
+    expect(existsSync(join(t.paths.escalations, "7.json"))).toBe(false);
+    expect(serviceRecords(t.paths).filter((r) => r.kind === "transient-outage")).toEqual([
+      expect.objectContaining({ issue: 7, cause: "EAI_AGAIN", error: "getaddrinfo EAI_AGAIN api.github.com" }),
+    ]);
+    expect(serviceRecords(t.paths).find((r) => r.kind === "chain-error")).toBeUndefined();
+    failing = false;
+    await t.s.tick();
+    await settle();
+    expect((await t.claim()).outage).toBeUndefined();
+    expect(serviceRecords(t.paths).filter((r) => r.kind === "transient-outage-over")).toEqual([
+      expect.objectContaining({ issue: 7, since: "2026-10-12T12:00:00.000Z", failures: MAX_CHAIN_FAILURES + 2 }),
+    ]);
+  }, 60_000);
+
+  it("counts a genuine error after an outage as today, and transient failures between genuine ones neither count nor reset (AC-7)", async () => {
+    const script: (Error | null)[] = [dns(), new Error("boom"), dns(), new Error("boom"), dns(), new Error("boom")];
+    const t = await outageSetup(async (_d, c) => { const e = script.shift(); if (e) throw e; return c; });
+    const counts: (number | null)[] = [];
+    for (let i = 0; i < 6; i++) {
+      await t.s.tick();
+      await settle();
+      const c = await t.claim();
+      if (!c) break;
+      counts.push(c.state.chainFailures?.count ?? null);
+      if (i === 1) expect(c.outage).toBeUndefined();
+      t.advance(600);
+    }
+    expect(counts).toEqual([null, 1, 1, 2, 2, 3]);
+    const t7 = await t.s.tick();
+    expect(t7.released).toEqual([7]);
+    expect(serviceRecords(t.paths).filter((r) => r.kind === "chain-error")).toHaveLength(1);
+  }, 60_000);
+
+  it("raises one notification, one finding and one infra_alarm event after two hours of outage (AC-8)", async () => {
+    const t = await outageSetup(async () => { throw dns(); });
+    for (let i = 0; i < 12; i++) {
+      await t.s.tick();
+      await settle();
+      t.advance(1800);
+    }
+    const c = await t.claim();
+    expect(c.outage?.alarmed).toBe(true);
+    expect(t.notifications.filter((n) => n.gate === "infra")).toHaveLength(1);
+    expect(t.notifications.find((n) => n.gate === "infra")?.text).toContain("EAI_AGAIN");
+    const findings = readFileSync(t.paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(findings).toHaveLength(1);
+    expect(findings[0].finding).toMatchObject({ what: "network outage blocks the chain", noticed_how: "scheduler transient error" });
+    expect(t.events.filter((e) => e.event === "infra_alarm")).toEqual([{ event: "infra_alarm", payload: expect.objectContaining({ issue: 7, since: "2026-10-12T12:00:00.000Z", cause: "EAI_AGAIN" }) }]);
+    expect(t.notifications.filter((n) => n.gate === "chain_error")).toEqual([]);
+  }, 60_000);
+
+  it("does not let liveness expire a claim that is retrying through an outage (AC-9)", async () => {
+    const t = await outageSetup(async () => { throw dns(); });
+    for (let i = 0; i < 4; i++) {
+      const tick = await t.s.tick();
+      await settle();
+      expect(tick.released).toEqual([]);
+      t.advance(5400);
+    }
+    expect(await t.claim()).toBeTruthy();
+    expect(serviceRecords(t.paths).find((r) => r.kind === "stale-claim")).toBeUndefined();
+  }, 60_000);
+
+  it("forgives a chain-error release recorded for a transient cause when the issue is claimed again (AC-11; issue #13)", async () => {
+    const { s, paths } = await setup(routes([issue(1)]));
+    await writeLedger(paths, 1, { ...ledgerOf(initialChainState(1)), chainErrors: 1, history: ["chain error in verify: getaddrinfo EAI_AGAIN api.github.com"] });
+    const t = await s.tick();
+    expect(t.claimed).toEqual([1]);
+    const claim = (await listClaims(paths)).find((c) => c.issue === 1)!;
+    expect(claim.state.chainErrors).toBe(0);
+    const ledger = JSON.parse(readFileSync(join(paths.escalations, "1.json"), "utf8"));
+    expect(ledger.chainErrors).toBe(0);
+    expect(ledger.history).toEqual(["chain error in verify (transient, not counted): getaddrinfo EAI_AGAIN api.github.com"]);
+    expect(serviceRecords(paths)).toContainEqual(expect.objectContaining({ kind: "chain-errors-forgiven", issue: 1, forgiven: 1 }));
   }, 30_000);
 });
 

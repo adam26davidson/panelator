@@ -548,6 +548,106 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
   }, 120_000);
 });
 
+// ---------------------------------------------------------------------------------------------------------------
+// Spec 015 AC-12: the chain keeps its work through postponements and network outages.
+
+/**
+ * The world's GitHub behind a switchable network (`down` set: every request fails as a DNS failure does, or, with
+ * `genuine`, answers 422), without Octokit's own retries, and a clock the test moves forward.
+ */
+function network(w: ChainWorld) {
+  const n = { down: false, genuine: false, offset: 0 };
+  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (n.down && n.genuine) return new Response(JSON.stringify({ message: "Validation Failed" }), { status: 422, headers: { "content-type": "application/json" } });
+    if (n.down) throw Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("getaddrinfo EAI_AGAIN api.github.com"), { code: "EAI_AGAIN" }) });
+    return w.gh.fetch(input, init);
+  }) as typeof fetch;
+  w.deps.gh = new GitHubClient(new Octokit({ auth: "x", request: { fetch: fetchFn }, retry: { enabled: false } }), "o/r");
+  w.deps.now = () => new Date(Date.now() + n.offset);
+  return n;
+}
+const serviceRecords = (w: ChainWorld) => readFileSync(w.paths.serviceLog, "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+
+describe("end to end: the chain keeps its work (spec 015 AC-12)", () => {
+  it("review postponed three times on a PR whose base moved, then run: no dropped patch (issue #35)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    const moveMain = () => {
+      writeFileSync(join(w.pair.repo, "main.txt"), "main moved\n");
+      git(w.pair.repo, "add", "main.txt");
+      git(w.pair.repo, "commit", "-q", "-m", "main moved");
+      git(w.pair.repo, "push", "-q", "origin", "main");
+    };
+    // Main moves on after the PR is opened: every review is prepared with a rebase that moves HEAD.
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: [(run: StageRun) => { const r = a.implement(9)(run); moveMain(); return r; }], review: [RATE_LIMITED, RATE_LIMITED, RATE_LIMITED, APPROVE] } });
+    const n = network(w);
+    await w.tick();
+    for (let i = 0; i < 3; i++) {
+      n.offset += 1801_000;
+      await w.tick();
+    }
+    await expectSettled(w);
+    expect(w.adapter.ran).toEqual(["plan", "implement", "review", "review", "review", "review"]);
+    expect(w.mergeRequests).toEqual([9]);
+    expect(patchesOf(w, "dropped")).toEqual([]);
+    expect(w.logs.filter((r) => r.kind === "worktree-synced" && r.dropped)).toEqual([]);
+    expect(w.logs.filter((r) => r.kind === "rebase-undone")).toHaveLength(3);
+  }, 180_000);
+
+  it("a chain whose GitHub calls fail with EAI_AGAIN for four steps: no chain error, no release, the PR kept, merged (issue #29)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    let n!: ReturnType<typeof network>;
+    // The network goes down just after implement opened PR 9: the step's PR binding check is the first call to fail.
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: [(run: StageRun) => { const r = a.implement(9)(run); n.down = true; return r; }], review: [APPROVE] } });
+    n = network(w);
+    await w.tick();
+    // Each retry after its backoff (60, 120, 240, 480 s), short of the two-hour alarm.
+    for (let i = 0; i < 4; i++) {
+      n.offset += 1000_000;
+      await w.tick();
+    }
+    const during = (await listClaims(w.paths))[0];
+    expect(during.outage).toMatchObject({ count: 5, alarmed: false });
+    expect(during.state.chainFailures).toBeNull();
+    n.down = false;
+    n.offset += 1000_000;
+    await w.tick();
+    await expectSettled(w);
+    expect(w.adapter.ran).toEqual(["plan", "implement", "review"]);
+    expect(w.mergeRequests).toEqual([9]);
+    expect(w.prs.get(9)?.merged).toBe(true);
+    expect(w.labelLog).toEqual(["+in-progress", "-in-progress"]);
+    expect(w.comments).toEqual([]);
+    expect(w.logs.filter((r) => r.kind === "stale-branch-dropped" || r.kind === "recovered-commits")).toEqual([]);
+    expect(w.logs.filter((r) => r.kind === "stage-result-kept")).toHaveLength(5);
+    const records = serviceRecords(w);
+    expect(records.filter((r) => r.kind === "transient-outage")).toHaveLength(1);
+    expect(records.filter((r) => r.kind === "transient-outage-over")).toHaveLength(1);
+    expect(records.filter((r) => r.kind === "chain-error")).toEqual([]);
+  }, 180_000);
+
+  it("the same chain with a genuine error three times: chain_error and a release, as today", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    let n!: ReturnType<typeof network>;
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: [(run: StageRun) => { const r = a.implement(9)(run); n.down = true; n.genuine = true; return r; }] } });
+    n = network(w);
+    await w.tick();
+    for (let i = 0; i < 2; i++) await w.tick();
+    expect((await listClaims(w.paths))[0].state.chainFailures?.count).toBe(3);
+    n.down = false;
+    const t = await w.tick();
+    expect(t.released).toEqual([7]);
+    expect(serviceRecords(w).filter((r) => r.kind === "chain-error")).toHaveLength(1);
+    expect(serviceRecords(w).find((r) => r.kind === "transient-outage")).toBeUndefined();
+    // The release comment carries the genuine error; the issue is claimed again later in the same tick, as today.
+    const released = w.comments.filter((c) => c.body.startsWith("Claim released: the scheduler failed on this issue repeatedly."));
+    expect(released).toHaveLength(1);
+    expect(released[0].body).toContain("Validation Failed");
+  }, 180_000);
+});
+
 describe('standing agents: recorded runs through the real runner and mocked App',()=>{
  const why='Independently verified operational adjustment';
  const context=(w:Awaited<ReturnType<typeof standingWorld>>)=>({paths:w.paths,parameters:w.parameters,log:new ActionLog(w.paths.actionsLog),levels:loadActionLevels(join(agentsDir,'actions.yaml')),gh:w.gh,now:w.deps.now});
