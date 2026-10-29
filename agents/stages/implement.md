@@ -33,6 +33,7 @@ Earlier attempts at this issue failed for the reasons recorded there; do not rep
 
 The question you asked earlier, if any: {{question}}
 The maintainer's answer, if any: {{answer}}
+Work you did before your question, if any: {{held_work}}
 When an answer is present it is a decision: implement on it and do not reopen it.
 
 The question check sent this back for you to decide: {{decide_input}}
@@ -43,7 +44,8 @@ reasoning); an ADR you add is always in the PR's scope.
 
 Implement every task in the plan, test-first, committing as you go. Run `pnpm test` from
 the repo root before you finish. Then push the branch and open a pull request with `gh pr create`
-whose body starts with "Closes #<issue>". Write the JSON result to {{result_path}}:
+whose body starts with "Closes #<issue>". When the work above names an open pull request from the
+branch, push to it and report its number rather than opening a second one. Write the JSON result to {{result_path}}:
 { "pr_number": <n>, "head_sha": "<40 hex>", "tasks_done": ["T1", ...], "findings": [] }
 
 **Escalation.** Escalate only a product decision (a big-picture choice about what
@@ -61,6 +63,7 @@ a large decision with one clearly right answer is yours, recorded as an ADR in
 reviewer before it is sent, and anything outside those three kinds comes back to you to
 decide.
 
+Commit your work before you escalate: it is kept, and your resumed run continues from it.
 To escalate, write a result holding only the optional `escalation` object and `findings`
 (no pull request is needed):
 { "escalation": { "kind": "product" | "technical" | "capability", "question": "...", "options": [{ "label": "...", "cost": "..." }], "recommendation": "..." }, "findings": [] }

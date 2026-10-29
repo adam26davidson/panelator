@@ -99,7 +99,9 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
   `held`, through `savePatch`; no file when there are none) and logs
   `{ kind: "held-work", issue, stage, branch, head, pushed, prs, patch }`,
   where `pushed` says whether the branch exists on origin and `prs` lists the
-  open PRs from it. The machine sets `heldWork` to `{ branch, head }` on every
+  open PRs from it (each `null` when its lookup failed). A fix result
+  escalates with a PR bound: its held work is on the PR's branch and is kept
+  as AC-2 says for that case. The machine sets `heldWork` to `{ branch, head }` on every
   transition that routes the question (to the question check, or straight to
   `paused` for a follow-up). A `stage_ok` on that path without `head` throws,
   as one without `scope` does today. A follow-up or a second question from
@@ -112,6 +114,18 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
   worktree as it is: no `recovered-commits` patch, no `stale-branch-dropped`,
   no PR closed, the branch on origin untouched, and `HEAD` still the held
   head. The log carries `{ kind: "held-work-kept", issue, branch, head }`.
+  Given the branch's `HEAD` instead builds on the held head (the resumed
+  stage committed more, then failed, was postponed or crashed), then `HEAD`
+  is kept too, the held head becomes `HEAD`, and the log carries
+  `{ kind: "held-work-advanced", issue, branch, from, to }`.
+  Given a PR is bound on the held branch (a fix that asked), then the
+  preparation syncs to the remote head as spec 005 AC-3 says, which keeps a
+  held head that builds on the remote head (`held-work-kept`, or
+  `held-work-advanced` when `HEAD` builds on the held head), and the driver
+  does not rebase it onto `origin/main` before the stage (the rewritten
+  commits would be unpushed and diverged from the PR). When the remote head
+  diverged from the held head, the sync drops it as today (its `dropped`
+  patch saved), and the driver logs `held-work-lost` and clears the held work.
 - AC-3. **The pause and the resume carry it.** Given the question check
   returns `send`, then the paused record's `state` carries the held work.
   Given the maintainer replies and the issue resumes (spec 006 AC-15), then
@@ -124,8 +138,11 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
   carries `held_work`: a short text naming the branch, the held head, whether
   the branch is on origin, and any open PR from it (`gh pr list` would show
   the same), saying that the work is the stage's own from before the
-  question and that the stage continues from it. Given no held work, the
-  field is absent and the prompt renders "(none)". Given an implement run
+  question and that the stage continues from it. A lookup that failed is
+  stated as unknown, never as "not on origin" or "(none)". The field is
+  present only when the worktree's `HEAD` is the held head after the
+  preparation (AC-2, AC-5); given no held work, or held work the preparation
+  could not keep, the field is absent and the prompt renders "(none)". Given an implement run
   with `held_work` naming an open PR, then its result may report that PR: the
   binding check of spec 001 (open, from the chain's branch, at the result's
   head) is unchanged.
@@ -133,9 +150,14 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
   `HEAD` is not the held head (the worktree was recreated from `origin/main`,
   or a crash left it elsewhere), when the next stage on the question path is
   prepared, then the driver puts the branch at the held head when that commit
-  exists in the repository (`held-work-restored`, `source: "local"`);
+  exists in the repository (`held-work-restored`, `source: "local"`), first
+  saving the local branch's commits not reachable from the held head as a
+  patch (kind `held-diverged`; the record's `patch` field names it, null when
+  there are none) unless the branch builds on the held head (AC-2);
   otherwise, when the branch exists on origin after the fetch, at the branch's
-  remote head (`held-work-restored`, `source: "origin"`); otherwise it logs
+  remote head (`held-work-restored`, `source: "origin"`); a fetch that fails
+  for any reason but the branch missing on origin fails the step and changes
+  nothing; otherwise it logs
   `{ kind: "held-work-lost", issue, branch, head }`, clears the held work and
   prepares the worktree as it does without it. The patch of AC-1 is the
   fallback in the last case. Given the held head is reachable from

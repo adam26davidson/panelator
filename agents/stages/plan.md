@@ -30,6 +30,7 @@ failure does not happen again.
 
 The question you asked earlier, if any: {{question}}
 The maintainer's answer, if any: {{answer}}
+Work you did before your question, if any: {{held_work}}
 When an answer is present it is a decision: plan on it and do not reopen it.
 
 The question check sent this back for you to decide: {{decide_input}}

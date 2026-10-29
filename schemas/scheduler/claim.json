@@ -285,6 +285,29 @@
         "checksRerun": {
           "type": "boolean"
         },
+        "heldWork": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "branch",
+                "head"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "branch": {
+                  "type": "string"
+                },
+                "head": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
         "answerQuestionIds": {
           "type": "array",
           "items": {
@@ -618,7 +641,16 @@
         "result": {},
         "start": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "security": { "type": "boolean" },
-        "sensitive": { "type": "boolean" }
+        "sensitive": { "type": "boolean" },
+        "held": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["head", "patch"],
+          "properties": {
+            "head": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "patch": { "type": ["string", "null"] }
+          }
+        }
       }
     },
     "outage": {

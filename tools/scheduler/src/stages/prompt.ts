@@ -16,6 +16,7 @@ export interface StageInput {
   decide_input?: string;
   spec_problem?: string;
   answered_questions?: string;
+  held_work?: string;
   result_path: string;
   profile_instructions: string;
 }
@@ -42,6 +43,7 @@ export function renderPrompt(template: string, input: StageInput): string {
     decide_input: input.decide_input ?? NONE,
     spec_problem: input.spec_problem ?? NONE,
     answered_questions: input.answered_questions ?? NONE,
+    held_work: input.held_work ?? NONE,
     result_path: input.result_path,
     profile_instructions: input.profile_instructions,
   };

@@ -458,6 +458,160 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     expect(w.labelLog).toEqual(["+in-progress", "+needs-decision", "-in-progress", "+in-progress", "-needs-decision", "-in-progress"]);
   }, 120_000);
 
+  describe("a stage that asks a question keeps its work (spec 011 AC-10)", () => {
+    const rev = (run: StageRun) => git(run.worktree, "rev-parse", "HEAD").trim();
+    /** Implement commits and pushes `issue-7` (and opens PR 9 when `pr`), then asks; `held` records the head it left. */
+    function asksAfterPushing(w: () => ChainWorld, q: Question, held: { head: string }, pr = false) {
+      return (run: StageRun) => {
+        held.head = w().push(run, { "a.txt": "held work\n" }, "held");
+        if (pr) w().openPr(run, 9, held.head);
+        return { escalation: q };
+      };
+    }
+    const kinds = (w: ChainWorld, kind: string) => w.logs.filter((r) => r.kind === kind);
+
+    it("a capability question after a push: no recovered commits, no dropped branch, the resumed run starts at the held head", async () => {
+      let w!: ChainWorld;
+      const a = agents(() => w);
+      const held = { head: "" };
+      const starts: string[] = [];
+      w = await chainWorld({
+        files: repoFiles(),
+        results: {
+          plan: [PLAN], implement: [asksAfterPushing(() => w, ask("capability", "Can you add the flashing token?"), held), a.implement(9, { "a.txt": "pr 9\n" }, (run) => starts.push(rev(run)))],
+          review: [APPROVE], "question-check": [SEND],
+        },
+      });
+      await w.tick();
+      w.reply("Added it.");
+      await w.tick();
+      await expectSettled(w);
+
+      expect(w.adapter.ran).toEqual(["plan", "implement", "question-check", "implement", "review"]);
+      expect(kinds(w, "recovered-commits")).toEqual([]);
+      expect(kinds(w, "stale-branch-dropped")).toEqual([]);
+      expect(kinds(w, "held-work")).toMatchObject([{ issue: 7, stage: "implement", branch: "issue-7", head: held.head, pushed: true, prs: [] }]);
+      expect(kinds(w, "held-work-kept")).toEqual([{ kind: "held-work-kept", issue: 7, branch: "issue-7", head: held.head }, { kind: "held-work-kept", issue: 7, branch: "issue-7", head: held.head }]);
+      expect(patchesOf(w, "held")).toHaveLength(1);
+      expect(starts).toEqual([held.head]);
+      expect(inputsOf(w, "implement")[0].held_work).toBeUndefined();
+      expect(inputsOf(w, "implement")[1].held_work).toContain(held.head);
+      expect(inputsOf(w, "question-check")[0].held_work).toBeUndefined();
+      expect(w.writes().filter((c) => c.startsWith("PATCH /repos/o/r/pulls") || c.startsWith("DELETE /repos/o/r/git/refs"))).toEqual([]);
+      expect(w.mergeRequests).toEqual([9]);
+    }, 120_000);
+
+    it("with a PR opened before the question: it is not closed, and the resumed implement reports it", async () => {
+      let w!: ChainWorld;
+      const a = agents(() => w);
+      const held = { head: "" };
+      w = await chainWorld({
+        files: repoFiles(),
+        results: {
+          plan: [PLAN], implement: [asksAfterPushing(() => w, ask("capability", "Can you add the flashing token?"), held, true), a.implement(9, { "a.txt": "pr 9\n" })],
+          review: [APPROVE], "question-check": [SEND],
+        },
+      });
+      await w.tick();
+      w.reply("Added it.");
+      await w.tick();
+      await expectSettled(w);
+
+      expect(kinds(w, "held-work")).toMatchObject([{ pushed: true, prs: [9] }]);
+      expect(inputsOf(w, "implement")[1].held_work).toContain("#9");
+      expect(w.writes().filter((c) => c.startsWith("PATCH /repos/o/r/pulls"))).toEqual([]);
+      expect(kinds(w, "stale-branch-dropped")).toEqual([]);
+      expect(w.mergeRequests).toEqual([9]);
+    }, 120_000);
+
+    it("a technical question: the spec PR records the answer and merges, then plan and implement continue from the held head", async () => {
+      let w!: ChainWorld;
+      const a = agents(() => w);
+      const held = { head: "" };
+      const starts: string[] = [];
+      const record = (run: StageRun) => {
+        const mark = `(maintainer answer, question #${w.questions()[0].id})`;
+        return a.spec(12, { "specs/010-thing/spec.md": specOf().replace("Do a thing.", `Do a thing, in RAM ${mark}.`) })(run);
+      };
+      w = await chainWorld({
+        files: repoFiles(),
+        results: {
+          plan: [PLAN, PLAN],
+          implement: [asksAfterPushing(() => w, ask("technical", "Cache the frames in RAM or in flash?"), held), a.implement(9, { "a.txt": "pr 9\n" }, (run) => starts.push(rev(run)))],
+          review: [APPROVE, APPROVE], "question-check": [SEND], spec: [record],
+        },
+      });
+      await w.tick();
+      w.reply("RAM.");
+      await w.tick();
+      await expectSettled(w);
+
+      expect(w.adapter.ran).toEqual(["plan", "implement", "question-check", "spec", "review", "plan", "implement", "review"]);
+      expect(runsOf(w, "spec")[0]).toMatchObject({ branch: "spec-7" });
+      expect(runsOf(w, "spec")[0].input.mode).toBe("record");
+      expect(runsOf(w, "spec")[0].input.held_work).toBeUndefined();
+      expect(kinds(w, "stale-branch-dropped")).toEqual([]);
+      expect(kinds(w, "recovered-commits")).toEqual([]);
+      expect(inputsOf(w, "plan")[1].held_work).toContain(held.head);
+      expect(starts).toEqual([held.head]);
+      expect(runsOf(w, "implement")[1].branch).toBe("issue-7");
+      expect(w.mergeRequests).toEqual([12, 9]);
+    }, 120_000);
+
+    it("decide_yourself after a question: the stage in decide mode continues from the held head", async () => {
+      let w!: ChainWorld;
+      const a = agents(() => w);
+      const held = { head: "" };
+      const starts: string[] = [];
+      const reasoning = "The spec settles it: cache in RAM.";
+      w = await chainWorld({
+        files: repoFiles(),
+        results: {
+          plan: [PLAN], implement: [asksAfterPushing(() => w, ask("technical", "Cache in RAM or flash?"), held), a.implement(9, { "a.txt": "pr 9\n" }, (run) => starts.push(rev(run)))],
+          review: [APPROVE], "question-check": [{ verdict: "decide_yourself", reasoning }],
+        },
+      });
+      await w.tick();
+      await expectSettled(w);
+
+      expect(w.adapter.ran).toEqual(["plan", "implement", "question-check", "implement", "review"]);
+      expect(inputsOf(w, "implement")[1].decide_input).toBe(reasoning);
+      expect(inputsOf(w, "implement")[1].held_work).toContain(held.head);
+      expect(starts).toEqual([held.head]);
+      expect(kinds(w, "stale-branch-dropped")).toEqual([]);
+      expect(w.mergeRequests).toEqual([9]);
+    }, 120_000);
+
+    it("a question whose resumed stage then fails: the retry starts clean, with the stale-branch record", async () => {
+      let w!: ChainWorld;
+      const a = agents(() => w);
+      const held = { head: "" };
+      const starts: string[] = [];
+      w = await chainWorld({
+        files: repoFiles(),
+        results: {
+          plan: [PLAN],
+          implement: [
+            asksAfterPushing(() => w, ask("capability", "Can you add the flashing token?"), held),
+            (run: StageRun) => { starts.push(rev(run)); return undefined; },
+            a.implement(9, { "a.txt": "pr 9\n" }, (run) => starts.push(rev(run))),
+          ],
+          review: [APPROVE], "question-check": [SEND],
+        },
+      });
+      const main = git(w.pair.origin, "rev-parse", "main").trim();
+      await w.tick();
+      w.reply("Added it.");
+      await w.tick();
+      await expectSettled(w);
+
+      expect(starts).toEqual([held.head, main]);
+      expect(kinds(w, "stale-branch-dropped")).toMatchObject([{ issue: 7, branch: "issue-7" }]);
+      expect(inputsOf(w, "implement")[2].held_work).toBeUndefined();
+      expect(w.mergeRequests).toEqual([9]);
+    }, 120_000);
+  });
+
   it("abandonment (spec 006 AC-28)", async () => {
     const w = await chainWorld({
       files: repoFiles(),

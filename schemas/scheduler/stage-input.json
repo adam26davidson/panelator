@@ -87,6 +87,9 @@
     "answered_questions": {
       "type": "string"
     },
+    "held_work": {
+      "type": "string"
+    },
     "mode": {
       "enum": [
         "write",

@@ -40,6 +40,8 @@ export interface StageRunRecord {
   start: string;
   security: boolean;
   sensitive: boolean;
+  /** Spec 011 AC-1: the held work this run's question already saved (its patch) and logged, so a recheck does neither again. */
+  held?: { head: string; patch: string | null };
 }
 
 export interface Outage {

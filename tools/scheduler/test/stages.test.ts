@@ -223,6 +223,19 @@ describe("renderPrompt", () => {
     expect(renderPrompt("{{mode}}|{{history}}|{{answer}}", { ...input, mode: "revise", history: "h" })).toBe("revise|h|(none)");
     expect(renderPrompt("{{question}}{{decide_input}}{{spec_problem}}{{answered_questions}}", input)).toBe("(none)".repeat(4));
   });
+  it("renders held_work, (none) when absent, in the four stages that carry it (spec 011 AC-4)", () => {
+    const read = (n: string) => readFileSync(join(agentsDir, "stages", `${n}.md`), "utf8");
+    expect(renderPrompt("{{held_work}}", input)).toBe("(none)");
+    expect(renderPrompt("{{held_work}}", { ...input, held_work: "Branch issue-7 is at abc" })).toBe("Branch issue-7 is at abc");
+    for (const n of ["plan", "implement", "fix", "spec"]) {
+      const t = read(n);
+      expect(t, n).toContain("{{held_work}}");
+      expect(renderPrompt(t, { ...input, held_work: "HELD-TEXT" }), n).toContain("HELD-TEXT");
+      expect(renderPrompt(t, { ...input, held_work: undefined }), n).toContain("before your question, if any: (none)");
+    }
+    for (const n of ["implement", "fix", "spec"]) expect(read(n), n).toMatch(/Commit your work before you (escalate|return a question)/);
+    expect(read("implement")).toMatch(/push to it and report its number/);
+  });
   it("throws on an unknown placeholder", () => {
     expect(() => renderPrompt("{{nope}}", input)).toThrow(/unknown placeholder/);
   });

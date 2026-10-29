@@ -1262,6 +1262,363 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
   }, 60_000);
 });
 
+describe("driver: a stage that asks a question keeps its work (spec 011)", () => {
+  const prRoutes = (state: { pair?: ReturnType<typeof repoPair> }) => (sha: string): Route[] => [
+    { method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: (_m, _b, url) => ({ body: url.searchParams.get("head") === "o:issue-7" && url.searchParams.get("state") === "open" ? [{ number: 9 }] : [] }) },
+    { method: "DELETE", path: /^\/repos\/o\/r\/git\/refs\/heads\/(.+)$/, reply: (m) => { git(state.pair!.origin, "update-ref", "-d", `refs/heads/${decodeURIComponent(m[1])}`); return { status: 204, body: null }; } },
+    ...ghRoutes(sha),
+  ];
+  const originHas = (pair: ReturnType<typeof repoPair>, branch: string) => git(pair.origin, "branch", "--list", branch).trim() !== "";
+  const capability: Question = { ...Q, kind: "capability" };
+  const logsOf = (deps: DriverDeps) => {
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    return logs;
+  };
+
+  it("saves a held patch, logs held-work and puts the head on the question-check state when implement asks after pushing (AC-1)", async () => {
+    const state: { pair?: ReturnType<typeof repoPair> } = {};
+    let pushed = "";
+    const t = await setup(() => ({
+      implement: [(run: StageRun) => { pushed = commitIn(run.worktree, { "work.txt": "w\n" }); git(run.worktree, "push", "-q", "origin", "issue-7"); return { escalation: capability }; }],
+    }), prRoutes(state), (p) => { state.pair = p; });
+    const logs = logsOf(t.deps);
+    const c = at(t.claim, { stage: "implement", plan: plan as never });
+    await writeClaim(t.paths, c);
+    const r = await step(t.deps, c);
+    expect(r.claim.state).toMatchObject({ stage: "question-check", askingStage: "implement", heldWork: { branch: "issue-7", head: pushed } });
+    const saved = readdirSync(t.paths.patches).filter((f) => f.includes("held"));
+    expect(saved).toHaveLength(1);
+    expect(readFileSync(join(t.paths.patches, saved[0]), "utf8")).toContain("work.txt");
+    expect(logs).toContainEqual({ kind: "held-work", issue: 7, stage: "implement", branch: "issue-7", head: pushed, pushed: true, prs: [9], patch: join(t.paths.patches, saved[0]) });
+  }, 60_000);
+
+  it("writes no held patch when the asking stage committed nothing (AC-1)", async () => {
+    const t = await setup(() => ({ plan: [{ escalation: capability }] }));
+    const logs = logsOf(t.deps);
+    const c = at(t.claim, { stage: "plan" });
+    await writeClaim(t.paths, c);
+    const r = await step(t.deps, c);
+    expect(r.claim.state.heldWork).toEqual({ branch: "issue-7", head: head(t.claim.worktree) });
+    expect(readdirSync(t.paths.patches)).toEqual([]);
+    expect(logs).toContainEqual(expect.objectContaining({ kind: "held-work", stage: "plan", pushed: false, patch: null }));
+  }, 60_000);
+
+  it("leaves the pushed branch, its open PR and HEAD alone when the question check is prepared (AC-2)", async () => {
+    const state: { pair?: ReturnType<typeof repoPair> } = {};
+    let held = "";
+    const t = await setup(() => ({ "question-check": [{ verdict: "decide_yourself", reasoning: "r" }] }), prRoutes(state), (p, wt) => {
+      state.pair = p;
+      held = commitIn(wt, { "work.txt": "w\n" });
+      git(wt, "push", "-q", "origin", "issue-7");
+    });
+    const logs = logsOf(t.deps);
+    const c = at(t.claim, { stage: "question-check", question: capability, askingStage: "implement", heldWork: { branch: "issue-7", head: held } });
+    await writeClaim(t.paths, c);
+    await step(t.deps, c);
+    expect(head(t.claim.worktree)).toBe(held);
+    expect(originHas(state.pair!, "issue-7")).toBe(true);
+    expect(writes(t.gh).filter((w) => w.startsWith("PATCH") || w.startsWith("DELETE"))).toEqual([]);
+    expect(logs.find((r) => r.kind === "recovered-commits" || r.kind === "stale-branch-dropped")).toBeUndefined();
+    expect(logs).toContainEqual({ kind: "held-work-kept", issue: 7, branch: "issue-7", head: held });
+    expect(readdirSync(t.paths.patches)).toEqual([]);
+  }, 60_000);
+
+  it("tells the resumed implement about the work, and not the question check (AC-4)", async () => {
+    const state: { pair?: ReturnType<typeof repoPair> } = {};
+    let held = "";
+    const t = await setup(() => ({ "question-check": [{ verdict: "decide_yourself", reasoning: "r" }], implement: [] }), prRoutes(state), (p, wt) => {
+      state.pair = p;
+      held = commitIn(wt, { "work.txt": "w\n" });
+      git(wt, "push", "-q", "origin", "issue-7");
+    });
+    const heldWork = () => ({ branch: "issue-7", head: held });
+    const qc = at(t.claim, { stage: "question-check", question: capability, askingStage: "implement", heldWork: heldWork(), plan: plan as never });
+    await writeClaim(t.paths, qc);
+    await step(t.deps, qc);
+    expect(inputOf(t.paths, "7-question-check-").held_work).toBeUndefined();
+    const im = at(t.claim, { stage: "implement", plan: plan as never, heldWork: heldWork() });
+    await writeClaim(t.paths, im);
+    await step(t.deps, im);
+    const text = inputOf(t.paths, "7-implement-").held_work!;
+    expect(text).toContain("issue-7");
+    expect(text).toContain(held);
+    expect(text).toContain("on origin");
+    expect(text).toContain("#9");
+    expect(t.adapter.heads).toEqual(["issue-7", "issue-7"]);
+    expect(head(t.claim.worktree)).toBe(held);
+  }, 60_000);
+
+  it("puts a lost worktree back at the held head from the object store, or from origin (AC-5)", async () => {
+    const state: { pair?: ReturnType<typeof repoPair> } = {};
+    let held = "";
+    const t = await setup(() => ({ implement: [] }), prRoutes(state), (p, wt) => {
+      state.pair = p;
+      held = commitIn(wt, { "work.txt": "w\n" });
+      git(wt, "reset", "-q", "--hard", "origin/main");
+    });
+    const logs = logsOf(t.deps);
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: held } });
+    await writeClaim(t.paths, c);
+    await step(t.deps, c);
+    expect(head(t.claim.worktree)).toBe(held);
+    expect(logs).toContainEqual({ kind: "held-work-restored", issue: 7, branch: "issue-7", head: held, source: "local", patch: null });
+
+    // The commit exists nowhere in this repository, but the branch is on origin.
+    const lost = "1".repeat(40);
+    const scratch = join(state.pair!.root, "scratch");
+    git(state.pair!.root, "clone", "-q", state.pair!.origin, scratch);
+    git(scratch, "checkout", "-q", "-b", "issue-7");
+    const remoteHead = commitIn(scratch, { "other.txt": "o\n" });
+    git(scratch, "push", "-q", "origin", "issue-7");
+    git(t.claim.worktree, "checkout", "-q", "--detach", "origin/main");
+    git(t.claim.worktree, "branch", "-D", "issue-7");
+    const again = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: lost } });
+    await writeClaim(t.paths, again);
+    const r = await step(t.deps, again);
+    expect(head(t.claim.worktree)).toBe(remoteHead);
+    expect(logs).toContainEqual({ kind: "held-work-restored", issue: 7, branch: "issue-7", head: remoteHead, source: "origin" });
+    expect(r.claim.state.heldWork).toEqual({ branch: "issue-7", head: remoteHead });
+  }, 60_000);
+
+  it("logs held-work-lost, clears the held work and prepares as without it when the commit is nowhere (AC-5)", async () => {
+    const t = await setup(() => ({ implement: [] }));
+    const logs = logsOf(t.deps);
+    const lost = "1".repeat(40);
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: lost } });
+    await writeClaim(t.paths, c);
+    const r = await step(t.deps, c);
+    expect(logs).toContainEqual({ kind: "held-work-lost", issue: 7, branch: "issue-7", head: lost });
+    expect(r.claim.state.heldWork).toBeNull();
+    expect(head(t.claim.worktree)).toBe(git(t.pair.repo, "rev-parse", "origin/main").trim());
+  }, 60_000);
+
+  it("keeps commits the resumed stage added on top of the held head, and advances the held head to them (AC-2)", async () => {
+    let held = "";
+    let added = "";
+    const t = await setup(() => ({ implement: [] }), (sha) => ghRoutes(sha), (_p, wt) => {
+      held = commitIn(wt, { "work.txt": "w\n" });
+      added = commitIn(wt, { "more.txt": "m\n" });
+    });
+    const logs = logsOf(t.deps);
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: held } });
+    await writeClaim(t.paths, c);
+    await step(t.deps, c);
+    expect(head(t.claim.worktree)).toBe(added);
+    expect(logs).toContainEqual({ kind: "held-work-advanced", issue: 7, branch: "issue-7", from: held, to: added });
+    expect(inputOf(t.paths, "7-implement-").held_work).toContain(added);
+    expect(readdirSync(t.paths.patches)).toEqual([]);
+  }, 60_000);
+
+  it("leaves main's commits out of the held-diverged patch when the diverged branch sits on a moved main (AC-5)", async () => {
+    let held = "";
+    const t = await setup(() => ({ implement: [] }), (sha) => ghRoutes(sha), (p, wt) => {
+      held = commitIn(wt, { "work.txt": "w\n" });
+      writeFileSync(join(p.repo, "main.txt"), "main moved\n");
+      git(p.repo, "add", "main.txt");
+      git(p.repo, "commit", "-q", "-m", "main moved");
+      git(p.repo, "push", "-q", "origin", "main");
+      git(wt, "fetch", "-q", "origin");
+      git(wt, "reset", "-q", "--hard", "origin/main");
+      commitIn(wt, { "other.txt": "o\n" }, "own");
+    });
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: held } });
+    await writeClaim(t.paths, c);
+    await step(t.deps, c);
+    expect(head(t.claim.worktree)).toBe(held);
+    const saved = readdirSync(t.paths.patches).filter((f) => f.includes("held-diverged"));
+    expect(saved).toHaveLength(1);
+    const text = readFileSync(join(t.paths.patches, saved[0]), "utf8");
+    expect(text).toContain("other.txt");
+    expect(text).not.toContain("main.txt");
+  }, 60_000);
+
+  it("saves a held-diverged patch of the local branch's own commits before putting it back at the held head (AC-5)", async () => {
+    let held = "";
+    const t = await setup(() => ({ implement: [] }), (sha) => ghRoutes(sha), (_p, wt) => {
+      held = commitIn(wt, { "work.txt": "w\n" });
+      git(wt, "reset", "-q", "--hard", "origin/main");
+      commitIn(wt, { "other.txt": "o\n" });
+    });
+    const logs = logsOf(t.deps);
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: held } });
+    await writeClaim(t.paths, c);
+    await step(t.deps, c);
+    expect(head(t.claim.worktree)).toBe(held);
+    const saved = readdirSync(t.paths.patches).filter((f) => f.includes("held-diverged"));
+    expect(saved).toHaveLength(1);
+    expect(readFileSync(join(t.paths.patches, saved[0]), "utf8")).toContain("other.txt");
+    expect(logs).toContainEqual(expect.objectContaining({ kind: "held-work-restored", source: "local", head: held, patch: join(t.paths.patches, saved[0]) }));
+  }, 60_000);
+
+  it("with a PR bound, keeps an unpushed held commit on the remote head and does not rebase it away (AC-2)", async () => {
+    const state: { pair?: ReturnType<typeof repoPair> } = {};
+    let remote = "";
+    let held = "";
+    const t = await setup(() => ({ fix: [] }), prRoutes(state), (p, wt) => {
+      state.pair = p;
+      remote = commitIn(wt, { "work.txt": "w\n" });
+      git(wt, "push", "-q", "origin", "issue-7");
+      held = commitIn(wt, { "fix.txt": "f\n" });
+    });
+    // main moves on, so a rebase would rewrite the held commit.
+    const scratch = join(t.pair.root, "scratch");
+    git(t.pair.root, "clone", "-q", t.pair.origin, scratch);
+    commitIn(scratch, { "main.txt": "m\n" });
+    git(scratch, "push", "-q", "origin", "HEAD:main");
+    const logs = logsOf(t.deps);
+    const c = at(t.claim, { stage: "fix", plan: plan as never, pr: { number: 9, head_sha: remote }, pendingFixInput: "x", heldWork: { branch: "issue-7", head: held } });
+    await writeClaim(t.paths, c);
+    await step(t.deps, c);
+    expect(head(t.claim.worktree)).toBe(held);
+    expect(logs.find((r) => r.kind === "worktree-synced")).toBeUndefined();
+    expect(logs).toContainEqual({ kind: "held-work-kept", issue: 7, branch: "issue-7", head: held });
+    expect(inputOf(t.paths, "7-fix-").held_work).toContain(held);
+  }, 60_000);
+
+  it("with a PR bound, a held head the remote diverged from is dropped as today, and the stage is not told it is there (AC-5)", async () => {
+    const state: { pair?: ReturnType<typeof repoPair> } = {};
+    let held = "";
+    let remote = "";
+    const t = await setup(() => ({ fix: [] }), prRoutes(state), (p, wt) => {
+      state.pair = p;
+      commitIn(wt, { "work.txt": "w\n" });
+      git(wt, "push", "-q", "origin", "issue-7");
+      held = commitIn(wt, { "fix.txt": "f\n" });
+    });
+    const scratch = join(t.pair.root, "scratch");
+    git(t.pair.root, "clone", "-q", "-b", "issue-7", t.pair.origin, scratch);
+    remote = commitIn(scratch, { "elsewhere.txt": "e\n" });
+    git(scratch, "push", "-q", "origin", "issue-7");
+    const logs = logsOf(t.deps);
+    const c = at(t.claim, { stage: "fix", plan: plan as never, pr: { number: 9, head_sha: remote }, pendingFixInput: "x", heldWork: { branch: "issue-7", head: held } });
+    await writeClaim(t.paths, c);
+    await step(t.deps, c);
+    expect(logs).toContainEqual(expect.objectContaining({ kind: "worktree-synced", dropped: held }));
+    expect(logs).toContainEqual({ kind: "held-work-lost", issue: 7, branch: "issue-7", head: held });
+    expect(inputOf(t.paths, "7-fix-").held_work).toBeUndefined();
+  }, 60_000);
+
+  it("says unknown, not 'not on origin' or '(none)', when the branch and PR lookups fail (AC-4)", async () => {
+    let held = "";
+    const failing = (sha: string): Route[] => [{ method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: () => ({ status: 422, body: { message: "lookup failed" } }) }, ...ghRoutes(sha)];
+    const t = await setup(() => ({ implement: [] }), failing, (_p, wt) => { held = commitIn(wt, { "work.txt": "w\n" }); });
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: held } });
+    await writeClaim(t.paths, c);
+    t.deps.fetchOrigin = async () => {};
+    git(t.claim.worktree, "remote", "set-url", "origin", join(t.pair.root, "nonexistent.git"));
+    try {
+      await step(t.deps, c);
+    } finally {
+      git(t.claim.worktree, "remote", "set-url", "origin", t.pair.origin);
+    }
+    const text = inputOf(t.paths, "7-implement-").held_work!;
+    expect(text).toContain(held);
+    expect(text).toMatch(/on origin: unknown/);
+    expect(text).toMatch(/pull requests from it: unknown/i);
+    expect(text).not.toContain("not on origin");
+    expect(text).not.toContain("(none)");
+  }, 60_000);
+
+  it("a recorded escalation checked again after the step threw saves one held patch and logs held-work once (AC-1, spec 015 AC-10)", async () => {
+    const state: { pair?: ReturnType<typeof repoPair> } = {};
+    const t = await setup(() => ({
+      implement: [(run: StageRun) => { commitIn(run.worktree, { "work.txt": "w\n" }); return { escalation: capability }; }],
+    }), prRoutes(state), (p) => { state.pair = p; });
+    const logs: Record<string, unknown>[] = [];
+    let failures = 1;
+    t.deps.log = (r) => {
+      logs.push(r);
+      if (r.kind === "transition" && failures-- > 0) throw new Error("getaddrinfo EAI_AGAIN api.github.com");
+    };
+    const c = at(t.claim, { stage: "implement", plan: plan as never });
+    await writeClaim(t.paths, c);
+    await expect(step(t.deps, c)).rejects.toThrow(/EAI_AGAIN/);
+    const kept = (await readClaim(t.paths, 7))!;
+    expect(kept.stageRun?.stage).toBe("implement");
+    const r = await step(t.deps, kept);
+    expect(logs).toContainEqual(expect.objectContaining({ kind: "stage-result-kept", stage: "implement" }));
+    expect(r.claim.state).toMatchObject({ stage: "question-check", heldWork: { branch: "issue-7" } });
+    expect(readdirSync(t.paths.patches).filter((f) => f.includes("held"))).toHaveLength(1);
+    expect(logs.filter((l) => l.kind === "held-work")).toHaveLength(1);
+  }, 60_000);
+
+  it("a network failure fetching the held branch fails the step and keeps the held work untouched (AC-5)", async () => {
+    const state: { pair?: ReturnType<typeof repoPair> } = {};
+    const t = await setup(() => ({ implement: [] }), prRoutes(state), (p) => { state.pair = p; });
+    const logs = logsOf(t.deps);
+    const scratch = join(t.pair.root, "scratch");
+    git(t.pair.root, "clone", "-q", t.pair.origin, scratch);
+    git(scratch, "checkout", "-q", "-b", "issue-7");
+    const remoteHead = commitIn(scratch, { "other.txt": "o\n" });
+    git(scratch, "push", "-q", "origin", "issue-7");
+    const lost = "1".repeat(40);
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: lost } });
+    await writeClaim(t.paths, c);
+    // The service's own fetch got through; the branch fetch then hits the outage.
+    t.deps.fetchOrigin = async () => {};
+    git(t.claim.worktree, "remote", "set-url", "origin", join(t.pair.root, "nonexistent.git"));
+    try {
+      await expect(step(t.deps, c)).rejects.toThrow();
+    } finally {
+      git(t.claim.worktree, "remote", "set-url", "origin", t.pair.origin);
+    }
+    expect(logs.find((r) => r.kind === "held-work-lost")).toBeUndefined();
+    expect(logs.find((r) => r.kind === "stale-branch-dropped")).toBeUndefined();
+    expect((await readClaim(t.paths, 7))?.state.heldWork).toEqual({ branch: "issue-7", head: lost });
+    expect(git(t.pair.origin, "rev-parse", "refs/heads/issue-7").trim()).toBe(remoteHead);
+  }, 60_000);
+
+  it("runs as without held work when the held head is already on main (AC-5)", async () => {
+    const t = await setup(() => ({ implement: [] }));
+    const logs = logsOf(t.deps);
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: head(t.claim.worktree) } });
+    await writeClaim(t.paths, c);
+    await step(t.deps, c);
+    expect(logs.find((r) => r.kind === "held-work-kept")).toBeUndefined();
+  }, 60_000);
+
+  it("keeps issue-7 locally and on origin while the spec track records an answer, and delete_branch puts the worktree back on it (AC-6)", async () => {
+    const state: { pair?: ReturnType<typeof repoPair> } = {};
+    let held = "";
+    const t = await setup(() => ({ spec: [] }), prRoutes(state), (p, wt) => {
+      state.pair = p;
+      held = commitIn(wt, { "work.txt": "w\n" });
+      git(wt, "push", "-q", "origin", "issue-7");
+    });
+    const logs = logsOf(t.deps);
+    const heldWork = { branch: "issue-7", head: held };
+    const c = at(t.claim, { stage: "spec", track: "spec", specMode: "record", heldWork });
+    await writeClaim(t.paths, c);
+    await step(t.deps, c);
+    expect(t.adapter.heads).toEqual(["spec-7"]);
+    expect(logs.find((r) => r.kind === "recovered-commits" || r.kind === "stale-branch-dropped")).toBeUndefined();
+    expect(originHas(state.pair!, "issue-7")).toBe(true);
+    expect(git(t.claim.worktree, "rev-parse", "issue-7").trim()).toBe(held);
+    expect(head(t.claim.worktree)).toBe(git(state.pair!.repo, "rev-parse", "origin/main").trim());
+
+    await applyActions(t.deps, at(t.claim, { track: "issue", heldWork }), [{ type: "delete_branch", branch: "spec-7" }]);
+    expect(branchIn(t.claim.worktree)).toBe("issue-7");
+    expect(head(t.claim.worktree)).toBe(held);
+  }, 60_000);
+
+  it("still drops the stale branch and resets when there is no held work (AC-8)", async () => {
+    const state: { pair?: ReturnType<typeof repoPair> } = {};
+    const t = await setup(() => ({ implement: [] }), prRoutes(state), (p, wt) => {
+      state.pair = p;
+      commitIn(wt, { "work.txt": "w\n" });
+      git(wt, "push", "-q", "origin", "issue-7");
+    });
+    const logs = logsOf(t.deps);
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: null });
+    await writeClaim(t.paths, c);
+    await step(t.deps, c);
+    expect(logs.map((r) => r.kind)).toEqual(expect.arrayContaining(["recovered-commits", "stale-branch-dropped"]));
+    expect(originHas(state.pair!, "issue-7")).toBe(false);
+    expect(head(t.claim.worktree)).toBe(git(state.pair!.repo, "rev-parse", "origin/main").trim());
+  }, 60_000);
+});
+
 /** The PR branch issue-7 on origin with one commit of its own, and main moved on since, so the driver's rebase moves HEAD. */
 function prBehindMain(pair: ReturnType<typeof repoPair>, wt: string): void {
   commitIn(wt, { "feature.txt": "feature\n" }, "feature");
