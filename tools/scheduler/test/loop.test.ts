@@ -539,8 +539,8 @@ const writeWaiting = (h: Harness, n: number, postponedUntil: string) =>
   });
 const rmClaim = async (h: Harness, n: number) => (await import("node:fs/promises")).unlink(join(h.paths.claims, `${n}.json`));
 const holdingDrive = () => {
-  const st = { release: () => {} };
-  const drive: Drive = async (_d, claim) => { await new Promise<void>((r) => { st.release = r; }); return claim; };
+  const st = { release: () => {}, started: [] as number[] };
+  const drive: Drive = async (_d, claim) => { st.started.push(claim.issue); await new Promise<void>((r) => { st.release = r; }); return claim; };
   return { st, drive };
 };
 
@@ -624,6 +624,7 @@ describe("Scheduler.tick: a postponed chain holds its slot (spec 009)", () => {
     const t = await h.s.tick();
     expect(t.held).toBe(3);
     expect(t.claimed).toEqual([]);
+    expect(st.started).toEqual([order[0]]);
     expect((await listClaims(h.paths)).map((c) => c.issue)).toEqual(order);
     await rmClaim(h, order[0]);
     st.release();
@@ -631,6 +632,7 @@ describe("Scheduler.tick: a postponed chain holds its slot (spec 009)", () => {
     const t2 = await h.s.tick();
     expect(t2.held).toBe(2);
     expect(t2.claimed).toEqual([]);
+    expect(st.started).toEqual([order[0], order[1]]);
     expect((await listClaims(h.paths)).map((c) => c.issue)).toEqual(order.slice(1));
     st.release();
   }, 30_000);
