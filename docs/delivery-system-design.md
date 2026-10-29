@@ -492,3 +492,4 @@ are stale and are corrected as part of B.
 - `specs/011-asking-stage-keeps-its-work/spec.md`
 - `specs/012-metrics-reflection/spec.md`
 - `specs/014-filer-batch-integrity/spec.md`
+- `specs/016-fair-slot-scheduling/spec.md`
