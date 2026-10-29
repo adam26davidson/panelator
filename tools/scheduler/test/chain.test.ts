@@ -29,6 +29,21 @@ function at(stage: ChainState["stage"], over: Partial<ChainState> = {}): ChainSt
 }
 const types = (actions: Action[]) => actions.map((a) => a.type);
 
+describe('asking session conversation',()=>{
+ it('resumes plan before recording a product answer and records only after settled',()=>{
+  const s=at('paused',{question:qProduct,askingStage:'plan',resumeSession:{harness:'claude',model:'m',session_id:'session',worktree:'/tmp/w'}});
+  const reply=transition(s,{type:'answered',answer:'why not the second one?',questionId:42});
+  expect(reply.state.stage).toBe('plan');expect(reply.actions).toEqual([{type:'run_stage',stage:'plan',attempt:1,conversation:true}]);
+  const settled=transition(reply.state,{type:'stage_ok',stage:'plan',result:{conversation:'settled',decision:'Use second for simplicity'} as never});
+  expect(settled.state.stage).toBe('spec');expect(settled.state.specMode).toBe('record');expect(settled.state.decision).toBe('Use second for simplicity');expect(settled.state.answer).toContain('why not the second one?');
+ });
+ it('retries an invalid turn once without counting any bound',()=>{
+  const s=transition(at('paused',{question:qProduct,askingStage:'review',resumeSession:{harness:'pi',model:'m',session_id:'s',worktree:'/w'}}),{type:'answered',answer:'second',questionId:4}).state;
+  const retry=transition(s,{type:'stage_failed',stage:'review',reason:'invalid'});expect(retry.state.conversation?.retried).toBe(true);expect(retry.state.history).toEqual(s.history);
+  const end=transition(retry.state,{type:'stage_failed',stage:'review',reason:'invalid'});expect(end.state.stage).toBe('spec');expect(end.state.decision).toBeNull();
+ });
+});
+
 describe("chain: happy path", () => {
   it("claimed -> plan -> implement -> verify -> review -> merge -> done", () => {
     let s = initialChainState(1);

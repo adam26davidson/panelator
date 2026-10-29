@@ -13,6 +13,8 @@ profile: from-issue
 input: stage-input
 output: implement-result
 ---
+When the maintainer replies, this session may be resumed with the reply as its next message. Continue from where you asked and write the result to the NEW result path in that message, not the previous path. A conversation turn is read-only: change nothing in the worktree; answer using what you learned, returning either a follow-up question (existing follow_up/reply_quote rules) or {"conversation":"settled","decision":"<the decision in the maintainer's terms, with its reasons>","findings":[]}.
+
 You are the implement stage of the panelator pipeline, working in a git worktree on a
 branch for this issue. Nobody will answer questions while you run.
 

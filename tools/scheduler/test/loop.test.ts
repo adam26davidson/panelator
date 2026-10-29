@@ -1,3 +1,7 @@
+import {TelegramClient} from '../src/telegram/client.ts';
+import {telegramChannel} from '../src/telegram/channel.ts';
+import {fakeTelegram} from './helpers/fake-telegram.ts';
+import {emptyTelegram} from '../src/state/paused.ts';
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Octokit } from "octokit";
@@ -8,7 +12,7 @@ import { MAX_CHAIN_FAILURES, Scheduler, type SchedulerDeps } from "../src/servic
 import { ServiceLog } from "../src/service/log.ts";
 import { SleepInhibitor } from "../src/service/inhibit.ts";
 import { loadStageDefinitions } from "../src/stages/definition.ts";
-import { listClaims, writeClaim } from "../src/state/claims.ts";
+import { listClaims, readClaim, writeClaim } from "../src/state/claims.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import { writeToken } from "../src/state/token.ts";
 import { HISTORY_ENTRY_MAX, initialChainState, ledgerOf } from "../src/chain/machine.ts";
@@ -66,6 +70,32 @@ async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
   const s = new Scheduler(deps, { driveChain: drive ?? (async (_d, claim) => { started.push(claim.issue); return { ...claim, state: { ...claim.state, stage: "verify" } }; }) });
   return { s, deps, gh, notifications, started, paths, pair, setNow: (d: Date) => { now = d; }, setMono: (m: number) => { mono = m; } };
 }
+
+describe('Telegram answers and watchdog fallback',()=>{
+ it('wake interrupts the watchdog sleep without waiting for its timer',async()=>{
+  const {s,deps}=await setup(routes([]));let ticks=0;deps.sleep=()=>new Promise<void>(()=>{});s.tick=async()=>{ticks++;if(ticks===2)s.stop('test');return {eligible:0,claimed:[],released:[],held:0,errors:[],restartPending:false};};const running=s.run();await new Promise(r=>setTimeout(r,10));expect(ticks).toBe(1);s.wake();await running;expect(ticks).toBe(2);
+ },30000);
+ const tgRecord=(issue=7):PausedRecord=>({...record(),issue,nonce:`nonce-${issue}`,telegram:{...emptyTelegram(),message_id:issue*10,sent:true,sent_at:'2026-10-10T00:00:00Z',thread_message_ids:[issue*10]}});
+ const message=(id:number,text:string)=>({update_id:id,message:{message_id:1000+id,date:Date.parse('2026-10-12T11:00:00Z')/1000,chat:{id:42},text}});
+ it('journals a reply before confirmation, redelivery makes one issue record and one delayed ack',async()=>{
+  const {s,deps,paths,gh}=await setup(routes([waiting()]),1,firstStep);const server=await fakeTelegram();deps.telegram=telegramChannel(new TelegramClient('SECRET',42,server.url));
+  try{await writePaused(paths,tgRecord());const u=message(1,'Use the file store.');await s.handleTelegramUpdate(u);expect(server.sent).toHaveLength(0);expect((await listPaused(paths))[0].phase).toBe('resuming');await s.handleTelegramUpdate(u);await s.confirmTelegramUpdate(u);await s.confirmTelegramUpdate(u);expect(server.sent).toHaveLength(1);expect(server.sent[0].text).toContain('Picked up your reply from 11:00');expect(gh.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/comments'))).toHaveLength(1);await s.tick();expect(await listPaused(paths)).toEqual([]);expect(logLines(paths).filter(e=>e.event==='answered')).toHaveLength(1);}finally{await server.close();}
+ },30000);
+ it('keeps free text while two questions are open, then a selection answers the right one',async()=>{
+  const {s,deps,paths}=await setup(routes([]));const server=await fakeTelegram();deps.telegram=telegramChannel(new TelegramClient('secret',42,server.url));
+  try{await writePaused(paths,tgRecord(7));await writePaused(paths,tgRecord(8));await s.handleTelegramUpdate(message(2,'Choose the file store'));expect(server.sent[0].text).toContain('#7');expect(server.sent[0].text).toContain('#8');const u={update_id:3,callback_query:{id:'pick',data:'pick:8',message:{message_id:1,date:1,chat:{id:42}}}};await s.handleTelegramUpdate(u);await s.confirmTelegramUpdate(u);const all=await listPaused(paths);expect(all.find(r=>r.issue===7)?.phase).toBe('paused');expect(all.find(r=>r.issue===8)?.answer).toBe('Choose the file store');expect(server.answeredCallbacks).toHaveLength(1);}finally{await server.close();}
+ },30000);
+ it('answers /questions and no-open messages once per update',async()=>{
+  const {s,deps}=await setup(routes([]));const server=await fakeTelegram();deps.telegram=telegramChannel(new TelegramClient('secret',42,server.url));try{const u=message(1,'hello');await s.handleTelegramUpdate(u);await s.handleTelegramUpdate(u);await s.handleTelegramUpdate(message(2,'/questions'));expect(server.sent.map(m=>m.text)).toEqual(['No open question','No open question']);}finally{await server.close();}
+ },30000);
+ it('reminds on Telegram, keeps issue comments as an answer path, rejects a later button',async()=>{
+  const comments:unknown[]=[];const {s,deps,paths,gh}=await setup(routes([waiting()],{}, {7:comments}),1,firstStep);const server=await fakeTelegram();deps.telegram=telegramChannel(new TelegramClient('secret',42,server.url));
+  try{await writePaused(paths,{...tgRecord(),asked_at:'2026-10-10T00:00:00Z'});await s.tick();expect(server.sent).toHaveLength(1);expect(server.sent[0].reply_to_message_id).toBe(70);expect(gh.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/comments'))).toHaveLength(0);comments.push(comment(501,ME,'2026-10-12T11:00:00Z','Use file'));await s.tick();await settle();await s.handleTelegramUpdate({update_id:5,callback_query:{id:'late',data:'q:nonce-7:1',message:{message_id:70,date:1,chat:{id:42}}}});expect(server.sent.at(-1)?.text).toContain('already answered on issue');expect(logLines(paths).filter(e=>e.event==='answered')[0].channel).toBe('issue');}finally{await server.close();}
+ },30000);
+ it('retries a failed send just once, then waits on the issue',async()=>{
+  const {s,deps,paths}=await setup(routes([waiting()]));const server=await fakeTelegram();deps.telegram=telegramChannel(new TelegramClient('secret',42,server.url));try{await writePaused(paths,{...record(),telegram:{...emptyTelegram(),send_failures:1}});server.fail('sendMessage',500);await s.tick();await s.tick();expect(server.requests.filter(r=>r.method==='sendMessage')).toHaveLength(1);expect((await listPaused(paths))[0].telegram?.send_failures).toBe(2);}finally{await server.close();}
+ },30000);
+});
 
 describe("Scheduler.tick", () => {
   it('a due standing agent takes the free slot before shortlist and never overlaps itself',async()=>{
@@ -311,7 +341,7 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     expect(c.state).toMatchObject({ stage: "spec", specMode: "record", answer: "Question #500: Use the file store.", answerQuestionId: 500, rescues: 1 });
     expect(await listPaused(paths)).toEqual([]);
     const answered = logLines(paths).filter((e) => e.event === "answered");
-    expect(answered).toEqual([{ issue: 7, at: deps.now().toISOString(), event: "answered", asking_stage: "plan", question_comment_id: 500, reply_comment_id: 501, answer: "Use the file store.", question: Q }]);
+    expect(answered).toEqual([{ issue: 7, at: deps.now().toISOString(), event: "answered", asking_stage: "plan", question_comment_id: 500, reply_comment_id: 501, answer: "Use the file store.", question: Q,channel:'issue' }]);
   }, 30_000);
 
   it("does not resume on a maintainer comment older than the question (review focus 1)", async () => {
@@ -417,7 +447,7 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     await writeClaim(paths, { issue: 3, slot: 0, state: { ...initialChainState(3), stage: "verify" }, worktree: join(pair.worktrees, "issue-3"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
     await writePaused(paths, record());
     await s.tick();
-    expect(await listPaused(paths)).toEqual([expect.objectContaining({ phase: "paused" })]);
+    expect(await listPaused(paths)).toEqual([expect.objectContaining({ phase: "resuming",answer:'Use the file store.' })]);
     expect((await listClaims(paths)).map((c) => c.issue)).toEqual([3]);
     await (await import("node:fs/promises")).unlink(join(paths.claims, "3.json"));
     hold();
@@ -575,7 +605,9 @@ describe("Scheduler.tick: a postponed chain holds its slot (spec 009)", () => {
     await writePaused(h.paths, record());
     const t = await h.s.tick();
     expect(t.claimed).toEqual([]);
-    expect(await listPaused(h.paths)).toEqual([expect.objectContaining({ phase: "paused" })]);
+    // The record is kept (marked resuming once the answer is read), and nothing is resumed.
+    expect(await listPaused(h.paths)).toEqual([expect.objectContaining({ issue: 7 })]);
+    expect(await readClaim(h.paths, 7)).toBeNull();
     expect(labelCalls(h.gh, 7)).toEqual([]);
     await rmClaim(h, 3);
     const t2 = await h.s.tick();

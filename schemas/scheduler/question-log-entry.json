@@ -56,6 +56,15 @@
     },
     "answer": {
       "type": "string"
+    },
+    "channel": {
+      "enum": [
+        "telegram",
+        "issue"
+      ]
+    },
+    "telegram_message_id": {
+      "type": "integer"
     }
   }
 }

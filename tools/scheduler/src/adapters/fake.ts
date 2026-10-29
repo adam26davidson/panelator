@@ -14,11 +14,14 @@ export interface FakeOptions {
 const rec = (e: unknown): Record<string, unknown> => (typeof e === "object" && e !== null ? (e as Record<string, unknown>) : {});
 
 /** Replays a recorded stream through a throwaway script and writes a canned result (spec section 13). */
-export function fakeAdapter(opts: FakeOptions): Adapter & { opts: FakeOptions } {
+export function fakeAdapter(opts: FakeOptions): Adapter & { opts: FakeOptions; runs:StageRun[] } {
+  const runs:StageRun[]=[];
   return {
+    runs,
     harness: "fake",
     opts,
     buildCommand(run: StageRun) {
+      runs.push(run);
       const argv = [
         process.execPath, opts.scriptPath, opts.eventsFile ?? "", run.resultPath, String(opts.exitCode ?? 0), String(opts.sleepMs ?? 0),
       ];

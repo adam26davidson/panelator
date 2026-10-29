@@ -6,6 +6,9 @@ app:
   installation_id: 172040609
   private_key_path: ~/.config/panelator/scheduler-app.pem
   bot_login: panelator-pipeline[bot]
+telegram:
+  credentials_path: ~/.config/panelator/telegram.json
+  long_poll_timeout_s: 50
 poll_interval_s: 45
 slots: 1
 liveness_hours: 2

@@ -7,6 +7,8 @@ import type { StatePaths } from "./paths.ts";
 export type RunOutcome = "ok" | "failed" | "timeout" | "bounds";
 
 export interface UsageRecord {
+  resumed_session_id?:string;
+  resume_fallback?:string;
   run_id: string;
   issue: number;
   stage: string;

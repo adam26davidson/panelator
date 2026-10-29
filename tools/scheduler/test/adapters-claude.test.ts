@@ -13,6 +13,10 @@ const run: StageRun = {
 };
 
 describe("claudeAdapter.buildCommand (AC-18)", () => {
+  it('resumes the asking session and limits conversation tools',()=>{
+    const {argv}=claudeAdapter.buildCommand({...run,stage:'implement',resume:{sessionId:'old-session'},conversation:true});
+    expect(argv).not.toContain('--session-id');expect(argv[argv.indexOf('--resume')+1]).toBe('old-session');expect(argv[argv.indexOf('--allowedTools')+1]).toBe('Read,Glob,Grep,Edit(//tmp/r.json)');
+  });
   it("builds the headless command with bounds, session id and no-prompt permission", () => {
     const { argv, env } = claudeAdapter.buildCommand(run);
     expect(argv[0]).toBe("claude");

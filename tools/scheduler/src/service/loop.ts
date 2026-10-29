@@ -1,4 +1,6 @@
-import { applyActions, completePause, driveChain as defaultDriveChain, step, type DriverDeps } from "../chain/driver.ts";
+import {TelegramAnswers} from '../telegram/answers.ts';
+import {questionMessage,reminderText} from '../telegram/questions.ts';
+import { applyActions, sendPausedQuestion, completePause, driveChain as defaultDriveChain, step, type DriverDeps } from "../chain/driver.ts";
 import { CLAIM_LABEL, ENDED, HISTORY_ENTRY_MAX, NEEDS_DECISION_LABEL, initialChainState, ledgerOf, stuckOf as stuckStage, transition } from "../chain/machine.ts";
 import {emit} from '../standing/events.ts';
 import { appendFindings, onFindingsQueued } from "../state/findings.ts";
@@ -75,9 +77,18 @@ export class Scheduler {
   #stopReason = "";
   #ticking = false;
   #restartPending = false;
+  #questionOperation:Promise<unknown>=Promise.resolve();
+  #serializeQuestions<T>(fn:()=>Promise<T>):Promise<T>{const p=this.#questionOperation.then(fn);this.#questionOperation=p.catch(()=>{});return p;}
+  #wakeRequested=false;
+  #wakeSleep:(()=>void)|null=null;
+  telegramAnswers:TelegramAnswers;
+  wake():void{this.#wakeRequested=true;this.#wakeSleep?.();}
+  handleTelegramUpdate(u:import('../telegram/client.ts').TelegramUpdate){return this.#serializeQuestions(()=>this.telegramAnswers.handle(u));}
+  confirmTelegramUpdate(u:import('../telegram/client.ts').TelegramUpdate){return this.#serializeQuestions(()=>this.telegramAnswers.confirmed(u));}
 
   constructor(deps: SchedulerDeps, opts: { driveChain?: DriveFn } = {}) {
     this.#deps = deps;
+    this.telegramAnswers=new TelegramAnswers(deps,()=>this.wake());
     if(deps.registry) {
       deps.emitEvent ??= (event,payload)=>emit(deps.paths,deps.registry!,event,payload,deps.now());
       onFindingsQueued(deps.paths,(count,offset)=>deps.emitEvent!('finding_queued',{count,offset}));
@@ -92,6 +103,7 @@ export class Scheduler {
   stop(reason: string): void {
     this.#stopping = true;
     this.#stopReason = reason;
+    this.wake();
   }
 
   #start(claim: Claim): void {
@@ -107,6 +119,7 @@ export class Scheduler {
       .catch((e) => d.log({ kind: "error", issue: claim.issue, error: `failure count: ${(e as Error).message}` }))
       .finally(() => {
         this.#active.delete(claim.issue);
+        if(d.telegram)this.wake();
         if (this.active === 0) {
           d.inhibitor.release();
           // Mid-tick, the tick's own finally requests the restart once it is done.
@@ -181,7 +194,12 @@ export class Scheduler {
 
   /** Step 2 of a tick, for one paused record of an issue not running in this process (AC-13, AC-15, AC-16). True when it resumed the issue into a slot. */
   async #handlePaused(rec: PausedRecord, isOpen: boolean, slotFree: boolean, info: TickInfo): Promise<boolean> {
-    const d = this.#deps;
+    return this.#serializeQuestions(()=>this.#handlePausedLocked(rec,isOpen,slotFree,info));
+  }
+  async #handlePausedLocked(rec:PausedRecord,isOpen:boolean,slotFree:boolean,info:TickInfo):Promise<boolean>{
+    const d=this.#deps;
+    // A Telegram handler may have answered while this tick was reading GitHub.
+    rec=(await listPaused(d.paths)).find(r=>r.issue===rec.issue)??rec;
     if (!isOpen) {
       // Review focus 5: a closed paused issue is dropped, with any claim a crash mid-pause or mid-resume left.
       await removePaused(d.paths, rec.issue);
@@ -196,16 +214,23 @@ export class Scheduler {
     }
     if (rec.phase === "resuming") {
       if (!slotFree) return false;
+      if(rec.telegram?.channel==='telegram'&&!rec.telegram.ack_sent){
+        const {readFile}=await import('node:fs/promises');
+        const offset=JSON.parse(await readFile(d.paths.telegramOffset,'utf8').catch(()=>'{"next_update_id":0}')).next_update_id;
+        if(offset<=(rec.telegram.answer_update_id??0))return false;
+        await this.telegramAnswers.acknowledge(rec);
+      }
       await this.#resume(rec, info);
       return true;
     }
+    if(d.telegram&&rec.telegram&&!rec.telegram.sent&&rec.telegram.send_failures===1)rec=await sendPausedQuestion(d,rec);
     // A crash between the record saying `paused` and the claim's removal.
     await removeClaim(d.paths, rec.issue);
     const decision = pausedDecision(rec, await d.gh.listComments(rec.issue), d.cfg.maintainer, d.now());
     if (decision.kind === "resume") {
-      if (!slotFree) return false; // retried next tick
-      const resuming: PausedRecord = { ...rec, phase: "resuming", answer: decision.answer, reply_comment_id: decision.replyId };
+      const resuming: PausedRecord = { ...rec, phase: "resuming", answer: decision.answer, reply_comment_id: decision.replyId,telegram:rec.telegram?{...rec.telegram,channel:'issue'}:null };
       await writePaused(d.paths, resuming);
+      if(!slotFree)return false;
       await this.#resume(resuming, info);
       return true;
     }
@@ -213,9 +238,12 @@ export class Scheduler {
       // C15: the mark is written first, so a crash costs the reminder rather than sending a second one (AC-16).
       await writePaused(d.paths, { ...rec, reminded: true });
       const text = `@${d.cfg.maintainer} Still waiting on your answer: ${rec.question.question}`;
-      await d.gh.comment(rec.issue, text);
+      if(d.telegram&&rec.telegram?.message_id){
+        const id=await d.telegram.sendReply(reminderText(rec),rec.telegram.message_id,questionMessage({number:rec.issue,title:''},rec,'').reply_markup);
+        rec={...rec,reminded:true,telegram:{...rec.telegram,reminder_message_id:id,thread_message_ids:[...rec.telegram.thread_message_ids,id]}};await writePaused(d.paths,rec);
+      }else await d.gh.comment(rec.issue, text);
       await d.notifier.notify({ issue: rec.issue, gate: "question-reminder", label: NEEDS_DECISION_LABEL, text });
-      await appendQuestionLog(d.paths, { issue: rec.issue, at: d.now().toISOString(), event: "reminded", asking_stage: rec.asking_stage, ...(rec.question_comment_id === null ? {} : { question_comment_id: rec.question_comment_id }) });
+      await appendQuestionLog(d.paths, { issue: rec.issue, at: d.now().toISOString(), event: "reminded", asking_stage: rec.asking_stage,channel:rec.telegram?.message_id?'telegram':'issue',...(rec.telegram?.reminder_message_id?{telegram_message_id:rec.telegram.reminder_message_id}:{}), ...(rec.question_comment_id === null ? {} : { question_comment_id: rec.question_comment_id }) });
     }
     return false;
   }
@@ -232,14 +260,15 @@ export class Scheduler {
       // C8: the question text goes with the answer, for the review input of AC-10.
       await appendQuestionLog(d.paths, {
         issue: rec.issue, at: d.now().toISOString(), event: "answered", asking_stage: rec.asking_stage,
-        question_comment_id: questionId, reply_comment_id: rec.reply_comment_id, answer: rec.answer, question: rec.question,
+        question_comment_id: questionId, reply_comment_id: rec.reply_comment_id, answer: rec.answer, question: rec.question,channel:rec.telegram?.channel??'issue',
       });
     }
     let claim = await readClaim(d.paths, rec.issue);
     if (!claim) {
       const wt = await ensureWorktree(d.repoDir, d.paths.worktrees, rec.issue);
       claim = {
-        issue: rec.issue, slot: this.#active.size, state: rec.state, worktree: wt.path,
+        issue: rec.issue, slot: this.#active.size, state:{...rec.state,resumeSession:d.telegram?rec.session??null:null}, worktree: rec.session?.worktree??wt.path,
+        telegram_thread:rec.telegram??null,
         started_at: d.now().toISOString(), last_activity_at: d.now().toISOString(), run_id: null,
         pendingEvent: { type: "answered", answer: rec.answer, questionId },
       };
@@ -248,6 +277,7 @@ export class Scheduler {
     }
     await d.gh.addLabels(rec.issue, [CLAIM_LABEL]);
     await d.gh.removeLabel(rec.issue, NEEDS_DECISION_LABEL);
+    await this.telegramAnswers.archive(rec);
     await removePaused(d.paths, rec.issue);
     info.claimed.push(rec.issue);
     this.#start(claim);
@@ -279,6 +309,7 @@ export class Scheduler {
       }catch(e){info.errors.push(`main checks: ${(e as Error).message}`);}
       await pruneUsage(d.paths, d.now()).catch((e) => info.errors.push(`prune: ${(e as Error).message}`));
 
+      if(d.telegram)await this.#serializeQuestions(async()=>this.telegramAnswers.auditLateIssueReplies((await listClaims(d.paths)).map(c=>c.issue))).catch(()=>d.log({kind:'telegram-issue-audit-failed'}));
       // Step 2 owns the claims of paused issues (a crash mid-pause or mid-resume); a claim carrying pending work is the driver's.
       const pausedIssues = new Set((await listPaused(d.paths)).map((r) => r.issue));
       for (const claim of await listClaims(d.paths)) {
@@ -308,7 +339,8 @@ export class Scheduler {
 
       // Spec 009: claims held on disk reserve slots even while waiting; paused issues hold none.
       // Standing agents have no issue claim, so retain their running-slot reservation separately.
-      const held = (await listClaims(d.paths)).filter((c) => !pausedIssues.has(c.issue)).length;
+      // A chain still running in this process holds its slot even after a pause removed its claim file.
+      const held = new Set([...(await listClaims(d.paths)).filter((c) => !pausedIssues.has(c.issue)).map((c) => c.issue), ...this.#active.keys()]).size;
       info.held = held;
       let free = Math.max(0, slots - held - this.#activeStanding.size);
       const paused = await listPaused(d.paths);
@@ -399,7 +431,9 @@ export class Scheduler {
       await this.tick().catch((e) => d.log({ kind: "error", error: (e as Error).message }));
       lastWall = d.now().getTime();
       lastMono = d.monotonic();
-      await d.sleep(intervalMs);
+      if(!this.#wakeRequested)await Promise.race([d.sleep(intervalMs),new Promise<void>(r=>{this.#wakeSleep=r;})]);
+      this.#wakeSleep=null;
+      this.#wakeRequested=false;
       const wall = d.now().getTime() - lastWall;
       const mono = d.monotonic() - lastMono;
       if (wall - mono > intervalMs) {

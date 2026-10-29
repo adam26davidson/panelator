@@ -32,6 +32,9 @@ export type Scripted = unknown | ((run: StageRun) => unknown);
 export const RATE_LIMITED = Symbol("rate-limited");
 
 export interface RunSeen {
+  resume?:{sessionId:string};
+  sessionId:string;
+  conversation?:boolean;
   stage: string;
   model: string;
   /** The branch the worktree was on when the run started. */
@@ -49,6 +52,7 @@ export function scripted(results: Record<string, Scripted[]>): Adapter & { ran: 
     buildCommand(run) {
       ran.push(run.stage);
       runs.push({
+        resume:run.resume,sessionId:run.sessionId,conversation:run.conversation,
         stage: run.stage, model: run.model, branch: git(run.worktree, "rev-parse", "--abbrev-ref", "HEAD").trim(), profile: run.profile?.name ?? null,
         input: JSON.parse(readFileSync(join(dirname(run.resultPath), "input.json"), "utf8")) as StageInput,
       });
@@ -238,7 +242,7 @@ export async function chainWorld(opts: { files: Record<string, string>; issueBod
   const scheduler = new Scheduler(deps);
 
   return {
-    pair, paths, cfg, gh, adapter, notifications, logs, labels, labelLog, comments, prComments, prs, mergeRequests,
+    deps,scheduler,pair, paths, cfg, gh, adapter, notifications, logs, labels, labelLog, comments, prComments, prs, mergeRequests,
     get issueOpen() { return issueOpen; },
     get issueBody() { return issueBody; },
     /** One tick, then wait for the chains it started to stop (ended, paused or waiting). */
