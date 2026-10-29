@@ -13,7 +13,7 @@ async function setup(){
  const gh={listOpenIssuesByLabel:vi.fn(async()=>[]),listOpenIssuesByAuthor:vi.fn(async()=>[]),searchOpenIssuesByMarker:vi.fn(async()=>[]),listComments:vi.fn(async()=>[]),createIssue:vi.fn(async(_title:string,_body:string,_labels:string[])=>42),comment:vi.fn(async()=>({id:1})),removeLabel:vi.fn(async()=>{}),closeIssue:vi.fn(async()=>{}),findDraftSecurityAdvisory:vi.fn(async():Promise<string|null>=>null),createDraftSecurityAdvisory:vi.fn(async()=> 'GHSA-private')};
  const notify=vi.fn(async()=>{}),now=()=>new Date('2026-10-27T00:00:00Z');
  const d:FilerDeps={paths,gh:gh as unknown as GitHubClient,botLogin:'bot',classes:['class:bug'],notify,now};
- const input:FilerInput={records:[{ref:'1',finding}],abandoned:[],open_issues:[],cursor:0};
+ const input:FilerInput={records:[{ref:'1',finding}],abandoned:[],open_issues:[],cursor:0,issue_classes:['class:bug']};
  return {paths,gh,d,input,notify};
 }
 it('bounds and orders batches, records decisions before cursor; rejects incomplete or extra decisions',async()=>{
@@ -238,4 +238,46 @@ it('discarding the last held ref closes the capability issue; a close already co
  const probe=await buildFilerInput(d);
  await applyFilerResult(d,'discard',probe,{summary:'s',decisions:[{ref:'1',outcome:'discard',reason:'false positive'}]});
  expect(gh.closeIssue).toHaveBeenCalledWith(42,'');expect(gh.comment).not.toHaveBeenCalled();
+});
+// Spec 017: the filer's class labels.
+const live=['class:product','class:bug','class:tooling','class:dependency'];
+it('lists the accepted class labels in the filer input (AC-1)',async()=>{
+ const {d,paths}=await setup();d.classes=live;await queue(paths,[finding]);
+ expect((await buildFilerInput(d)).issue_classes).toEqual(live);
+});
+it('applies the live batch shape: "tooling" without the prefix on file and merge_into decisions (AC-2 regression)',async()=>{
+ const {d,input,gh,paths}=await setup();d.classes=live;
+ input.records=[{ref:'16',finding},{ref:'17',finding},{ref:'18',finding}];
+ const tooling={title:'Tooling gap',body:'what, where, evidence',class:'tooling'};
+ await applyFilerResult(d,'run',input,{summary:'live',decisions:[
+  {ref:'16',outcome:'file',reason:'verified',issue:tooling},
+  {ref:'17',outcome:'merge_into',reason:'same as #32',issue_number:32,issue:tooling},
+  {ref:'18',outcome:'file',reason:'verified',issue:{...tooling,class:'Class:Dependency'}},
+ ]});
+ expect(gh.createIssue.mock.calls.map(c=>c[2])).toEqual([['class:tooling','validated'],['class:tooling','validated'],['class:dependency','validated']]);
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).map(t=>t.ref)).toEqual(['16','17','18']);
+});
+it('resolves case and whitespace differences, exact labels first (AC-2)',async()=>{
+ const {d,input,gh}=await setup();d.classes=live;
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:[{ref:'1',outcome:'file',reason:'v',issue:{...issue,class:' BUG '}}]});
+ expect(gh.createIssue.mock.calls[0][2]).toEqual(['class:bug','validated']);
+});
+it('an unresolvable class falls back to class:bug, is logged, and the rest of the batch applies (AC-3)',async()=>{
+ const {d,input,gh,paths}=await setup();d.classes=live;const log=vi.fn();d.log=log;
+ input.records=[{ref:'1',finding},{ref:'2',finding}];
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:[
+  {ref:'1',outcome:'file',reason:'v',issue:{...issue,class:'class:security-ish'}},
+  {ref:'2',outcome:'file',reason:'v',issue:{...issue,class:'class:tooling'}},
+ ]});
+ expect(gh.createIssue.mock.calls.map(c=>c[2][0])).toEqual(['class:bug','class:tooling']);
+ expect(log).toHaveBeenCalledWith(expect.objectContaining({kind:'filer-class-fallback',ref:'1',class:'class:security-ish',used:'class:bug'}));
+ expect(log).toHaveBeenCalledTimes(1);
+ const rows=await readJsonLines<TriageEntry>(paths.findingsTriage);
+ expect(rows[0].reason).toContain("class 'class:security-ish' is not configured");expect(rows).toHaveLength(2);
+ expect(JSON.parse(await readFile(paths.findingsCursor,'utf8')).line).toBe(2);
+});
+it('without class:bug configured the fallback is the first configured class (AC-3)',async()=>{
+ const {d,input,gh}=await setup();d.classes=['class:product','class:tooling'];
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:[{ref:'1',outcome:'file',reason:'v',issue:{...issue,class:'bug'}}]});
+ expect(gh.createIssue.mock.calls[0][2]).toEqual(['class:product','validated']);
 });

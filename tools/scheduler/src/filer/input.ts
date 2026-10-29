@@ -6,7 +6,8 @@ import type {GitHubClient} from '../github/client.ts';
 import type {Finding,IssueData} from '../types.ts';
 export interface QueueRecord {ref:string; finding:Finding; repeat?:string; advisory_failed?:boolean; advisory_attempts?:number; [key:string]:unknown}
 export interface AbandonedRecord {ref:string;issue:IssueData;comments:unknown[];ledgers:unknown[];retries:number}
-export interface FilerInput {records:QueueRecord[];abandoned:AbandonedRecord[];open_issues:{number:number;title:string}[];cursor:number}
+/** `issue_classes`: the exact class labels an issue decision may carry, so the model need not guess them (spec 017 AC-1). */
+export interface FilerInput {records:QueueRecord[];abandoned:AbandonedRecord[];open_issues:{number:number;title:string}[];cursor:number;issue_classes:string[]}
 export interface TriageEntry {ref:string;outcome:string;reason:string;run_id:string;at:string;issue?:number;advisory?:string;failed?:boolean;finding?:Finding;attempt?:number;failure?:AdvisoryFailure;held?:boolean;capability_issue?:number}
 /** `permission`: GitHub refused the App (403, the missing capability); `error`: anything else (spec 014 AC-5). */
 export type AdvisoryFailure='permission'|'error';
@@ -36,7 +37,7 @@ export async function readJsonLines<T>(path:string):Promise<T[]> {
  let text:string;try{text=await readFile(path,'utf8');}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return [];throw e;}
  return text.split('\n').filter(Boolean).map(l=>JSON.parse(l) as T);
 }
-export interface FilerDeps {paths:StatePaths;gh:GitHubClient;botLogin:string;now:()=>Date;classes:string[];notify:(text:string,key?:string)=>Promise<void>}
+export interface FilerDeps {paths:StatePaths;gh:GitHubClient;botLogin:string;now:()=>Date;classes:string[];notify:(text:string,key?:string)=>Promise<void>;log?:(entry:Record<string,unknown>)=>void}
 export async function buildFilerInput(d:FilerDeps):Promise<FilerInput> {
  let cursor=0;try{cursor=JSON.parse(await readFile(d.paths.findingsCursor,'utf8')).line;}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
  const queue=await withStateLock(d.paths.findingsQueue,()=>readJsonLines<{finding:Finding}>(d.paths.findingsQueue)) as ({finding:Finding}|undefined)[],triage=await readJsonLines<TriageEntry>(d.paths.findingsTriage);
@@ -61,5 +62,5 @@ export async function buildFilerInput(d:FilerDeps):Promise<FilerInput> {
   const ledgers=[];for(const f of await readdir(d.paths.escalations))if(f.startsWith(`${issue.number}.abandoned-`))ledgers.push(JSON.parse(await readFile(join(d.paths.escalations,f),'utf8')));
   abandoned.push({ref,issue,comments:await d.gh.listComments(issue.number),ledgers,retries:history.filter(t=>t.outcome==='retry').length});
  }
- return {records,abandoned,open_issues:openBot.map(i=>({number:i.number,title:i.title})),cursor};
+ return {records,abandoned,open_issues:openBot.map(i=>({number:i.number,title:i.title})),cursor,issue_classes:[...d.classes]};
 }

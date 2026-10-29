@@ -11,6 +11,12 @@
     },
     "open_issues": {
       "type": "array"
+    },
+    "issue_classes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
