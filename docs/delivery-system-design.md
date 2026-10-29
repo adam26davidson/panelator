@@ -493,4 +493,5 @@ are stale and are corrected as part of B.
 - `specs/012-metrics-reflection/spec.md`
 - `specs/013-quota-planning/spec.md`
 - `specs/014-filer-batch-integrity/spec.md`
+- `specs/015-chain-keeps-its-work/spec.md`
 - `specs/016-fair-slot-scheduling/spec.md`

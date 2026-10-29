@@ -383,7 +383,7 @@ describe("driveChain", () => {
     const text = readFileSync(patchPath, "utf8");
     expect(text).toContain("local.txt");
     expect(text).not.toContain("remote.txt");
-    expect(logs).toContainEqual({ kind: "worktree-synced", issue: 7, pr: 9, dropped: local, patch: patchPath });
+    expect(logs).toContainEqual({ kind: "worktree-synced", issue: 7, pr: 9, dropped: local, patch: patchPath, rebased: false });
     expect(logs.find((r) => r.kind === "recovered-commits")).toBeUndefined();
     // The patch applies onto the remote head it was cut against.
     git(other, "am", patchPath);
@@ -1259,5 +1259,173 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     expect(await applyActions(deps, { ...c, state }, actions)).toBe("ended");
     expect(writes(gh)).toEqual(expect.arrayContaining(["PATCH /repos/o/r/pulls/12", "DELETE /repos/o/r/git/refs/heads/spec-7", "PATCH /repos/o/r/pulls/9", "DELETE /repos/o/r/git/refs/heads/issue-7"]));
     expect(await readClaim(paths, 7)).toBeNull();
+  }, 60_000);
+});
+
+/** The PR branch issue-7 on origin with one commit of its own, and main moved on since, so the driver's rebase moves HEAD. */
+function prBehindMain(pair: ReturnType<typeof repoPair>, wt: string): void {
+  commitIn(wt, { "feature.txt": "feature\n" }, "feature");
+  git(wt, "push", "-q", "-u", "origin", "issue-7");
+  writeFileSync(join(pair.repo, "main.txt"), "main moved\n");
+  git(pair.repo, "add", "main.txt");
+  git(pair.repo, "commit", "-q", "-m", "main moved");
+  git(pair.repo, "push", "-q", "origin", "main");
+}
+/** A scripted adapter whose failing runs are rate-limited (429), as when the Claude quota is spent. */
+function rateLimited(results: Record<string, Scripted[]>): ReturnType<typeof scriptedAdapter> {
+  const a = scriptedAdapter(results);
+  return { ...a, judge: (e, exit, timedOut) => exit === 0 ? a.judge(e, exit, timedOut) : { outcome: "failed", reason: "You've hit your session limit", apiErrorStatus: 429, finalText: null } };
+}
+const dnsFailure = () => Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("getaddrinfo EAI_AGAIN api.github.com"), { code: "EAI_AGAIN" }) });
+const patchFiles = (paths: ReturnType<typeof statePaths>) => readdirSync(paths.patches).filter((f) => /^7-.*\.patch$/.test(f));
+
+describe("driver: the chain keeps its work (spec 015)", () => {
+  it("undoes its rebase after a postponed run, so three postponed retries write no dropped patch (AC-1, AC-2; issue #35)", async () => {
+    const { deps, claim, pair, paths, sha } = await setup(() => ({}), undefined, prBehindMain);
+    const adapter = rateLimited({ review: [undefined, undefined, undefined, approve] });
+    deps.adapterFor = () => adapter;
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    let c = at(claim, { stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } });
+    await writeClaim(paths, c);
+    for (let i = 0; i < 3; i++) {
+      const r = await step(deps, c);
+      expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "review" });
+      // The worktree is back where the preparation found it: the PR's remote head.
+      expect(head(claim.worktree)).toBe(sha);
+      // The wait is over: the next step starts the review again.
+      c = (await step(deps, at(r.claim, { postponedUntil: null }))).claim;
+      expect(c.state.stage).toBe("review");
+    }
+    const r = await step(deps, c);
+    expect(adapter.ran).toHaveLength(4);
+    expect(r.claim.state.stage).toBe("merge");
+    expect(logs.filter((l) => l.kind === "rebase-undone")).toHaveLength(3);
+    expect(logs.find((l) => l.kind === "rebase-undone")).toMatchObject({ issue: 7, stage: "review", to: sha });
+    expect(logs.filter((l) => l.kind === "worktree-synced" && l.dropped)).toEqual([]);
+    expect(patchFiles(paths)).toEqual([]);
+    // The review that ran saw the rebased head: main's commit is in it.
+    expect(git(claim.worktree, "merge-base", "--is-ancestor", git(pair.repo, "rev-parse", "origin/main").trim(), "HEAD")).toBe("");
+  }, 120_000);
+
+  it("keeps a run's own commits: no rebase is undone when the run moved HEAD (AC-1)", async () => {
+    const { deps, claim, paths, sha } = await setup(() => ({}), undefined, prBehindMain);
+    const adapter = rateLimited({ review: [(run: StageRun) => { commitIn(run.worktree, { "notes.txt": "x\n" }, "run's own commit"); return undefined; }] });
+    deps.adapterFor = () => adapter;
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    const c = at(claim, { stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } });
+    await writeClaim(paths, c);
+    const r = await step(deps, c);
+    expect(r.claim.state.stage).toBe("waiting");
+    expect(logs.find((l) => l.kind === "rebase-undone")).toBeUndefined();
+    expect(git(claim.worktree, "log", "-1", "--format=%s").trim()).toBe("run's own commit");
+  }, 60_000);
+
+  it("drops a rebased head left by a review without saving it as a patch (AC-3)", async () => {
+    const { deps, claim, paths, sha } = await setup(() => ({ review: [approve] }), undefined, prBehindMain);
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    const c = at(claim, { stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } });
+    await writeClaim(paths, c);
+    const r1 = await step(deps, c);
+    const rebased = head(claim.worktree);
+    expect(rebased).not.toBe(sha);
+    // Verify syncs the worktree to the PR's remote head, which the review did not move.
+    await step(deps, at(r1.claim, { stage: "verify" }));
+    expect(head(claim.worktree)).toBe(sha);
+    expect(logs).toContainEqual({ kind: "worktree-synced", issue: 7, pr: 9, dropped: rebased, patch: null, rebased: true });
+    expect(patchFiles(paths)).toEqual([]);
+  }, 60_000);
+
+  it("checks a finished run's result again after the step threw, without running the stage again (AC-10)", async () => {
+    let pushed = "";
+    let failures = 1;
+    const routes = (sha: string) => ghRoutes(sha, { prs: { 9: { headRef: "issue-7", head: () => pushed } } }).map((r) =>
+      r.method === "GET" && String(r.path) === String(/^\/repos\/o\/r\/pulls\/(\d+)$/) ? { ...r, reply: (m: RegExpExecArray, b: unknown, u: URL) => { if (failures-- > 0) throw dnsFailure(); return r.reply(m, b, u); } } : r);
+    const { deps, claim, paths, adapter, gh } = await setup(() => ({
+      implement: [(run: StageRun) => { pushed = commitIn(run.worktree, { "a.txt": "done\n" }, "implement"); git(run.worktree, "push", "-q", "-u", "origin", "issue-7"); return impl(pushed); }],
+    }), routes);
+    // Octokit's retry plugin would retry the failed request; the outage outlasts it.
+    deps.gh = new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch }, retry: { enabled: false } }), "o/r");
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    const c = at(claim, { stage: "implement", plan: plan as never });
+    await writeClaim(paths, c);
+    await expect(step(deps, c)).rejects.toThrow(/EAI_AGAIN/);
+    const kept = (await readClaim(paths, 7))!;
+    expect(kept.stageRun).toMatchObject({ stage: "implement", attempt: 1, result: impl(pushed) });
+    const r = await step(deps, kept);
+    expect(adapter.ran).toEqual(["implement:claude-sonnet-5-5"]);
+    expect(logs).toContainEqual(expect.objectContaining({ kind: "stage-result-kept", issue: 7, stage: "implement" }));
+    expect(logs.find((l) => l.kind === "stale-branch-dropped" || l.kind === "recovered-commits")).toBeUndefined();
+    expect(r.claim.state.pr).toEqual({ number: 9, head_sha: pushed });
+    expect(r.claim.stageRun).toBeUndefined();
+    expect((await readClaim(paths, 7))!.stageRun).toBeUndefined();
+  }, 60_000);
+
+  it("ignores and clears a recorded run of another stage or attempt (AC-10)", async () => {
+    const { deps, claim, paths, adapter } = await setup(() => ({ plan: [plan] }));
+    const c: Claim = { ...at(claim, { stage: "plan" }), stageRun: { stage: "plan", attempt: 2, run_id: "7-plan-2-x", result: plan, start: "0".repeat(40), security: false, sensitive: false } };
+    await writeClaim(paths, c);
+    const r = await step(deps, c);
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(r.claim.state.stage).toBe("implement");
+    expect(r.claim.stageRun).toBeUndefined();
+  }, 60_000);
+
+  it("leaves the rebase alone when a postponed run left uncommitted changes (AC-1)", async () => {
+    const { deps, claim, paths, sha } = await setup(() => ({}), undefined, prBehindMain);
+    const adapter = rateLimited({ review: [(run: StageRun) => { writeFileSync(join(run.worktree, "scratch.txt"), "half done\n"); return undefined; }] });
+    deps.adapterFor = () => adapter;
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    const c = at(claim, { stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } });
+    await writeClaim(paths, c);
+    const r = await step(deps, c);
+    expect(r.claim.state.stage).toBe("waiting");
+    expect(logs.find((l) => l.kind === "rebase-undone")).toBeUndefined();
+    expect(head(claim.worktree)).not.toBe(sha);
+    expect(readFileSync(join(claim.worktree, "scratch.txt"), "utf8")).toBe("half done\n");
+  }, 60_000);
+
+  it("undoes the rebase after a failed (not postponed) run too, and the retry drops nothing (AC-1)", async () => {
+    const { deps, claim, paths, sha, adapter } = await setup(() => ({ review: [undefined, approve] }), undefined, prBehindMain);
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    const c = at(claim, { stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } });
+    await writeClaim(paths, c);
+    const r1 = await step(deps, c);
+    expect(r1.claim.state).toMatchObject({ stage: "review", attempt: 2 });
+    expect(head(claim.worktree)).toBe(sha);
+    expect(logs.filter((l) => l.kind === "rebase-undone")).toHaveLength(1);
+    await step(deps, r1.claim);
+    expect(adapter.ran).toHaveLength(2);
+    expect(logs.filter((l) => l.kind === "worktree-synced" && l.dropped)).toEqual([]);
+    expect(patchFiles(paths)).toEqual([]);
+  }, 60_000);
+
+  it("re-applies the recorded run's event when an action after the transition threw, without running the stage again (AC-10)", async () => {
+    let failures = 1;
+    const routes = (sha: string) => ghRoutes(sha).map((r) =>
+      r.method === "POST" && String(r.path) === String(/^\/repos\/o\/r\/issues\/\d+\/comments$/)
+        ? { ...r, reply: (m: RegExpExecArray, b: unknown, u: URL) => { if (u.pathname.endsWith("/issues/9/comments") && failures-- > 0) throw dnsFailure(); return r.reply(m, b, u); } } : r);
+    const { deps, claim, paths, adapter, gh, sha } = await setup(() => ({ review: [{ verdict: "changes_requested", findings_on_pr: [{ criterion: "AC-1", file: "a.txt", line: 1, scenario: "z" }], declined_to_judge: [] }] }), routes);
+    deps.gh = new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch }, retry: { enabled: false } }), "o/r");
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    // The fix loop is spent and so is the rescue: changes requested re-plan, closing PR 9 (its comment fails the first time).
+    const c = at(claim, { stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha }, fixes: 2, rescues: 1 });
+    await writeClaim(paths, c);
+    await expect(step(deps, c)).rejects.toThrow(/EAI_AGAIN/);
+    const kept = (await readClaim(paths, 7))!;
+    expect(kept.state.stage).toBe("review");
+    expect(kept.stageRun?.stage).toBe("review");
+    const r = await step(deps, kept);
+    expect(adapter.ran).toEqual(["review:claude-fable-5-1"]);
+    expect(logs).toContainEqual(expect.objectContaining({ kind: "stage-result-kept", stage: "review" }));
+    expect(logs).toContainEqual(expect.objectContaining({ kind: "pr-closed", pr: 9 }));
+    expect(r.claim.state).toMatchObject({ stage: "plan", replans: 1, pr: null });
+    expect(gh.calls.filter((x) => x.method === "POST" && x.url === "/repos/o/r/issues/9/comments")).toHaveLength(2);
   }, 60_000);
 });

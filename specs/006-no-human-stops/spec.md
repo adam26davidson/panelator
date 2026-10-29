@@ -195,7 +195,10 @@ AC-10 second sentence, AC-13)
   finding (with the last error) is appended and one notification says so.
   Any transition that goes through resets the count. At abandonment, an
   answer not yet recorded is carried into the fresh ledger, so a later
-  claim records it first.
+  claim records it first. *(Amended by spec 015 section 4: only genuine
+  errors count; a transient network failure postpones the chain until its
+  outage passes a 24-hour ceiling, and earlier releases for a transient
+  cause are not counted.)*
 
 **Review escalation and security** (replaces AC-11)
 
