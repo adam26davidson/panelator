@@ -1,7 +1,7 @@
 import {appendFile,writeFile,rename} from 'node:fs/promises';
 import type {Question} from '../types.ts';
 import {validate} from '../schema/validate.ts';
-import {readJsonLines,settledCursor,advisoryAttempts,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
+import {readJsonLines,settledCursor,advisoryAttempts,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,type AdvisoryFailure,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
 export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'}}
 export interface FilerResult {summary:string;decisions:Decision[]}
 export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput,result:FilerResult):Promise<void> {
@@ -21,21 +21,28 @@ export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput
  try{await applyDecisions(d,runId,input,result,triage);}
  finally{const line=settledCursor(input.cursor,triage);await writeFile(d.paths.findingsCursor+'.tmp',JSON.stringify({line}));await rename(d.paths.findingsCursor+'.tmp',d.paths.findingsCursor);}
 }
-const capabilityIssueBody=(error:string,held:number)=>`Capability needed (delivery-system design section 3, item 3: credentials and access).
+/** A 403 is GitHub refusing the App: the missing capability. Anything else is an ordinary error (spec 014 AC-5). */
+function classify(e:unknown):{kind:AdvisoryFailure;status:number|null;message:string} {
+ const status=typeof (e as {status?:unknown})?.status==='number'?(e as {status:number}).status:null,message=(e as Error)?.message??String(e);
+ return {kind:status===403||/Resource not accessible by integration/.test(message)?'permission':'error',status,message};
+}
+/** Public text: only the status and fixed phrases, never GitHub's message, which can echo the advisory payload (spec 014 AC-6). */
+const capabilityIssueBody=(status:number|null,held:number)=>`Capability needed (delivery-system design section 3, item 3: credentials and access).
 
-The findings filer could not create a draft repository security advisory after ${ADVISORY_ATTEMPTS} attempts in a row. GitHub's last answer: \`${error.replace(/`/g,"'")}\`
+The findings filer could not create a draft repository security advisory after ${ADVISORY_ATTEMPTS} attempts in a row: GitHub answered HTTP ${status??403} (the App is not permitted to write repository security advisories).
 
 ${held} security finding(s) are held privately in the scheduler's state until an advisory can be created. None of their content is in this issue.
 
 What agents cannot do: grant the panelator GitHub App the repository permission "Repository security advisories: Read and write" (spec 001 section 12, spec 008 AC-22) and accept the updated permissions on its installation.
 
-For the spec stage: no spec or code change is needed. Return this as a question of kind \`capability\` through the question check, with the step above as the only option. Once the permission is granted, closing this issue releases the held findings at once; otherwise they are tried again after a week, and the first advisory that succeeds closes this issue (spec 014 AC-5, AC-6).
+For the spec stage: no spec or code change is needed. Return this as a question of kind \`capability\` through the question check, with granting the permission as the only option. When the maintainer answers, the scheduler closes this issue instead of resuming the chain and retries the held findings at once; a failure then holds them again under a new issue. While this issue is open, one held finding is tried once a day, and the first advisory that succeeds closes this issue (spec 014 AC-5, AC-6, AC-8).
 
 ${CAPABILITY_MARKER}`;
-async function openCapabilityIssue(d:FilerDeps):Promise<number|null> {
- return (await d.gh.searchOpenIssuesByMarker(CAPABILITY_MARKER)).find(i=>i.author===d.botLogin&&i.body.includes(CAPABILITY_MARKER))?.number??null;
-}
 async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:FilerResult,triage:TriageEntry[]):Promise<void> {
+ // The open capability issue, looked up at most once per batch and only while something is held (spec 014 AC-6).
+ let capability:number|null|undefined;
+ const capabilityIssue=async()=>capability!==undefined?capability:(capability=(await d.gh.searchOpenIssuesByMarker(CAPABILITY_MARKER)).find(i=>i.author===d.botLogin&&i.body.includes(CAPABILITY_MARKER))?.number??null);
+ const lastRows=()=>{const m=new Map<string,TriageEntry>();for(const t of triage)m.set(t.ref,t);return [...m.values()];};
  for(const dec of result.decisions) {
   const abandoned=input.abandoned.find(r=>r.ref===dec.ref),record=input.records.find(r=>r.ref===dec.ref);
   const prior=triage.filter(t=>t.ref===dec.ref).at(-1);
@@ -51,8 +58,10 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
    if(dec.outcome==='escalate')body=`Possible design flaw\n\n${body}\n\nQuestion for the spec stage:\n${JSON.stringify(dec.question,null,2)}`;
    return d.gh.createIssue(issue.title,`${body}\n\nFiler verification: ${dec.reason}\n\n${marker}`,[issue.class,'validated']);
   };
-  // A security flag overrides every public outcome; a discard is private and stays a discard (AC-19).
-  if(dec.outcome==='security'||(record?.finding.security&&dec.outcome!=='discard')) {
+  // A security flag overrides every public outcome; a discard is private and stays a discard (AC-19). A record
+  // already judged security once (a retried advisory) is as private as a flagged one (spec 014 AC-9).
+  const confidential=!!record&&(record.finding.security||record.advisory_failed||triage.some(t=>t.ref===dec.ref&&t.outcome==='security'));
+  if(dec.outcome==='security'||(confidential&&dec.outcome!=='discard')) {
    row.outcome='security';
    try {
     const advisory=dec.advisory??{title:dec.issue?.title??record!.finding.what,description:dec.issue?.body??JSON.stringify(record!.finding),severity:'high' as const};
@@ -61,16 +70,21 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
     await d.notify(`Security advisory ${row.advisory}`,dec.ref);
    }
    catch(e){
-    const error=(e as Error).message;
-    row.failed=true;row.reason=`advisory failed: ${error}`;row.attempt=advisoryAttempts(prior)+1;
+    const {kind,status,message}=classify(e);
+    row.failed=true;row.failure=kind;row.reason=`advisory failed: ${message}`;row.attempt=advisoryAttempts(prior,kind)+1;
+    const wasHeld=!!prior?.held;
     if(row.attempt>=ADVISORY_ATTEMPTS) {
-     // Bounded: the record is held and the missing capability goes to the maintainer through the chain (spec 014 AC-5, AC-6).
+     // Bounded: the record is held; a missing permission goes to the maintainer through the chain (spec 014 AC-5, AC-6).
      row.held=true;
-     const lastRows=new Map(triage.map(t=>[t.ref,t]));lastRows.set(dec.ref,row);
-     const held=[...lastRows.values()].filter(t=>t.held).length;
-     row.capability_issue=(await openCapabilityIssue(d))??await d.gh.createIssue('The GitHub App cannot create draft security advisories',capabilityIssueBody(error,held),[d.classes.includes('class:tooling')?'class:tooling':d.classes[0],'validated']);
-     row.reason+=` (held after ${row.attempt} attempts; capability issue #${row.capability_issue})`;
-     await d.notify(`Security finding held after ${row.attempt} failed advisory attempts; capability issue #${row.capability_issue}: ${error}`,dec.ref);
+     let filed=false;
+     if(kind==='permission') {
+      let n=await capabilityIssue();
+      if(n===null){const held=lastRows().filter(t=>t.held&&t.failure!=='error').length+(prior?.held&&prior.failure!=='error'?0:1);n=capability=await d.gh.createIssue('The GitHub App cannot create draft security advisories',capabilityIssueBody(status,held),[d.classes.includes('class:tooling')?'class:tooling':d.classes[0],'validated']);filed=true;}
+      row.capability_issue=n;
+     }
+     row.reason+=` (held after ${row.attempt} attempts${row.capability_issue?`; capability issue #${row.capability_issue}`:''})`;
+     // A daily probe that fails again under the same open question stays quiet; the full error stays private.
+     if(!wasHeld||filed)await d.notify(`Security finding held after ${row.attempt} failed advisory attempts${row.capability_issue?`; capability issue #${row.capability_issue}`:''}: ${message}`,dec.ref);
     } else await d.notify(row.reason,dec.ref);
    }
   } else switch(dec.outcome) {
@@ -88,10 +102,11 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
    case 'discard':case 'defer':break;
   }
   await appendFile(d.paths.findingsTriage,JSON.stringify(row)+'\n');triage.push(row);
-  // Advisories work again, so the capability question is settled (spec 014 AC-6); done after the row is kept.
-  if(row.outcome==='security'&&!row.failed) {
-   const capability=await openCapabilityIssue(d);
-   if(capability!==null)await d.gh.closeIssue(capability,'A draft security advisory was created: the App can write repository security advisories again, and held security findings are retried.');
+  // Advisories work again, so the capability question is settled (spec 014 AC-6); done after the row is kept, and
+  // only when something was held under a permission failure.
+  if(row.outcome==='security'&&!row.failed&&((prior?.held&&prior.capability_issue!==undefined)||lastRows().some(t=>t.held&&t.capability_issue!==undefined))) {
+   const n=await capabilityIssue();
+   if(n!==null){await d.gh.closeIssue(n,'A draft security advisory was created: the App can write repository security advisories again, and held security findings are retried.');capability=null;}
   }
  }
 }

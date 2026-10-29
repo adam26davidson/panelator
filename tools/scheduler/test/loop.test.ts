@@ -343,6 +343,26 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     expect(answered).toEqual([{ issue: 7, at: deps.now().toISOString(), event: "answered", asking_stage: "plan", question_comment_id: 500, reply_comment_id: 501, answer: "Use the file store.", question: Q,channel:'issue' }]);
   }, 30_000);
 
+  it("closes a capability-hold issue on the maintainer's answer instead of resuming it (spec 014 AC-8)", async () => {
+    const capability = { ...waiting(), body: "Capability needed\n\n<!-- panelator-capability:security-advisories -->" };
+    const rs = routes([capability], {}, { 7: [comment(500, BOT_LOGIN, "2026-10-12T08:00:00Z", "q"), comment(501, ME, "2026-10-12T09:00:00Z", "Granted.")] });
+    rs.push({ method: "PATCH", path: /^\/repos\/o\/r\/issues\/7$/, reply: () => ({ body: {} }) });
+    const { s, gh, paths, deps } = await setup(rs, 1, firstStep);
+    const events: unknown[] = [];
+    deps.emitEvent = async (event, payload) => { events.push({ event, payload }); };
+    const capQ: Question = { kind: "capability", question: "Grant the App security advisories write?", options: [{ label: "grant", cost: "two minutes" }], recommendation: "grant" };
+    await writePaused(paths, record({ question: capQ, asking_stage: "spec", state: { ...pausedState(), askingStage: "spec", question: capQ } }));
+    const t = await s.tick();
+    await settle();
+    expect(t.claimed).toEqual([]);
+    expect(await listClaims(paths)).toEqual([]);
+    expect(await listPaused(paths)).toEqual([]);
+    expect(gh.calls.filter((c) => c.method === "PATCH" && c.url === "/repos/o/r/issues/7")).toEqual([expect.objectContaining({ body: expect.objectContaining({ state: "closed" }) })]);
+    expect(labelCalls(gh, 7)).toEqual(["-needs-decision"]);
+    expect(logLines(paths).filter((e) => e.event === "answered")).toEqual([expect.objectContaining({ issue: 7, question_comment_id: 500, reply_comment_id: 501, answer: "Granted." })]);
+    expect(events).toEqual([{ event: "maintainer_reply", payload: { issue: 7, question_id: 500 } }]);
+  }, 30_000);
+
   it("does not resume on a maintainer comment older than the question (review focus 1)", async () => {
     const rs = routes([waiting()], {}, { 7: [comment(499, ME, "2026-10-12T09:00:00Z", "earlier"), comment(500, BOT_LOGIN, "2026-10-12T08:00:00Z", "q")] });
     const { s, paths, gh } = await setup(rs, 1, firstStep);

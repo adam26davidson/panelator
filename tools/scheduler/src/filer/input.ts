@@ -7,14 +7,21 @@ import type {Finding,IssueData} from '../types.ts';
 export interface QueueRecord {ref:string; finding:Finding; repeat?:string; advisory_failed?:boolean; advisory_attempts?:number; [key:string]:unknown}
 export interface AbandonedRecord {ref:string;issue:IssueData;comments:unknown[];ledgers:unknown[];retries:number}
 export interface FilerInput {records:QueueRecord[];abandoned:AbandonedRecord[];open_issues:{number:number;title:string}[];cursor:number}
-export interface TriageEntry {ref:string;outcome:string;reason:string;run_id:string;at:string;issue?:number;advisory?:string;failed?:boolean;finding?:Finding;attempt?:number;held?:boolean;capability_issue?:number}
-/** Spec 014: a failed advisory is retried this many times in a row, then held and raised as a capability issue. */
+export interface TriageEntry {ref:string;outcome:string;reason:string;run_id:string;at:string;issue?:number;advisory?:string;failed?:boolean;finding?:Finding;attempt?:number;failure?:AdvisoryFailure;held?:boolean;capability_issue?:number}
+/** `permission`: GitHub refused the App (403, the missing capability); `error`: anything else (spec 014 AC-5). */
+export type AdvisoryFailure='permission'|'error';
+/** Spec 014: a failed advisory is retried this many times in a row (per failure kind), then held. */
 export const ADVISORY_ATTEMPTS=3;
-export const HOLD_MS=7*86400000;
+/** A held ref is probed at most once per this interval, one ref per batch, while it stays held (spec 014 AC-5). */
+export const PROBE_MS=86400000;
 export const BATCH=20;
 export const CAPABILITY_MARKER='<!-- panelator-capability:security-advisories -->';
-/** A failed advisory row that is not held carries the attempts so far; anything else starts again at 0 (spec 014 AC-5). */
-export const advisoryAttempts=(t:TriageEntry|undefined):number=>t&&t.outcome==='security'&&t.failed&&!t.held?(t.attempt??1):0;
+export const isFailedAdvisory=(t:TriageEntry|undefined):t is TriageEntry=>!!t&&t.outcome==='security'&&!!t.failed;
+/** Consecutive failures of `kind` so far. A held ref resumes one short of the bound, so its next failure holds it again (spec 014 AC-5). */
+export function advisoryAttempts(t:TriageEntry|undefined,kind?:AdvisoryFailure):number {
+ if(!isFailedAdvisory(t)||(kind&&(t.failure??'permission')!==kind))return 0;
+ return t.held?ADVISORY_ATTEMPTS-1:(t.attempt??1);
+}
 /** The stored cursor advanced past every consecutive settled queue ref (spec 014 AC-2, AC-4). */
 export function settledCursor(cursor:number,triage:TriageEntry[]):number {
  const settled=new Set(triage.map(t=>t.ref));let line=cursor;while(settled.has(String(line+1)))line++;return line;
@@ -26,19 +33,18 @@ export async function readJsonLines<T>(path:string):Promise<T[]> {
 export interface FilerDeps {paths:StatePaths;gh:GitHubClient;botLogin:string;now:()=>Date;classes:string[];notify:(text:string,key?:string)=>Promise<void>}
 export async function buildFilerInput(d:FilerDeps):Promise<FilerInput> {
  let cursor=0;try{cursor=JSON.parse(await readFile(d.paths.findingsCursor,'utf8')).line;}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
- const queue=await withStateLock(d.paths.findingsQueue,()=>readJsonLines<{finding:Finding}>(d.paths.findingsQueue)),triage=await readJsonLines<TriageEntry>(d.paths.findingsTriage);
+ const queue=await withStateLock(d.paths.findingsQueue,()=>readJsonLines<{finding:Finding}>(d.paths.findingsQueue)) as ({finding:Finding}|undefined)[],triage=await readJsonLines<TriageEntry>(d.paths.findingsTriage);
  const last=new Map<string,TriageEntry>();for(const t of triage)last.set(t.ref,t);
  const openBot=await d.gh.listOpenIssuesByAuthor(d.botLogin);
- // A held advisory waits for its capability issue to close, or for a week (spec 014 AC-5).
- const released=(t:TriageEntry)=>!t.held||!openBot.some(i=>i.number===t.capability_issue)||Date.parse(t.at)<=d.now().getTime()-HOLD_MS;
- const records:QueueRecord[]=[];
- for(const t of last.values()) {
-  const q=queue[Number(t.ref)-1];
-  if(records.length<BATCH&&q&&t.failed&&t.outcome==='security'&&released(t))records.push({...q,ref:t.ref,advisory_failed:true,advisory_attempts:advisoryAttempts(t)});
- }
+ const failed=[...last.values()].filter(t=>isFailedAdvisory(t)&&queue[Number(t.ref)-1]);
+ // Not held: retried every batch. Held under a capability issue that is now closed: all released (the
+ // maintainer answered, spec 014 AC-8). Otherwise held: one probe a day, oldest first (spec 014 AC-5).
+ const due=failed.filter(t=>!t.held||(t.capability_issue!==undefined&&!openBot.some(i=>i.number===t.capability_issue)));
+ const probe=failed.filter(t=>!due.includes(t)&&Date.parse(t.at)<=d.now().getTime()-PROBE_MS).sort((x,y)=>Date.parse(x.at)-Date.parse(y.at))[0];
+ const records:QueueRecord[]=[...due,...(probe?[probe]:[])].slice(0,BATCH).map(t=>({...queue[Number(t.ref)-1]!,ref:t.ref,advisory_failed:true,advisory_attempts:advisoryAttempts(t)}));
  // Each ref once: a retry is its queue record, and a settled record is never re-sent (spec 014 AC-1, AC-2).
  cursor=settledCursor(cursor,triage);
- for(let i=cursor;i<queue.length&&records.length<BATCH;i++){const ref=String(i+1);if(!last.has(ref))records.push({...queue[i],ref});}
+ for(let i=cursor;i<queue.length&&records.length<BATCH;i++){const ref=String(i+1);if(!last.has(ref))records.push({...queue[i]!,ref});}
  for(const r of records){const old=triage.find(t=>t.outcome==='discard'&&t.finding?.what===r.finding.what&&t.finding?.where===r.finding.where&&Date.parse(t.at)>d.now().getTime()-30*86400000);if(old)r.repeat=old.reason;}
  const abandoned:AbandonedRecord[]=[];
  for(const issue of await d.gh.listOpenIssuesByLabel('abandoned')) {

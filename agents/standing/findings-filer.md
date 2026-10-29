@@ -1,7 +1,7 @@
 ---
 name: findings-filer
 kind: standing
-trigger: {events: [finding_queued, issue_abandoned], schedule: 1d}
+trigger: {events: [finding_queued, issue_abandoned, maintainer_reply], schedule: 1d}
 harness: claude
 model: claude-fable-5-1
 tier: strong
@@ -40,6 +40,7 @@ rewrite (new issue supersedes it), close (why not worth doing or done elsewhere)
 Possible design flaws go to the spec stage and its question check, never directly to the
 maintainer. Do not write specs yourself. Investigate repeat discards and advisory failures.
 Each ref appears once in the batch. A record with advisory_failed is a security record whose
-advisory call failed advisory_attempts times; decide it again as usual. After three failures
-the scheduler holds it and raises the missing capability itself; never move it to a public issue.
+advisory call failed advisory_attempts times: decide it only as security or discard, never
+file, merge_into or escalate (the scheduler keeps it private whatever you return). After three
+failures the scheduler holds it and raises the missing permission as a capability issue itself.
 Write JSON {summary, decisions, findings?} to {{result_path}}.

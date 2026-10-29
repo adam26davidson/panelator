@@ -100,36 +100,90 @@ it('moves the cursor past the applied part of a batch aborted half way (AC-4)',a
  expect(JSON.parse(await readFile(paths.findingsCursor,'utf8')).line).toBe(1);
  expect((await buildFilerInput(d)).records.map(r=>r.ref)).toEqual(['2','3']);
 });
-it('holds an advisory after three failures and raises one content-free capability issue (AC-5, AC-6)',async()=>{
- const {d,paths,gh,notify}=await setup();d.classes=['class:bug','class:tooling'];
- const secret={...finding,what:'Token leaks in logs',evidence:'secret-evidence',security:true};await queue(paths,[secret,{...secret,what:'Second leak'}]);
- gh.createDraftSecurityAdvisory.mockRejectedValue(new Error('Resource not accessible by integration'));
- let at=new Date('2026-10-27T00:00:00Z');d.now=()=>at;
- const advisory={title:'Secret title',description:'Secret description',severity:'high' as const};
- const run=async(i:number)=>{const input=await buildFilerInput(d);await applyFilerResult(d,`run-${i}`,input,{summary:'s',decisions:input.records.map(r=>({ref:r.ref,outcome:'security' as const,reason:'private',advisory}))});return input;};
- const first=await run(0);expect(first.records.map(r=>r.ref)).toEqual(['1','2']);
+const denied=(extra='')=>Object.assign(new Error(`Resource not accessible by integration${extra}`),{status:403});
+const advisory={title:'Secret title',description:'Secret description',severity:'high' as const};
+const secret={...finding,what:'Token leaks in logs',evidence:'secret-evidence',security:true};
+async function securitySetup(findings:object[]){
+ const x=await setup();x.d.classes=['class:bug','class:tooling'];await queue(x.paths,findings);
+ let at=new Date('2026-10-27T00:00:00Z');x.d.now=()=>at;
+ const clock={plus:(ms:number)=>{at=new Date(at.getTime()+ms);}};
+ const run=async(i:number|string,outcome:Decision['outcome']='security')=>{const input=await buildFilerInput(x.d);await applyFilerResult(x.d,`run-${i}`,input,{summary:'s',decisions:input.records.map(r=>({ref:r.ref,outcome,reason:'private',advisory,issue,issue_number:4,question:{kind:'technical' as const,question:'q?',options:[{label:'a',cost:'b'}],recommendation:'a'}}))});return input;};
+ return {...x,clock,run};
+}
+it.each(['file','merge_into','escalate'] as const)('a retried advisory stays private when the filer now says %s (review 1)',async(outcome)=>{
+ // The model judged it security without the queue flag; its advisory failed once.
+ const {paths,gh,run}=await securitySetup([finding]);
+ await appendFile(paths.findingsTriage,row('1',{outcome:'security',failed:true,attempt:1,failure:'permission'}));
+ gh.listOpenIssuesByAuthor.mockResolvedValue([{number:4,title:'t',labels:[]}] as never);
+ const input=await run(0,outcome);expect(input.records[0]).toMatchObject({ref:'1',advisory_failed:true});
+ expect(gh.createIssue).not.toHaveBeenCalled();expect(gh.comment).not.toHaveBeenCalled();expect(gh.createDraftSecurityAdvisory).toHaveBeenCalledTimes(1);
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1)).toMatchObject({ref:'1',outcome:'security',advisory:'GHSA-private'});
+});
+it('holds a permission failure after three attempts and raises one content-free capability issue (AC-5, AC-6)',async()=>{
+ const {paths,gh,notify,run}=await securitySetup([secret,{...secret,what:'Second leak'}]);
+ // A 403 whose message echoes payload text: only the status and a fixed phrase may go public (review 3).
+ gh.createDraftSecurityAdvisory.mockRejectedValue(denied(': Secret title'));
+ expect((await run(0)).records.map(r=>r.ref)).toEqual(['1','2']);
  expect((await run(1)).records.map(r=>[r.ref,r.advisory_attempts])).toEqual([['1',1],['2',1]]);
  expect(gh.createIssue).not.toHaveBeenCalled();
- // The first hold files the capability issue; the second finds it by its marker.
- gh.searchOpenIssuesByMarker.mockImplementation(async()=>gh.createIssue.mock.calls.length&&!gh.closeIssue.mock.calls.length?[{number:42,author:'bot',body:'<!-- panelator-capability:security-advisories -->'}] as never:[]);
+ // The listing stays empty: the issue created for ref 1 is remembered for ref 2 in the same batch (review 4).
+ gh.searchOpenIssuesByMarker.mockResolvedValue([]);
  await run(2);
  const triage=await readJsonLines<TriageEntry>(paths.findingsTriage);
  expect(triage.slice(-2)).toEqual([expect.objectContaining({ref:'1',failed:true,attempt:3,held:true,capability_issue:42}),expect.objectContaining({ref:'2',held:true,capability_issue:42})]);
  expect(gh.createIssue).toHaveBeenCalledTimes(1);
  const [title,body,labels]=gh.createIssue.mock.calls[0];
- expect(labels).toEqual(['class:tooling','validated']);expect(body).toContain('<!-- panelator-capability:security-advisories -->');expect(body).toMatch(/kind `capability`/);expect(body).toContain('Resource not accessible by integration');
+ expect(labels).toEqual(['class:tooling','validated']);expect(body).toContain('<!-- panelator-capability:security-advisories -->');expect(body).toMatch(/kind `capability`/);expect(body).toContain('HTTP 403');
  for(const text of ['Token leaks','Second leak','secret-evidence','Secret title','Secret description'])expect(title+body).not.toContain(text);
- expect(notify.mock.calls.filter(c=>String((c as unknown[])[0]).includes('held'))).toHaveLength(2);
- // While the capability issue is open and the hold is fresh, the refs are not offered.
+ const held=notify.mock.calls.map(c=>String((c as unknown[])[0])).filter(t=>t.includes('held'));
+ expect(held).toHaveLength(2);expect(held[0]).toContain('Secret title');
+});
+it('holds other advisory errors privately, with no capability issue (review 3)',async()=>{
+ const {paths,gh,notify,run}=await securitySetup([secret]);
+ gh.createDraftSecurityAdvisory.mockRejectedValueOnce(denied()).mockRejectedValue(Object.assign(new Error('Validation failed: Secret title'),{status:422}));
+ // A permission failure does not count toward an error streak: three more are needed.
+ for(let i=0;i<3;i++)await run(i);
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1)).toMatchObject({ref:'1',attempt:2,failure:'error'});
+ await run(3);
+ const last=(await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1);
+ expect(last).toMatchObject({ref:'1',attempt:3,held:true,failure:'error'});expect(last?.capability_issue).toBeUndefined();
+ expect(gh.createIssue).not.toHaveBeenCalled();
+ expect(String((notify.mock.calls.at(-1) as unknown[]|undefined)?.[0])).toMatch(/held.*Secret title/);
+});
+it('probes one held ref a day while the capability issue is open, re-holding on the first failure (review 2, 5)',async()=>{
+ const {d,paths,gh,notify,clock,run}=await securitySetup([secret,{...secret,what:'Second leak'}]);
+ gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
+ for(let i=0;i<3;i++)await run(i);
  gh.listOpenIssuesByAuthor.mockResolvedValue([{number:42,title:'cap',labels:[]}] as never);
+ gh.searchOpenIssuesByMarker.mockResolvedValue([{number:42,author:'bot',body:'<!-- panelator-capability:security-advisories -->'}] as never);
  expect((await buildFilerInput(d)).records).toEqual([]);
- at=new Date(at.getTime()+8*86400000);
- expect((await buildFilerInput(d)).records.map(r=>[r.ref,r.advisory_attempts])).toEqual([['1',0],['2',0]]);
- at=new Date(at.getTime()-8*86400000);gh.listOpenIssuesByAuthor.mockResolvedValue([]);
- const released=await buildFilerInput(d);expect(released.records.map(r=>r.ref)).toEqual(['1','2']);
- // A success while the issue is open closes it.
- gh.createDraftSecurityAdvisory.mockResolvedValue('GHSA-ok');
- await applyFilerResult(d,'run-ok',released,{summary:'s',decisions:released.records.map(r=>({ref:r.ref,outcome:'security' as const,reason:'private',advisory}))});
- expect(gh.closeIssue).toHaveBeenCalledTimes(1);expect(gh.closeIssue.mock.calls[0]).toEqual([42,expect.stringMatching(/advisor/i)]);
+ clock.plus(25*3600000);
+ const probe=await buildFilerInput(d);expect(probe.records.map(r=>[r.ref,r.advisory_attempts])).toEqual([['1',2]]);
+ const notes=notify.mock.calls.length;
+ await applyFilerResult(d,'probe',probe,{summary:'s',decisions:[{ref:'1',outcome:'security',reason:'private',advisory}]});
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1)).toMatchObject({ref:'1',attempt:3,held:true,capability_issue:42});
+ expect(gh.createIssue).toHaveBeenCalledTimes(1);expect(notify.mock.calls.length).toBe(notes);
+ // The next probe is the other ref; once the issue closes, every held ref is offered, each re-held by one failure.
+ expect((await buildFilerInput(d)).records.map(r=>r.ref)).toEqual(['2']);
+ gh.listOpenIssuesByAuthor.mockResolvedValue([]);
+ expect((await buildFilerInput(d)).records.map(r=>[r.ref,r.advisory_attempts])).toEqual([['1',2],['2',2]]);
+ // A probe that succeeds closes the capability issue once, listing it once per batch (review 6).
+ gh.createDraftSecurityAdvisory.mockResolvedValue('GHSA-ok');gh.searchOpenIssuesByMarker.mockClear();
+ await run('ok');
+ expect(gh.searchOpenIssuesByMarker).toHaveBeenCalledTimes(1);expect(gh.closeIssue).toHaveBeenCalledTimes(1);expect(gh.closeIssue.mock.calls[0]).toEqual([42,expect.stringMatching(/advisor/i)]);
  expect((await buildFilerInput(d)).records).toEqual([]);
+});
+it('a successful advisory with no held row does not list issues (review 6)',async()=>{
+ const {gh,run}=await securitySetup([secret]);
+ await run(0);expect(gh.createDraftSecurityAdvisory).toHaveBeenCalledTimes(1);expect(gh.searchOpenIssuesByMarker).not.toHaveBeenCalled();
+});
+it('the last held ref succeeding still closes the capability issue (review 6)',async()=>{
+ const {gh,clock,run}=await securitySetup([secret]);
+ gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
+ for(let i=0;i<3;i++)await run(i);
+ gh.listOpenIssuesByAuthor.mockResolvedValue([{number:42,title:'cap',labels:[]}] as never);
+ gh.searchOpenIssuesByMarker.mockResolvedValue([{number:42,author:'bot',body:'<!-- panelator-capability:security-advisories -->'}] as never);
+ clock.plus(25*3600000);gh.createDraftSecurityAdvisory.mockResolvedValue('GHSA-ok');
+ expect((await run('probe')).records.map(r=>r.ref)).toEqual(['1']);
+ expect(gh.closeIssue).toHaveBeenCalledWith(42,expect.stringMatching(/advisor/i));
 });
