@@ -2,6 +2,7 @@ import { readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { normalizeChainState } from "../chain/machine.ts";
 import type { Action, ChainEvent, ChainState } from "../chain/types.ts";
+import type { AgentStageName } from "../types.ts";
 import { validate } from "../schema/validate.ts";
 import type { StatePaths } from "./paths.ts";
 
@@ -21,6 +22,36 @@ export interface Claim {
    */
   pendingEvent?: Extract<ChainEvent, { type: "answered" } | { type: "chain_error" }>;
   pendingActions?: Action[];
+  /**
+   * Spec 015 AC-10: a stage run that ended `ok`, recorded before its result is checked, so a step that throws after the
+   * run checks the result again instead of running the stage again. Every transition clears it.
+   */
+  stageRun?: StageRunRecord;
+  /** Spec 015 AC-5: the claim's consecutive transient failures; the chain is not started again before `retry_at`. */
+  outage?: Outage;
+}
+
+export interface StageRunRecord {
+  stage: AgentStageName;
+  attempt: number;
+  run_id: string;
+  result: unknown;
+  /** The worktree's HEAD when the run started (TI1). */
+  start: string;
+  security: boolean;
+  sensitive: boolean;
+  /** Spec 011 AC-1: the held work this run's question already saved (its patch) and logged, so a recheck does neither again. */
+  held?: { head: string; patch: string | null };
+}
+
+export interface Outage {
+  since: string;
+  count: number;
+  last: string;
+  retry_at: string;
+  alarmed: boolean;
+  /** Spec 015 AC-13: the outage passed its ceiling; its failures count as genuine. */
+  ceiling?: boolean;
 }
 
 /** Pre-006 claims carry `securityFinding` and lack the new fields; fill them on read. */

@@ -148,6 +148,16 @@ export async function syncToRemote(worktree: string, remoteBranch: string): Prom
   return { moved: true, dropped: fastForward ? null : head };
 }
 
+/**
+ * Spec 015 AC-3: whether `dropped` carries nothing of its own beyond `remote`: every commit reachable from it and from
+ * neither `remote` nor `base` is, change for change (`git patch-id`), one of the remote's commits not on `base`. True for
+ * the remote head rebased onto base, which the driver's rebase makes before review and fix; a merge commit is never one.
+ */
+export async function onlyRebased(worktree: string, dropped: string, remote: string, base = "origin/main"): Promise<boolean> {
+  const own = (await git(worktree, "rev-list", "--right-only", "--cherry-pick", `${remote}...${dropped}`, `^${base}`)).stdout.trim();
+  return own === "";
+}
+
 export async function removeWorktree(repo: string, path: string): Promise<void> {
   try {
     await git(repo, "worktree", "remove", "--force", path);

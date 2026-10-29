@@ -628,6 +628,44 @@
           ]
         }
       }
+    },
+    "stageRun": {
+      "description": "Spec 015 AC-10: a stage run that ended ok, recorded before its result is checked.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "attempt", "run_id", "result", "start", "security", "sensitive"],
+      "properties": {
+        "stage": { "enum": ["plan", "implement", "review", "fix", "spec", "question-check"] },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "run_id": { "type": "string", "minLength": 1 },
+        "result": {},
+        "start": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "security": { "type": "boolean" },
+        "sensitive": { "type": "boolean" },
+        "held": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["head", "patch"],
+          "properties": {
+            "head": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "patch": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "outage": {
+      "description": "Spec 015 AC-5: the claim's consecutive transient failures.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["since", "count", "last", "retry_at", "alarmed"],
+      "properties": {
+        "since": { "type": "string", "format": "date-time" },
+        "count": { "type": "integer", "minimum": 1 },
+        "last": { "type": "string" },
+        "retry_at": { "type": "string", "format": "date-time" },
+        "alarmed": { "type": "boolean" },
+        "ceiling": { "type": "boolean" }
+      }
     }
   }
 }

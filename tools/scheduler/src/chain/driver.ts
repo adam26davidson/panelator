@@ -18,7 +18,7 @@ import type { ParameterStore } from "../parameters/store.ts";
 import { modelLimitFallback, planLaunch, quotaParams, readBook, waitAfterLimit } from "../quota/book.ts";
 import { runStage, type StageOutcome } from "../runner/run.ts";
 import {
-  checkoutBranch, commitsPatch, deleteLocalBranch, diffFilesAgainstBase, discardUncommitted, rebaseOntoMain, removeWorktree, syncToRemote, uncommittedPatch,
+  checkoutBranch, commitsPatch, deleteLocalBranch, diffFilesAgainstBase, discardUncommitted, onlyRebased, rebaseOntoMain, removeWorktree, syncToRemote, uncommittedPatch,
 } from "../runner/worktree.ts";
 import { buildSelectContext } from "../shortlist/fetch.ts";
 import { specPathFromIssueBody } from "../spec/link.ts";
@@ -372,12 +372,18 @@ async function openPrsFrom(deps: DriverDeps, issue: number, branch: string): Pro
  */
 async function holdWork(deps: DriverDeps, claim: Claim, stage: Exclude<AgentStageName, "question-check" | "review">): Promise<string> {
   const head = await worktreeHead(claim.worktree);
+  // Spec 015 AC-10: a recorded run checked again after a throw already saved and logged this head's held work.
+  if (claim.stageRun?.held?.head === head) return head;
   const branch = branchOf(claim.state);
   const commits = await commitsPatch(claim.worktree, "origin/main");
   const patch = commits.trim() ? await savePatch(deps.paths, claim.issue, commits, deps.now(), "held") : null;
   const pushed = await pushedBranch(claim.worktree, branch);
   const prs = await openPrsFrom(deps, claim.issue, branch);
   deps.log({ kind: "held-work", issue: claim.issue, stage, branch, head, pushed, prs, patch });
+  if (claim.stageRun) {
+    claim.stageRun = { ...claim.stageRun, held: { head, patch } };
+    await writeClaim(deps.paths, { ...claim, last_activity_at: deps.now().toISOString() });
+  }
   return head;
 }
 
@@ -473,10 +479,16 @@ async function syncWorktree(deps: DriverDeps, claim: Claim): Promise<void> {
   // A held head that builds on the remote head is ahead of it, so the sync keeps it (R1); one the remote diverged from is dropped.
   const sync = await syncToRemote(claim.worktree, remoteBranch);
   if (sync.moved) {
-    // The dropped head is still in the object store after the reset; a head already on main carries no work of its own.
-    const own = sync.dropped !== null && !(await isAncestor(claim.worktree, sync.dropped, "origin/main"));
-    const saved = own ? await savePatch(deps.paths, claim.issue, await commitsPatch(claim.worktree, remoteBranch, sync.dropped!), deps.now(), "dropped") : null;
-    deps.log({ kind: "worktree-synced", issue: claim.issue, pr: claim.state.pr.number, dropped: sync.dropped, patch: saved });
+    if (sync.dropped === null) {
+      deps.log({ kind: "worktree-synced", issue: claim.issue, pr: claim.state.pr.number, dropped: null, patch: null });
+    } else {
+      // Spec 015 AC-3: the remote head rebased (the driver's own rebase, never pushed) carries no work of its own.
+      const rebased = await onlyRebased(claim.worktree, sync.dropped, remoteBranch, "origin/main");
+      // The dropped head is still in the object store after the reset; a head already on main carries no work of its own.
+      const own = !rebased && !(await isAncestor(claim.worktree, sync.dropped, "origin/main"));
+      const saved = own ? await savePatch(deps.paths, claim.issue, await commitsPatch(claim.worktree, remoteBranch, sync.dropped), deps.now(), "dropped") : null;
+      deps.log({ kind: "worktree-synced", issue: claim.issue, pr: claim.state.pr.number, dropped: sync.dropped, patch: saved, rebased });
+    }
   }
   await settleHeldOnPr(deps, claim, branch);
 }
@@ -532,6 +544,19 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   if(state.resumeSession&&state.resumeSession.harness!==def.harness)deps.log({kind:'resume-fresh',issue:claim.issue,reason:'harness changed'});
   const sensitiveGlobs = readSensitiveGlobs(deps.agentsDir);
 
+  // Spec 015 AC-10: a run that finished before the step threw is checked again, not run again.
+  const kept = claim.stageRun;
+  if (kept) {
+    if (kept.stage === stage && kept.attempt === state.attempt && !state.conversation) {
+      deps.log({ kind: "stage-result-kept", issue: claim.issue, stage, run_id: kept.run_id });
+      const issue = await fetchIssue(deps, claim.issue);
+      const specText = specOnMain(deps.repoDir, specPathFromIssueBody(issue.body));
+      return stageEvent(deps, claim, stage, kept.result, { issueBody: issue.body, specText, sensitiveGlobs, start: kept.start, security: kept.security, sensitive: kept.sensitive });
+    }
+    // Another stage's or attempt's: the next claim write drops it.
+    delete claim.stageRun;
+  }
+
   // Spec 013 AC-6, AC-8, AC-9: the quota book decides, before the worktree is touched, whether the stage starts now
   // and on which model. A resumed session or conversation keeps its model and meets a limit as a 429.
   const quota = await quotaParams(deps.parameters);
@@ -556,23 +581,39 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
     }
   }
   const postponed = async (reason: string): Promise<ChainEvent> => {
+    // Spec 015 AC-1: a postponed run leaves no unpushed rebase behind.
+    await undoRebase();
     const until = await waitAfterLimit(deps.paths, primaryHarness, primaryModel, deps.now());
     return { type: "stage_failed", stage, reason, postpone: true, until };
   };
 
   if(!state.conversation&&!state.resumeSession)await syncWorktree(deps, claim);
+  // Spec 015 AC-1: the head before the driver's own rebase, to go back to when the run ends without a result.
+  let beforeRebase: string | null = null;
   // The spec stage and the question check work from origin/main and are never rebased (spec section 4).
   // Spec 011: held work on the PR's branch is not rebased: the rewritten commits would be unpushed and diverged, and
   // the next preparation would drop them. The resumed stage pushes it; a later stage rebases.
   const heldOnPr = claim.state.heldWork !== null && claim.state.heldWork.branch === branchOf(claim.state);
   if (!state.conversation&&!state.resumeSession&&stage !== "spec" && stage !== "question-check" && state.pr !== null && !state.conflictPending && !heldOnPr) {
+    const before = await worktreeHead(claim.worktree);
     const rebase = await rebaseOntoMain(claim.worktree, "origin/main", botIdentity(deps));
     if (!rebase.ok) return { type: "rebase_conflict", detail: rebase.conflict };
+    if (rebase.moved) beforeRebase = before;
   }
   // C1: with a conflict pending the fix stage rebases and resolves it itself (its input says so).
 
   // TI1: where this run starts; a recording run's marks must be in what it adds after this commit.
   const start = await worktreeHead(claim.worktree);
+  /**
+   * Spec 015 AC-1: a run that ends without a result and left the rebased head as it was (no commit, a clean tree) gets the
+   * rebase undone: it was never pushed, and the next preparation's sync would otherwise drop it as diverged work.
+   */
+  const undoRebase = async (): Promise<void> => {
+    if (beforeRebase === null) return;
+    if ((await worktreeHead(claim.worktree)) !== start || (await uncommittedPatch(claim.worktree)).trim()) return;
+    await gitOut(claim.worktree, "reset", "-q", "--hard", beforeRebase);
+    deps.log({ kind: "rebase-undone", issue: claim.issue, stage, from: start, to: beforeRebase });
+  };
   const issue = await fetchIssue(deps, claim.issue);
   const specPath = specPathFromIssueBody(issue.body);
   const specText = specOnMain(deps.repoDir, specPath);
@@ -660,29 +701,43 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
       }
     }
   }
-  if (out.outcome !== "ok") return { type: "stage_failed", stage, reason: out.reason ?? out.outcome };
+  if (out.outcome !== "ok") {
+    await undoRebase();
+    return { type: "stage_failed", stage, reason: out.reason ?? out.outcome };
+  }
 
+  // Spec 015 AC-10: on disk before the result is checked, so a throw from here on checks it again rather than running again.
+  claim.stageRun = { stage, attempt, run_id: out.runId, result: out.result, start, security, sensitive };
+  await writeClaim(deps.paths, { ...claim, last_activity_at: deps.now().toISOString() });
+  return stageEvent(deps, claim, stage, out.result, { issueBody: issue.body, specText, sensitiveGlobs, start, security, sensitive });
+}
+
+interface StageContext { issueBody: string; specText: string; sensitiveGlobs: string[]; start: string; security: boolean; sensitive: boolean }
+
+/** The event of a stage run that ended `ok`, after the checks on its result (the PR binding, the scope gates). */
+async function stageEvent(deps: DriverDeps, claim: Claim, stage: AgentStageName, result: unknown, ctx: StageContext): Promise<ChainEvent> {
+  const { issueBody, specText, sensitiveGlobs, start, security, sensitive } = ctx;
   switch (stage) {
     case "plan": {
-      const result = out.result as PlanOutcome;
+      const plan = result as PlanOutcome;
       // AC-17, review focus 9: a plan that escalates skips the domain-profile check.
-      if (!("escalation" in result && result.escalation)) {
+      if (!("escalation" in plan && plan.escalation)) {
         // I4: a domain with no profile fails the plan rather than running under another profile.
-        const domain = (result as { domain: string }).domain;
+        const domain = (plan as { domain: string }).domain;
         if (!listProfiles(deps.agentsDir).includes(domain)) return { type: "stage_failed", stage: "plan", reason: `profile not available: ${domain}` };
       }
-      if ("escalation" in result && result.escalation) return { type: "stage_ok", stage: "plan", result, head: await holdWork(deps, claim, "plan") };
-      return { type: "stage_ok", stage: "plan", result };
+      if ("escalation" in plan && plan.escalation) return { type: "stage_ok", stage: "plan", result: plan, head: await holdWork(deps, claim, "plan") };
+      return { type: "stage_ok", stage: "plan", result: plan };
     }
     case "review":
-      return { type: "stage_ok", stage: "review", result: out.result as never, security, sensitive };
+      return { type: "stage_ok", stage: "review", result: result as never, security, sensitive };
     case "question-check":
-      return { type: "stage_ok", stage: "question-check", result: out.result as never };
+      return { type: "stage_ok", stage: "question-check", result: result as never };
     case "spec":
-      return specEvent(deps, claim, issue.body, out.result as SpecResult, start);
+      return specEvent(deps, claim, issueBody, result as SpecResult, start);
     case "implement":
     case "fix":
-      return codeEvent(deps, claim, stage, out.result as ImplementOutcome | FixOutcome, issue.body, specText, sensitiveGlobs, start);
+      return codeEvent(deps, claim, stage, result as ImplementOutcome | FixOutcome, issueBody, specText, sensitiveGlobs, start);
   }
 }
 
@@ -1052,7 +1107,9 @@ export async function step(deps: DriverDeps, claim: Claim): Promise<{ claim: Cla
   // Tm3: a transition that went through is progress: the count of consecutive chain errors starts again.
   const state = next.state.chainFailures === null ? next.state : { ...next.state, chainFailures: null };
   const actions = next.actions;
-  claim = { ...claim, state, last_activity_at: deps.now().toISOString() };
+  // Spec 015 AC-10: the recorded run is the event's now.
+  const { stageRun: _applied, ...rest } = claim;
+  claim = { ...rest, state, last_activity_at: deps.now().toISOString() };
   // AC-7: the ledger is written whenever a counter or the history changes, before any action.
   if (JSON.stringify(ledgerOf(before)) !== JSON.stringify(ledgerOf(state))) await writeLedger(deps.paths, claim.issue, ledgerOf(state));
   await logQuestion(deps, before, state, event);
