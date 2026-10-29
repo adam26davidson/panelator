@@ -4,7 +4,8 @@ import {withStateLock} from '../parameters/store.ts';
 import type {StatePaths} from '../state/paths.ts';
 import type {GitHubClient} from '../github/client.ts';
 import type {Finding,IssueData} from '../types.ts';
-export interface QueueRecord {ref:string; finding:Finding; repeat?:string; advisory_failed?:boolean; advisory_attempts?:number; [key:string]:unknown}
+/** `duplicate_refs`: later unsettled records identical to this one; its decision settles them too (spec 019 AC-1, AC-2). */
+export interface QueueRecord {ref:string; finding:Finding; repeat?:string; advisory_failed?:boolean; advisory_attempts?:number; duplicate_refs?:string[]; [key:string]:unknown}
 export interface AbandonedRecord {ref:string;issue:IssueData;comments:unknown[];ledgers:unknown[];retries:number}
 /** `issue_classes`: the exact class labels an issue decision may carry, so the model need not guess them (spec 018 AC-1). */
 export interface FilerInput {records:QueueRecord[];abandoned:AbandonedRecord[];open_issues:{number:number;title:string}[];cursor:number;issue_classes:string[]}
@@ -33,6 +34,12 @@ export function advisoryAttempts(t:TriageEntry|undefined):number {
 export function settledCursor(cursor:number,triage:TriageEntry[]):number {
  const settled=new Set(triage.map(t=>t.ref));let line=cursor;while(settled.has(String(line+1)))line++;return line;
 }
+/** What makes two queue records the same record: every field but the producing run and its time (spec 019 AC-1). */
+export function recordKey(q:Record<string,unknown>):string {
+ const canon=(v:unknown):unknown=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canon((v as Record<string,unknown>)[k])])):Array.isArray(v)?v.map(canon):v;
+ const rest={...q};for(const k of ['ref','run_id','timestamp','repeat','advisory_failed','advisory_attempts','duplicate_refs'])delete rest[k];
+ return JSON.stringify(canon(rest));
+}
 export async function readJsonLines<T>(path:string):Promise<T[]> {
  let text:string;try{text=await readFile(path,'utf8');}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return [];throw e;}
  return text.split('\n').filter(Boolean).map(l=>JSON.parse(l) as T);
@@ -51,7 +58,18 @@ export async function buildFilerInput(d:FilerDeps):Promise<FilerInput> {
  const records:QueueRecord[]=[...due,...(probe?[probe]:[])].slice(0,BATCH).map(t=>({...queue[Number(t.ref)-1]!,ref:t.ref,advisory_failed:true,advisory_attempts:advisoryAttempts(t)}));
  // Each ref once: a retry is its queue record, and a settled record is never re-sent (spec 014 AC-1, AC-2).
  cursor=settledCursor(cursor,triage);
- for(let i=cursor;i<queue.length&&records.length<BATCH;i++){const ref=String(i+1);if(!last.has(ref))records.push({...queue[i]!,ref});}
+ // Identical unsettled records, anywhere after the cursor, ride on the first entry of their kind instead of taking
+ // batch places of their own, so one investigation settles every copy (spec 019 AC-1). Copies of a failed advisory
+ // not in this batch (held, not probed today) wait for it: as entries of their own they would lose its privacy.
+ const byKey=new Map<string,QueueRecord|null>();for(const r of records)if(!byKey.has(recordKey(r)))byKey.set(recordKey(r),r);
+ for(const t of failed){const key=recordKey(queue[Number(t.ref)-1] as Record<string,unknown>);if(!byKey.has(key))byKey.set(key,null);}
+ for(let i=cursor;i<queue.length;i++) {
+  const ref=String(i+1);if(last.has(ref)||!queue[i])continue;
+  const key=recordKey(queue[i] as Record<string,unknown>),same=byKey.get(key);
+  if(same)(same.duplicate_refs??=[]).push(ref);
+  else if(same===null)continue;
+  else if(records.length<BATCH){const r={...queue[i]!,ref};records.push(r);byKey.set(key,r);}
+ }
  for(const r of records){const old=triage.find(t=>t.outcome==='discard'&&t.finding?.what===r.finding.what&&t.finding?.where===r.finding.where&&Date.parse(t.at)>d.now().getTime()-30*86400000);if(old)r.repeat=old.reason;}
  const abandoned:AbandonedRecord[]=[];
  for(const issue of await d.gh.listOpenIssuesByLabel('abandoned')) {

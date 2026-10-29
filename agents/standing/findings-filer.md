@@ -40,7 +40,9 @@ rewrite (new issue supersedes it), close (why not worth doing or done elsewhere)
 (possible design flaw as above) or defer (reason; offered again after seven days).
 Possible design flaws go to the spec stage and its question check, never directly to the
 maintainer. Do not write specs yourself. Investigate repeat discards and advisory failures.
-Each ref appears once in the batch. A record with advisory_failed is a security record whose
+Each ref appears once in the batch. A record with duplicate_refs stands for those later queue
+records, identical to it but for run and time; its one decision settles them all. A record
+with advisory_failed is a security record whose
 advisory call failed advisory_attempts times: decide it only as security or discard, never
 file, merge_into or escalate (the scheduler keeps it private whatever you return). After three
 failures the scheduler holds it and raises the missing permission as a capability issue itself.
