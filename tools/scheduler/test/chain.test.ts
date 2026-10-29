@@ -1031,7 +1031,7 @@ describe("chain: repeated chain errors (final review C7)", () => {
     const s = at("implement", { plan, chainFailures: { count: 3, last: "boom (at)x" } });
     const r = transition(s, { type: "chain_error", error: "GitHub said @someone 500" });
     expect(r.state).toMatchObject({ stage: "released", chainErrors: 1, chainFailures: null });
-    expect(r.state.history.at(-1)).toBe("chain error in implement: GitHub said @someone 500");
+    expect(r.state.history.at(-1)).toBe("chain error in implement (counted): GitHub said @someone 500");
     expect(types(r.actions)).toEqual(["comment", "label", "finding", "notify", "release"]);
     const comment = r.actions[0] as Extract<Action, { type: "comment" }>;
     expect(comment.text).toContain("GitHub said (at)someone 500");

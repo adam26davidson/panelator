@@ -587,7 +587,8 @@ export function stuckOf(s: ChainState): Stuck {
 
 /** C7: the driver failed on this chain again and again. The first time the claim is released with the error; after that the issue is abandoned. */
 function chainError(state: ChainState, error: string): Step {
-  const s = note({ ...state, chainFailures: null }, `chain error in ${state.stage}: ${error}`);
+  // Spec 015 AC-11: "(counted)" marks a release recorded since spec 015 (genuine, or past the outage ceiling), never forgiven.
+  const s = note({ ...state, chainFailures: null }, `chain error in ${state.stage} (counted): ${error}`);
   if (s.chainErrors >= MAX_CHAIN_ERRORS) return abandon(s, stuckOf(s));
   const shown = clip(error).replaceAll("@", "(at)");
   const text = [

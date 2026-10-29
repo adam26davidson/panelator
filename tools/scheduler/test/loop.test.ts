@@ -257,7 +257,7 @@ describe("Scheduler.tick", () => {
     expect(readFileSync(paths.findingsQueue, "utf8")).toContain("chain released after repeated scheduler errors");
     const ledger = JSON.parse(readFileSync(join(paths.escalations, "7.json"), "utf8"));
     expect(ledger).toMatchObject({ chainErrors: 1, chainFailures: null });
-    expect(ledger.history.at(-1)).toBe("chain error in verify: boom");
+    expect(ledger.history.at(-1)).toBe("chain error in verify (counted): boom");
   }, 30_000);
 
   it("keeps the failure count across a restart: a new Scheduler reads it from the claim (C7)", async () => {
@@ -582,8 +582,11 @@ const dns =() => Object.assign(new Error("getaddrinfo EAI_AGAIN api.github.com")
 const serviceRecords = (paths: { serviceLog: string }) => readFileSync(paths.serviceLog, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
 
 describe("Scheduler.tick: transient failures (spec 015)", () => {
-  async function outageSetup(drive: Drive) {
-    const t = await setup(routes([]), 1, drive);
+  async function outageSetup(drive: Drive, listed: () => unknown[] = () => []) {
+    const rs = routes([]).map((r) =>
+      String(r.path) === String(/^\/repos\/o\/r\/issues$/) ? { ...r, reply: (_m: RegExpExecArray, _b: unknown, url: URL) => ({ body: listed(), headers: pageLink(url, 1, 1) }) }
+        : String(r.path) === String(/^\/graphql$/) ? { ...r, reply: () => ({ body: { data: { repository: { issues: { totalCount: listed().length } } } } }) } : r);
+    const t = await setup(rs, 1, drive);
     const events: { event: string; payload: unknown }[] = [];
     t.deps.emitEvent = async (event, payload) => { events.push({ event, payload }); };
     await writeClaim(t.paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "verify" }, worktree: join(t.pair.worktrees, "issue-7"), started_at: t.deps.now().toISOString(), last_activity_at: t.deps.now().toISOString(), run_id: null });
@@ -671,16 +674,29 @@ describe("Scheduler.tick: transient failures (spec 015)", () => {
   }, 60_000);
 
   it("counts the failures of an outage past its 24-hour ceiling as genuine, with one finding, and then releases with chain_error (AC-13)", async () => {
-    const t = await outageSetup(async () => { throw dns(); });
+    let open = false;
+    const t = await outageSetup(async () => { throw dns(); }, () => (open ? [issue(7)] : []));
     const c0 = await t.claim();
     const since = new Date(t.deps.now().getTime() - 25 * 3600_000).toISOString();
     await writeClaim(t.paths, { ...c0, outage: { since, count: 40, last: "getaddrinfo EAI_AGAIN api.github.com", retry_at: since, alarmed: true } });
+    const LAST = "outage past ceiling: getaddrinfo EAI_AGAIN api.github.com";
+    // A laptop asleep for a day is not a day of failures: the first failures past the ceiling, until there are three
+    // spanning at least 30 minutes, still count nothing.
+    for (let i = 1; i <= 2; i++) {
+      await t.s.tick();
+      await settle();
+      const c = await t.claim();
+      expect(c.state.chainFailures).toBeNull();
+      expect(c.outage).toMatchObject({ since, count: 40 + i, past_ceiling: { failures: i } });
+      expect(c.outage?.ceiling).toBeFalsy();
+      t.advance(1800);
+    }
     for (let i = 1; i <= MAX_CHAIN_FAILURES; i++) {
       expect((await t.s.tick()).released).toEqual([]);
       await settle();
       const c = await t.claim();
-      expect(c.state.chainFailures).toEqual({ count: i, last: "getaddrinfo EAI_AGAIN api.github.com" });
-      expect(c.outage).toMatchObject({ since, count: 40 + i, ceiling: true });
+      expect(c.state.chainFailures).toEqual({ count: i, last: LAST });
+      expect(c.outage).toMatchObject({ since, count: 42 + i, ceiling: true });
       t.advance(1800);
     }
     expect(JSON.parse(readFileSync(join(t.paths.escalations, "7.json"), "utf8")).chainFailures.count).toBe(MAX_CHAIN_FAILURES);
@@ -688,7 +704,35 @@ describe("Scheduler.tick: transient failures (spec 015)", () => {
     const findings = readFileSync(t.paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(findings.filter((f) => f.finding.what === "network outage outlasted the retry ceiling")).toHaveLength(1);
     expect((await t.s.tick()).released).toEqual([7]);
+    await settle();
     expect(serviceRecords(t.paths).filter((r) => r.kind === "chain-error")).toHaveLength(1);
+    const ledger = JSON.parse(readFileSync(join(t.paths.escalations, "7.json"), "utf8"));
+    expect(ledger.chainErrors).toBe(1);
+    expect(ledger.history.at(-1)).toBe(`chain error in verify (counted): ${LAST}`);
+    // Claimed again: the release past the ceiling is not forgiven, so the next one abandons the issue.
+    open = true;
+    const reclaim = await t.s.tick();
+    await settle();
+    expect(reclaim).toMatchObject({ claimed: [7] });
+    const again = (await listClaims(t.paths)).find((c) => c.issue === 7)!;
+    expect(again.state.chainErrors).toBe(1);
+    expect(serviceRecords(t.paths).find((r) => r.kind === "chain-errors-forgiven")).toBeUndefined();
+  }, 60_000);
+
+  it("reports a claim carrying pending work once when its outage passes the ceiling (AC-13)", async () => {
+    const t = await outageSetup(async () => { throw dns(); });
+    const c0 = await t.claim();
+    const since = new Date(t.deps.now().getTime() - 25 * 3600_000).toISOString();
+    await writeClaim(t.paths, { ...c0, pendingEvent: { type: "chain_error", error: "boom" }, outage: { since, count: 40, last: "getaddrinfo EAI_AGAIN api.github.com", retry_at: since, alarmed: true } });
+    for (let i = 0; i < 6; i++) {
+      await t.s.tick();
+      await settle();
+      t.advance(1800);
+    }
+    expect(t.notifications.filter((n) => n.gate === "chain_error")).toHaveLength(1);
+    expect(t.notifications.find((n) => n.gate === "chain_error")?.text).toContain("past its 24-hour ceiling");
+    expect(serviceRecords(t.paths).filter((r) => r.kind === "pending-work-failing")).toHaveLength(1);
+    expect(await t.claim()).toBeTruthy();
   }, 60_000);
 
   it("does not let liveness expire a claim that is retrying through an outage (AC-9)", async () => {

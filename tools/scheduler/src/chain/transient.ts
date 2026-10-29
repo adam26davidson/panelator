@@ -23,7 +23,8 @@ const MAX_DEPTH = 5;
 
 /**
  * A short label for a transient error (its code, `HTTP <status>`, the abort's name or git's message), else null. Looks
- * through `cause` five levels deep. An HTTP 4xx is genuine whatever its message says (rate limits included: spec 013).
+ * through `cause` five levels deep. An HTTP 4xx is genuine whatever its message says, GitHub rate limits included, as
+ * today: no spec plans GitHub rate-limit retries.
  */
 export function transientCause(error: unknown): string | null {
   let e: unknown = error;
@@ -64,12 +65,21 @@ export const OUTAGE_ALARM_MS = 2 * 3600_000;
  * port that refuses) would otherwise retry forever. Its failures count as genuine from then on.
  */
 export const OUTAGE_CEILING_MS = 24 * 3600_000;
+/**
+ * AC-13: the outage's age is wall-clock time and counts a laptop asleep; its failures count as genuine only once this
+ * many failed past the ceiling, spanning at least CEILING_MIN_SPAN_MS.
+ */
+export const CEILING_MIN_FAILURES = 3;
+export const CEILING_MIN_SPAN_MS = 30 * 60_000;
+/** AC-13: the prefix of the error a failure past the ceiling is counted with; the release's history entry carries it. */
+export const PAST_CEILING = "outage past ceiling: ";
 
 const CHAIN_ERROR_ENTRY = /^chain error in (\S+): ([\s\S]*)$/;
 
 /**
- * AC-11: a chain-error release recorded for a transient cause (before spec 015 they counted) is not counted. Each such
- * history entry is rewritten so it is forgiven once.
+ * AC-11: a chain-error release recorded for a transient cause before spec 015 is not counted. Each such history entry
+ * is rewritten so it is forgiven once. An entry recorded since spec 015 reads `chain error in <stage> (counted): ...`
+ * (a genuine error, or one past the outage ceiling) and never matches.
  */
 export function forgiveTransientChainErrors<L extends Pick<LedgerCounts, "chainErrors" | "history">>(ledger: L): { ledger: L; forgiven: number } {
   let forgiven = 0;
