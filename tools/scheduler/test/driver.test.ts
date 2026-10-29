@@ -22,6 +22,9 @@ import { writeLedger } from "../src/state/ledger.ts";
 import { appendQuestionLog } from "../src/state/questions.ts";
 import type { Question } from "../src/types.ts";
 import { mockGitHub, type Route } from "./helpers/mock-github.ts";
+import { ParameterStore } from "../src/parameters/store.ts";
+import { loadParameterDefinitions } from "../src/parameters/definitions.ts";
+import { observeRun } from "../src/quota/book.ts";
 import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
 
 const script = join(import.meta.dirname, "fixtures", "stage-script.ts");
@@ -772,6 +775,151 @@ describe("driver: rate limits (spec 006 AC-26)", () => {
     expect(ran).toEqual(["question-check:openai/gpt-6.1-sol", "question-check:claude-fable-5-1"]);
     const usage = readdirSync(paths.usage).map((f) => JSON.parse(readFileSync(join(paths.usage, f), "utf8")));
     expect(usage.map((u) => [u.stage, u.model]).sort()).toEqual([["question-check", "claude-fable-5-1"], ["question-check", "openai/gpt-6.1-sol"]]);
+  }, 60_000);
+});
+
+describe("driver: quota (spec 013)", () => {
+  const SESSION = "You've hit your session limit · resets 8:10am (Europe/Berlin)";
+  const FABLE = "You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage, to continue.";
+  /** Each model answers from its own list: a string is a 429 with that message, an object a result. */
+  function quotaAdapter(answers: Record<string, unknown[]>): Adapter & { ran: string[] } {
+    const ran: string[] = [];
+    let last: unknown;
+    return {
+      harness: "fake", quotaHarness: "claude", ran,
+      buildCommand: (run) => {
+        ran.push(`${run.stage}:${run.model}`);
+        last = answers[run.model]?.shift();
+        const argv = [process.execPath, script, events, run.resultPath, typeof last === "string" ? "2" : "0", "0"];
+        if (typeof last !== "string" && last !== undefined) argv.push(JSON.stringify(last));
+        return { argv, env: {} };
+      },
+      judge: (_e, exit) => exit === 2 ? { outcome: "failed", reason: String(last), apiErrorStatus: 429, finalText: null } : { outcome: "ok", reason: null, apiErrorStatus: null, finalText: "x" },
+      usage: () => ({ cost_usd: 0.5, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0 }),
+    };
+  }
+  async function world(answers: Record<string, unknown[]>, now: string) {
+    const t = await setup(() => ({}));
+    const adapter = quotaAdapter(answers);
+    let clock = new Date(now);
+    const logs: Record<string, unknown>[] = [];
+    t.deps.adapterFor = () => adapter;
+    t.deps.now = () => clock;
+    t.deps.log = (r) => { logs.push(r); };
+    t.deps.parameters = new ParameterStore(t.paths, loadParameterDefinitions(join(agentsDir, "parameters.yaml"), t.deps.cfg, {}));
+    return { ...t, adapter, logs, setNow: (v: string) => { clock = new Date(v); } };
+  }
+
+  it("postpones a strong stage to the stated reset and starts no run before it (AC-4, AC-5, AC-6)", async () => {
+    const w = await world({ "claude-fable-5-1": [SESSION, plan] }, "2026-10-29T02:58:53Z");
+    const c = at(w.claim, { stage: "plan" });
+    await writeClaim(w.paths, c);
+    let r = await step(w.deps, c);
+    expect(r.status).toBe("waiting");
+    expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "plan", postponedUntil: "2026-10-29T07:10:00.000Z" });
+    expect(w.logs.find((l) => l.kind === "quota-limit")).toMatchObject({ key: "claude", scope: "session", resets_at: "2026-10-29T07:10:00.000Z", source: "stated" });
+    // Before the reset nothing runs; at the reset a fresh plan run would be blocked no more.
+    w.setNow("2026-10-29T05:00:00Z");
+    r = await step(w.deps, r.claim);
+    expect(r.status).toBe("waiting");
+    // Even when the wait is bypassed (a restart, a manual start), the launch decision runs no blocked stage.
+    const again = at(r.claim, { stage: "plan", postponedUntil: null });
+    r = await step(w.deps, again);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", postponedUntil: "2026-10-29T07:10:00.000Z" });
+    expect(w.logs.find((l) => l.kind === "quota-wait")).toMatchObject({ issue: 7, stage: "plan", key: "claude" });
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(readdirSync(w.paths.usage)).toHaveLength(1);
+    w.setNow("2026-10-29T07:11:00Z");
+    r = await step(w.deps, r.claim);
+    r = await step(w.deps, r.claim);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1"]);
+    expect(r.claim.state.stage).toBe("implement");
+  }, 60_000);
+
+  it("moves a strong stage to the next-best Claude model on a model-only limit, then launches there directly (AC-9)", async () => {
+    const w = await world({ "claude-fable-5-1": [FABLE], "claude-opus-5-5": [plan, plan] }, "2026-10-29T07:15:00Z");
+    const c = at(w.claim, { stage: "plan" });
+    await writeClaim(w.paths, c);
+    const r = await step(w.deps, c);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5"]);
+    expect(r.claim.state.stage).toBe("implement");
+    expect(w.logs.filter((l) => l.kind === "quota-fallback")).toEqual([{ kind: "quota-fallback", issue: 7, stage: "plan", from: "claude-fable-5-1", to: "claude-opus-5-5", key: "claude:fable" }]);
+    const again = at(r.claim, { stage: "plan" });
+    await step(w.deps, again);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5", "plan:claude-opus-5-5"]);
+    const usage = readdirSync(w.paths.usage).map((f) => JSON.parse(readFileSync(join(w.paths.usage, f), "utf8")).model).sort();
+    expect(usage).toEqual(["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5-5"]);
+  }, 60_000);
+
+  it("never moves a rescue to the fallback model: it postpones under a Fable limit (AC-9, spec 006 AC-27)", async () => {
+    const w = await world({ "claude-fable-5-1": [FABLE] }, "2026-10-29T07:15:00Z");
+    const c = at(w.claim, { stage: "plan", rescueRun: true, rescues: 1 });
+    await writeClaim(w.paths, c);
+    let r = await step(w.deps, c);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "plan", rescueRun: true, rescues: 1, postponedUntil: "2026-10-29T07:30:00.000Z" });
+    // Started again while the Fable limit holds, the rescue waits rather than run on Opus.
+    r = await step(w.deps, at(r.claim, { stage: "plan", postponedUntil: null }));
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", rescueRun: true });
+    expect(w.logs.filter((l) => l.kind === "quota-fallback")).toEqual([]);
+  }, 60_000);
+
+  it("caps a session wait at quota.session_window as set in the parameter store (AC-1, AC-8)", async () => {
+    // 8:10 Berlin read an hour after it passed would be tomorrow; with a 2h window the wait is 2h.
+    const w = await world({ "claude-fable-5-1": ["You've hit your session limit · resets 8:10am (Europe/Berlin)"] }, "2026-10-29T08:10:00Z");
+    await w.deps.parameters!.setParameter("quota.session_window", "2h", "maintainer");
+    const c = at(w.claim, { stage: "plan" });
+    await writeClaim(w.paths, c);
+    const r = await step(w.deps, c);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", postponedUntil: "2026-10-29T10:10:00.000Z" });
+    const book = JSON.parse(readFileSync(w.paths.quota, "utf8"));
+    expect(book.window).toMatchObject({ start: "2026-10-29T08:10:00.000Z" });
+    expect(book.limits.claude.resets_at).toBe("2026-10-29T10:10:00.000Z");
+  }, 60_000);
+
+  it("never moves a strong stage to another Claude model on a weekly limit (AC-9)", async () => {
+    const w = await world({ "claude-fable-5-1": ["You've hit your weekly limit · resets Nov 3, 9am (Europe/Berlin)"] }, "2026-10-29T07:15:00Z");
+    const c = at(w.claim, { stage: "plan" });
+    await writeClaim(w.paths, c);
+    const r = await step(w.deps, c);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", postponedUntil: "2026-11-03T08:00:00.000Z" });
+    expect(w.logs.filter((l) => l.kind === "quota-fallback")).toEqual([]);
+  }, 60_000);
+
+  it("defers a strong stage to the window's end once, then runs it (AC-8)", async () => {
+    const w = await world({ "claude-fable-5-1": [plan] }, "2026-10-29T03:00:00Z");
+    const u = (over: Record<string, unknown>) => ({
+      run_id: `u${Math.random()}`, issue: 1, stage: "plan", attempt: 1, outcome: "ok" as const, harness: "claude" as const, model: "claude-fable-5-1", cost_usd: 4, input_tokens: 0, output_tokens: 0,
+      cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0, wall_seconds: 1, started_at: "", ended_at: "", events_path: "", ...over,
+    });
+    const okJ = { outcome: "ok" as const, reason: null, apiErrorStatus: null, finalText: null };
+    for (const [start, reset] of [["2026-10-28T12:00:00Z", "6pm"], ["2026-10-28T18:00:00Z", "12am"]]) {
+      for (let i = 0; i < 5; i++) await observeRun(w.paths, u({ started_at: start }), okJ, new Date(start));
+      await observeRun(w.paths, u({ outcome: "failed", cost_usd: 0, started_at: start }), { outcome: "failed", reason: `You've hit your session limit · resets ${reset} (UTC)`, apiErrorStatus: 429, finalText: null }, new Date(start));
+    }
+    for (let i = 0; i < 5; i++) await observeRun(w.paths, u({ started_at: "2026-10-29T00:01:00Z" }), okJ, new Date("2026-10-29T00:01:00Z"));
+    const c = at(w.claim, { stage: "plan" });
+    await writeClaim(w.paths, c);
+    let r = await step(w.deps, c);
+    expect(w.adapter.ran).toEqual([]);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", postponedUntil: "2026-10-29T05:01:00.000Z" });
+    expect(w.logs.find((l) => l.kind === "quota-defer")).toMatchObject({ issue: 7, stage: "plan", estimate: 4, spent: 20, capacity: 20, until: "2026-10-29T05:01:00.000Z" });
+    // Started again before the end (a restart), it is not deferred a second time in the same window.
+    r = await step(w.deps, at(r.claim, { stage: "plan", postponedUntil: null }));
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(r.claim.state.stage).toBe("implement");
+  }, 60_000);
+
+  it("waits instead when the model-limit fallback parameter is off (AC-9)", async () => {
+    const w = await world({ "claude-fable-5-1": [FABLE] }, "2026-10-29T07:15:00Z");
+    await w.deps.parameters!.setParameter("quota.model_limit_fallback", false, "maintainer");
+    const c = at(w.claim, { stage: "plan" });
+    await writeClaim(w.paths, c);
+    const r = await step(w.deps, c);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", postponedUntil: "2026-10-29T07:30:00.000Z" });
   }, 60_000);
 });
 

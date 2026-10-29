@@ -23,3 +23,25 @@
   default: true
   mode: locked
   description: Require approval for first contact with an outside party.
+- name: quota.model_limit_fallback
+  type: boolean
+  default: true
+  mode: auto
+  description: When only a strong-tier stage's own Claude model is limited (e.g. the Fable limit), run it on quota.model_limit_fallback_model instead of waiting for the reset (spec 013 AC-9; default from ADR 0003, the maintainer's decision of 2026-10-29).
+- name: quota.model_limit_fallback_model
+  type: string
+  default: claude-opus-5-5
+  mode: auto
+  description: The next-best Claude model a strong-tier stage moves to under a model-specific limit (spec 013).
+- name: quota.plan_windows
+  type: boolean
+  default: true
+  mode: auto
+  description: Defer a strong-tier Claude stage to the end of the session window when its estimated cost would likely exceed what the window has left (spec 013).
+- name: quota.session_window
+  type: duration
+  default: 5h
+  min: 1h
+  max: 24h
+  mode: auto
+  description: Length of a Claude subscription session window, from its first run (spec 013).

@@ -10,6 +10,8 @@ export interface AgentState {
  pending_events:StandingEvent[]; paused:boolean; paused_by:string|null; failures:number;
  summary?:string; removed_at?:string;
  running?:{run_id:string;started_at:string};
+ /** Spec 013 AC-7: not started again before this instant (a quota limit or a deferral). */
+ postponed_until?:string;
 }
 export async function updateAgentState(paths:StatePaths,name:string,fn:(state:AgentState)=>AgentState):Promise<void> {
  if(!/^[a-z][a-z0-9-]*$/.test(name))throw new Error('invalid agent name');

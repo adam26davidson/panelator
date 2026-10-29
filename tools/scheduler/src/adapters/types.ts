@@ -42,6 +42,8 @@ export interface Command {
 
 export interface Adapter {
   harness: Harness;
+  /** Spec 013: the vendor whose quota a run counts against, when `harness` is not one (a test's fake harness). */
+  quotaHarness?: Harness;
   buildCommand(run: StageRun): Command;
   judge(events: unknown[], exitCode: number | null, timedOut: boolean): Judgement;
   usage(events: unknown[]): Usage;

@@ -3,6 +3,7 @@ import {questionMessage,reminderText} from '../telegram/questions.ts';
 import { applyActions, sendPausedQuestion, completePause, driveChain as defaultDriveChain, step, type DriverDeps } from "../chain/driver.ts";
 import { CLAIM_LABEL, ENDED, HISTORY_ENTRY_MAX, NEEDS_DECISION_LABEL, initialChainState, ledgerOf, stuckOf as stuckStage, transition } from "../chain/machine.ts";
 import {emit} from '../standing/events.ts';
+import { quotaSummary } from "../quota/book.ts";
 import { appendFindings, onFindingsQueued } from "../state/findings.ts";
 import { livenessGate } from "../gates/index.ts";
 import { ensureWorktree, uncommittedPatch } from "../runner/worktree.ts";
@@ -182,7 +183,9 @@ export class Scheduler {
     const ghActivity = await d.gh.issueActivityAt(claim.issue).catch(() => claim.last_activity_at);
     const last = ghActivity > claim.last_activity_at ? ghActivity : claim.last_activity_at;
     const g = livenessGate(last, claim.run_id !== null, d.now(), d.cfg.liveness_hours);
-    if (g.ok || !expirable(claim)) return false;
+    // Spec 013 AC-5: a chain postponed to a known instant (a quota reset) is scheduled, not stalled.
+    const scheduled = claim.state.stage === "waiting" && claim.state.postponedUntil !== null && new Date(claim.state.postponedUntil) > d.now();
+    if (g.ok || !expirable(claim) || scheduled) return false;
     await this.#expire(claim);
     return true;
   }
@@ -426,6 +429,8 @@ export class Scheduler {
         states.sort((a, b) => (a.state.next_run ?? "").localeCompare(b.state.next_run ?? ""));
         for (const s of states) {
           const due = (s.state.next_run && Date.parse(s.state.next_run) <= d.now().getTime()) || s.state.pending_events.length;
+          // Spec 013 AC-7: a standing agent postponed on a quota limit is skipped until then, whatever events arrive.
+          if (s.state.postponed_until && Date.parse(s.state.postponed_until) > d.now().getTime()) continue;
           if (!s.state.paused && !this.#activeStanding.has(s.def.name) && due) dueStanding.push(s);
         }
       }
@@ -514,7 +519,9 @@ export class Scheduler {
       return info;
     } finally {
       this.#ticking = false;
-      d.serviceLog.tick({ ...info, active: [...this.#active.keys()] });
+      // Spec 013 AC-10: the quota book's limits and what waits on them, when there are any.
+      const quota = await quotaSummary(d.paths, d.now()).catch(() => null);
+      d.serviceLog.tick({ ...info, active: [...this.#active.keys()], ...(quota ? { quota } : {}) });
       if (this.#restartPending && this.active === 0) d.requestRestart();
     }
   }

@@ -25,6 +25,8 @@ export interface StatePaths {
   mainChecks: string;
   findingsCursor: string;
   findingsTriage: string;
+  /** Spec 013: the quota book. */
+  quota: string;
 }
 
 export function statePaths(root: string): StatePaths {
@@ -52,6 +54,7 @@ export function statePaths(root: string): StatePaths {
     paused: join(root, "paused"),
     escalations: join(root, "escalations"),
     questionsLog: join(root, "questions", "log.jsonl"),
+    quota: join(root, "quota.json"),
   };
 }
 
