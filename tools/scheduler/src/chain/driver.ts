@@ -409,7 +409,8 @@ async function keepHeldWork(deps: DriverDeps, claim: Claim, branch: string): Pro
       deps.log({ kind: "held-work-advanced", issue: claim.issue, branch, from: held.head, to: head });
     } else if (current !== branch || tip !== held.head) {
       // The branch went elsewhere: its own commits are saved before it is put back at the held head (spec 005).
-      const own = tip !== null && tip !== held.head ? await commitsPatch(wt, held.head, tip) : "";
+      // Only the branch's own commits: not the held head's, and not main's (a branch reset onto a moved main carries them).
+      const own = tip !== null && tip !== held.head ? await gitOut(wt, "format-patch", "--stdout", tip, `^${held.head}`, "^origin/main") : "";
       const patch = own.trim() ? await savePatch(deps.paths, claim.issue, own, deps.now(), "held-diverged") : null;
       await checkoutBranch(wt, branch, held.head);
       deps.log({ kind: "held-work-restored", issue: claim.issue, branch, head: held.head, source: "local", patch });

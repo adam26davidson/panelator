@@ -1410,6 +1410,29 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     expect(readdirSync(t.paths.patches)).toEqual([]);
   }, 60_000);
 
+  it("leaves main's commits out of the held-diverged patch when the diverged branch sits on a moved main (AC-5)", async () => {
+    let held = "";
+    const t = await setup(() => ({ implement: [] }), (sha) => ghRoutes(sha), (p, wt) => {
+      held = commitIn(wt, { "work.txt": "w\n" });
+      writeFileSync(join(p.repo, "main.txt"), "main moved\n");
+      git(p.repo, "add", "main.txt");
+      git(p.repo, "commit", "-q", "-m", "main moved");
+      git(p.repo, "push", "-q", "origin", "main");
+      git(wt, "fetch", "-q", "origin");
+      git(wt, "reset", "-q", "--hard", "origin/main");
+      commitIn(wt, { "other.txt": "o\n" }, "own");
+    });
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: held } });
+    await writeClaim(t.paths, c);
+    await step(t.deps, c);
+    expect(head(t.claim.worktree)).toBe(held);
+    const saved = readdirSync(t.paths.patches).filter((f) => f.includes("held-diverged"));
+    expect(saved).toHaveLength(1);
+    const text = readFileSync(join(t.paths.patches, saved[0]), "utf8");
+    expect(text).toContain("other.txt");
+    expect(text).not.toContain("main.txt");
+  }, 60_000);
+
   it("saves a held-diverged patch of the local branch's own commits before putting it back at the held head (AC-5)", async () => {
     let held = "";
     const t = await setup(() => ({ implement: [] }), (sha) => ghRoutes(sha), (_p, wt) => {
