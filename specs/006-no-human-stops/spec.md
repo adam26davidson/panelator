@@ -593,9 +593,8 @@ AC-10 second sentence, AC-13)
     (AC-13);
   - a failure postponed for quota is handled before every other failure rule:
     in a rescue run it postpones the rescue, which stays a rescue and is not
-    spent. (Amended by spec 013: the postponement ends at the limit's reset,
-    and a rescue whose own Claude model alone is limited may first be retried
-    on the next-best Claude model, AC-9.)
+    spent. (Amended by spec 013: the postponement ends at the limit's reset.
+    A rescue never takes spec 013's model-limit fallback.)
 
   The ended states are `done`, `released`, `abandoned` and `paused`.
 - AC-28. **End-to-end chains are recorded.** Recorded end-to-end tests (fake

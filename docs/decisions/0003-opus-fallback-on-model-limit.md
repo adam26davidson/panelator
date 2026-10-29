@@ -31,8 +31,11 @@ The maintainer chose "allow the Opus fallback by default" on 2026-10-29.
 
 - When only a strong-tier stage's own Claude model is limited (a model-scope
   limit such as the Fable limit), the stage runs on the next-best Claude model
-  instead of waiting for the reset. This applies to chain stages, rescues and
-  standing agents. The move happens up front when the limit is already known,
+  instead of waiting for the reset. This applies to ordinary strong-tier chain
+  stages and to standing agents. It does not apply to rescues: the delivery
+  design's section 4 (a protected statement) makes a rescue "one more attempt
+  on the strongest model", and this decision does not cover rescues, so a
+  rescue under a Fable limit is postponed as spec 006 AC-27 says. The move happens up front when the limit is already known,
   or as one retry, capped by `retry_cost_limit_usd`, when a run hits it.
 - A limit shared by all Claude models (session, weekly) never triggers this.
   The stage waits for the reset as before.

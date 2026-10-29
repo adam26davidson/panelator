@@ -174,6 +174,29 @@ describe("the quota book", () => {
     expect(await waitAfterLimit(paths, "claude", "claude-fable-5-1", now)).toBe("2026-10-29T07:10:00.000Z");
   });
 
+  it("escalates repeated just-reset hits through the backoff (AC-1, AC-3)", async () => {
+    const paths = setup(); await ensureStateDirs(paths);
+    let now = at("2026-10-29T07:10:03Z");
+    const waits: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const l = (await observeRun(paths, usage({ outcome: "failed", cost_usd: 0, started_at: now.toISOString() }), limited(SESSION), now))!;
+      waits.push((Date.parse(l.resets_at) - now.getTime()) / 60_000);
+      now = new Date(l.resets_at);
+    }
+    // One minute, then the backoff; still within 30 minutes of the stated 8:10 for the first three.
+    expect(waits).toEqual([1, 15, 30, 300]);
+  });
+
+  it("uses the session window passed in for the window and the session cap (AC-8)", async () => {
+    const paths = setup(); await ensureStateDirs(paths);
+    const now = at("2026-10-29T08:10:00Z");
+    const l = (await observeRun(paths, usage({ outcome: "failed", started_at: now.toISOString() }), limited(SESSION), now, 2 * 3_600_000))!;
+    expect(l.resets_at).toBe("2026-10-29T10:10:00.000Z");
+    expect((await readBook(paths)).window).toMatchObject({ start: "2026-10-29T08:10:00.000Z" });
+    await observeRun(paths, usage({ started_at: "2026-10-29T10:11:00Z" }), ok, at("2026-10-29T10:11:00Z"), 2 * 3_600_000);
+    expect((await readBook(paths)).window).toMatchObject({ start: "2026-10-29T10:11:00.000Z", end: "2026-10-29T12:11:00.000Z" });
+  });
+
   it("caps a session wait at one window and any wait at 7 days (AC-1)", async () => {
     const paths = setup(); await ensureStateDirs(paths);
     // 8:10 Berlin read an hour after it passed would be tomorrow; a session limit lifts within one window.

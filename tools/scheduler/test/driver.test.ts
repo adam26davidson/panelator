@@ -851,6 +851,33 @@ describe("driver: quota (spec 013)", () => {
     expect(usage).toEqual(["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5-5"]);
   }, 60_000);
 
+  it("never moves a rescue to the fallback model: it postpones under a Fable limit (AC-9, spec 006 AC-27)", async () => {
+    const w = await world({ "claude-fable-5-1": [FABLE] }, "2026-10-29T07:15:00Z");
+    const c = at(w.claim, { stage: "plan", rescueRun: true, rescues: 1 });
+    await writeClaim(w.paths, c);
+    let r = await step(w.deps, c);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "plan", rescueRun: true, rescues: 1, postponedUntil: "2026-10-29T07:30:00.000Z" });
+    // Started again while the Fable limit holds, the rescue waits rather than run on Opus.
+    r = await step(w.deps, at(r.claim, { stage: "plan", postponedUntil: null }));
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", rescueRun: true });
+    expect(w.logs.filter((l) => l.kind === "quota-fallback")).toEqual([]);
+  }, 60_000);
+
+  it("caps a session wait at quota.session_window as set in the parameter store (AC-1, AC-8)", async () => {
+    // 8:10 Berlin read an hour after it passed would be tomorrow; with a 2h window the wait is 2h.
+    const w = await world({ "claude-fable-5-1": ["You've hit your session limit · resets 8:10am (Europe/Berlin)"] }, "2026-10-29T08:10:00Z");
+    await w.deps.parameters!.setParameter("quota.session_window", "2h", "maintainer");
+    const c = at(w.claim, { stage: "plan" });
+    await writeClaim(w.paths, c);
+    const r = await step(w.deps, c);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", postponedUntil: "2026-10-29T10:10:00.000Z" });
+    const book = JSON.parse(readFileSync(w.paths.quota, "utf8"));
+    expect(book.window).toMatchObject({ start: "2026-10-29T08:10:00.000Z" });
+    expect(book.limits.claude.resets_at).toBe("2026-10-29T10:10:00.000Z");
+  }, 60_000);
+
   it("never moves a strong stage to another Claude model on a weekly limit (AC-9)", async () => {
     const w = await world({ "claude-fable-5-1": ["You've hit your weekly limit · resets Nov 3, 9am (Europe/Berlin)"] }, "2026-10-29T07:15:00Z");
     const c = at(w.claim, { stage: "plan" });

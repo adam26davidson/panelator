@@ -9,7 +9,7 @@ import { listClaims } from "../state/claims.ts";
 import type { StatePaths } from "../state/paths.ts";
 import type { UsageRecord } from "../state/runs.ts";
 import type { Harness, Tier } from "../types.ts";
-import { keyCovers, parseLimit, type LimitScope } from "./parse.ts";
+import { JUST_RESET_WAIT_MS, keyCovers, parseLimit, type LimitScope } from "./parse.ts";
 
 /** Spec 013: the quota book, `quota.json` in the state directory. */
 export interface Limit {
@@ -165,7 +165,13 @@ export function observeRun(paths: StatePaths, usage: UsageRecord, judgement: Jud
     const parsed = parseLimit(judgement.reason, usage.harness, usage.model, now);
     let resetsAt = parsed.resetsAt;
     let source: Limit["source"] = "stated";
-    if (!resetsAt) {
+    if (resetsAt && resetsAt.getTime() - now.getTime() <= JUST_RESET_WAIT_MS) {
+      // AC-1, AC-3: a "just reset" hit waits a minute the first time, then escalates like a backoff.
+      const n = book.backoff[parsed.key] ?? 0;
+      resetsAt = new Date(now.getTime() + (n === 0 ? JUST_RESET_WAIT_MS : Math.min(BACKOFF_BASE_MS * 2 ** (n - 1), BACKOFF_MAX_MS)));
+      book.backoff[parsed.key] = n + 1;
+      source = "backoff";
+    } else if (!resetsAt) {
       const n = book.backoff[parsed.key] ?? 0;
       resetsAt = new Date(now.getTime() + Math.min(BACKOFF_BASE_MS * 2 ** n, BACKOFF_MAX_MS));
       book.backoff[parsed.key] = n + 1;

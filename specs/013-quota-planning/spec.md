@@ -20,7 +20,7 @@ on by default). Amends
 stage may move to the next-best Claude model on a model-specific limit, per
 ADR 0003; the postponement ends at the stated reset, not after a fixed 30
 minutes); [006-no-human-stops](../006-no-human-stops/spec.md) AC-26 and AC-27
-(the same end of the postponement; a rescue may take the AC-9 fallback); and
+(the same end of the postponement); and
 [008-agent-registry](../008-agent-registry/spec.md) AC-3 (a standing run that
 hits a quota or rate limit is not a failure and is not retried at the next
 tick; it is postponed to the reset, AC-7). Each amended criterion carries a
@@ -93,7 +93,9 @@ directory, written under the state lock.
   after now, with the zone's offset on that date), source `stated`. Live
   429s arrive seconds after the reset they name, so a time at most 30
   minutes past is *just reset*: the reset is now plus one minute, never the
-  same time tomorrow. A time further past is tomorrow's. Times with no
+  same time tomorrow; a further just-reset hit of the same key escalates
+  through the AC-3 backoff (15 minutes, then doubling), so a stale message
+  is not probed every minute. A time further past is tomorrow's. Times with no
   minutes (`resets 3am`), 24-hour times (`resets 15:10`) and a leading month
   and day (`resets Nov 3, 9am`) parse the same way. A dated time is this
   year's; when it has passed it is just reset, and it is next year's only
@@ -133,7 +135,8 @@ directory, written under the state lock.
   usage record is created, the chain is postponed to the reset as in AC-5,
   and a `quota-wait` line is logged with issue, stage, model, key and
   reset.
-- AC-7. Given a standing agent's run hits 429, or its model is blocked when
+- AC-7. Given a standing agent's run (of any tier, after any fallback run)
+  still ends with a 429, or its model is blocked when
   it is due, then the agent's state gets `postponed_until` set to the reset,
   its `failures` count is unchanged, its pending events are kept, no
   failure finding or notification is raised, and the tick does not start it
@@ -175,8 +178,9 @@ directory, written under the state lock.
 
 **Model-specific limits**
 
-- AC-9. Given a strong-tier Claude stage (chain stage, rescue or standing
-  agent) whose model is blocked by a `model`-scope limit only,
+- AC-9. Given a strong-tier Claude stage (an ordinary chain stage or a
+  standing agent, not a rescue) whose model is blocked by a `model`-scope
+  limit only,
   `quota.model_limit_fallback` true (default) and
   `quota.model_limit_fallback_model` (default `claude-opus-5-5`) not
   blocked and not the stage's own model, then the stage runs on that model
@@ -189,6 +193,12 @@ directory, written under the state lock.
   apply. Given the parameter false, then the stage waits as before. A
   standard-tier stage whose model is blocked runs on its own `fallback`
   when that is not blocked, without a 429 first.
+  A rescue never takes this fallback: the design (section 4, a protected
+  statement) makes a rescue "one more attempt on the strongest model", and
+  the maintainer's decision does not cover rescues, so a rescue under a
+  Fable limit is postponed as spec 006 AC-27 says. When a standing agent is
+  moved before launch, its state's `running.run_id` is the id the run
+  actually has (`<run id>-fallback`), so a restart finds the run's unit.
   Default allowed, as the maintainer decided on 2026-10-29
   ([ADR 0003](../../docs/decisions/0003-opus-fallback-on-model-limit.md)).
 

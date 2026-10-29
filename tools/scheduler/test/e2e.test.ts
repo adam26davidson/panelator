@@ -617,6 +617,26 @@ describe('standing agents: recorded runs through the real runner and mocked App'
   w.setNow(new Date('2026-10-01T03:00:30Z'));await w.scheduler.tick();await idle(w);expect(w.adapter.ran).toEqual(['operator']);
   expect((await readAgentState(w.paths,'operator'))?.last_run?.outcome).toBe('ok');
  },30000);
+ it('an agent moved to the fallback model before launch records the run id it actually runs under (spec 013 AC-9)',async()=>{
+  const seen:{running?:string;run?:string}={};
+  const w=await standingWorld({operator:[(run:StageRun)=>{seen.running=JSON.parse(readFileSync(join(w.paths.agents,'operator.json'),'utf8')).running?.run_id;seen.run=run.runId;return {summary:'on opus'};}]});
+  const t0=new Date('2026-10-01T00:00:00Z');
+  await observeRun(w.paths,{run_id:'x',issue:7,stage:'review',attempt:1,outcome:'failed',harness:'claude',model:'claude-fable-5-1',cost_usd:0,input_tokens:0,output_tokens:0,cache_read_tokens:0,cache_write_tokens:0,turns:1,tool_calls:0,wall_seconds:1,started_at:t0.toISOString(),ended_at:t0.toISOString(),events_path:''},{outcome:'failed',reason:"You've reached your Fable limit. Switch to another model.",apiErrorStatus:429,finalText:null},t0);
+  const state=(await readAgentState(w.paths,'operator'))!;state.next_run=t0.toISOString();await writeAgentState(w.paths,'operator',state);
+  await w.scheduler.tick();await idle(w);
+  expect(w.adapter.runs.map(r=>r.model)).toEqual(['claude-opus-5-5']);
+  expect(seen.running).toMatch(/-fallback$/);expect(seen.running).toBe(seen.run);
+  expect((await readAgentState(w.paths,'operator'))?.last_run?.outcome).toBe('ok');
+ },30000);
+ it('a standard-tier standing agent is postponed on a 429 too, not counted as a failure (spec 013 AC-7)',async()=>{
+  const w=await standingWorld({operator:[RATE_LIMITED]});
+  w.registry.operator={...w.registry.operator,tier:'standard',fallback:undefined};
+  const t0=new Date('2026-10-01T00:00:00Z');
+  const state=(await readAgentState(w.paths,'operator'))!;state.next_run=t0.toISOString();await writeAgentState(w.paths,'operator',state);
+  await w.scheduler.tick();await idle(w);
+  expect(await readAgentState(w.paths,'operator')).toMatchObject({failures:0,postponed_until:'2026-10-01T00:15:00.000Z',last_run:null});
+  expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(0);expect(w.notifications).toHaveLength(0);
+ },30000);
  it('a rate-limited filer does not feed itself: no finding from the 429, and new queued findings do not override the wait (issue #24)',async()=>{
   const w=await standingWorld({'findings-filer':[RATE_LIMITED,{summary:'triaged',decisions:[]}]});
   const t0=new Date('2026-10-01T00:00:00Z');

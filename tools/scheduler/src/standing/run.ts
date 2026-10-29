@@ -41,7 +41,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  let worktree=d.repoDir,created=false;
  let summary='',outcome='failed',error='standing run failed';
  try {
-  await updateAgentState(d.paths,def.name,s=>{const next={...s,running:{run_id:runId,started_at:now.toISOString()}};delete next.postponed_until;return next;});
+  await updateAgentState(d.paths,def.name,s=>{const next={...s,running:{run_id:moved?runId+'-fallback':runId,started_at:now.toISOString()}};delete next.postponed_until;return next;});
   if(def.worktree==='fresh') {
    worktree=join(d.paths.worktrees,`standing-${def.name}`);
    // A run never inherits the previous run's changes, including after an interrupted run.
@@ -74,6 +74,8 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
     if(afterFallback(def as unknown as StageDefinition,result.judgement).kind==='postpone')await postpone('rate limited (429)');
    } else if(retry.kind==='postpone')await postpone('rate limited (429)');
   }
+  // Spec 013 AC-7: a run still rate limited is postponed whatever the tier, never counted as a failure.
+  if(result.judgement.outcome==='failed'&&result.judgement.apiErrorStatus===429)await postpone('rate limited (429)');
   if(result.outcome!=='ok'||!result.result)throw new Error(result.reason??result.resultErrors.join('; '));
   const body=result.result as {summary:string;actions?:{kind:string;args:Record<string,unknown>;why:string}[];findings?:unknown[]};
   if(def.output==='filer-result')await applyFilerResult(filer,runId,input as Awaited<ReturnType<typeof buildFilerInput>>,body as FilerResult);
