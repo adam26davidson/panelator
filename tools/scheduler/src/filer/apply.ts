@@ -13,13 +13,24 @@ export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput
  for(const dec of result.decisions) {
   const abandoned=dec.ref.startsWith('issue:');
   if(!(abandoned?['retry','rewrite','close','escalate','defer']:['discard','file','merge_into','escalate','security']).includes(dec.outcome))throw new Error(`invalid outcome for ${dec.ref}`);
-  if(dec.issue && !d.classes.includes(dec.issue.class))throw new Error(`unknown issue class ${dec.issue.class}`);
   if(dec.question && !['product','technical'].includes(dec.question.kind))throw new Error('design flaw question must be product or technical');
  }
  const triage=await readJsonLines<TriageEntry>(d.paths.findingsTriage);
  // The cursor follows the triage log, so a batch aborted half way still moves it past what it applied (spec 014 AC-4).
  try{await applyDecisions(d,runId,input,result,triage);}
  finally{const line=settledCursor(input.cursor,triage);await writeFile(d.paths.findingsCursor+'.tmp',JSON.stringify({line}));await rename(d.paths.findingsCursor+'.tmp',d.paths.findingsCursor);}
+}
+/** The label an issue gets when the model's class cannot be resolved: `class:bug`, or the first configured class. */
+const defaultClass=(classes:string[])=>classes.includes('class:bug')?'class:bug':classes[0]!;
+/**
+ * The configured label a model-written class names, or null. Exact first; then, ignoring case and surrounding
+ * space, the label itself or the label with its `class:` prefix left off. Only a single match counts (spec 018 AC-2).
+ */
+export function resolveClass(value:string,classes:string[]):string|null {
+ if(classes.includes(value))return value;
+ const want=value.trim().toLowerCase();
+ const hits=classes.filter(c=>{const l=c.toLowerCase();return l===want||l===`class:${want}`;});
+ return hits.length===1?hits[0]!:null;
 }
 /**
  * GitHub refusing the App is the missing capability: "Resource not accessible by integration", or a 403 that is not
@@ -62,10 +73,16 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   if(prior?.held&&prior.capability_issue!==undefined)touchedHeld=true;
   const row:TriageEntry={ref:dec.ref,outcome:dec.outcome,reason:dec.reason,run_id:runId,at:d.now().toISOString(),...(record?{finding:record.finding}:{})};
   const marker=`<!-- panelator-finding:${runId}:${dec.ref} -->`;
+  // Set when an issue is created with the default label because the model's class could not be resolved (spec 018 AC-3).
+  const applied:{fallback?:{class:string;used:string}}={};
   const file=async()=>{
-   const issue=dec.issue??{title:record?.finding.what??abandoned!.issue.title,body:JSON.stringify(record?.finding??abandoned!.issue,null,2),class:d.classes.includes('class:bug')?'class:bug':d.classes[0]};
+   const issue=dec.issue?{...dec.issue}:{title:record?.finding.what??abandoned!.issue.title,body:JSON.stringify(record?.finding??abandoned!.issue,null,2),class:defaultClass(d.classes)};
    const existing=(await d.gh.searchOpenIssuesByMarker('<!-- panelator-finding:')).find(i=>i.author===d.botLogin&&new RegExp(`<!-- panelator-finding:[^:]+:${dec.ref.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')} -->`).test(i.body));
    if(existing)return existing.number;
+   // The class is resolved only where it is applied, so one decision's label never decides the batch (spec 018 AC-2, AC-3).
+   const resolved=resolveClass(issue.class,d.classes);
+   if(resolved===null){applied.fallback={class:issue.class,used:defaultClass(d.classes)};issue.class=applied.fallback.used;}
+   else issue.class=resolved;
    // Spec creation belongs to the chain; an input cannot smuggle a Spec line into intake.
    // Nor can it carry the capability issue's marker (spec 014 AC-6).
    let body=stripCapabilityMarkers(issue.body.replace(/^\s*Spec:.*$/gm,''));
@@ -113,7 +130,11 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
    case 'close':await d.gh.closeIssue(abandoned!.issue.number,stripCapabilityMarkers(dec.reason));row.issue=abandoned!.issue.number;break;
    case 'discard':case 'defer':break;
   }
+  const fb=applied.fallback;
+  if(fb)row.reason+=` (class '${fb.class}' is not configured; labelled ${fb.used})`;
   await appendFile(d.paths.findingsTriage,JSON.stringify(row)+'\n');triage.push(row);
+  // Logged once the decision is kept, so a settled ref or a batch that aborts earlier logs nothing (spec 018 AC-3).
+  if(fb)d.log?.({kind:'filer-class-fallback',run_id:runId,ref:dec.ref,class:fb.class,used:fb.used});
   // Advisories work again, so the capability question is settled (spec 014 AC-6); done after the row is kept, and
   // only when something was held under a permission failure.
   if(row.outcome==='security'&&!row.failed&&(touchedHeld||heldUnderIssue())) {

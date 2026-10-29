@@ -32,8 +32,9 @@ issue), file (issue with title, body, class), merge_into (issue_number and a fal
 with title, body, class), escalate (issue and question with kind product or technical,
 question, options with label and cost, recommendation), security (advisory with title,
 description, severity low|medium|high|critical). An issue body must carry what, where,
-evidence, how noticed and what you verified, with no Spec: line. Choose class from the
-scheduler configuration. Keep security findings private; never merge them into public issues.
+evidence, how noticed and what you verified, with no Spec: line. Set class to one of the
+labels in input.issue_classes, copied exactly with its prefix (for example class:bug, never
+bug). Keep security findings private; never merge them into public issues.
 For abandoned issues use retry (reason includes what to do differently; maximum twice),
 rewrite (new issue supersedes it), close (why not worth doing or done elsewhere), escalate
 (possible design flaw as above) or defer (reason; offered again after seven days).

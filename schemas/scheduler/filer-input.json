@@ -11,12 +11,19 @@
     },
     "open_issues": {
       "type": "array"
+    },
+    "issue_classes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
     "records",
     "abandoned",
-    "open_issues"
+    "open_issues",
+    "issue_classes"
   ],
   "additionalProperties": true
 }
