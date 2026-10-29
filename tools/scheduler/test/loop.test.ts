@@ -827,6 +827,43 @@ describe("Scheduler.tick: fair slot scheduling (spec 016)", () => {
   }, 30_000);
 });
 
+describe("Scheduler.tick: fair slot scheduling, failure and crash windows (spec 016)", () => {
+  it("claims no second issue in the same grant when the first claim's label fails after its claim file (AC-7, AC-8)", async () => {
+    const log = grantLog();
+    const failLabel: Route = { method: "POST", path: /^\/repos\/o\/r\/issues\/1\/labels$/, reply: () => ({ status: 422, body: { message: "Validation Failed" } }) };
+    const h = await setup([failLabel, ...routes([issue(1), issue(2)])], 1, log.drive);
+    const t = await h.s.tick();
+    await settle();
+    expect(t.claimed).toEqual([]);
+    expect(t.errors).toEqual([expect.stringContaining("claim 1:")]);
+    expect((await listClaims(h.paths)).map((c) => c.issue)).toEqual([1]);
+    expect(log.grants).toEqual([]);
+    expect(labelCalls(h.gh, 2)).toEqual([]);
+  }, 30_000);
+
+  it("starts a claim carrying an answered event, left by a crash after a resume, before a standing agent and other claims (AC-1)", async () => {
+    const log = grantLog();
+    const h = await setup(routes([]), 1, log.drive);
+    await withStanding(h, log);
+    await readyClaim(h, 4);
+    await writeClaim(h.paths, {
+      issue: 9, slot: 0, state: pausedState(), worktree: join(h.pair.worktrees, "issue-9"), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null,
+      pendingEvent: { type: "answered", answer: "Use the file store.", questionId: 500 },
+    });
+    const t = await h.s.tick();
+    await settle();
+    expect(t.standing).toEqual([]);
+    expect(log.grants).toEqual(["chain:9"]);
+    await rmClaim(h, 9);
+    await log.release("chain:9");
+    // The answered start did not take a turn: the standing agent still goes first.
+    await h.s.tick();
+    await settle();
+    expect(log.grants).toEqual(["chain:9", "standing"]);
+    await log.release("standing");
+  }, 30_000);
+});
+
 describe("Scheduler.run", () => {
   it("ticks immediately, again after a detected sleep, and writes the stopped trailer on stop (AC-4, AC-31)", async () => {
     const { s, deps, paths, setNow, setMono } = await setup(routes([]));

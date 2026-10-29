@@ -10,7 +10,8 @@ section 3 ("What happens while it waits": on a reply the paused work
 "returns to the shortlist ahead of everything else") and section 6.1
 (standing agents run beside the issue chain); [design-tree](../../docs/design-tree.md)
 R6.Q10 (pull on completion into a concurrency slot); amends
-[008-agent-registry](../008-agent-registry/spec.md) AC-3 and its decision
+[008-agent-registry](../008-agent-registry/spec.md) AC-3 (its order, and
+the timing of its "retried once at the next tick", section 2) and its decision
 "Standing agents take ordinary slots, after resumes and before the
 shortlist", [009-postponed-chain-holds-slot](../009-postponed-chain-holds-slot/spec.md)
 AC-4 and its section 4 resume rule; keeps
@@ -74,6 +75,12 @@ is claimed while held claims fill `slots` is kept.
   agents (oldest `next_run` first, spec 008 AC-3), both kept.
 - Persisting the turn across a restart.
 
+Spec 008 AC-3 says a failed standing run "is retried once at the next
+tick". Under the turn order of this spec the retry runs at the next tick
+on which the agent is granted a running slot, which may be later when
+chains hold the turn; the single retry and what follows a second failure
+are unchanged.
+
 ## 3. Acceptance criteria
 
 Terms. A *running slot* is free when the chains and standing agents running
@@ -94,7 +101,12 @@ restart a due standing agent is granted first.
   that tick and the claim is not started; given P's chain later ends, then
   the claim is started on the next tick. The paused handling still needs
   the open-issue list; if listing fails, the error is recorded and the rest
-  of the tick goes on without paused handling and without new claims.
+  of the tick goes on without paused handling and without new claims. A
+  claim on disk carrying a pending `answered` event (a resume a crash or a
+  restart interrupted after the paused record was removed) is treated the
+  same way: it is started into a free running slot after the paused
+  handling and before any other claim, standing agent or shortlisted issue,
+  and, like a resume, does not change the turn.
 - AC-2. **A held slot does not block an answered resume.** Given `slots: 1`,
   a claim in `waiting` with `postponedUntil` in the future, and an answered
   paused issue P, when a tick runs, then P is resumed on that tick (amends
@@ -127,7 +139,10 @@ restart a due standing agent is granted first.
   claimed, and held is 1 (spec 009 AC-1 kept). Given `slots: 2`, held 0, a
   due standing agent and two eligible issues, then one standing agent runs
   and one issue is claimed, in rank order (held plus running standing agents
-  never exceeds `slots` for a new claim).
+  never exceeds `slots` for a new claim). Given a new claim whose claim
+  file was written but whose `in-progress` label failed, then that claim
+  still counts as held for the rest of the tick, and no further issue is
+  claimed in its place on that tick.
 - AC-8. **Bounded.** In every case above the chains and standing agents
   running in the process never exceed `slots`.
 
@@ -139,9 +154,12 @@ restart a due standing agent is granted first.
   exists and runs the paused handling with "slot free" meaning a free
   running slot, (2) computes held, (3) grants running slots one at a time,
   each to the kind the turn does not name, falling back to the other kind,
-  until no running slot is free or neither kind has anything ready. Chains
-  are tried as: claims on disk in listing order, then the ranked shortlist,
-  computed at most once per tick and only when a new claim fits under held.
+  until no running slot is free or neither kind has anything ready. Claims
+  carrying a pending `answered` event are started right after the paused
+  handling, outside the turns. Chains are tried as: claims on disk in
+  listing order, then the ranked shortlist, computed at most once per tick;
+  each shortlisted issue is tried only while a new claim fits under held, and
+  held counts a claim from its claim file on, even if its label then fails.
   The turn is a private field `#lastGrant` of the scheduler; a resume of an
   answered question does not change it. `TickInfo` gains `standing:
   string[]`, the agents started this tick, written to the service log with
@@ -170,3 +188,5 @@ No other file is created or modified.
   `claimed` on the first tick with a free running slot after the answer.
 
 ## 6. Open decisions
+
+None.

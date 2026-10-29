@@ -325,6 +325,8 @@ export class Scheduler {
 
       // Claims that may start, in listing order; chain errors are handed out first, whatever the slots.
       const startable: Claim[] = [];
+      // A claim carrying an answered event is a resume a crash interrupted after the paused record went (spec 016 AC-1).
+      const answeredClaims: Claim[] = [];
       for (const claim of await listClaims(d.paths)) {
         if (this.#active.has(claim.issue) || pausedIssues.has(claim.issue)) continue;
         const failures = claim.state.chainFailures?.count ?? 0;
@@ -339,7 +341,7 @@ export class Scheduler {
           info.released.push(claim.issue);
           continue;
         }
-        if (!(claim.state.stage === "waiting" && claim.state.postponedUntil && new Date(claim.state.postponedUntil) > d.now())) startable.push(claim);
+        if (!(claim.state.stage === "waiting" && claim.state.postponedUntil && new Date(claim.state.postponedUntil) > d.now())) (claim.pendingEvent?.type === "answered" ? answeredClaims : startable).push(claim);
       }
 
       let issues: Awaited<ReturnType<typeof d.gh.listOpenIssues>> | null = null;
@@ -368,6 +370,9 @@ export class Scheduler {
           }
         }
       }
+
+      // Like an answered paused issue, outside the turns below.
+      for (const claim of answeredClaims) if (this.active < slots && !this.#stopping) this.#start(claim);
 
       // Spec 009: every claim on disk of an issue not paused holds a slot against new claims, and so does a chain
       // still running in this process after a pause removed its claim file.
@@ -430,7 +435,8 @@ export class Scheduler {
         }
         if (held + this.#activeStanding.size >= slots) return false;
         for (let issue = (await shortlist()).shift(); issue; issue = ranked!.shift()) {
-          if (this.#stopping) return false;
+          // Re-checked per issue: a claim that failed after its claim file was written still holds its slot.
+          if (this.#stopping || held + this.#activeStanding.size >= slots) return false;
           try {
             // Claim file before the label: a failure in between leaves a claim without in-progress, which the
             // next tick's stale-claim check drops (GitHub wins), never an in-progress label with no claim file.
