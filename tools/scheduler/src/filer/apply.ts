@@ -133,6 +133,13 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   const fb=applied.fallback;
   if(fb)row.reason+=` (class '${fb.class}' is not configured; labelled ${fb.used})`;
   await appendFile(d.paths.findingsTriage,JSON.stringify(row)+'\n');triage.push(row);
+  // The decision settles the identical records it stood for, with no further effect; a failed advisory leaves them
+  // to ride on its retry (spec 019 AC-2).
+  if(record?.duplicate_refs?.length&&!row.failed) {
+   const settled=new Set(triage.filter(t=>!t.failed).map(t=>t.ref));
+   const copies=record.duplicate_refs.filter(ref=>!settled.has(ref)).map(ref=>({...row,ref,reason:`same record as ref ${dec.ref}: ${row.reason}`}));
+   if(copies.length){await appendFile(d.paths.findingsTriage,copies.map(c=>JSON.stringify(c)+'\n').join(''));triage.push(...copies);}
+  }
   // Logged once the decision is kept, so a settled ref or a batch that aborts earlier logs nothing (spec 018 AC-3).
   if(fb)d.log?.({kind:'filer-class-fallback',run_id:runId,ref:dec.ref,class:fb.class,used:fb.used});
   // Advisories work again, so the capability question is settled (spec 014 AC-6); done after the row is kept, and

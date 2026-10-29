@@ -334,3 +334,63 @@ it('logs a fallback only for decisions applied: not for settled refs nor after a
  await expect(applyFilerResult(d,'run',input,{summary:'x',decisions:['1','2','3'].map(ref=>({ref,outcome:'file' as const,reason:'v',issue:bad}))})).rejects.toThrow('boom');
  expect(log.mock.calls.map(c=>c[0].ref)).toEqual(['2']);
 });
+// Spec 019 (issue #63).
+const loop={what:'standing agent findings-filer failed twice',where:'agents/standing/findings-filer.md',evidence:'rate limited (429)',noticed_how:'standing run retry exhausted'};
+const queued=(f:object,i:number,extra:object={})=>JSON.stringify({issue:0,stage:'findings-filer',run_id:`run-${i}`,timestamp:new Date(Date.UTC(2026,9,28,0,i)).toISOString(),finding:f,...extra})+'\n';
+it('collapses the live shape: hundreds of identical copies take one batch place (AC-1 regression)',async()=>{
+ const {d,paths}=await setup();
+ let text='';for(let i=0;i<300;i++)text+=queued(loop,i);for(let i=0;i<5;i++)text+=queued({...finding,what:`real ${i}`},300+i,{issue:13,stage:'review'});
+ // A copy whose finding lists its fields in another order is still the same record.
+ text+=queued({noticed_how:loop.noticed_how,evidence:loop.evidence,where:loop.where,what:loop.what},400);
+ await appendFile(paths.findingsQueue,text);
+ const input=await buildFilerInput(d);
+ expect(input.records.map(r=>r.ref)).toEqual(['1','301','302','303','304','305']);
+ expect(input.records[0].duplicate_refs).toEqual([...Array.from({length:299},(_,i)=>String(i+2)),'306']);
+ expect(input.records[1].duplicate_refs).toBeUndefined();
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:input.records.map(r=>({ref:r.ref,outcome:'discard' as const,reason:'fixed by spec 013'}))});
+ const triage=await readJsonLines<TriageEntry>(paths.findingsTriage);
+ expect(triage).toHaveLength(306);expect(triage.find(t=>t.ref==='306')).toMatchObject({outcome:'discard',reason:'same record as ref 1: fixed by spec 013',run_id:'run'});
+ expect(JSON.parse(await readFile(paths.findingsCursor,'utf8')).line).toBe(306);
+ expect((await buildFilerInput(d)).records).toEqual([]);
+});
+it('records differing in anything but run and time stay separate; settled copies are not listed (AC-1)',async()=>{
+ const {d,paths}=await setup();
+ await appendFile(paths.findingsQueue,queued(loop,0)+queued({...loop,evidence:'other'},1)+queued(loop,2,{issue:7})+queued(loop,3)+queued(loop,4));
+ await appendFile(paths.findingsTriage,row('4'));
+ const input=await buildFilerInput(d);
+ expect(input.records.map(r=>[r.ref,r.duplicate_refs])).toEqual([['1',['5']],['2',undefined],['3',undefined]]);
+});
+it('the batch fills with distinct records and copies past the batch still ride on their entry (AC-1)',async()=>{
+ const {d,paths}=await setup();
+ let text='';for(let i=0;i<25;i++)text+=queued({...finding,what:String(i)},i);text+=queued({...finding,what:'0'},25);
+ await appendFile(paths.findingsQueue,text);
+ const input=await buildFilerInput(d);
+ expect(input.records).toHaveLength(20);expect(input.records[0].duplicate_refs).toEqual(['26']);expect(input.records.at(-1)!.ref).toBe('20');
+});
+it('a filed entry settles its copies onto the same issue with one GitHub issue (AC-2)',async()=>{
+ const {d,paths,gh}=await setup();
+ await appendFile(paths.findingsQueue,queued(finding,0)+queued(finding,1)+queued(finding,2));
+ const input=await buildFilerInput(d);
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:[{ref:'1',outcome:'file',reason:'verified',issue}]});
+ expect(gh.createIssue).toHaveBeenCalledTimes(1);
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).map(t=>[t.ref,t.outcome,t.issue])).toEqual([['1','file',42],['2','file',42],['3','file',42]]);
+});
+it('a failed advisory settles no copies; they ride on its retry and settle when it succeeds (AC-2)',async()=>{
+ const {d,paths,gh}=await setup();
+ await appendFile(paths.findingsQueue,queued(secret,0)+queued(secret,1));
+ gh.createDraftSecurityAdvisory.mockRejectedValueOnce(new Error('boom'));
+ const first=await buildFilerInput(d);expect(first.records[0].duplicate_refs).toEqual(['2']);
+ await applyFilerResult(d,'run-1',first,{summary:'x',decisions:[{ref:'1',outcome:'security',reason:'private',advisory}]});
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).map(t=>t.ref)).toEqual(['1']);
+ const retry=await buildFilerInput(d);expect(retry.records).toHaveLength(1);expect(retry.records[0]).toMatchObject({ref:'1',advisory_failed:true,duplicate_refs:['2']});
+ await applyFilerResult(d,'run-2',retry,{summary:'x',decisions:[{ref:'1',outcome:'security',reason:'private',advisory}]});
+ expect(gh.createDraftSecurityAdvisory).toHaveBeenCalledTimes(2);
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1)).toMatchObject({ref:'2',outcome:'security',advisory:'GHSA-private'});
+ expect(JSON.parse(await readFile(paths.findingsCursor,'utf8')).line).toBe(2);
+});
+it('decisions cover entries only: a decision for a duplicate ref is refused (AC-3)',async()=>{
+ const {d,paths}=await setup();await appendFile(paths.findingsQueue,queued(loop,0)+queued(loop,1));
+ const input=await buildFilerInput(d);
+ await expect(applyFilerResult(d,'run',input,{summary:'x',decisions:[{ref:'1',outcome:'discard',reason:'a'},{ref:'2',outcome:'discard',reason:'b'}]})).rejects.toThrow(/each input/);
+ expect(await readFile(join(import.meta.dirname,'../../../agents/standing/findings-filer.md'),'utf8')).toMatch(/duplicate_refs[\s\S]*settles them all/);
+});

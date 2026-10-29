@@ -497,3 +497,4 @@ are stale and are corrected as part of B.
 - `specs/016-fair-slot-scheduling/spec.md`
 - `specs/017-read-only-stages-not-told-to-run-tests/spec.md`
 - `specs/018-filer-class-labels/spec.md`
+- `specs/019-filer-collapses-identical-records/spec.md`
