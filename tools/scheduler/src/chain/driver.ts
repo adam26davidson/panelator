@@ -244,11 +244,16 @@ async function specTrackScope(deps: DriverDeps, claim: Claim, diff: string[], sp
 async function heldWorkText(deps: DriverDeps, claim: Claim): Promise<string | undefined> {
   const held = claim.state.heldWork;
   if (!held || held.branch !== branchOf(claim.state)) return undefined;
+  // Never claim work the worktree does not hold: the preparation kept it, advanced it, or dropped it.
+  if ((await worktreeHead(claim.worktree)) !== held.head) return undefined;
   const pushed = await pushedBranch(claim.worktree, held.branch);
   const prs = await openPrsFrom(deps, claim.issue, held.branch);
+  // A failed lookup is "unknown", never "not on origin" or "(none)": the stage must not open a second PR on a guess.
+  const where = pushed === null ? "whether it is on origin: unknown (lookup failed)" : pushed ? "it is on origin" : "it is not on origin";
+  const open = prs === null ? "unknown (lookup failed)" : prs.length ? prs.map((n) => `#${n}`).join(", ") : "(none)";
   return [
-    `Branch ${held.branch} is at ${held.head}; it is ${pushed ? "on origin" : "not on origin"}.`,
-    `Open pull requests from it: ${prs.length ? prs.map((n) => `#${n}`).join(", ") : "(none)"}.`,
+    `Branch ${held.branch} is at ${held.head}; ${where}.`,
+    `Open pull requests from it: ${open}.`,
     "This is your own work from before your question was asked; you continue from it, you do not start again.",
   ].join("\n");
 }
@@ -340,15 +345,20 @@ async function dropStaleRemoteBranch(deps: DriverDeps, claim: Claim, branch: str
 }
 
 /** Whether `branch` exists on origin (a live lookup, not the tracking ref). */
-async function pushedBranch(worktree: string, branch: string): Promise<boolean> {
-  return (await gitOut(worktree, "ls-remote", "--heads", "origin", `refs/heads/${branch}`).catch(() => "")).trim() !== "";
+/** Whether `branch` exists on origin (a live lookup, not the tracking ref); null when the lookup failed. */
+async function pushedBranch(worktree: string, branch: string): Promise<boolean | null> {
+  try {
+    return (await gitOut(worktree, "ls-remote", "--heads", "origin", `refs/heads/${branch}`)).trim() !== "";
+  } catch {
+    return null;
+  }
 }
 
-/** The open PRs from `branch`; a lookup failure is logged and counts as none. */
-async function openPrsFrom(deps: DriverDeps, issue: number, branch: string): Promise<number[]> {
+/** The open PRs from `branch`; null when the lookup failed (logged). */
+async function openPrsFrom(deps: DriverDeps, issue: number, branch: string): Promise<number[] | null> {
   return deps.gh.openPullRequestsFrom(branch).catch((e) => {
     deps.log({ kind: "warn", issue, msg: `open PRs from ${branch}: ${(e as Error).message}` });
-    return [] as number[];
+    return null;
   });
 }
 
@@ -379,9 +389,20 @@ async function keepHeldWork(deps: DriverDeps, claim: Claim, branch: string): Pro
   let head = held.head;
   if (await refExists(wt, held.head)) {
     const current = (await gitOut(wt, "rev-parse", "--abbrev-ref", "HEAD")).trim();
-    if (current !== branch || (await worktreeHead(wt)) !== held.head) {
+    const local = `refs/heads/${branch}`;
+    const tip = (await refExists(wt, local)) ? (await gitOut(wt, "rev-parse", local)).trim() : null;
+    if (tip !== null && tip !== held.head && (await isAncestor(wt, held.head, tip))) {
+      // The resumed stage committed on top of its held work (then failed, was postponed or crashed): that is held work too.
+      if (current !== branch) await checkoutBranch(wt, branch, tip);
+      head = tip;
+      claim.state = { ...claim.state, heldWork: { branch, head } };
+      deps.log({ kind: "held-work-advanced", issue: claim.issue, branch, from: held.head, to: head });
+    } else if (current !== branch || tip !== held.head) {
+      // The branch went elsewhere: its own commits are saved before it is put back at the held head (spec 005).
+      const own = tip !== null && tip !== held.head ? await commitsPatch(wt, held.head, tip) : "";
+      const patch = own.trim() ? await savePatch(deps.paths, claim.issue, own, deps.now(), "held-diverged") : null;
       await checkoutBranch(wt, branch, held.head);
-      deps.log({ kind: "held-work-restored", issue: claim.issue, branch, head: held.head, source: "local" });
+      deps.log({ kind: "held-work-restored", issue: claim.issue, branch, head: held.head, source: "local", patch });
     }
   } else {
     const tracking = `refs/remotes/origin/${branch}`;
@@ -445,12 +466,37 @@ async function syncWorktree(deps: DriverDeps, claim: Claim): Promise<void> {
     await checkoutBranch(claim.worktree, branch, remoteBranch);
     deps.log({ kind: "worktree-branch", issue: claim.issue, from: current, to: branch });
   }
+  // A held head that builds on the remote head is ahead of it, so the sync keeps it (R1); one the remote diverged from is dropped.
   const sync = await syncToRemote(claim.worktree, remoteBranch);
-  if (!sync.moved) return;
-  // The dropped head is still in the object store after the reset; a head already on main carries no work of its own.
-  const own = sync.dropped !== null && !(await isAncestor(claim.worktree, sync.dropped, "origin/main"));
-  const saved = own ? await savePatch(deps.paths, claim.issue, await commitsPatch(claim.worktree, remoteBranch, sync.dropped!), deps.now(), "dropped") : null;
-  deps.log({ kind: "worktree-synced", issue: claim.issue, pr: claim.state.pr.number, dropped: sync.dropped, patch: saved });
+  if (sync.moved) {
+    // The dropped head is still in the object store after the reset; a head already on main carries no work of its own.
+    const own = sync.dropped !== null && !(await isAncestor(claim.worktree, sync.dropped, "origin/main"));
+    const saved = own ? await savePatch(deps.paths, claim.issue, await commitsPatch(claim.worktree, remoteBranch, sync.dropped!), deps.now(), "dropped") : null;
+    deps.log({ kind: "worktree-synced", issue: claim.issue, pr: claim.state.pr.number, dropped: sync.dropped, patch: saved });
+  }
+  await settleHeldOnPr(deps, claim, branch);
+}
+
+/**
+ * Spec 011 AC-2, AC-5 with a PR bound: held work on the PR's branch is kept when the worktree's head is it or builds on
+ * it (the held head then follows the worktree's head); otherwise the sync above dropped it (its patch saved), and the
+ * held work is cleared with `held-work-lost`.
+ */
+async function settleHeldOnPr(deps: DriverDeps, claim: Claim, branch: string): Promise<void> {
+  const held = claim.state.heldWork;
+  if (!held || held.branch !== branch) return;
+  const head = await worktreeHead(claim.worktree);
+  if (head === held.head) {
+    deps.log({ kind: "held-work-kept", issue: claim.issue, branch, head });
+    return;
+  }
+  if ((await refExists(claim.worktree, held.head)) && (await isAncestor(claim.worktree, held.head, head))) {
+    claim.state = { ...claim.state, heldWork: { branch, head } };
+    deps.log({ kind: "held-work-advanced", issue: claim.issue, branch, from: held.head, to: head });
+    return;
+  }
+  claim.state = { ...claim.state, heldWork: null };
+  deps.log({ kind: "held-work-lost", issue: claim.issue, branch, head: held.head });
 }
 
 /** One line per check run on the PR head for the review prompt; a lookup failure leaves the summary at "(none)". */
@@ -484,7 +530,10 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
 
   if(!state.conversation&&!state.resumeSession)await syncWorktree(deps, claim);
   // The spec stage and the question check work from origin/main and are never rebased (spec section 4).
-  if (!state.conversation&&!state.resumeSession&&stage !== "spec" && stage !== "question-check" && state.pr !== null && !state.conflictPending) {
+  // Spec 011: held work on the PR's branch is not rebased: the rewritten commits would be unpushed and diverged, and
+  // the next preparation would drop them. The resumed stage pushes it; a later stage rebases.
+  const heldOnPr = claim.state.heldWork !== null && claim.state.heldWork.branch === branchOf(claim.state);
+  if (!state.conversation&&!state.resumeSession&&stage !== "spec" && stage !== "question-check" && state.pr !== null && !state.conflictPending && !heldOnPr) {
     const rebase = await rebaseOntoMain(claim.worktree, "origin/main", botIdentity(deps));
     if (!rebase.ok) return { type: "rebase_conflict", detail: rebase.conflict };
   }

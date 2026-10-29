@@ -72,7 +72,7 @@ a large decision with one clearly right answer is yours, recorded as an ADR in
 reviewer before it is sent, and anything outside those three kinds comes back to you to
 decide.
 
-Commit your work before you escalate: it is kept, and your resumed run continues from it.
+Commit your work before you escalate: it is kept when it builds on the pull request's head, and your resumed run continues from it.
 To escalate, write a result holding only the optional `escalation` object and `findings`:
 { "escalation": { "kind": "product" | "technical" | "capability", "question": "...", "options": [{ "label": "...", "cost": "..." }], "recommendation": "..." }, "findings": [] }
 `kind` names which of the three it is, `question` is the question in a sentence or two,
