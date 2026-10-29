@@ -32,6 +32,14 @@ describe("profiles", () => {
       expect(existsSync(join(dir, ".gitkeep")), name).toBe(true);
     }
   });
+  it("no profile tells a stage to run the suite without the shell condition (spec 017 AC-3)", () => {
+    for (const name of listProfiles(agentsDir)) {
+      const text = resolveProfile(agentsDir, name).instructions.replace(/\s+/g, " ");
+      for (const sentence of text.split(/\.(?: |$)/)) {
+        if (sentence.includes("pnpm test")) expect(sentence, name).toContain("shell");
+      }
+    }
+  });
   it("throws on an unknown profile", () => {
     expect(() => resolveProfile(agentsDir, "nope")).toThrow(/unknown profile/);
   });

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentsDir } from "../src/config.ts";
 import { loadStageDefinitions, parseStageDefinition } from "../src/stages/definition.ts";
+import { resolveProfile } from "../src/profiles/resolve.ts";
 import { renderReplyPrompt,renderPrompt } from "../src/stages/prompt.ts";
 
 const minimal = `---
@@ -98,6 +99,20 @@ describe("committed stage prompts (AC-1, AC-14, AC-15, AC-17)", () => {
     result_path: "/tmp/r.json",
     profile_instructions: "Use cargo.",
   };
+  it("review.md says the stage has no shell whatever the checks say (spec 017 AC-2)", () => {
+    const t = read("review").replace(/\s+/g, " ");
+    expect(t).toContain("you have no shell");
+    expect(t).not.toContain("when every check succeeded");
+  });
+  for (const n of ["plan", "review", "question-check"]) {
+    it(`${n}.md never tells a stage to run pnpm test without a shell condition (spec 017 AC-4)`, () => {
+      const backend = resolveProfile(agentsDir, "backend").instructions;
+      const out = renderPrompt(read(n), { ...full, profile_instructions: backend }).replace(/\s+/g, " ");
+      for (const sentence of out.split(/\.(?: |$)/)) {
+        if (sentence.includes("pnpm test")) expect(sentence).toContain("shell");
+      }
+    });
+  }
   const narrowed = /that a user could notice a change does not make it a product decision/i;
   for (const n of ["plan", "implement", "fix", "review"]) {
     it(`${n}.md carries history, answer, decide input, escalation and the follow-up rule`, () => {
