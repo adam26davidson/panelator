@@ -42,6 +42,24 @@ describe('asking session conversation',()=>{
   const retry=transition(s,{type:'stage_failed',stage:'review',reason:'invalid'});expect(retry.state.conversation?.retried).toBe(true);expect(retry.state.history).toEqual(s.history);
   const end=transition(retry.state,{type:'stage_failed',stage:'review',reason:'invalid'});expect(end.state.stage).toBe('spec');expect(end.state.decision).toBeNull();
  });
+ it('carries held work through a conversation turn, its failed retry and the settled route (spec 011 AC-3, AC-7)',()=>{
+  const held={branch:'issue-1',head:'a'.repeat(40)};
+  const session={harness:'claude' as const,model:'m',session_id:'s',worktree:'/w'};
+  const s=at('paused',{question:q,askingStage:'implement',heldWork:held,resumeSession:session});
+  const turn=transition(s,{type:'answered',answer:'why not the second?',questionId:9});
+  expect(turn.state).toMatchObject({stage:'implement',heldWork:held});expect(turn.state.conversation?.next.heldWork).toEqual(held);
+  const failed=transition(turn.state,{type:'stage_failed',stage:'implement',reason:'invalid'});
+  expect(failed.state).toMatchObject({heldWork:held});expect(failed.state.conversation?.retried).toBe(true);
+  const settled=transition(failed.state,{type:'stage_ok',stage:'implement',result:{conversation:'settled',decision:'second'} as never});
+  expect(settled.state).toMatchObject({stage:'spec',specMode:'record',heldWork:held});
+ });
+ it('carries held work into a session resume; the resumed stage failing clears it (spec 011 AC-3, AC-7)',()=>{
+  const held={branch:'issue-1',head:'a'.repeat(40)};
+  const s=at('paused',{question:qCapability,askingStage:'implement',heldWork:held,plan,resumeSession:{harness:'claude',model:'m',session_id:'s',worktree:'/w'}});
+  const r=transition(s,{type:'answered',answer:'done, the token is set',questionId:9});
+  expect(r.state).toMatchObject({stage:'implement',heldWork:held});expect(r.state.conversation??null).toBeNull();expect(r.state.resumeSession).not.toBeNull();
+  expect(transition(r.state,{type:'stage_failed',stage:'implement',reason:'boom'}).state.heldWork).toBeNull();
+ });
 });
 
 describe("chain: happy path", () => {
