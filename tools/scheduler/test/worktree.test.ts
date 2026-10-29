@@ -286,6 +286,8 @@ describe("branch helpers (spec 006)", () => {
 });
 
 describe("onlyRebased (spec 015 AC-3)", () => {
+  // A CI runner has no git identity: the rebase needs one, as in the service.
+  const BOT_IDENTITY = { name: "panelator-pipeline[bot]", email: "panelator-pipeline[bot]@users.noreply.github.com" };
   const commit = (cwd: string, file: string, text: string) => {
     writeFileSync(join(cwd, file), text);
     git(cwd, "add", file);
@@ -306,7 +308,7 @@ describe("onlyRebased (spec 015 AC-3)", () => {
     git(w.path, "push", "-q", "origin", "issue-7");
     git(w.path, "fetch", "-q", "origin");
     moveMain(repo, w.path, "m1.txt");
-    expect(await rebaseOntoMain(w.path, "origin/main")).toEqual({ ok: true, moved: true });
+    expect(await rebaseOntoMain(w.path, "origin/main", BOT_IDENTITY)).toEqual({ ok: true, moved: true });
     const rebased = git(w.path, "rev-parse", "HEAD").trim();
     expect(await onlyRebased(w.path, rebased, "origin/issue-7", "origin/main")).toBe(true);
     moveMain(repo, w.path, "m2.txt");
@@ -320,7 +322,7 @@ describe("onlyRebased (spec 015 AC-3)", () => {
     git(w.path, "push", "-q", "origin", "issue-7");
     git(w.path, "fetch", "-q", "origin");
     moveMain(repo, w.path, "m1.txt");
-    await rebaseOntoMain(w.path, "origin/main");
+    await rebaseOntoMain(w.path, "origin/main", BOT_IDENTITY);
     const extra = commit(w.path, "local.txt", "local\n");
     expect(await onlyRebased(w.path, extra, "origin/issue-7", "origin/main")).toBe(false);
     // A local amend of the remote's commit (a different change, same message) is not a rebase either.
