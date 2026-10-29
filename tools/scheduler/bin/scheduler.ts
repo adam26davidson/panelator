@@ -65,7 +65,7 @@ if(args[0]==='quota') {
   // Spec 013 AC-10: the quota book, with the claims and agents waiting on it.
   const {readBook,quotaSummary}=await import('../src/quota/book.ts');
   const book=await readBook(paths);
-  console.log(JSON.stringify({...book,summary:quotaSummary(book,new Date())},null,2));
+  console.log(JSON.stringify({...book,summary:await quotaSummary(paths,new Date())},null,2));
   process.exit(0);
 }
 if(['param','agent','action'].includes(args[0])) {

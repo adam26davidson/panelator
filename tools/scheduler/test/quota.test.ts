@@ -38,6 +38,25 @@ describe("parseLimit (spec 013 AC-1 to AC-3)", () => {
     expect(parseLimit("You've hit your session limit · resets soon (UTC)", "claude", "m", at("2026-10-29T07:15:00Z")).resetsAt).toBeNull();
     expect(parseLimit(null, "claude", "m", at("2026-10-29T07:15:00Z")).key).toBe("claude:m");
   });
+  it("treats a reset that has just passed as just reset, never tomorrow or next year (AC-1)", () => {
+    // The 429 arrives seconds after the stated reset (the run took 3 s): wait a minute.
+    expect(parseReset("8:10am", "Europe/Berlin", at("2026-10-29T07:10:03Z"))).toEqual(at("2026-10-29T07:11:03Z"));
+    expect(parseLimit(SESSION, "claude", "m", at("2026-10-29T07:39:00Z")).resetsAt).toEqual(at("2026-10-29T07:40:00Z"));
+    expect(parseReset("Oct 29, 8am", "Europe/Berlin", at("2026-10-29T07:10:00Z"))).toEqual(at("2026-10-29T07:11:00Z"));
+    expect(parseReset("Oct 20, 8am", "Europe/Berlin", at("2026-10-29T07:10:00Z"))).toEqual(at("2026-10-29T07:11:00Z"));
+    // Across the year boundary a January date is next year's.
+    expect(parseReset("Jan 2, 9am", "UTC", at("2026-12-30T12:00:00Z"))).toEqual(at("2027-01-02T09:00:00Z"));
+  });
+  it("lands a reset inside a spring-forward gap just after the gap", () => {
+    // 2027-03-28 Berlin skips 02:00-03:00; 2:30am does not exist and is read as 03:30 CEST.
+    expect(parseReset("2:30am", "Europe/Berlin", at("2027-03-28T00:10:00Z"))).toEqual(at("2027-03-28T01:30:00Z"));
+    expect(parseReset("3:10am", "Europe/Berlin", at("2027-03-28T00:10:00Z"))).toEqual(at("2027-03-28T01:10:00Z"));
+  });
+  it("keys a limit naming no known model family by harness and model (AC-2)", () => {
+    const now = at("2026-10-29T07:15:00Z");
+    expect(parseLimit("You've hit your Claude Fable limit · resets 9pm (UTC)", "claude", "claude-fable-5-1", now)).toMatchObject({ key: "claude:fable", scope: "model" });
+    expect(parseLimit("You've reached your extra usage limit", "claude", "claude-fable-5-1", now)).toEqual({ key: "claude:claude-fable-5-1", scope: "unknown", resetsAt: null });
+  });
   it("matches keys against models", () => {
     expect(keyCovers("claude", "claude", "claude-opus-5-5")).toBe(true);
     expect(keyCovers("claude", "pi", "openai/gpt-6.1-sol")).toBe(false);
@@ -79,13 +98,8 @@ describe("the quota book", () => {
     // A standard stage goes straight to its own fallback.
     expect(await planLaunch(paths, { what: "issue:2", stage: "implement", tier: "standard", harness: "claude", model: "claude-sonnet-5-5", fallback: "openai/gpt-6.1-sol" }, DEFAULT_QUOTA_PARAMS, now))
       .toMatchObject({ kind: "run", model: "openai/gpt-6.1-sol", harness: "pi" });
-    expect(quotaSummary(await readBook(paths), now)).toEqual({
-      limits: [{ key: "claude", scope: "session", resets_at: "2026-10-29T07:10:00.000Z", source: "stated" }],
-      waiting: [{ what: "issue:1", until: "2026-10-29T07:10:00.000Z", key: "claude" }, { what: "x", until: "2026-10-29T07:10:00.000Z", key: "claude" }],
-    });
-    // A launch that runs clears its waiting entry.
-    await planLaunch(paths, strong, DEFAULT_QUOTA_PARAMS, at("2026-10-29T07:11:00Z"));
-    expect(Object.keys((await readBook(paths)).waiting)).toEqual(["x"]);
+    expect(await quotaSummary(paths, now)).toEqual({ limits: [{ key: "claude", scope: "session", resets_at: "2026-10-29T07:10:00.000Z", source: "stated" }], waiting: [] });
+    expect(await quotaSummary(paths, at("2026-10-29T07:10:00Z"))).toBeNull();
   });
 
   it("backs off exponentially on a limit with no reset, up to 4 hours, and a success clears it (AC-3)", async () => {
@@ -155,8 +169,47 @@ describe("the quota book", () => {
   it("waitAfterLimit uses the blocking limit, else a short backoff", async () => {
     const paths = setup(); await ensureStateDirs(paths);
     const now = at("2026-10-29T02:58:53Z");
-    expect(await waitAfterLimit(paths, "agent:f", "claude", "claude-fable-5-1", now)).toMatchObject({ until: "2026-10-29T03:13:53.000Z" });
+    expect(await waitAfterLimit(paths, "claude", "claude-fable-5-1", now)).toBe("2026-10-29T03:13:53.000Z");
     await observeRun(paths, usage({ outcome: "failed", started_at: now.toISOString() }), limited(SESSION), now);
-    expect(await waitAfterLimit(paths, "agent:f", "claude", "claude-fable-5-1", now)).toMatchObject({ until: "2026-10-29T07:10:00.000Z", key: "claude" });
+    expect(await waitAfterLimit(paths, "claude", "claude-fable-5-1", now)).toBe("2026-10-29T07:10:00.000Z");
+  });
+
+  it("caps a session wait at one window and any wait at 7 days (AC-1)", async () => {
+    const paths = setup(); await ensureStateDirs(paths);
+    // 8:10 Berlin read an hour after it passed would be tomorrow; a session limit lifts within one window.
+    const now = at("2026-10-29T08:10:00Z");
+    expect((await observeRun(paths, usage({ outcome: "failed" }), limited(SESSION), now))!.resets_at).toBe("2026-10-29T13:10:00.000Z");
+    const weekly = (await observeRun(paths, usage({ outcome: "failed" }), limited("You've hit your weekly limit · resets Dec 20, 9am (UTC)"), now))!;
+    expect(weekly.resets_at).toBe("2026-11-05T08:10:00.000Z");
+  });
+
+  it("recovers from a too-small capacity: a window that closes above it raises it, and tiny samples are ignored (AC-8)", async () => {
+    const paths = setup(); await ensureStateDirs(paths);
+    // Two windows hit the limit after $3 each (the maintainer's own use took the rest).
+    for (const [start, reset] of [["2026-10-28T12:00:00Z", "6pm"], ["2026-10-28T18:00:00Z", "12am"]]) {
+      await observeRun(paths, usage({ stage: "fix", model: "claude-sonnet-5-5", cost_usd: 3, started_at: start }), ok, at(start));
+      await observeRun(paths, usage({ outcome: "failed", cost_usd: 0, started_at: start }), limited(`You've hit your session limit · resets ${reset} (UTC)`), at(start));
+    }
+    expect((await readBook(paths)).capacity).toEqual([3, 3]);
+    // Samples below two review estimates ($4) are ignored: the review runs.
+    await observeRun(paths, usage({ cost_usd: 4, started_at: "2026-10-29T00:01:00Z" }), ok, at("2026-10-29T00:01:00Z"));
+    expect(await planLaunch(paths, strong, DEFAULT_QUOTA_PARAMS, at("2026-10-29T00:02:00Z"))).toMatchObject({ kind: "run" });
+    // That window spends $52 with no limit and closes; the next window's first run raises the samples to $52.
+    for (let i = 0; i < 12; i++) await observeRun(paths, usage({ cost_usd: 4, started_at: "2026-10-29T01:00:00Z" }), ok, at("2026-10-29T01:00:00Z"));
+    await observeRun(paths, usage({ cost_usd: 1, started_at: "2026-10-29T05:01:00Z" }), ok, at("2026-10-29T05:01:00Z"));
+    expect((await readBook(paths)).capacity).toEqual([52, 52]);
+  });
+
+  it("defers a stage at most once per window (AC-8)", async () => {
+    const paths = setup(); await ensureStateDirs(paths);
+    for (const [start, reset] of [["2026-10-28T12:00:00Z", "6pm"], ["2026-10-28T18:00:00Z", "12am"]]) {
+      for (let i = 0; i < 5; i++) await observeRun(paths, usage({ cost_usd: 4, started_at: start }), ok, at(start));
+      await observeRun(paths, usage({ outcome: "failed", cost_usd: 0, started_at: start }), limited(`You've hit your session limit · resets ${reset} (UTC)`), at(start));
+    }
+    for (let i = 0; i < 5; i++) await observeRun(paths, usage({ cost_usd: 4, started_at: "2026-10-29T00:01:00Z" }), ok, at("2026-10-29T00:01:00Z"));
+    const t = at("2026-10-29T03:00:00Z");
+    expect(await planLaunch(paths, strong, DEFAULT_QUOTA_PARAMS, t)).toMatchObject({ kind: "wait", until: "2026-10-29T05:01:00.000Z" });
+    expect(await planLaunch(paths, strong, DEFAULT_QUOTA_PARAMS, t)).toMatchObject({ kind: "run" });
+    expect(await planLaunch(paths, { ...strong, what: "issue:2" }, DEFAULT_QUOTA_PARAMS, t)).toMatchObject({ kind: "wait" });
   });
 });

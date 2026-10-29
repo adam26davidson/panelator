@@ -221,9 +221,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   };
   await writeUsageRecord(ctx.paths, usage);
   // Spec 013 AC-4, AC-8: the quota book sees every run; a book error never fails the run.
-  // The fake harness (tests) stands in for the harness the request names.
-  const quotaHarness = harness === "fake" ? (req.harness ?? req.def.harness) : harness;
-  const limit = await observeRun(ctx.paths, { ...usage, harness: quotaHarness }, judgement, endedAt, ctx.sessionWindowMs).catch(() => null);
+  const limit = await observeRun(ctx.paths, { ...usage, harness: ctx.adapter.quotaHarness ?? harness }, judgement, endedAt, ctx.sessionWindowMs).catch(() => null);
 
   const ioMessages = ioErrors.map((e) => e.message);
   let reason = judgement.reason;

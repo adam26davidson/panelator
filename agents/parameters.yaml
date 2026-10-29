@@ -27,7 +27,7 @@
   type: boolean
   default: true
   mode: auto
-  description: When only a strong-tier stage's own Claude model is limited (e.g. the Fable limit), run it on quota.model_limit_fallback_model instead of waiting for the reset (spec 013; default chosen by the maintainer 2026-10-29).
+  description: When only a strong-tier stage's own Claude model is limited (e.g. the Fable limit), run it on quota.model_limit_fallback_model instead of waiting for the reset (spec 013 AC-9; default from ADR 0003, the maintainer's decision of 2026-10-29).
 - name: quota.model_limit_fallback_model
   type: string
   default: claude-opus-5-5

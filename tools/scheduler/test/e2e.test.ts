@@ -26,6 +26,7 @@ import {ActionLog} from '../src/actions/log.ts';
 import {undoAction} from '../src/actions/undo.ts';
 import {loadActionLevels,applyAction} from '../src/actions/index.ts';
 import {appendFindings} from '../src/state/findings.ts';
+import {observeRun} from '../src/quota/book.ts';
 import {readAgentState,writeAgentState} from '../src/standing/state.ts';
 import {runStandingAgent} from '../src/standing/run.ts';
 import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
@@ -603,6 +604,19 @@ describe('standing agents: recorded runs through the real runner and mocked App'
   await w.scheduler.tick();await idle(w);expect((await readAgentState(w.paths,'operator'))?.last_run?.outcome).toBe('failed');
   expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);expect(w.notifications).toHaveLength(1);
  },30000);
+ it('a standing agent already blocked when it comes due starts no run and waits for the reset (spec 013 AC-7)',async()=>{
+  const w=await standingWorld({operator:[{summary:'after the reset'}]});
+  const t0=new Date('2026-10-01T00:00:00Z');
+  await observeRun(w.paths,{run_id:'x',issue:7,stage:'review',attempt:1,outcome:'failed',harness:'claude',model:'claude-fable-5-1',cost_usd:0,input_tokens:0,output_tokens:0,cache_read_tokens:0,cache_write_tokens:0,turns:1,tool_calls:0,wall_seconds:1,started_at:t0.toISOString(),ended_at:t0.toISOString(),events_path:''},{outcome:'failed',reason:"You've hit your session limit · resets 3am (UTC)",apiErrorStatus:429,finalText:null},t0);
+  const state=(await readAgentState(w.paths,'operator'))!;state.next_run=t0.toISOString();await writeAgentState(w.paths,'operator',state);
+  await w.scheduler.tick();await idle(w);
+  expect(w.adapter.ran).toEqual([]);
+  expect((await readAgentState(w.paths,'operator'))).toMatchObject({failures:0,postponed_until:'2026-10-01T03:00:00.000Z',last_run:null});
+  expect(readdirSync(w.paths.runs)).toEqual([]);
+  w.setNow(new Date('2026-10-01T02:59:00Z'));await w.scheduler.tick();await idle(w);expect(w.adapter.ran).toEqual([]);
+  w.setNow(new Date('2026-10-01T03:00:30Z'));await w.scheduler.tick();await idle(w);expect(w.adapter.ran).toEqual(['operator']);
+  expect((await readAgentState(w.paths,'operator'))?.last_run?.outcome).toBe('ok');
+ },30000);
  it('a rate-limited filer does not feed itself: no finding from the 429, and new queued findings do not override the wait (issue #24)',async()=>{
   const w=await standingWorld({'findings-filer':[RATE_LIMITED,{summary:'triaged',decisions:[]}]});
   const t0=new Date('2026-10-01T00:00:00Z');
@@ -644,7 +658,7 @@ describe('standing agents: recorded runs through the real runner and mocked App'
   expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(0);expect(w.notifications).toHaveLength(0);
   const ticks=readFileSync(w.paths.serviceLog,'utf8').trim().split('\n').map(l=>JSON.parse(l)).filter(r=>r.kind==='tick');
   // AC-10: the tick line shows the limit and the agent waiting on it while it lasts.
-  expect(ticks[1].quota).toEqual({limits:[{key:'claude:claude-fable-5-1',scope:'unknown',resets_at:'2026-10-01T00:15:00.000Z',source:'backoff'}],waiting:[{what:'agent:operator',until:'2026-10-01T00:15:00.000Z',key:'claude:claude-fable-5-1'}]});
+  expect(ticks[1].quota).toEqual({limits:[{key:'claude:claude-fable-5-1',scope:'unknown',resets_at:'2026-10-01T00:15:00.000Z',source:'backoff'}],waiting:[{what:'agent:operator',until:'2026-10-01T00:15:00.000Z'}]});
   expect(ticks.at(-1).quota).toBeUndefined();
  },30000);
 });

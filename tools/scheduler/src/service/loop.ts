@@ -3,7 +3,7 @@ import {questionMessage,reminderText} from '../telegram/questions.ts';
 import { applyActions, sendPausedQuestion, completePause, driveChain as defaultDriveChain, step, type DriverDeps } from "../chain/driver.ts";
 import { CLAIM_LABEL, ENDED, HISTORY_ENTRY_MAX, NEEDS_DECISION_LABEL, initialChainState, ledgerOf, stuckOf as stuckStage, transition } from "../chain/machine.ts";
 import {emit} from '../standing/events.ts';
-import { quotaSummary, readBook } from "../quota/book.ts";
+import { quotaSummary } from "../quota/book.ts";
 import { appendFindings, onFindingsQueued } from "../state/findings.ts";
 import { livenessGate } from "../gates/index.ts";
 import { ensureWorktree, uncommittedPatch } from "../runner/worktree.ts";
@@ -416,7 +416,7 @@ export class Scheduler {
     } finally {
       this.#ticking = false;
       // Spec 013 AC-10: the quota book's limits and what waits on them, when there are any.
-      const quota = await readBook(d.paths).then((b) => quotaSummary(b, d.now())).catch(() => null);
+      const quota = await quotaSummary(d.paths, d.now()).catch(() => null);
       d.serviceLog.tick({ ...info, active: [...this.#active.keys()], ...(quota ? { quota } : {}) });
       if (this.#restartPending && this.active === 0) d.requestRestart();
     }

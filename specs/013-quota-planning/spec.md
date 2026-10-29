@@ -12,11 +12,19 @@ subscriptions") and section 6.1; [process-spec](../../docs/process-spec.md)
 models as fallback when Claude quota runs out); research
 [05-token-efficiency](../../docs/research/05-token-efficiency.md) findings 8
 and 9 and [08-synthesis](../../docs/research/08-synthesis.md) item 16
-(quota-aware scheduler state). Amends
+(quota-aware scheduler state);
+[ADR 0003](../../docs/decisions/0003-opus-fallback-on-model-limit.md) (the
+maintainer's decision of 2026-10-29: the Opus fallback on a model-only limit,
+on by default). Amends
 [001-scheduler-core](../001-scheduler-core/spec.md) AC-25 (a strong-tier
-stage may move to the next-best Claude model on a model-specific limit) and
-the postponement wait of AC-25 and spec 006 AC-26/AC-27 (the wait ends at the
-stated reset, not after a fixed 30 minutes).
+stage may move to the next-best Claude model on a model-specific limit, per
+ADR 0003; the postponement ends at the stated reset, not after a fixed 30
+minutes); [006-no-human-stops](../006-no-human-stops/spec.md) AC-26 and AC-27
+(the same end of the postponement; a rescue may take the AC-9 fallback); and
+[008-agent-registry](../008-agent-registry/spec.md) AC-3 (a standing run that
+hits a quota or rate limit is not a failure and is not retried at the next
+tick; it is postponed to the reset, AC-7). Each amended criterion carries a
+note pointing here.
 
 ## 1. Goal
 
@@ -82,16 +90,25 @@ directory, written under the state lock.
 - AC-1. Given `You've hit your session limit · resets 8:10am
   (Europe/Berlin)` at 2026-10-29T02:58Z, then the limit is key `claude`,
   scope `session`, reset 2026-10-29T07:10Z (the next 8:10 in that zone
-  after now, with the zone's offset on that date), source `stated`. Given a
-  time already past today in that zone, the reset is the same time
-  tomorrow. Times with no minutes (`resets 3am`), 24-hour times (`resets
-  15:10`) and a leading month and day (`resets Nov 3, 9am`, the next such
-  date) parse the same way; `weekly limit` gives scope `weekly`, key
-  `claude`.
+  after now, with the zone's offset on that date), source `stated`. Live
+  429s arrive seconds after the reset they name, so a time at most 30
+  minutes past is *just reset*: the reset is now plus one minute, never the
+  same time tomorrow. A time further past is tomorrow's. Times with no
+  minutes (`resets 3am`), 24-hour times (`resets 15:10`) and a leading month
+  and day (`resets Nov 3, 9am`) parse the same way. A dated time is this
+  year's; when it has passed it is just reset, and it is next year's only
+  across the year boundary (more than 300 days past, as a December message
+  naming January). A time in a spring-forward gap lands just after the gap.
+  `weekly limit` gives scope `weekly`, key `claude`. No recorded wait is
+  longer than one `quota.session_window` for a session limit, or 7 days for
+  any limit.
 - AC-2. Given `You've reached your Fable limit. Switch to another model,
   ...`, then the limit is key `claude:fable`, scope `model`, source
   `backoff`. Given `You've hit your Opus limit · resets 9pm (UTC)`, then key
-  `claude:opus`, scope `model`, source `stated`.
+  `claude:opus`, scope `model`, source `stated`; `Claude Fable limit` also
+  gives `claude:fable`. A limit that names no known family (`fable`, `opus`,
+  `sonnet`, `haiku`) and is neither session nor weekly, such as `extra usage
+  limit`, is key `<harness>:<model>`, scope `unknown`, as in AC-3.
 - AC-3. Given a 429 whose reason is not recognised, an unknown time zone, or
   an unparseable time, then the limit is key `<harness>:<model>` (or the
   recognised key) with source `backoff`: the reset is now plus 15 minutes
@@ -122,7 +139,8 @@ directory, written under the state lock.
   failure finding or notification is raised, and the tick does not start it
   again before `postponed_until`, whatever events (such as `finding_queued`)
   arrive meanwhile. (The live loop fed itself: each second 429 wrote a
-  failure finding, whose `finding_queued` event made the filer due again.) A blocked agent starts no run at all.
+  failure finding, whose `finding_queued` event made the filer due again.)
+  A blocked agent starts no run at all.
   Given a tick after `postponed_until`, then it is started as usual and
   `postponed_until` is cleared when it starts.
 
@@ -134,19 +152,26 @@ directory, written under the state lock.
   5h) later, or at the stated reset of a session limit hit inside it. Each
   Claude run's reported cost is added to the window it started in. When a
   session limit is hit, the window's spend (including the run that hit it)
-  is kept as a capacity sample, at most once per window, last five kept;
-  the window's *capacity* is the median of the samples. A stage's
+  is kept as a capacity sample, at most once per window, last five kept.
+  A window that closes without a session limit held at least its spend, so
+  when the next window starts every sample below that spend is raised to
+  it. A stage's
   *estimate* is the median cost of its last ten `ok` runs on that model
   (stage name and model; seeded from `usage/` the first time the book is
-  read). Given a strong-tier stage on Claude about to start, planning on
-  (`quota.plan_windows`, default true), at least two capacity samples and
-  an estimate, and the window's spend plus the estimate above the
-  capacity, then the stage does not start: it waits until the window's end
+  read). For a stage, samples below twice its estimate are ignored (the
+  maintainer's own use shares the subscription, so a window can end early),
+  and its *capacity* is the median of the rest. Given a strong-tier stage on
+  Claude about to start, planning on (`quota.plan_windows`, default true),
+  an estimate, at least two remaining samples, the window's spend plus the
+  estimate above the capacity, and the same stage of the same issue or agent
+  not yet deferred in this window, then the stage does not start: it waits
+  until the window's end
   as in AC-6 and AC-7, and a `quota-defer` line is logged with stage,
   model, estimate, spend, capacity and window end. Otherwise it starts.
   Standard-tier stages are not deferred (they have the cheaper OpenAI
   fallback), so cheaper work keeps using the rest of the window.
-  *(agent's call: median, two samples, strong tier only)*
+  *(agent's call: median, two samples, twice the estimate, once per window,
+  strong tier only)*
 
 **Model-specific limits**
 
@@ -164,22 +189,19 @@ directory, written under the state lock.
   apply. Given the parameter false, then the stage waits as before. A
   standard-tier stage whose model is blocked runs on its own `fallback`
   when that is not blocked, without a 429 first.
-  Default allowed: the maintainer chose on 2026-10-29 (relayed by the
-  coordinating session) that strong-tier stages use the next-best
-  available Claude model rather than idle for hours. Process-spec 6.5 and
-  the predecessor's "never downgrade the judgment tier" were about moving
-  judgment to a much cheaper model; Opus is the next Claude model below
-  Fable, and the alternative observed live was 11 hours with no issue work.
+  Default allowed, as the maintainer decided on 2026-10-29
+  ([ADR 0003](../../docs/decisions/0003-opus-fallback-on-model-limit.md)).
 
 **Visibility**
 
 - AC-10. Given a tick while the book holds a limit with a future reset or
   something waits on quota, then the tick's service-log line carries
   `quota: { limits: [{key, scope, resets_at, source}], waiting: [{what,
-  until, key}] }`; otherwise the field is absent. `scheduler quota` prints
-  the whole book (limits, window, capacity samples, estimates and what
-  waits) as JSON. A waiting entry is removed when its stage or agent next
-  starts.
+  until}] }`; otherwise the field is absent. `waiting` is read from the
+  claims (`issue:<n>`, stage `waiting` with a future `postponedUntil`) and
+  the agent states (`agent:<name>`, a future `postponed_until`), not kept
+  in the book. `scheduler quota` prints the book (limits, window, capacity
+  samples, estimates) and that summary as JSON.
 
 ## 4. Interfaces and files
 
@@ -187,13 +209,17 @@ directory, written under the state lock.
   now)` and the zone arithmetic (via `Intl.DateTimeFormat`, no new
   dependency).
 - `tools/scheduler/src/quota/book.ts`: the book (`readBook`,
-  `observeRun`, `blocking`, `planLaunch`, `markWaiting`, `quotaSummary`).
+  `observeRun`, `blocking`, `planLaunch`, `waitAfterLimit`,
+  `quotaSummary`).
   `planLaunch` returns `{kind: "run", model, harness, note?}` or `{kind:
   "wait", until, key, reason}` and is the single launch decision for chain
   stages and standing agents.
 - `tools/scheduler/src/state/paths.ts`: `quota` (`quota.json`).
 - `tools/scheduler/src/runner/run.ts`: every run's usage and judgement go to
-  `observeRun` when the run ends.
+  `observeRun` when the run ends, with the `quota.session_window` the driver
+  and the standing runner pass in the runner context. The usage's harness is
+  the adapter's `quotaHarness` when it sets one (a test's fake adapter
+  stands in for a vendor that way), else its `harness`.
 - `tools/scheduler/src/runner/retry.ts`: `retryDecision` takes the model
   fallback of AC-9.
 - `tools/scheduler/src/chain/driver.ts`, `chain/machine.ts`,
@@ -208,10 +234,17 @@ directory, written under the state lock.
   `quota.model_limit_fallback_model` (string, `claude-opus-5-5`),
   `quota.plan_windows` (boolean, true), `quota.session_window` (duration,
   5h, 1h to 24h); all `auto`.
-- `specs/001-scheduler-core/spec.md` AC-25: one sentence pointing here.
+- `docs/decisions/0003-opus-fallback-on-model-limit.md`: the maintainer's
+  decision behind AC-9.
+- Amendment notes: `specs/001-scheduler-core/spec.md` AC-25,
+  `specs/006-no-human-stops/spec.md` AC-26 and AC-27,
+  `specs/008-agent-registry/spec.md` AC-3.
 - Tests: `test/quota.test.ts` (AC-1 to AC-3, AC-8, AC-9 decisions),
-  `test/driver.test.ts` (AC-4 to AC-6, AC-9 chain), `test/loop.test.ts`
-  (AC-5 liveness), `test/e2e.test.ts` (AC-7 and AC-10 through the real
+  `test/driver.test.ts` (AC-4 to AC-6, AC-8 deferral, AC-9 chain and the
+  weekly limit), `test/loop.test.ts`
+  (AC-5 liveness), `test/e2e.test.ts` (AC-7, including an agent already
+  blocked when due and the filer not fed by its own findings, and AC-10
+  through the real
   runner; replaces the test that counted a rate-limited standing run as a
   failure), `test/retry.test.ts` (AC-9 retry).
 - Not gated: a resumed session or a Telegram conversation turn keeps its

@@ -4,6 +4,8 @@ import type { Judgement } from "../adapters/types.ts";
 import type { ParameterStore } from "../parameters/store.ts";
 import { withStateLock } from "../parameters/store.ts";
 import { parseDuration } from "../standing/registry.ts";
+import { listAgentStates } from "../standing/state.ts";
+import { listClaims } from "../state/claims.ts";
 import type { StatePaths } from "../state/paths.ts";
 import type { UsageRecord } from "../state/runs.ts";
 import type { Harness, Tier } from "../types.ts";
@@ -19,27 +21,37 @@ export interface Limit {
   hit_at: string;
   run_id: string;
 }
-export interface Waiting { until: string; key: string; reason: string; since: string }
+export interface QuotaWindow {
+  start: string;
+  end: string;
+  spent_usd: number;
+  /** A session limit was hit in this window and its spend taken as a capacity sample. */
+  sampled: boolean;
+  /** `what|stage` already deferred in this window (AC-8: at most once each). */
+  deferred?: string[];
+}
 export interface Book {
   limits: Record<string, Limit>;
   /** Consecutive backoff hits per key (AC-3). */
   backoff: Record<string, number>;
   /** The Claude session window (AC-8). */
-  window: { start: string; end: string; spent_usd: number; sampled: boolean } | null;
-  /** Window spend at the moment a session limit was hit, last five. */
+  window: QuotaWindow | null;
+  /** Window spend at the moment a session limit was hit, last five; raised by windows that closed above them. */
   capacity: number[];
   /** Cost of the last ten ok runs per `stage|model`. */
   costs: Record<string, number[]>;
   seeded: boolean;
-  /** What waits on quota, by `issue:<n>` or `agent:<name>`. */
-  waiting: Record<string, Waiting>;
 }
 
 export const BACKOFF_BASE_MS = 15 * 60_000;
 export const BACKOFF_MAX_MS = 4 * 3_600_000;
+/** AC-1: no quota wait is longer than this, whatever a message says. */
+export const MAX_WAIT_MS = 7 * 86_400_000;
 const CAPACITY_SAMPLES = 5;
 const COST_SAMPLES = 10;
 const MIN_CAPACITY_SAMPLES = 2;
+/** AC-8: a capacity sample below this many of the stage's estimate says nothing about the stage and is ignored. */
+const SAMPLE_MIN_ESTIMATES = 2;
 
 export interface QuotaParams {
   modelFallback: boolean;
@@ -67,11 +79,12 @@ export async function quotaParams(store?: ParameterStore): Promise<QuotaParams> 
   };
 }
 
-const empty = (): Book => ({ limits: {}, backoff: {}, window: null, capacity: [], costs: {}, seeded: false, waiting: {} });
+const empty = (): Book => ({ limits: {}, backoff: {}, window: null, capacity: [], costs: {}, seeded: false });
 
 export async function readBook(paths: StatePaths): Promise<Book> {
   try {
-    return { ...empty(), ...JSON.parse(await readFile(paths.quota, "utf8")) };
+    const { waiting: _dropped, ...rest } = JSON.parse(await readFile(paths.quota, "utf8"));
+    return { ...empty(), ...rest };
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return empty();
     throw e;
@@ -116,6 +129,18 @@ async function seed(paths: StatePaths, book: Book): Promise<void> {
   for (const r of records) if (r.outcome === "ok" && typeof r.cost_usd === "number") book.costs[`${r.stage}|${r.model}`] = push(book.costs[`${r.stage}|${r.model}`] ?? [], r.cost_usd, COST_SAMPLES);
 }
 
+/** AC-8: a window that closed without a session limit held at least its spend; no sample stays below that. */
+function closeWindow(book: Book): void {
+  const w = book.window;
+  if (w && !w.sampled && w.spent_usd > 0) book.capacity = book.capacity.map((c) => Math.max(c, w.spent_usd));
+}
+
+/** AC-1: a wait is never longer than MAX_WAIT_MS, and a session limit lifts within one window. */
+function capReset(resetsAt: Date, scope: LimitScope, now: Date, sessionWindowMs: number): Date {
+  const cap = now.getTime() + (scope === "session" ? sessionWindowMs : MAX_WAIT_MS);
+  return resetsAt.getTime() > cap ? new Date(cap) : resetsAt;
+}
+
 /** AC-4, AC-8: every run ends here. Returns the limit a 429 recorded, or null. */
 export function observeRun(paths: StatePaths, usage: UsageRecord, judgement: Judgement, now: Date, sessionWindowMs = DEFAULT_QUOTA_PARAMS.sessionWindowMs): Promise<Limit | null> {
   return update(paths, async (book) => {
@@ -124,6 +149,7 @@ export function observeRun(paths: StatePaths, usage: UsageRecord, judgement: Jud
     if (usage.harness === "claude") {
       const start = Date.parse(usage.started_at);
       if (!book.window || start >= Date.parse(book.window.end)) {
+        closeWindow(book);
         book.window = { start: new Date(start).toISOString(), end: new Date(start + sessionWindowMs).toISOString(), spent_usd: 0, sampled: false };
       }
       book.window.spent_usd = Math.round((book.window.spent_usd + cost) * 1e6) / 1e6;
@@ -145,6 +171,7 @@ export function observeRun(paths: StatePaths, usage: UsageRecord, judgement: Jud
       book.backoff[parsed.key] = n + 1;
       source = "backoff";
     }
+    resetsAt = capReset(resetsAt, parsed.scope, now, sessionWindowMs);
     const limit: Limit = {
       key: parsed.key, scope: parsed.scope, resets_at: resetsAt.toISOString(), source, reason: (judgement.reason ?? "429").slice(0, 300), hit_at: now.toISOString(), run_id: usage.run_id,
     };
@@ -171,7 +198,7 @@ export function blocking(book: Book, harness: string, model: string, now: Date):
 }
 
 export interface LaunchRequest {
-  /** `issue:<n>` or `agent:<name>`, the waiting entry's key. */
+  /** `issue:<n>` or `agent:<name>`. */
   what: string;
   stage: string;
   tier: Tier;
@@ -209,49 +236,64 @@ function decide(book: Book, req: LaunchRequest, params: QuotaParams, now: Date):
     model = to;
     harness = harnessOf(to);
   }
-  // AC-8: a strong-tier Claude stage that would likely be cut off near the end of the window waits for its end.
+  // AC-8: a strong-tier Claude stage that would likely be cut off near the end of the window waits for its end,
+  // at most once per stage per window.
   const w = book.window;
   const estimates = book.costs[`${req.stage}|${model}`];
-  if (params.planWindows && req.tier === "strong" && harness === "claude" && w && Date.parse(w.end) > now.getTime() && book.capacity.length >= MIN_CAPACITY_SAMPLES && estimates?.length) {
+  const once = `${req.what}|${req.stage}`;
+  if (params.planWindows && req.tier === "strong" && harness === "claude" && w && Date.parse(w.end) > now.getTime() && estimates?.length && !w.deferred?.includes(once)) {
     const estimate = median(estimates);
-    const capacity = median(book.capacity);
-    if (w.spent_usd + estimate > capacity) {
-      return {
-        kind: "wait", until: w.end, key: "claude",
-        reason: `deferred to the window's end: spent ${w.spent_usd.toFixed(2)} + estimate ${estimate.toFixed(2)} > capacity ${capacity.toFixed(2)}`,
-        defer: { estimate, spent: w.spent_usd, capacity },
-      };
+    const samples = book.capacity.filter((c) => c >= SAMPLE_MIN_ESTIMATES * estimate);
+    if (samples.length >= MIN_CAPACITY_SAMPLES) {
+      const capacity = median(samples);
+      if (w.spent_usd + estimate > capacity) {
+        w.deferred = [...(w.deferred ?? []), once];
+        return {
+          kind: "wait", until: w.end, key: "claude",
+          reason: `deferred to the window's end: spent ${w.spent_usd.toFixed(2)} + estimate ${estimate.toFixed(2)} > capacity ${capacity.toFixed(2)}`,
+          defer: { estimate, spent: w.spent_usd, capacity },
+        };
+      }
     }
   }
   return note ? { kind: "run", model, harness, note } : { kind: "run", model, harness };
 }
 
-/** AC-6 to AC-9: the launch decision for one stage or agent run; records or clears its waiting entry. */
+/** AC-6 to AC-9: the launch decision for one stage or agent run. */
 export function planLaunch(paths: StatePaths, req: LaunchRequest, params: QuotaParams, now: Date): Promise<LaunchDecision> {
   return update(paths, async (book) => {
     await seed(paths, book);
-    const d = decide(book, req, params, now);
-    if (d.kind === "wait") book.waiting[req.what] = { until: d.until, key: d.key, reason: d.reason, since: book.waiting[req.what]?.since ?? now.toISOString() };
-    else delete book.waiting[req.what];
-    return d;
+    return decide(book, req, params, now);
   });
 }
 
-/** AC-5, AC-7: the wait after a 429, for a run of `model`: the blocking limit's reset, recorded as waiting. */
-export function waitAfterLimit(paths: StatePaths, what: string, harness: string, model: string, now: Date): Promise<Waiting> {
-  return update(paths, (book) => {
-    const blk = blocking(book, harness, model, now);
-    const w: Waiting = blk
-      ? { until: blk.resets_at, key: blk.key, reason: `${model} limited (${blk.key}, ${blk.source}) until ${blk.resets_at}`, since: now.toISOString() }
-      : { until: new Date(now.getTime() + BACKOFF_BASE_MS).toISOString(), key: `${harness}:${model}`, reason: "rate limited", since: now.toISOString() };
-    book.waiting[what] = w;
-    return w;
-  });
+/** AC-5, AC-7: when a run of `model` that hit 429 may start again: the blocking limit's reset, else a short backoff. */
+export async function waitAfterLimit(paths: StatePaths, harness: string, model: string, now: Date): Promise<string> {
+  const blk = blocking(await readBook(paths), harness, model, now);
+  return blk ? blk.resets_at : new Date(now.getTime() + BACKOFF_BASE_MS).toISOString();
+}
+
+export interface QuotaSummary {
+  limits: { key: string; scope: string; resets_at: string; source: string }[];
+  waiting: { what: string; until: string }[];
+}
+
+/** AC-10: what waits, from the claims (`postponedUntil`) and agent states (`postponed_until`) themselves. */
+export async function quotaWaiting(paths: StatePaths, now: Date): Promise<{ what: string; until: string }[]> {
+  const out: { what: string; until: string }[] = [];
+  for (const c of await listClaims(paths).catch(() => [])) {
+    if (c.state.stage === "waiting" && c.state.postponedUntil && Date.parse(c.state.postponedUntil) > now.getTime()) out.push({ what: `issue:${c.issue}`, until: c.state.postponedUntil });
+  }
+  for (const [name, s] of Object.entries(await listAgentStates(paths).catch(() => ({})))) {
+    if (s.postponed_until && Date.parse(s.postponed_until) > now.getTime()) out.push({ what: `agent:${name}`, until: s.postponed_until });
+  }
+  return out;
 }
 
 /** AC-10: the tick's summary, or null when nothing is limited and nothing waits. */
-export function quotaSummary(book: Book, now: Date): { limits: { key: string; scope: string; resets_at: string; source: string }[]; waiting: { what: string; until: string; key: string }[] } | null {
+export async function quotaSummary(paths: StatePaths, now: Date): Promise<QuotaSummary | null> {
+  const book = await readBook(paths);
   const limits = Object.values(book.limits).filter((l) => Date.parse(l.resets_at) > now.getTime()).map(({ key, scope, resets_at, source }) => ({ key, scope, resets_at, source }));
-  const waiting = Object.entries(book.waiting).filter(([, w]) => Date.parse(w.until) > now.getTime()).map(([what, w]) => ({ what, until: w.until, key: w.key }));
+  const waiting = await quotaWaiting(paths, now);
   return limits.length || waiting.length ? { limits, waiting } : null;
 }

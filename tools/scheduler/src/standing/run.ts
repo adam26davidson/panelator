@@ -36,7 +36,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  const moved=launch.model!==def.model?{model:launch.model,harness:launch.harness}:null;
  if(moved)d.log({kind:'quota-fallback',agent:def.name,from:def.model,to:moved.model,key:launch.note?.key});
  let postponedUntil:string|null=null;
- const postpone=async(reason:string)=>{postponedUntil=(await waitAfterLimit(d.paths,what,def.harness,def.model,d.now())).until;throw new Error(`${reason}; postponed until ${postponedUntil}`);};
+ const postpone=async(reason:string)=>{postponedUntil=await waitAfterLimit(d.paths,def.harness,def.model,d.now());throw new Error(`${reason}; postponed until ${postponedUntil}`);};
  const filer:FilerDeps={paths:d.paths,gh:d.gh,botLogin:d.botLogin,now:d.now,classes:[...d.cfg.labels.feature_classes,...d.cfg.labels.debt_classes],notify:(text,key)=>d.notifier.notify({issue:0,gate:'standing',label:`${def.name}:${key??text}`,text})};
  let worktree=d.repoDir,created=false;
  let summary='',outcome='failed',error='standing run failed';
@@ -57,7 +57,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   // Standing agents have no write or GitHub tool, even when a profile normally supplies one.
   const safeProfile=profile?{...profile,tools:['Read','Glob','Grep'],credentialHook:undefined}:null;
   const req={def,input:{} as StageInput,standingInput:{agent:def.name,events:input?{events:received,input}:received,since:state.last_run?.at??null,parameters},issue:0,attempt,worktree,profile:safeProfile,runId};
-  const context={paths:d.paths,adapter:d.adapterFor(def.harness),systemdScope:d.systemdScope,systemdRunBin:d.systemdRunBin,now:d.now,binDir:d.binDir};
+  const context={paths:d.paths,adapter:d.adapterFor(def.harness),systemdScope:d.systemdScope,systemdRunBin:d.systemdRunBin,now:d.now,binDir:d.binDir,sessionWindowMs:quota.sessionWindowMs};
   const logLimit=(r:StageOutcome)=>{if(r.limit)d.log({kind:'quota-limit',agent:def.name,run_id:r.runId,key:r.limit.key,scope:r.limit.scope,resets_at:r.limit.resets_at,source:r.limit.source});};
   let result=moved?await runStage({...context,adapter:d.adapterFor(moved.harness)},{...req,model:moved.model,harness:moved.harness,runId:runId+'-fallback'}):await runStage(context,req);
   logLimit(result);

@@ -24,6 +24,7 @@ import type { Question } from "../src/types.ts";
 import { mockGitHub, type Route } from "./helpers/mock-github.ts";
 import { ParameterStore } from "../src/parameters/store.ts";
 import { loadParameterDefinitions } from "../src/parameters/definitions.ts";
+import { observeRun } from "../src/quota/book.ts";
 import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
 
 const script = join(import.meta.dirname, "fixtures", "stage-script.ts");
@@ -785,7 +786,7 @@ describe("driver: quota (spec 013)", () => {
     const ran: string[] = [];
     let last: unknown;
     return {
-      harness: "fake", ran,
+      harness: "fake", quotaHarness: "claude", ran,
       buildCommand: (run) => {
         ran.push(`${run.stage}:${run.model}`);
         last = answers[run.model]?.shift();
@@ -848,6 +849,40 @@ describe("driver: quota (spec 013)", () => {
     expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5", "plan:claude-opus-5-5"]);
     const usage = readdirSync(w.paths.usage).map((f) => JSON.parse(readFileSync(join(w.paths.usage, f), "utf8")).model).sort();
     expect(usage).toEqual(["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5-5"]);
+  }, 60_000);
+
+  it("never moves a strong stage to another Claude model on a weekly limit (AC-9)", async () => {
+    const w = await world({ "claude-fable-5-1": ["You've hit your weekly limit · resets Nov 3, 9am (Europe/Berlin)"] }, "2026-10-29T07:15:00Z");
+    const c = at(w.claim, { stage: "plan" });
+    await writeClaim(w.paths, c);
+    const r = await step(w.deps, c);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", postponedUntil: "2026-11-03T08:00:00.000Z" });
+    expect(w.logs.filter((l) => l.kind === "quota-fallback")).toEqual([]);
+  }, 60_000);
+
+  it("defers a strong stage to the window's end once, then runs it (AC-8)", async () => {
+    const w = await world({ "claude-fable-5-1": [plan] }, "2026-10-29T03:00:00Z");
+    const u = (over: Record<string, unknown>) => ({
+      run_id: `u${Math.random()}`, issue: 1, stage: "plan", attempt: 1, outcome: "ok" as const, harness: "claude" as const, model: "claude-fable-5-1", cost_usd: 4, input_tokens: 0, output_tokens: 0,
+      cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0, wall_seconds: 1, started_at: "", ended_at: "", events_path: "", ...over,
+    });
+    const okJ = { outcome: "ok" as const, reason: null, apiErrorStatus: null, finalText: null };
+    for (const [start, reset] of [["2026-10-28T12:00:00Z", "6pm"], ["2026-10-28T18:00:00Z", "12am"]]) {
+      for (let i = 0; i < 5; i++) await observeRun(w.paths, u({ started_at: start }), okJ, new Date(start));
+      await observeRun(w.paths, u({ outcome: "failed", cost_usd: 0, started_at: start }), { outcome: "failed", reason: `You've hit your session limit · resets ${reset} (UTC)`, apiErrorStatus: 429, finalText: null }, new Date(start));
+    }
+    for (let i = 0; i < 5; i++) await observeRun(w.paths, u({ started_at: "2026-10-29T00:01:00Z" }), okJ, new Date("2026-10-29T00:01:00Z"));
+    const c = at(w.claim, { stage: "plan" });
+    await writeClaim(w.paths, c);
+    let r = await step(w.deps, c);
+    expect(w.adapter.ran).toEqual([]);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", postponedUntil: "2026-10-29T05:01:00.000Z" });
+    expect(w.logs.find((l) => l.kind === "quota-defer")).toMatchObject({ issue: 7, stage: "plan", estimate: 4, spent: 20, capacity: 20, until: "2026-10-29T05:01:00.000Z" });
+    // Started again before the end (a restart), it is not deferred a second time in the same window.
+    r = await step(w.deps, at(r.claim, { stage: "plan", postponedUntil: null }));
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(r.claim.state.stage).toBe("implement");
   }, 60_000);
 
   it("waits instead when the model-limit fallback parameter is off (AC-9)", async () => {

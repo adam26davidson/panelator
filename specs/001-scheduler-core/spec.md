@@ -161,7 +161,8 @@ fake harness and a mocked GitHub API unless marked (real).
   then it is retried once on the fallback with a new session; given the
   stage is tagged `tier: strong`, then it is not retried on a weaker model
   but postponed, and the chain waits with the claim held. (Amended by spec
-  013: the wait ends at the limit's reset, and a strong-tier stage whose own
+  013 and [ADR 0003](../../docs/decisions/0003-opus-fallback-on-model-limit.md):
+  the wait ends at the limit's reset, and a strong-tier stage whose own
   Claude model alone is limited may run on the next-best Claude model.)
 - AC-26. Given a stage definition with `profile: web-ui`, when the stage
   starts, then the profile's skills directory is made available to the

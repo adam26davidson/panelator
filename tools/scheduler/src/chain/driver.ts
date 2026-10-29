@@ -422,8 +422,8 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
     }
   }
   const postponed = async (reason: string): Promise<ChainEvent> => {
-    const w = await waitAfterLimit(deps.paths, what, primaryHarness, primaryModel, deps.now());
-    return { type: "stage_failed", stage, reason, postpone: true, until: w.until };
+    const until = await waitAfterLimit(deps.paths, primaryHarness, primaryModel, deps.now());
+    return { type: "stage_failed", stage, reason, postpone: true, until };
   };
 
   if(!state.conversation&&!state.resumeSession)await syncWorktree(deps, claim);
@@ -466,7 +466,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
       const out = await runStage(
         {
           paths: deps.paths, adapter: deps.adapterFor(h), systemdScope: deps.systemdScope, systemdRunBin: deps.systemdRunBin, binDir: deps.binDir, now: deps.now,
-          gitIdentity: botIdentity(deps),
+          gitIdentity: botIdentity(deps), sessionWindowMs: quota.sessionWindowMs,
         },
         { def, input, issue: claim.issue, attempt, worktree: claim.worktree, profile, model, harness, runId,
           conversation:!!state.conversation,
