@@ -48,7 +48,7 @@ export function scripted(results: Record<string, Scripted[]>): Adapter & { ran: 
   const ran: string[] = [];
   const runs: RunSeen[] = [];
   return {
-    harness: "fake", ran, runs,
+    harness: "fake", quotaHarness: "claude", ran, runs,
     buildCommand(run) {
       ran.push(run.stage);
       runs.push({

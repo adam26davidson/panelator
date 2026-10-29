@@ -86,7 +86,7 @@ export type ChainEvent =
   /** `scope`: the spec PR's scope check (AC-22), required for `revised`, absent for `question`. */
   | { type: "stage_ok"; stage: "spec"; result: SpecResult; scope?: ScopeResult; head?: string }
   | { type: "stage_ok"; stage: "question-check"; result: QuestionCheckResult }
-  | { type: "stage_failed"; stage: AgentStageName; reason: string; postpone?: boolean }
+  | { type: "stage_failed"; stage: AgentStageName; reason: string; postpone?: boolean; /** Spec 013 AC-5: when the quota that postponed it resets. */ until?: string }
   /** `at`: when the checks were read; `pending`: the required checks still pending or missing. */
   | { type: "checks"; status: "green" | "failed" | "pending"; log?: string; sensitive: boolean; at: string; pending?: string[] }
   /** `specGate`: on the spec track, spec-present and the UI-design gate run again on origin/main after the merge (AC-4). */
@@ -108,7 +108,7 @@ export type Action =
   | { type: "comment"; text: string }
   | { type: "notify"; gate: string; label: string; text: string }
   | { type: "release"; reason: string; savePatch: boolean }
-  | { type: "wait"; seconds: number }
+  | { type: "wait"; seconds: number; /** Spec 013 AC-5: an absolute end of the wait, in place of `seconds`. */ until?: string }
   | { type: "done" }
   /** Carries the PR and its branch: the new state has already dropped the PR when the driver applies it (review focus 6). */
   | { type: "close_pr"; pr: number; branch: string; comment: string }

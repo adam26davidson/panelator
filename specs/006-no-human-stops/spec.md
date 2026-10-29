@@ -573,7 +573,8 @@ AC-10 second sentence, AC-13)
   `fallback`. Given its primary run fails with a quota or rate-limit error,
   then it is retried once on the fallback in a fresh session. Given the
   fallback run also fails with a quota or rate-limit error, then the stage is
-  postponed, as any strong-tier stage is (spec 001 AC-25). The usage record
+  postponed, as any strong-tier stage is (spec 001 AC-25; amended by spec
+  013 AC-5: the postponement ends at the limit's reset). The usage record
   names the model that produced the result, and accepts the `spec` and
   `question-check` stage names. On pi, plan, review and the question check
   run with read-only tools only, so none can write its result file: given
@@ -592,7 +593,8 @@ AC-10 second sentence, AC-13)
     (AC-13);
   - a failure postponed for quota is handled before every other failure rule:
     in a rescue run it postpones the rescue, which stays a rescue and is not
-    spent.
+    spent. (Amended by spec 013: the postponement ends at the limit's reset.
+    A rescue never takes spec 013's model-limit fallback.)
 
   The ended states are `done`, `released`, `abandoned` and `paused`.
 - AC-28. **End-to-end chains are recorded.** Recorded end-to-end tests (fake

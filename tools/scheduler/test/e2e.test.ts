@@ -26,6 +26,7 @@ import {ActionLog} from '../src/actions/log.ts';
 import {undoAction} from '../src/actions/undo.ts';
 import {loadActionLevels,applyAction} from '../src/actions/index.ts';
 import {appendFindings} from '../src/state/findings.ts';
+import {observeRun} from '../src/quota/book.ts';
 import {readAgentState,writeAgentState} from '../src/standing/state.ts';
 import {runStandingAgent} from '../src/standing/run.ts';
 import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
@@ -757,16 +758,81 @@ describe('standing agents: recorded runs through the real runner and mocked App'
   await w.scheduler.tick();await idle(w);expect((await readAgentState(w.paths,'operator'))?.last_run?.outcome).toBe('failed');
   expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);expect(w.notifications).toHaveLength(1);
  },30000);
- it('a rate-limited strong-tier standing run counts as a failure, backs off after the second and runs no more',async()=>{
-  const w=await standingWorld({operator:[RATE_LIMITED,RATE_LIMITED,{summary:'never reached'}]});
-  const state=(await readAgentState(w.paths,'operator'))!;state.next_run=w.deps.now().toISOString();await writeAgentState(w.paths,'operator',state);
-  await w.scheduler.tick();await idle(w);expect((await readAgentState(w.paths,'operator'))?.failures).toBe(1);
+ it('a standing agent already blocked when it comes due starts no run and waits for the reset (spec 013 AC-7)',async()=>{
+  const w=await standingWorld({operator:[{summary:'after the reset'}]});
+  const t0=new Date('2026-10-01T00:00:00Z');
+  await observeRun(w.paths,{run_id:'x',issue:7,stage:'review',attempt:1,outcome:'failed',harness:'claude',model:'claude-fable-5-1',cost_usd:0,input_tokens:0,output_tokens:0,cache_read_tokens:0,cache_write_tokens:0,turns:1,tool_calls:0,wall_seconds:1,started_at:t0.toISOString(),ended_at:t0.toISOString(),events_path:''},{outcome:'failed',reason:"You've hit your session limit · resets 3am (UTC)",apiErrorStatus:429,finalText:null},t0);
+  const state=(await readAgentState(w.paths,'operator'))!;state.next_run=t0.toISOString();await writeAgentState(w.paths,'operator',state);
   await w.scheduler.tick();await idle(w);
-  const after=(await readAgentState(w.paths,'operator'))!;expect(after.last_run?.outcome).toBe('failed');expect(after.failures).toBe(0);
-  expect(Date.parse(after.next_run!)).toBeGreaterThan(w.deps.now().getTime());
-  // AC-3: a third tick while the vendor still limits does not spawn another run; the agent waits for its next schedule.
-  // (The queued finding wakes the filer, which is the intended routing; only the operator's runs are counted.)
-  await w.scheduler.tick();await idle(w);expect(w.adapter.ran.filter(s=>s==='operator')).toEqual(['operator','operator']);
-  expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);expect(w.notifications).toHaveLength(1);expect(w.notifications[0].label).toMatch(/^operator:/);
+  expect(w.adapter.ran).toEqual([]);
+  expect((await readAgentState(w.paths,'operator'))).toMatchObject({failures:0,postponed_until:'2026-10-01T03:00:00.000Z',last_run:null});
+  expect(readdirSync(w.paths.runs)).toEqual([]);
+  w.setNow(new Date('2026-10-01T02:59:00Z'));await w.scheduler.tick();await idle(w);expect(w.adapter.ran).toEqual([]);
+  w.setNow(new Date('2026-10-01T03:00:30Z'));await w.scheduler.tick();await idle(w);expect(w.adapter.ran).toEqual(['operator']);
+  expect((await readAgentState(w.paths,'operator'))?.last_run?.outcome).toBe('ok');
+ },30000);
+ it('an agent moved to the fallback model before launch records the run id it actually runs under (spec 013 AC-9)',async()=>{
+  const seen:{running?:string;run?:string}={};
+  const w=await standingWorld({operator:[(run:StageRun)=>{seen.running=JSON.parse(readFileSync(join(w.paths.agents,'operator.json'),'utf8')).running?.run_id;seen.run=run.runId;return {summary:'on opus'};}]});
+  const t0=new Date('2026-10-01T00:00:00Z');
+  await observeRun(w.paths,{run_id:'x',issue:7,stage:'review',attempt:1,outcome:'failed',harness:'claude',model:'claude-fable-5-1',cost_usd:0,input_tokens:0,output_tokens:0,cache_read_tokens:0,cache_write_tokens:0,turns:1,tool_calls:0,wall_seconds:1,started_at:t0.toISOString(),ended_at:t0.toISOString(),events_path:''},{outcome:'failed',reason:"You've reached your Fable limit. Switch to another model.",apiErrorStatus:429,finalText:null},t0);
+  const state=(await readAgentState(w.paths,'operator'))!;state.next_run=t0.toISOString();await writeAgentState(w.paths,'operator',state);
+  await w.scheduler.tick();await idle(w);
+  expect(w.adapter.runs.map(r=>r.model)).toEqual(['claude-opus-5-5']);
+  expect(seen.running).toMatch(/-fallback$/);expect(seen.running).toBe(seen.run);
+  expect((await readAgentState(w.paths,'operator'))?.last_run?.outcome).toBe('ok');
+ },30000);
+ it('a standard-tier standing agent is postponed on a 429 too, not counted as a failure (spec 013 AC-7)',async()=>{
+  const w=await standingWorld({operator:[RATE_LIMITED]});
+  w.registry.operator={...w.registry.operator,tier:'standard',fallback:undefined};
+  const t0=new Date('2026-10-01T00:00:00Z');
+  const state=(await readAgentState(w.paths,'operator'))!;state.next_run=t0.toISOString();await writeAgentState(w.paths,'operator',state);
+  await w.scheduler.tick();await idle(w);
+  expect(await readAgentState(w.paths,'operator')).toMatchObject({failures:0,postponed_until:'2026-10-01T00:15:00.000Z',last_run:null});
+  expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(0);expect(w.notifications).toHaveLength(0);
+ },30000);
+ it('a rate-limited filer does not feed itself: no finding from the 429, and new queued findings do not override the wait (issue #24)',async()=>{
+  const w=await standingWorld({'findings-filer':[RATE_LIMITED,{summary:'triaged',decisions:[]}]});
+  const t0=new Date('2026-10-01T00:00:00Z');
+  const finding=(n:number)=>appendFindings(w.paths,{issue:7,stage:'review',run_id:`r${n}`,timestamp:w.deps.now().toISOString()},[{what:`finding ${n}`,where:'a.txt',evidence:'observed',noticed_how:'review'}]);
+  await finding(1);
+  await w.scheduler.tick();await idle(w);
+  let state=(await readAgentState(w.paths,'findings-filer'))!;
+  expect(state).toMatchObject({failures:0,postponed_until:'2026-10-01T00:15:00.000Z'});
+  expect(state.pending_events.length).toBeGreaterThan(0);
+  expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);
+  // More findings arrive during the wait; ticks before the reset still start no filer run.
+  for(let i=1;i<=5;i++){await finding(i+1);w.setNow(new Date(t0.getTime()+i*2*60_000));await w.scheduler.tick();await idle(w);}
+  expect(w.adapter.ran.filter(s=>s==='findings-filer')).toEqual(['findings-filer']);
+  expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(6);expect(w.notifications).toHaveLength(0);
+  w.setNow(new Date('2026-10-01T00:16:00Z'));await w.scheduler.tick();await idle(w);
+  state=(await readAgentState(w.paths,'findings-filer'))!;
+  // After the reset the filer runs again (once), and the postponement is gone.
+  expect(w.adapter.ran.filter(s=>s==='findings-filer')).toEqual(['findings-filer','findings-filer']);
+  expect(state.postponed_until).toBeUndefined();
+ },30000);
+ it('a rate-limited standing run is postponed until the limit lifts, without a failure, finding or retry per tick (spec 013 AC-7)',async()=>{
+  const w=await standingWorld({operator:[RATE_LIMITED,RATE_LIMITED,{summary:'ran after the limit'}]});
+  const t0=new Date('2026-10-01T00:00:00Z');
+  const state=(await readAgentState(w.paths,'operator'))!;state.next_run=t0.toISOString();await writeAgentState(w.paths,'operator',state);
+  await w.scheduler.tick();await idle(w);
+  let after=(await readAgentState(w.paths,'operator'))!;
+  // An unrecognised 429 backs off 15 minutes; the failure count and the schedule are untouched.
+  expect(after).toMatchObject({failures:0,postponed_until:'2026-10-01T00:15:00.000Z',next_run:t0.toISOString(),last_run:null});
+  // Ticks before the wait ends start no run (issue #24).
+  for(let i=0;i<3;i++){w.setNow(new Date(t0.getTime()+(i+1)*60_000));await w.scheduler.tick();await idle(w);}
+  expect(w.adapter.ran.filter(s=>s==='operator')).toEqual(['operator']);
+  w.setNow(new Date('2026-10-01T00:16:00Z'));await w.scheduler.tick();await idle(w);
+  after=(await readAgentState(w.paths,'operator'))!;
+  expect(after).toMatchObject({failures:0,postponed_until:'2026-10-01T00:46:00.000Z'});
+  w.setNow(new Date('2026-10-01T00:47:00Z'));await w.scheduler.tick();await idle(w);
+  after=(await readAgentState(w.paths,'operator'))!;
+  expect(after.last_run?.outcome).toBe('ok');expect(after.postponed_until).toBeUndefined();
+  expect(w.adapter.ran.filter(s=>s==='operator')).toEqual(['operator','operator','operator']);
+  expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(0);expect(w.notifications).toHaveLength(0);
+  const ticks=readFileSync(w.paths.serviceLog,'utf8').trim().split('\n').map(l=>JSON.parse(l)).filter(r=>r.kind==='tick');
+  // AC-10: the tick line shows the limit and the agent waiting on it while it lasts.
+  expect(ticks[1].quota).toEqual({limits:[{key:'claude:claude-fable-5-1',scope:'unknown',resets_at:'2026-10-01T00:15:00.000Z',source:'backoff'}],waiting:[{what:'agent:operator',until:'2026-10-01T00:15:00.000Z'}]});
+  expect(ticks.at(-1).quota).toBeUndefined();
  },30000);
 });

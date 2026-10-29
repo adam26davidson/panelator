@@ -22,6 +22,12 @@ describe("retryDecision (AC-25)", () => {
   it("postpones a strong-tier stage instead of downgrading", () => {
     expect(retryDecision({ ...base, name: "review", tier: "strong", fallback: undefined }, j429, 0, 1)).toEqual({ kind: "postpone" });
   });
+  it("retries a strong-tier stage once on the model-limit fallback within the cost limit (spec 013 AC-9)", () => {
+    const review = { ...base, name: "review" as const, tier: "strong" as const, fallback: undefined };
+    expect(retryDecision(review, j429, 0.5, 1, "claude-opus-5-5")).toEqual({ kind: "fallback", model: "claude-opus-5-5", harness: "claude" });
+    expect(retryDecision(review, j429, 1.5, 1, "claude-opus-5-5")).toEqual({ kind: "postpone" });
+    expect(retryDecision(review, j429, 0, 1, null)).toEqual({ kind: "postpone" });
+  });
 });
 
 describe("independent strong-tier stages (AC-26)", () => {
