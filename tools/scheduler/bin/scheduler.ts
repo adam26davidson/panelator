@@ -10,6 +10,7 @@ import { agentsDir, defaultConfigPath, loadConfig, repoRoot } from "../src/confi
 import { createAppClient } from "../src/github/auth.ts";
 import { GitHubClient } from "../src/github/client.ts";
 import { LogNotifier } from "../src/notify/log.ts";
+import { recordedNotifier } from "../src/notify/recorded.ts";
 import { rateLimited } from "../src/notify/rate-limit.ts";
 import { fastForwardMain, fetchOrigin } from "../src/service/git.ts";
 import { SleepInhibitor } from "../src/service/inhibit.ts";
@@ -160,7 +161,7 @@ const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec));
 let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
-  cfg, paths, gh, telegram,registry, metrics, parameters, emitEvent, notifier: rateLimited(new LogNotifier(paths.serviceLog,paths), cfg.notify_rate_limit_hours),
+  cfg, paths, gh, telegram,registry, metrics, parameters, emitEvent, notifier: rateLimited(recordedNotifier(new LogNotifier(paths.serviceLog), paths), cfg.notify_rate_limit_hours),
   stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: repoRoot, binDir,
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),
