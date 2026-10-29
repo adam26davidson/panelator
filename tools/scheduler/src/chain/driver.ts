@@ -385,7 +385,14 @@ async function keepHeldWork(deps: DriverDeps, claim: Claim, branch: string): Pro
     }
   } else {
     const tracking = `refs/remotes/origin/${branch}`;
-    await gitOut(wt, "fetch", "-q", "origin", `+refs/heads/${branch}:${tracking}`).catch(() => "");
+    // Only "the branch is not on origin" means the work may be lost; any other failure (DNS, connection) fails the step
+    // and leaves the held work on disk for the retry.
+    await gitOut(wt, "fetch", "-q", "origin", `+refs/heads/${branch}:${tracking}`).catch((e: unknown) => {
+      const err = e as { message?: string; stderr?: string };
+      if (!/couldn't find remote ref/i.test(`${err.stderr ?? ""}\n${err.message ?? ""}`)) throw e;
+      // A tracking ref left from an earlier fetch is not the branch on origin.
+      return gitOut(wt, "update-ref", "-d", tracking).catch(() => "");
+    });
     if (!(await refExists(wt, tracking))) {
       deps.log({ kind: "held-work-lost", issue: claim.issue, branch, head: held.head });
       claim.state = { ...claim.state, heldWork: null };

@@ -1245,6 +1245,32 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     expect(head(t.claim.worktree)).toBe(git(t.pair.repo, "rev-parse", "origin/main").trim());
   }, 60_000);
 
+  it("a network failure fetching the held branch fails the step and keeps the held work untouched (AC-5)", async () => {
+    const state: { pair?: ReturnType<typeof repoPair> } = {};
+    const t = await setup(() => ({ implement: [] }), prRoutes(state), (p) => { state.pair = p; });
+    const logs = logsOf(t.deps);
+    const scratch = join(t.pair.root, "scratch");
+    git(t.pair.root, "clone", "-q", t.pair.origin, scratch);
+    git(scratch, "checkout", "-q", "-b", "issue-7");
+    const remoteHead = commitIn(scratch, { "other.txt": "o\n" });
+    git(scratch, "push", "-q", "origin", "issue-7");
+    const lost = "1".repeat(40);
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: lost } });
+    await writeClaim(t.paths, c);
+    // The service's own fetch got through; the branch fetch then hits the outage.
+    t.deps.fetchOrigin = async () => {};
+    git(t.claim.worktree, "remote", "set-url", "origin", join(t.pair.root, "nonexistent.git"));
+    try {
+      await expect(step(t.deps, c)).rejects.toThrow();
+    } finally {
+      git(t.claim.worktree, "remote", "set-url", "origin", t.pair.origin);
+    }
+    expect(logs.find((r) => r.kind === "held-work-lost")).toBeUndefined();
+    expect(logs.find((r) => r.kind === "stale-branch-dropped")).toBeUndefined();
+    expect((await readClaim(t.paths, 7))?.state.heldWork).toEqual({ branch: "issue-7", head: lost });
+    expect(git(t.pair.origin, "rev-parse", "refs/heads/issue-7").trim()).toBe(remoteHead);
+  }, 60_000);
+
   it("runs as without held work when the held head is already on main (AC-5)", async () => {
     const t = await setup(() => ({ implement: [] }));
     const logs = logsOf(t.deps);
