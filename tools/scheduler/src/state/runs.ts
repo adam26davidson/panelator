@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { validate } from "../schema/validate.ts";
+import { record } from "../events/store.ts";
 import type { AgentStageName, Harness } from "../types.ts";
 import type { StatePaths } from "./paths.ts";
 
@@ -45,6 +46,7 @@ export async function writeUsageRecord(p: StatePaths, rec: UsageRecord): Promise
   const text = JSON.stringify(rec, null, 2);
   await writeAtomic(join(p.usage, `${rec.run_id}.json`), text);
   await writeAtomic(join(runDir(p, rec.run_id), "usage.json"), text);
+  await record(p, "run.ended", rec.ended_at, rec as unknown as Record<string, unknown>, { issue: rec.issue, run_id: rec.run_id, ...(rec.run_id.startsWith("standing-") ? { agent: rec.run_id.replace(/-fallback$/, "").split("-").slice(1, -2).join("-") } : {}) });
 }
 
 async function writeAtomic(path: string, text: string): Promise<void> {

@@ -1,0 +1,24 @@
+name: issue_to_merge_days
+goal: speed
+description: Median days from an issue's validated labelling to its merge
+unit: days
+direction: lower
+introduced: 2026-10-28
+rationale: >-
+  The charter asks the system to be fast from an approved idea to shipped work, and the design names
+  issue-to-merge time as the first seed metric. Starting the clock at the validated labelling (or at
+  the issue's creation when no labelling is recorded) measures what the maintainer waits for, queue
+  and shortlist time included, not only the time agents spend. A median is used so one stuck issue
+  does not hide a healthy week. It drives the delivery reflection's bottleneck question: when it
+  rises, the stage durations and the eligible-to-claimed wait say where the time went.
+query: |-
+  WITH s AS (
+    SELECT issue, COALESCE(json_extract(payload, '$.validated_at'), json_extract(payload, '$.created_at')) AS started,
+           row_number() OVER (PARTITION BY issue ORDER BY at) AS r
+    FROM events WHERE kind = 'issue.eligible' AND issue IS NOT NULL),
+  x AS (
+    SELECT m.bucket AS bucket, julianday(m.merged_at) - julianday(s.started) AS v,
+           row_number() OVER (PARTITION BY m.bucket ORDER BY julianday(m.merged_at) - julianday(s.started)) AS rn,
+           count(*) OVER (PARTITION BY m.bucket) AS c
+    FROM (SELECT issue, at AS merged_at, date(at, 'weekday 0', '-6 days') AS bucket FROM events WHERE kind = 'merge' AND at >= :from AND at < :to) m JOIN s ON s.issue = m.issue AND s.r = 1)
+  SELECT bucket, avg(v) AS value, c AS n FROM x WHERE rn IN ((c + 1) / 2, (c + 2) / 2) GROUP BY bucket

@@ -1,5 +1,6 @@
 import { appendFile, readFile } from "node:fs/promises";
 import { validate } from "../schema/validate.ts";
+import { record } from "../events/store.ts";
 import type { AskingStage, Question } from "../types.ts";
 import type { StatePaths } from "./paths.ts";
 
@@ -18,10 +19,17 @@ export interface QuestionLogEntry {
   answer?: string;
 }
 
-export async function appendQuestionLog(p: StatePaths, entry: QuestionLogEntry): Promise<void> {
+export async function appendQuestionLog(p: StatePaths, entry: QuestionLogEntry, contactText = ""): Promise<void> {
   const v = validate("question-log-entry", entry);
   if (!v.ok) throw new Error(`invalid question-log entry: ${v.errors.join("; ")}`);
   await appendFile(p.questionsLog, JSON.stringify(entry) + "\n");
+  await record(p, "question", entry.at, entry as unknown as Record<string, unknown>, { issue: entry.issue });
+  if (entry.event === "sent" || entry.event === "reminded") {
+    await record(p, "maintainer.contact", entry.at, {
+      channel: entry.channel ?? "issue", kind: entry.event === "sent" ? "question" : "reminder", issue: entry.issue,
+      ...(entry.question_comment_id === undefined ? {} : { question_comment_id: entry.question_comment_id }), label: entry.asking_stage, text: contactText,
+    }, { issue: entry.issue });
+  }
 }
 
 /** Every `answered` line of the log, oldest first. */

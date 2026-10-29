@@ -1,0 +1,14 @@
+name: merged_per_week_system
+goal: delivery
+description: Merges per week of system work
+unit: merges
+direction: higher
+introduced: 2026-10-28
+rationale: >-
+  The design splits delivered work into system work (the pipeline improving itself) and product work,
+  and holds a share parameter between them. Counting the system merges separately shows whether that
+  share is being met in practice and whether system work is crowding out the product, or the reverse.
+  It uses the work class the scheduler recorded on the merge, so a later change to the classification
+  rule does not rewrite history. It drives the tuning of the system work share parameter.
+query: |-
+  SELECT date(at, 'weekday 0', '-6 days') AS bucket, count(*) AS value, count(*) AS n FROM events WHERE kind = 'merge' AND json_extract(payload, '$.work') = 'system' AND at >= :from AND at < :to GROUP BY bucket

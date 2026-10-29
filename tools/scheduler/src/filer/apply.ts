@@ -1,6 +1,8 @@
 import {appendFile,writeFile,rename} from 'node:fs/promises';
 import type {Question} from '../types.ts';
 import {validate} from '../schema/validate.ts';
+import {record as recordEvt} from '../events/store.ts';
+import {createIssueRecorded} from '../events/filed.ts';
 import {readJsonLines,settledCursor,advisoryAttempts,isCapabilityIssue,stripCapabilityMarkers,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,CAPABILITY_TITLE,CAPABILITY_CLOSED_MARKER,type AdvisoryFailure,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
 export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'}}
 export interface FilerResult {summary:string;decisions:Decision[]}
@@ -87,7 +89,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
    // Nor can it carry the capability issue's marker (spec 014 AC-6).
    let body=stripCapabilityMarkers(issue.body.replace(/^\s*Spec:.*$/gm,''));
    if(dec.outcome==='escalate')body=`Possible design flaw\n\n${body}\n\nQuestion for the spec stage:\n${JSON.stringify(dec.question,null,2)}`;
-   return d.gh.createIssue(stripCapabilityMarkers(issue.title),stripCapabilityMarkers(`${body}\n\nFiler verification: ${dec.reason}`)+`\n\n${marker}`,[issue.class,'validated']);
+   return createIssueRecorded(d.paths,d.gh,d.now(),{title:stripCapabilityMarkers(issue.title),body:stripCapabilityMarkers(`${body}\n\nFiler verification: ${dec.reason}`)+`\n\n${marker}`,labels:[issue.class,'validated'],by:d.botLogin,class:issue.class,marker});
   };
   // A security flag overrides every public outcome; a discard is private and stays a discard (AC-19). A record
   // already judged security once (a retried advisory) is as private as a flagged one (spec 014 AC-9).
@@ -133,6 +135,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   const fb=applied.fallback;
   if(fb)row.reason+=` (class '${fb.class}' is not configured; labelled ${fb.used})`;
   await appendFile(d.paths.findingsTriage,JSON.stringify(row)+'\n');triage.push(row);
+  await recordEvt(d.paths,'finding.triaged',row.at,row as unknown as Record<string,unknown>,{run_id:runId});
   // Logged once the decision is kept, so a settled ref or a batch that aborts earlier logs nothing (spec 018 AC-3).
   if(fb)d.log?.({kind:'filer-class-fallback',run_id:runId,ref:dec.ref,class:fb.class,used:fb.used});
   // Advisories work again, so the capability question is settled (spec 014 AC-6); done after the row is kept, and

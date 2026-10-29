@@ -1,3 +1,4 @@
+import { openIndex } from "../src/events/index.ts";
 import {TelegramClient} from '../src/telegram/client.ts';
 import {telegramChannel} from '../src/telegram/channel.ts';
 import {fakeTelegram} from './helpers/fake-telegram.ts';
@@ -98,6 +99,24 @@ describe('Telegram answers and watchdog fallback',()=>{
 });
 
 describe("Scheduler.tick", () => {
+  it("records a completed main check once across two service instances", async () => {
+    const { s, deps, paths, gh } = await setup([
+      ...routes([]),
+      { method: "GET", path: /^\/repos\/o\/r\/commits\/[^/]+\/check-runs$/, reply: () => ({ body: { total_count: 1, check_runs: [{ id: 42, name: "test", status: "completed", conclusion: "success" }] } }) },
+    ]);
+    const { loadRegistry } = await import("../src/standing/registry.ts");
+    const { EVENT_NAMES } = await import("../src/standing/events.ts");
+    const { registryActionsCheck } = await import("../src/actions/index.ts");
+    deps.registry = loadRegistry(join(agentsDir, "standing"), EVENT_NAMES, registryActionsCheck(join(agentsDir, "actions.yaml")));
+    deps.cfg.required_checks = ["test"];
+    await s.tick(); s.stop("restart test");
+    const restarted = new Scheduler(deps);
+    await restarted.tick(); restarted.stop("test done");
+    expect(gh.calls.filter(c => c.url.includes("/check-runs"))).toHaveLength(2);
+    const db = openIndex(paths);
+    expect(db.prepare("SELECT count(*) AS n FROM events WHERE kind = 'ci.check' AND json_extract(payload, '$.check') = 'test'").get()).toEqual({ n: 1 });
+    db.close(); expect(gh.unmatched).toEqual([]);
+  }, 30000);
   it('a due standing agent takes the free slot before shortlist and never overlaps itself',async()=>{
     const {s,deps,paths}=await setup(routes([issue(1)]));
     const {loadRegistry}=await import('../src/standing/registry.ts');
@@ -200,6 +219,14 @@ describe("Scheduler.tick", () => {
     expect(readdirSync(paths.patches)).toHaveLength(1);
     expect(gh.calls.find((c) => c.url === "/repos/o/r/issues/7/comments")).toBeTruthy();
     expect(gh.calls.find((c) => c.method === "DELETE" && c.url.endsWith("/labels/in-progress"))).toBeTruthy();
+    // Spec 012 AC-2: the expiry bypasses step(), and still records the chain's leaving implement.
+    const db = openIndex(paths);
+    const rows = db.prepare("SELECT kind, issue, payload FROM events WHERE kind IN ('chain.transition', 'issue.released') ORDER BY at, rowid").all() as { kind: string; issue: number; payload: string }[];
+    db.close();
+    expect(rows.map((r) => [r.kind, r.issue, JSON.parse(r.payload)])).toEqual([
+      ["chain.transition", 7, expect.objectContaining({ from: "implement", to: "released", event: "liveness_expired", track: "issue" })],
+      ["issue.released", 7, { reason: "stopped" }],
+    ]);
   }, 30_000);
 
   it("does not expire or start a chain postponed to a quota reset still ahead (spec 013 AC-5)", async () => {

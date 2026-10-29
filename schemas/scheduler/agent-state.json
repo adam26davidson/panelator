@@ -30,6 +30,27 @@
     "failures": {
       "type": "integer",
       "minimum": 0
+    },
+    "last_success": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "reflection": {
+      "type": "object",
+      "properties": {
+        "period_from": {
+          "type": "string"
+        },
+        "plan_key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "period_from",
+        "plan_key"
+      ]
     }
   },
   "required": [

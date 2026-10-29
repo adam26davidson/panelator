@@ -12,6 +12,9 @@ export interface AgentState {
  running?:{run_id:string;started_at:string};
  /** Spec 013 AC-7: not started again before this instant (a quota limit or a deferral). */
  postponed_until?:string;
+ last_success?:{at:string;run_id:string}|null;
+ /** A reflection's period start and plan key, fixed before its first attempt so a retry reuses them. */
+ reflection?:{period_from:string;plan_key:string};
 }
 export async function updateAgentState(paths:StatePaths,name:string,fn:(state:AgentState)=>AgentState):Promise<void> {
  if(!/^[a-z][a-z0-9-]*$/.test(name))throw new Error('invalid agent name');

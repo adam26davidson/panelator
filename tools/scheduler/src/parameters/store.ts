@@ -1,5 +1,6 @@
 import {appendFile, readFile, rename, writeFile, open, unlink, stat} from 'node:fs/promises';
 import type {StatePaths} from '../state/paths.ts';
+import {record} from '../events/store.ts';
 import {checkParameter, type ParameterDefinition} from './definitions.ts';
 const operations=new Map<string,Promise<unknown>>();
 /** A short-lived state transaction lock, shared by the service and local CLI processes.
@@ -62,7 +63,9 @@ export class ParameterStore {
   const all=await this.stored(); all[name]=next;
   await writeFile(this.paths.parameters+'.tmp',JSON.stringify(all,null,2));
   await rename(this.paths.parameters+'.tmp',this.paths.parameters);
-  await appendFile(this.paths.parametersHistory,JSON.stringify({name,old:old[field],new:next[field],field,actor,at:next.at})+'\n');
+  const entry={name,old:old[field],new:next[field],field,actor,at:next.at};
+  await appendFile(this.paths.parametersHistory,JSON.stringify(entry)+'\n');
+  await record(this.paths,'parameter.changed',next.at,entry);
  }
  async initialize():Promise<void> {
   await withStateLock(this.paths.parameters,async()=>{

@@ -1,0 +1,19 @@
+name: post_merge_defects
+goal: quality
+description: Bug issues filed citing a PR merged in the previous 30 days
+unit: issues
+direction: lower
+introduced: 2026-10-28
+rationale: >-
+  A change that passes review and still needs a bug issue within a month was not good enough, and
+  review passing is the pipeline's own claim of quality, so this is the check from outside. A bug
+  issue counts when it was filed in the week and its body, which carries the finding's location, cites
+  a pull request merged in the 30 days before. It drives the review criteria and the verification
+  stage: a rising value means defects are escaping, whatever the review verdicts say.
+query: |-
+  SELECT date(f.at, 'weekday 0', '-6 days') AS bucket, count(*) AS value, count(*) AS n
+  FROM events f
+  WHERE f.kind = 'issue.filed' AND json_extract(f.payload, '$.class') = 'class:bug' AND f.at >= :from AND f.at < :to
+    AND EXISTS (SELECT 1 FROM events m WHERE m.kind = 'merge' AND m.at <= f.at AND m.at >= strftime('%Y-%m-%dT%H:%M:%fZ', f.at, '-30 days')
+      AND instr(replace(replace(replace(replace(coalesce(json_extract(f.payload, '$.body'), ''), char(10), ' '), '.', ' '), ',', ' '), ')', ' ') || ' ', '#' || json_extract(m.payload, '$.pr') || ' ') > 0)
+  GROUP BY bucket

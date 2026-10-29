@@ -11,7 +11,22 @@
       "const": "standing"
     },
     "trigger": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "schedule": {
+          "type": "string"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "min_events": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
     },
     "harness": {
       "enum": [
