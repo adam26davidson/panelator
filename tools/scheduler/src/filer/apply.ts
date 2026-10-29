@@ -15,19 +15,9 @@ export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput
   if(!(abandoned?['retry','rewrite','close','escalate','defer']:['discard','file','merge_into','escalate','security']).includes(dec.outcome))throw new Error(`invalid outcome for ${dec.ref}`);
   if(dec.question && !['product','technical'].includes(dec.question.kind))throw new Error('design flaw question must be product or technical');
  }
- // A class label is a matter of one decision, never of the batch: resolve it, or fall back and say so (spec 017 AC-2, AC-3).
- const decisions=result.decisions.map(dec=>{
-  // Only an outcome that can create an issue uses the class; the others ignore it, as before.
-  if(!dec.issue||!['file','merge_into','escalate','rewrite'].includes(dec.outcome))return dec;
-  const resolved=resolveClass(dec.issue.class,d.classes);
-  if(resolved!==null)return {...dec,issue:{...dec.issue,class:resolved}};
-  const used=defaultClass(d.classes);
-  d.log?.({kind:'filer-class-fallback',run_id:runId,ref:dec.ref,class:dec.issue.class,used});
-  return {...dec,reason:`${dec.reason} (class '${dec.issue.class}' is not configured; labelled ${used})`,issue:{...dec.issue,class:used}};
- });
  const triage=await readJsonLines<TriageEntry>(d.paths.findingsTriage);
  // The cursor follows the triage log, so a batch aborted half way still moves it past what it applied (spec 014 AC-4).
- try{await applyDecisions(d,runId,input,{...result,decisions},triage);}
+ try{await applyDecisions(d,runId,input,result,triage);}
  finally{const line=settledCursor(input.cursor,triage);await writeFile(d.paths.findingsCursor+'.tmp',JSON.stringify({line}));await rename(d.paths.findingsCursor+'.tmp',d.paths.findingsCursor);}
 }
 /** The label an issue gets when the model's class cannot be resolved: `class:bug`, or the first configured class. */
@@ -83,10 +73,16 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   if(prior?.held&&prior.capability_issue!==undefined)touchedHeld=true;
   const row:TriageEntry={ref:dec.ref,outcome:dec.outcome,reason:dec.reason,run_id:runId,at:d.now().toISOString(),...(record?{finding:record.finding}:{})};
   const marker=`<!-- panelator-finding:${runId}:${dec.ref} -->`;
+  // Set when an issue is created with the default label because the model's class could not be resolved (spec 017 AC-3).
+  const applied:{fallback?:{class:string;used:string}}={};
   const file=async()=>{
-   const issue=dec.issue??{title:record?.finding.what??abandoned!.issue.title,body:JSON.stringify(record?.finding??abandoned!.issue,null,2),class:defaultClass(d.classes)};
+   const issue=dec.issue?{...dec.issue}:{title:record?.finding.what??abandoned!.issue.title,body:JSON.stringify(record?.finding??abandoned!.issue,null,2),class:defaultClass(d.classes)};
    const existing=(await d.gh.searchOpenIssuesByMarker('<!-- panelator-finding:')).find(i=>i.author===d.botLogin&&new RegExp(`<!-- panelator-finding:[^:]+:${dec.ref.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')} -->`).test(i.body));
    if(existing)return existing.number;
+   // The class is resolved only where it is applied, so one decision's label never decides the batch (spec 017 AC-2, AC-3).
+   const resolved=resolveClass(issue.class,d.classes);
+   if(resolved===null){applied.fallback={class:issue.class,used:defaultClass(d.classes)};issue.class=applied.fallback.used;}
+   else issue.class=resolved;
    // Spec creation belongs to the chain; an input cannot smuggle a Spec line into intake.
    // Nor can it carry the capability issue's marker (spec 014 AC-6).
    let body=stripCapabilityMarkers(issue.body.replace(/^\s*Spec:.*$/gm,''));
@@ -134,7 +130,11 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
    case 'close':await d.gh.closeIssue(abandoned!.issue.number,stripCapabilityMarkers(dec.reason));row.issue=abandoned!.issue.number;break;
    case 'discard':case 'defer':break;
   }
+  const fb=applied.fallback;
+  if(fb)row.reason+=` (class '${fb.class}' is not configured; labelled ${fb.used})`;
   await appendFile(d.paths.findingsTriage,JSON.stringify(row)+'\n');triage.push(row);
+  // Logged once the decision is kept, so a settled ref or a batch that aborts earlier logs nothing (spec 017 AC-3).
+  if(fb)d.log?.({kind:'filer-class-fallback',run_id:runId,ref:dec.ref,class:fb.class,used:fb.used});
   // Advisories work again, so the capability question is settled (spec 014 AC-6); done after the row is kept, and
   // only when something was held under a permission failure.
   if(row.outcome==='security'&&!row.failed&&(touchedHeld||heldUnderIssue())) {

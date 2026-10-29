@@ -26,8 +26,8 @@ rejected the whole batch with `unknown issue class tooling`:
 `applyFilerResult` validates every decision before any effect, and requires
 `issue.class` to be exactly one of the configured labels (`class:product`,
 `class:bug`, `class:tooling`, `class:dependency`). The model wrote
-`"tooling"`, without the `class:` prefix, on eight `file` and `merge_into`
-decisions. The prompt only says "Choose class from the scheduler
+`"tooling"`, without the `class:` prefix, on all ten decisions that carry
+an issue (seven `file`, three `merge_into`). The prompt only says "Choose class from the scheduler
 configuration", and nothing in the input lists the labels, so the model
 guessed. Two such failures notify the maintainer, and each throws away a
 strong-tier run's work.
@@ -78,11 +78,18 @@ as in `tools/scheduler/test/filer.test.ts`.
 - AC-3. **An unresolved class does not reject the batch.** Given a `file`,
   `merge_into`, `escalate` or `rewrite` decision whose class AC-2 cannot
   resolve, then it is applied with `class:bug` (or the first configured
-  class when `class:bug` is not configured), its triage reason says
-  `class '<value>' is not configured; labelled <label>`, and the service log
-  gets `{kind: "filer-class-fallback", run_id, ref, class, used}`. The other
-  decisions of the batch apply as usual and the cursor moves past it (spec
-  014 AC-4). A class on any other outcome is ignored, as it is not used.
+  class when `class:bug` is not configured). The other decisions of the
+  batch apply as usual and the cursor moves past it (spec 014 AC-4). The
+  class is resolved only where an issue is actually created: a `file`,
+  `escalate` or `rewrite` decision, or a `merge_into` whose target is closed
+  or not bot-authored and so falls back to `file`. Only then does its triage
+  reason (never the public issue or comment) say `class '<value>' is not
+  configured; labelled <label>`, and only after its triage row is written
+  does the service log get `{kind: "filer-class-fallback", run_id, ref,
+  class, used}`. So a ref already settled, a decision after a batch aborts,
+  a `merge_into` an open issue, a `discard`, a `security` decision and a
+  confidential record (spec 014 AC-9, applied as `security`) are neither
+  annotated nor logged, and a confidential record still gets its advisory.
 
 ## 4. Amendments to earlier specs
 
@@ -99,14 +106,14 @@ as in `tools/scheduler/test/filer.test.ts`.
   `FilerDeps.log` (optional).
 - `tools/scheduler/src/filer/apply.ts`: `resolveClass(value, classes)`, the
   default label shared with the existing `class:bug` fallback, and the
-  per-decision resolution before applying.
+  resolution where an issue is created, with the note and log after the
+  triage row.
 - `tools/scheduler/src/standing/run.ts`: the filer's deps take the service
   log.
 - `schemas/scheduler/filer-input.json`: `issue_classes`.
 - `agents/standing/findings-filer.md`: copy `class` from `issue_classes`.
 - `tools/scheduler/test/filer.test.ts`: AC-1 to AC-3, including the live
   regression.
-
 - `docs/delivery-system-design.md`: this spec under `## Children`.
 
 `tools/scheduler/`, `agents/` and `docs/delivery-system-design.md` are

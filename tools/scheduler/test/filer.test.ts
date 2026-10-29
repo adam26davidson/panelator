@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import type {GitHubClient} from '../src/github/client.ts';
 import {statePaths,ensureStateDirs} from '../src/state/paths.ts';
 import {buildFilerInput,readJsonLines,type FilerDeps,type FilerInput,type TriageEntry} from '../src/filer/input.ts';
-import {applyFilerResult,type Decision} from '../src/filer/apply.ts';
+import {applyFilerResult,resolveClass,type Decision} from '../src/filer/apply.ts';
 const finding={what:'A verified bug',where:'file.ts',evidence:'reproduced',noticed_how:'test'};
 const issue={title:'Bug',body:'Verified details\nSpec: no-smuggled-spec',class:'class:bug'};
 async function setup(){
@@ -280,4 +280,57 @@ it('without class:bug configured the fallback is the first configured class (AC-
  const {d,input,gh}=await setup();d.classes=['class:product','class:tooling'];
  await applyFilerResult(d,'run',input,{summary:'x',decisions:[{ref:'1',outcome:'file',reason:'v',issue:{...issue,class:'bug'}}]});
  expect(gh.createIssue.mock.calls[0][2]).toEqual(['class:product','validated']);
+});
+it('a value matching two labels is not resolved; an exact match wins (AC-2, review)',()=>{
+ const twins=['class:product','class:Tooling','class:tooling'];
+ expect(resolveClass('TOOLING',twins)).toBeNull();
+ expect(resolveClass('class:Tooling',twins)).toBe('class:Tooling');
+ expect(resolveClass('class:tooling',twins)).toBe('class:tooling');
+ expect(resolveClass('product',twins)).toBe('class:product');
+});
+it('an ambiguous class falls back on apply (AC-2, AC-3, review)',async()=>{
+ const {d,input,gh}=await setup();d.classes=['class:product','class:Tooling','class:tooling'];
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:[{ref:'1',outcome:'file',reason:'v',issue:{...issue,class:'TOOLING'}}]});
+ expect(gh.createIssue.mock.calls[0][2]).toEqual(['class:product','validated']);
+});
+it('falls back on escalate and rewrite too, logging each (AC-3, review)',async()=>{
+ const {d,input,gh,paths}=await setup();d.classes=live;const log=vi.fn();d.log=log;
+ input.abandoned=[{ref:'issue:7',issue:{number:7} as never,comments:[],ledgers:[],retries:0}];
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:[
+  {ref:'1',outcome:'escalate',reason:'flaw',issue:{...issue,class:'nope'},question:{kind:'technical',question:'Which?',options:[{label:'a',cost:'small'}],recommendation:'a'}},
+  {ref:'issue:7',outcome:'rewrite',reason:'rewrite it',issue:{...issue,class:'nope'}},
+ ]});
+ expect(gh.createIssue.mock.calls.map(c=>c[2][0])).toEqual(['class:bug','class:bug']);
+ expect(log.mock.calls.map(c=>c[0].ref)).toEqual(['1','issue:7']);
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).every(t=>t.reason.includes("class 'nope' is not configured"))).toBe(true);
+});
+it('a bad class on a discard, security or merge into an open issue is not used, annotated or logged (AC-3, review)',async()=>{
+ const {d,input,gh,paths}=await setup();d.classes=live;const log=vi.fn();d.log=log;
+ gh.listOpenIssuesByAuthor.mockResolvedValue([{number:32}] as never);
+ input.records=[{ref:'1',finding},{ref:'2',finding},{ref:'3',finding}];
+ const bad={...issue,class:'nope'};
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:[
+  {ref:'1',outcome:'discard',reason:'no',issue:bad},
+  {ref:'2',outcome:'security',reason:'private',issue:bad,advisory:{title:'S',description:'D',severity:'low'}},
+  {ref:'3',outcome:'merge_into',reason:'same as #32',issue_number:32,issue:bad},
+ ]});
+ expect(log).not.toHaveBeenCalled();expect(gh.createIssue).not.toHaveBeenCalled();
+ expect(gh.comment).toHaveBeenCalledTimes(1);expect((gh.comment.mock.calls[0] as unknown as [number,string])[1]).not.toContain('not configured');
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).some(t=>t.reason.includes('not configured'))).toBe(false);
+});
+it('a confidential record with an unresolvable class still gets its advisory, no issue and no fallback (AC-3, review)',async()=>{
+ const {d,input,gh,paths}=await setup();d.classes=live;const log=vi.fn();d.log=log;
+ input.records[0].finding={...finding,security:true};
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:[{ref:'1',outcome:'file',reason:'v',issue:{...issue,class:'nope'}}]});
+ expect(gh.createDraftSecurityAdvisory).toHaveBeenCalledTimes(1);expect(gh.createIssue).not.toHaveBeenCalled();expect(log).not.toHaveBeenCalled();
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage))[0].reason).not.toContain('not configured');
+});
+it('logs a fallback only for decisions applied: not for settled refs nor after a mid-batch abort (AC-3, review)',async()=>{
+ const {d,input,gh,paths}=await setup();d.classes=live;const log=vi.fn();d.log=log;
+ input.records=[{ref:'1',finding},{ref:'2',finding},{ref:'3',finding}];
+ await appendFile(paths.findingsTriage,row('1'));
+ gh.createIssue.mockResolvedValueOnce(42).mockRejectedValueOnce(new Error('boom'));
+ const bad={...issue,class:'nope'};
+ await expect(applyFilerResult(d,'run',input,{summary:'x',decisions:['1','2','3'].map(ref=>({ref,outcome:'file' as const,reason:'v',issue:bad}))})).rejects.toThrow('boom');
+ expect(log.mock.calls.map(c=>c[0].ref)).toEqual(['2']);
 });
