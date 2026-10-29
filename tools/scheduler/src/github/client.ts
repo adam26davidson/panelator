@@ -11,9 +11,15 @@ export class GitHubClient {
   readonly owner: string;
   readonly repo: string;
 
-  constructor(octokit: Octokit, repo: string) {
+  /** Waits before each re-list when the issue count disagrees with the server total (spec 014 AC-7). */
+  readonly settleDelaysMs: number[];
+  private readonly sleep: (ms: number) => Promise<void>;
+
+  constructor(octokit: Octokit, repo: string, opts: { settleDelaysMs?: number[]; sleep?: (ms: number) => Promise<void> } = {}) {
     this.octokit = octokit;
     [this.owner, this.repo] = repo.split("/") as [string, string];
+    this.settleDelaysMs = opts.settleDelaysMs ?? [1000, 3000, 9000];
+    this.sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   private get base() {
@@ -22,14 +28,21 @@ export class GitHubClient {
 
   /** Full pagination, PRs dropped, count asserted against the GraphQL total (process-spec 6.4). */
   async listOpenIssues(): Promise<IssueData[]> {
-    const raw = (await this.octokit.paginate("GET /repos/{owner}/{repo}/issues", { ...this.base, state: "open", per_page: 100 })) as Rec[];
-    const issues = raw.filter((i) => !i.pull_request);
-    const g = (await this.octokit.graphql(
-      `query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){issues(states:OPEN){totalCount}}}`,
-      this.base,
-    )) as { repository: { issues: { totalCount: number } } };
-    const total = g.repository.issues.totalCount;
-    if (issues.length !== total) throw new Error(`issue list incomplete: got ${issues.length}, server reports ${total}`);
+    // Right after a write the REST listing and the GraphQL total can briefly disagree (eventual
+    // consistency, #26): re-list a bounded number of times, then fail loudly as before.
+    let issues: Rec[] = [];
+    for (let attempt = 0; ; attempt++) {
+      const raw = (await this.octokit.paginate("GET /repos/{owner}/{repo}/issues", { ...this.base, state: "open", per_page: 100 })) as Rec[];
+      issues = raw.filter((i) => !i.pull_request);
+      const g = (await this.octokit.graphql(
+        `query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){issues(states:OPEN){totalCount}}}`,
+        this.base,
+      )) as { repository: { issues: { totalCount: number } } };
+      const total = g.repository.issues.totalCount;
+      if (issues.length === total) break;
+      if (attempt >= this.settleDelaysMs.length) throw new Error(`issue list incomplete: got ${issues.length}, server reports ${total}`);
+      await this.sleep(this.settleDelaysMs[attempt]!);
+    }
     const out: IssueData[] = [];
     for (const i of issues) {
       out.push({

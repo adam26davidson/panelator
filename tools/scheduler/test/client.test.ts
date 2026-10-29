@@ -60,9 +60,20 @@ describe("listOpenIssues (process-spec 6.4)", () => {
     ]);
     expect(gh.calls.filter((x) => x.url.startsWith("/repos/o/r/issues?"))).toHaveLength(2);
   });
-  it("throws when the count disagrees with the server total (review focus 1)", async () => {
-    const { c } = client([issuesRoute([[issue(1)]]), total(5), timeline(1)]);
+  it("throws when the count still disagrees after re-listing (review focus 1, spec 014 AC-7)", async () => {
+    const gh = mockGitHub([issuesRoute([[issue(1)]]), total(5), timeline(1)]);
+    const c = new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r", { settleDelaysMs: [0, 0, 0] });
     await expect(c.listOpenIssues()).rejects.toThrow(/incomplete: got 1, server reports 5/);
+    expect(gh.calls.filter((x) => x.url === "/graphql")).toHaveLength(4);
+  });
+  it("re-lists after a short listing right after the scheduler's own write (spec 014 AC-7, #26)", async () => {
+    let listings = 0;
+    const lagging: Route = { method: "GET", path: /^\/repos\/o\/r\/issues$/, reply: (_m, _b, url) => ({ body: listings++ === 0 ? [issue(1)] : [issue(1), issue(2)], headers: pageLink(url, 1, 1) }) };
+    const gh = mockGitHub([lagging, total(2), timeline(1), timeline(2)]);
+    const waits: number[] = [];
+    const c = new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r", { settleDelaysMs: [5, 7, 9], sleep: async (ms) => { waits.push(ms); } });
+    expect((await c.listOpenIssues()).map((i) => i.number)).toEqual([1, 2]);
+    expect(waits).toEqual([5]);
   });
 });
 

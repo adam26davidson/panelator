@@ -71,3 +71,65 @@ it('marks repeat discards with the earlier reason',async()=>{
  await appendFile(paths.findingsQueue,JSON.stringify({finding})+'\n'+JSON.stringify({finding})+'\n');
  const next=await buildFilerInput(d);expect(next.records[0].ref).toBe('2');expect(next.records[0].repeat).toBe('already fixed');
 });
+// Spec 014 (issues #33 and #26).
+const queue=async(paths:{findingsQueue:string},findings:object[])=>{for(const f of findings)await appendFile(paths.findingsQueue,JSON.stringify({finding:f})+'\n');};
+const row=(ref:string,extra:Partial<TriageEntry>={})=>JSON.stringify({ref,outcome:'discard',reason:'r',run_id:'old',at:'2026-10-26T00:00:00Z',...extra})+'\n';
+it('lists a failed advisory still inside the cursor window once (#33 regression, AC-1, AC-2)',async()=>{
+ const {d,paths}=await setup();
+ await queue(paths,Array.from({length:25},(_,i)=>({...finding,what:String(i),security:i===2})));
+ // Refs 1 to 3 were settled by a batch that aborted before the cursor was written; ref 3's advisory failed.
+ await appendFile(paths.findingsTriage,row('1')+row('2')+row('3',{outcome:'security',failed:true,attempt:1,reason:'advisory failed: Resource not accessible by integration'}));
+ const input=await buildFilerInput(d);const refs=input.records.map(r=>r.ref);
+ expect(new Set(refs).size).toBe(refs.length);expect(refs).toHaveLength(20);
+ expect(refs.filter(r=>r==='3')).toHaveLength(1);expect(refs).not.toContain('1');expect(refs).not.toContain('2');
+ expect(input.records.find(r=>r.ref==='3')).toMatchObject({advisory_failed:true,advisory_attempts:1});
+ expect(input.cursor).toBe(3);expect(refs.slice(1)).toEqual(Array.from({length:19},(_,i)=>String(i+4)));
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:refs.map(ref=>({ref,outcome:'discard' as const,reason:'not an issue'}))});
+ expect(JSON.parse(await readFile(paths.findingsCursor,'utf8')).line).toBe(22);
+});
+it('accepts one decision per distinct ref and refuses a repeated decision (AC-3)',async()=>{
+ const {d,input}=await setup();input.records=[{ref:'1',finding},{ref:'1',finding,advisory_failed:true}];
+ await expect(applyFilerResult(d,'run',input,{summary:'x',decisions:[{ref:'1',outcome:'discard',reason:'a'},{ref:'1',outcome:'discard',reason:'b'}]})).rejects.toThrow(/each input/);
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:[{ref:'1',outcome:'discard',reason:'a'}]});
+});
+it('moves the cursor past the applied part of a batch aborted half way (AC-4)',async()=>{
+ const {d,paths,gh}=await setup();await queue(paths,[finding,{...finding,what:'b'},{...finding,what:'c'}]);
+ gh.createIssue.mockResolvedValueOnce(42).mockRejectedValueOnce(new Error('issue list incomplete: got 6, server reports 7'));
+ const input=await buildFilerInput(d);
+ await expect(applyFilerResult(d,'run',input,{summary:'x',decisions:input.records.map(r=>({ref:r.ref,outcome:'file' as const,reason:'verified',issue}))})).rejects.toThrow(/incomplete/);
+ expect(JSON.parse(await readFile(paths.findingsCursor,'utf8')).line).toBe(1);
+ expect((await buildFilerInput(d)).records.map(r=>r.ref)).toEqual(['2','3']);
+});
+it('holds an advisory after three failures and raises one content-free capability issue (AC-5, AC-6)',async()=>{
+ const {d,paths,gh,notify}=await setup();d.classes=['class:bug','class:tooling'];
+ const secret={...finding,what:'Token leaks in logs',evidence:'secret-evidence',security:true};await queue(paths,[secret,{...secret,what:'Second leak'}]);
+ gh.createDraftSecurityAdvisory.mockRejectedValue(new Error('Resource not accessible by integration'));
+ let at=new Date('2026-10-27T00:00:00Z');d.now=()=>at;
+ const advisory={title:'Secret title',description:'Secret description',severity:'high' as const};
+ const run=async(i:number)=>{const input=await buildFilerInput(d);await applyFilerResult(d,`run-${i}`,input,{summary:'s',decisions:input.records.map(r=>({ref:r.ref,outcome:'security' as const,reason:'private',advisory}))});return input;};
+ const first=await run(0);expect(first.records.map(r=>r.ref)).toEqual(['1','2']);
+ expect((await run(1)).records.map(r=>[r.ref,r.advisory_attempts])).toEqual([['1',1],['2',1]]);
+ expect(gh.createIssue).not.toHaveBeenCalled();
+ // The first hold files the capability issue; the second finds it by its marker.
+ gh.searchOpenIssuesByMarker.mockImplementation(async()=>gh.createIssue.mock.calls.length&&!gh.closeIssue.mock.calls.length?[{number:42,author:'bot',body:'<!-- panelator-capability:security-advisories -->'}] as never:[]);
+ await run(2);
+ const triage=await readJsonLines<TriageEntry>(paths.findingsTriage);
+ expect(triage.slice(-2)).toEqual([expect.objectContaining({ref:'1',failed:true,attempt:3,held:true,capability_issue:42}),expect.objectContaining({ref:'2',held:true,capability_issue:42})]);
+ expect(gh.createIssue).toHaveBeenCalledTimes(1);
+ const [title,body,labels]=gh.createIssue.mock.calls[0];
+ expect(labels).toEqual(['class:tooling','validated']);expect(body).toContain('<!-- panelator-capability:security-advisories -->');expect(body).toMatch(/kind `capability`/);expect(body).toContain('Resource not accessible by integration');
+ for(const text of ['Token leaks','Second leak','secret-evidence','Secret title','Secret description'])expect(title+body).not.toContain(text);
+ expect(notify.mock.calls.filter(c=>String((c as unknown[])[0]).includes('held'))).toHaveLength(2);
+ // While the capability issue is open and the hold is fresh, the refs are not offered.
+ gh.listOpenIssuesByAuthor.mockResolvedValue([{number:42,title:'cap',labels:[]}] as never);
+ expect((await buildFilerInput(d)).records).toEqual([]);
+ at=new Date(at.getTime()+8*86400000);
+ expect((await buildFilerInput(d)).records.map(r=>[r.ref,r.advisory_attempts])).toEqual([['1',0],['2',0]]);
+ at=new Date(at.getTime()-8*86400000);gh.listOpenIssuesByAuthor.mockResolvedValue([]);
+ const released=await buildFilerInput(d);expect(released.records.map(r=>r.ref)).toEqual(['1','2']);
+ // A success while the issue is open closes it.
+ gh.createDraftSecurityAdvisory.mockResolvedValue('GHSA-ok');
+ await applyFilerResult(d,'run-ok',released,{summary:'s',decisions:released.records.map(r=>({ref:r.ref,outcome:'security' as const,reason:'private',advisory}))});
+ expect(gh.closeIssue).toHaveBeenCalledTimes(1);expect(gh.closeIssue.mock.calls[0]).toEqual([42,expect.stringMatching(/advisor/i)]);
+ expect((await buildFilerInput(d)).records).toEqual([]);
+});

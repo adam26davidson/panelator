@@ -39,4 +39,7 @@ rewrite (new issue supersedes it), close (why not worth doing or done elsewhere)
 (possible design flaw as above) or defer (reason; offered again after seven days).
 Possible design flaws go to the spec stage and its question check, never directly to the
 maintainer. Do not write specs yourself. Investigate repeat discards and advisory failures.
+Each ref appears once in the batch. A record with advisory_failed is a security record whose
+advisory call failed advisory_attempts times; decide it again as usual. After three failures
+the scheduler holds it and raises the missing capability itself; never move it to a public issue.
 Write JSON {summary, decisions, findings?} to {{result_path}}.

@@ -1,13 +1,14 @@
 import {appendFile,writeFile,rename} from 'node:fs/promises';
 import type {Question} from '../types.ts';
 import {validate} from '../schema/validate.ts';
-import {readJsonLines,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
+import {readJsonLines,settledCursor,advisoryAttempts,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
 export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'}}
 export interface FilerResult {summary:string;decisions:Decision[]}
 export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput,result:FilerResult):Promise<void> {
  const valid=validate('filer-result',result);if(!valid.ok)throw new Error(valid.errors.join('; '));
- const refs=[...input.records,...input.abandoned].map(r=>r.ref);
- if(new Set(result.decisions.map(r=>r.ref)).size!==refs.length||result.decisions.length!==refs.length||result.decisions.some(r=>!refs.includes(r.ref)))throw new Error('decisions must cover each input ref exactly once');
+ // One decision per distinct ref, even if an input ever held a ref twice (spec 014 AC-3).
+ const refs=new Set([...input.records,...input.abandoned].map(r=>r.ref)),decided=new Set(result.decisions.map(r=>r.ref));
+ if(decided.size!==result.decisions.length||decided.size!==refs.size||[...decided].some(r=>!refs.has(r)))throw new Error('decisions must cover each input ref exactly once');
  // Validate the entire batch before any effect or consumption.
  for(const dec of result.decisions) {
   const abandoned=dec.ref.startsWith('issue:');
@@ -15,7 +16,26 @@ export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput
   if(dec.issue && !d.classes.includes(dec.issue.class))throw new Error(`unknown issue class ${dec.issue.class}`);
   if(dec.question && !['product','technical'].includes(dec.question.kind))throw new Error('design flaw question must be product or technical');
  }
- let triage=await readJsonLines<TriageEntry>(d.paths.findingsTriage);
+ const triage=await readJsonLines<TriageEntry>(d.paths.findingsTriage);
+ // The cursor follows the triage log, so a batch aborted half way still moves it past what it applied (spec 014 AC-4).
+ try{await applyDecisions(d,runId,input,result,triage);}
+ finally{const line=settledCursor(input.cursor,triage);await writeFile(d.paths.findingsCursor+'.tmp',JSON.stringify({line}));await rename(d.paths.findingsCursor+'.tmp',d.paths.findingsCursor);}
+}
+const capabilityIssueBody=(error:string,held:number)=>`Capability needed (delivery-system design section 3, item 3: credentials and access).
+
+The findings filer could not create a draft repository security advisory after ${ADVISORY_ATTEMPTS} attempts in a row. GitHub's last answer: \`${error.replace(/`/g,"'")}\`
+
+${held} security finding(s) are held privately in the scheduler's state until an advisory can be created. None of their content is in this issue.
+
+What agents cannot do: grant the panelator GitHub App the repository permission "Repository security advisories: Read and write" (spec 001 section 12, spec 008 AC-22) and accept the updated permissions on its installation.
+
+For the spec stage: no spec or code change is needed. Return this as a question of kind \`capability\` through the question check, with the step above as the only option. Once the permission is granted, closing this issue releases the held findings at once; otherwise they are tried again after a week, and the first advisory that succeeds closes this issue (spec 014 AC-5, AC-6).
+
+${CAPABILITY_MARKER}`;
+async function openCapabilityIssue(d:FilerDeps):Promise<number|null> {
+ return (await d.gh.searchOpenIssuesByMarker(CAPABILITY_MARKER)).find(i=>i.author===d.botLogin&&i.body.includes(CAPABILITY_MARKER))?.number??null;
+}
+async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:FilerResult,triage:TriageEntry[]):Promise<void> {
  for(const dec of result.decisions) {
   const abandoned=input.abandoned.find(r=>r.ref===dec.ref),record=input.records.find(r=>r.ref===dec.ref);
   const prior=triage.filter(t=>t.ref===dec.ref).at(-1);
@@ -40,7 +60,19 @@ export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput
     row.advisory=(await d.gh.findDraftSecurityAdvisory(privateMarker))??await d.gh.createDraftSecurityAdvisory({...advisory,description:`${advisory.description}\n\n${privateMarker}`});
     await d.notify(`Security advisory ${row.advisory}`,dec.ref);
    }
-   catch(e){row.failed=true;row.reason=`advisory failed: ${(e as Error).message}`;await d.notify(row.reason,dec.ref);}
+   catch(e){
+    const error=(e as Error).message;
+    row.failed=true;row.reason=`advisory failed: ${error}`;row.attempt=advisoryAttempts(prior)+1;
+    if(row.attempt>=ADVISORY_ATTEMPTS) {
+     // Bounded: the record is held and the missing capability goes to the maintainer through the chain (spec 014 AC-5, AC-6).
+     row.held=true;
+     const lastRows=new Map(triage.map(t=>[t.ref,t]));lastRows.set(dec.ref,row);
+     const held=[...lastRows.values()].filter(t=>t.held).length;
+     row.capability_issue=(await openCapabilityIssue(d))??await d.gh.createIssue('The GitHub App cannot create draft security advisories',capabilityIssueBody(error,held),[d.classes.includes('class:tooling')?'class:tooling':d.classes[0],'validated']);
+     row.reason+=` (held after ${row.attempt} attempts; capability issue #${row.capability_issue})`;
+     await d.notify(`Security finding held after ${row.attempt} failed advisory attempts; capability issue #${row.capability_issue}: ${error}`,dec.ref);
+    } else await d.notify(row.reason,dec.ref);
+   }
   } else switch(dec.outcome) {
    case 'file':case 'escalate': row.issue=await file();break;
    case 'merge_into': {
@@ -56,7 +88,10 @@ export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput
    case 'discard':case 'defer':break;
   }
   await appendFile(d.paths.findingsTriage,JSON.stringify(row)+'\n');triage.push(row);
+  // Advisories work again, so the capability question is settled (spec 014 AC-6); done after the row is kept.
+  if(row.outcome==='security'&&!row.failed) {
+   const capability=await openCapabilityIssue(d);
+   if(capability!==null)await d.gh.closeIssue(capability,'A draft security advisory was created: the App can write repository security advisories again, and held security findings are retried.');
+  }
  }
- const line=Math.max(input.cursor,...input.records.filter(r=>!r.advisory_failed).map(r=>Number(r.ref)));
- await writeFile(d.paths.findingsCursor+'.tmp',JSON.stringify({line}));await rename(d.paths.findingsCursor+'.tmp',d.paths.findingsCursor);
 }

@@ -57,7 +57,7 @@ async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
   let mono = 0;
   const cfg = { ...loadConfig(defaultConfigPath), repo: "o/r", slots, state_dir: paths.root, poll_interval_s: 5 };
   const deps: SchedulerDeps = {
-    cfg, paths, gh: new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r"),
+    cfg, paths, gh: new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r", { settleDelaysMs: [0, 0, 0] }),
     notifier: { notify: async (n) => { notifications.push(n); } },
     stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: pair.repo, binDir: join(pair.root, "bin"),
     // the "chain" here is a stub: it records the issue and parks the claim in verify so the test controls time
