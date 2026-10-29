@@ -53,7 +53,10 @@ stale claims. A chain running in the process holds one through its claim
 file; a `waiting` claim, whether its `postponedUntil` has passed or not,
 holds one; a claim carrying a pending event or pending actions holds one. A
 paused record holds none, whatever claim a crash mid-pause or mid-resume
-left beside it. *Free* is `slots` minus held, never below zero.
+left beside it. A chain still running in the process also holds one when
+it has no claim file (a pause removed it while the chain finishes), so held
+is the number of distinct issues among those claims and the running chains.
+*Free* is `slots` minus held, never below zero.
 
 - AC-1. **A postponed chain holds its slot.** Given `slots: 1`, a claim for
   issue A in stage `waiting` with `postponedUntil` in the future, and the
