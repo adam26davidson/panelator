@@ -495,7 +495,8 @@ records as chain stages.
   (documentation of the tool, in its own package).
 
 No file outside `tools/scheduler/`, `agents/`, `schemas/scheduler/` and
-`dev-logs/` is changed. `tools/scheduler/` and `agents/` are sensitive paths,
+`dev-logs/` is changed except `tools/README.md`, listed above.
+`tools/scheduler/` and `agents/` are sensitive paths,
 so the security review runs on the PR as spec 006 AC-9 says. Nothing here
 changes the sensitive-path list, the security criteria, or what routes a
 sensitive diff to the security review.
