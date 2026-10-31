@@ -32,7 +32,6 @@ import {emit} from '../src/standing/events.ts';
 import {runStandingAgent} from '../src/standing/run.ts';
 import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
 import { chainWorld, standingWorld, scripted, RATE_LIMITED, worldPaths, type ChainWorld } from "./helpers/e2e-routes.ts";
-import { emit } from "../src/standing/events.ts";
 import { recordEvent } from "../src/events/store.ts";
 import { appendMerge } from "../src/state/merges.ts";
 import { openIndex } from "../src/events/index.ts";
