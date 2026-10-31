@@ -332,3 +332,75 @@ describe("onlyRebased (spec 015 AC-3)", () => {
     expect(await onlyRebased(w.path, git(w.path, "rev-parse", "HEAD").trim(), "origin/issue-7", "origin/main")).toBe(false);
   });
 });
+
+describe("rebaseOntoMain with main merged into the branch (spec 024)", () => {
+  const bot = { name: "panelator-pipeline[bot]", email: "panelator-pipeline[bot]@users.noreply.github.com" };
+  function moveMain(repo: string, w: string, file: string, text: string): void {
+    writeFileSync(join(repo, file), text);
+    git(repo, "add", file);
+    git(repo, "commit", "-q", "-m", `main: ${file}`);
+    git(repo, "push", "-q", "origin", "main");
+    git(w, "fetch", "-q", "origin");
+  }
+  /** A branch commit and a main commit that conflict in a.txt, resolved by merging main into the branch (PR #77's shape). */
+  async function mergedMain(issue: number) {
+    const pair = repoPair();
+    const w = await ensureWorktree(pair.repo, pair.worktrees, issue);
+    writeFileSync(join(w.path, "a.txt"), "branch\n");
+    git(w.path, "commit", "-q", "-am", "branch change");
+    moveMain(pair.repo, w.path, "a.txt", "main\n");
+    expect(() => git(w.path, "merge", "-q", "--no-edit", "origin/main")).toThrow();
+    writeFileSync(join(w.path, "a.txt"), "resolved\n");
+    git(w.path, "add", "a.txt");
+    git(w.path, "commit", "-q", "--no-edit");
+    return { ...pair, w };
+  }
+
+  it("skips the rebase when origin/main is an ancestor of HEAD: the merge stays and no conflict is raised (AC-1)", async () => {
+    const { w } = await mergedMain(30);
+    const before = git(w.path, "rev-parse", "HEAD").trim();
+    expect(await rebaseOntoMain(w.path, "origin/main", bot)).toEqual({ ok: true, moved: false });
+    expect(git(w.path, "rev-parse", "HEAD").trim()).toBe(before);
+    expect(git(w.path, "rev-list", "--merges", "--count", "origin/main..HEAD").trim()).toBe("1");
+    expect(readFileSync(join(w.path, "a.txt"), "utf8")).toBe("resolved\n");
+  });
+
+  it("does not linearise a merge when main moved on and merges cleanly: the branch stays where it is (AC-2)", async () => {
+    const { repo, w } = await mergedMain(31);
+    moveMain(repo, w.path, "other.txt", "other\n");
+    const before = git(w.path, "rev-parse", "HEAD").trim();
+    expect(await rebaseOntoMain(w.path, "origin/main", bot)).toEqual({ ok: true, moved: false });
+    expect(git(w.path, "rev-parse", "HEAD").trim()).toBe(before);
+    expect(git(w.path, "status", "--porcelain").trim()).toBe("");
+  });
+
+  it("reports a real conflict when main moved on against a branch holding a merge, and leaves the tree as it was (AC-2)", async () => {
+    const { repo, w } = await mergedMain(32);
+    moveMain(repo, w.path, "a.txt", "main again\n");
+    const before = git(w.path, "rev-parse", "HEAD").trim();
+    const r = await rebaseOntoMain(w.path, "origin/main", bot);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.conflict).toMatch(/CONFLICT.*a\.txt/);
+    expect(git(w.path, "rev-parse", "HEAD").trim()).toBe(before);
+    expect(git(w.path, "status", "--porcelain").trim()).toBe("");
+    expect(readFileSync(join(w.path, "a.txt"), "utf8")).toBe("resolved\n");
+  });
+
+  it("a merge on main's own side is not a merge on the branch: a linear branch still rebases (AC-2)", async () => {
+    const { repo, worktrees } = repoPair();
+    git(repo, "checkout", "-q", "-b", "side");
+    writeFileSync(join(repo, "side.txt"), "s\n");
+    git(repo, "add", "side.txt");
+    git(repo, "commit", "-q", "-m", "side");
+    git(repo, "checkout", "-q", "main");
+    const w = await ensureWorktree(repo, worktrees, 33);
+    writeFileSync(join(w.path, "b.txt"), "b\n");
+    git(w.path, "add", "b.txt");
+    git(w.path, "commit", "-q", "-m", "b");
+    git(repo, "merge", "-q", "--no-ff", "--no-edit", "side");
+    git(repo, "push", "-q", "origin", "main");
+    git(w.path, "fetch", "-q", "origin");
+    expect(await rebaseOntoMain(w.path, "origin/main", bot)).toEqual({ ok: true, moved: true });
+    expect(git(w.path, "rev-list", "--merges", "--count", "origin/main..HEAD").trim()).toBe("0");
+  });
+});

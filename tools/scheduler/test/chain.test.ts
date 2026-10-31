@@ -1121,6 +1121,7 @@ describe("chain: every event in every stage (AC-27)", () => {
     { type: "merge_result", status: "not_mergeable", detail: "conflict" },
     { type: "head_moved", head_sha: "e".repeat(40) },
     { type: "rebase_conflict", detail: "CONFLICT a.ts" },
+    { type: "conflict_gone" },
     answered(),
     { type: "liveness_expired" },
     { type: "chain_error", error: "boom" },
@@ -1136,6 +1137,8 @@ describe("chain: every event in every stage (AC-27)", () => {
       case "merge_result":
       case "head_moved": return stage === "merge";
       case "rebase_conflict": return ["plan", "implement", "review", "fix", "verify", "merge"].includes(stage);
+      // Needs `conflictPending`, which no fixture here sets; spec 024's tests cover the valid case.
+      case "conflict_gone": return false;
       case "answered": return stage === "paused";
       case "liveness_expired":
       case "chain_error": return !ENDED.includes(stage);
@@ -1297,5 +1300,105 @@ describe("chain: every event in every stage (AC-27)", () => {
   it("rebase_conflict is invalid in the spec stage and the question check", () => {
     expect(() => transition(at("spec", { track: "spec" }), { type: "rebase_conflict", detail: "x" })).toThrow(/^invalid event rebase_conflict /);
     expect(() => transition(at("question-check", { question: q, askingStage: "plan" }), { type: "rebase_conflict", detail: "x" })).toThrow(/^invalid event rebase_conflict /);
+  });
+});
+
+describe("chain: a fix must resolve a pending rebase conflict (spec 024)", () => {
+  const conflict = { type: "rebase_conflict" as const, detail: "CONFLICT (content): Merge conflict in a.ts" };
+  const pending = () => transition(at("review", { plan, pr: pr3 }), conflict).state;
+
+  it("a rebase conflict leaves a history entry carrying its detail (AC-5)", () => {
+    expect(pending().history.at(-1)).toMatch(/^origin\/main conflicted before review[^\n]*:\n.*Merge conflict in a\.ts/s);
+  });
+  it("the abandonment comment explains itself: it quotes the conflict (AC-5)", () => {
+    const s = at("review", { plan, pr: pr3, fixes: 2, rescues: 1, replans: 1, specRevisions: 1 });
+    const end = transition(s, conflict);
+    expect(end.state.stage).toBe("abandoned");
+    expect(end.actions.find((a) => a.type === "comment")).toMatchObject({ text: expect.stringContaining("Merge conflict in a.ts") });
+  });
+  it("the fix input says what resolving means and warns off rebasing past a merge (AC-3)", () => {
+    expect(pending().pendingFixInput).toMatch(/new head/);
+    expect(pending().pendingFixInput).toMatch(/merge origin\/main/i);
+  });
+  it("an unchanged head with a conflict pending is a failed fix: no fix is counted and a rescue runs, told the real state (AC-3)", () => {
+    const r = transition(pending(), fixOk(pr3.head_sha));
+    expect(r.state).toMatchObject({ stage: "fix", fixes: 0, conflictPending: true, rescues: 1, rescueRun: true, pr: pr3 });
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining(pr3.head_sha) }]);
+    expect(r.state.pendingFixInput).toMatch(/unchanged/);
+    expect(r.state.pendingFixInput).toMatch(/does not end/);
+    expect(r.state.pendingFixInput).not.toMatch(/scheduler checks/);
+    expect(r.state.pendingFixInput).toContain("Merge conflict in a.ts");
+    expect(r.state.history.join("\n")).toMatch(/fix attempt 1 failed: .*unchanged/);
+  });
+  it("a rescue that returns the unchanged head again fails on: the PR closes and the issue is planned again (AC-3)", () => {
+    const rescue = transition(pending(), fixOk(pr3.head_sha)).state;
+    const r = transition(rescue, fixOk(pr3.head_sha));
+    expect(r.state).toMatchObject({ stage: "plan", replans: 1, pr: null, conflictPending: false, rescueRun: false });
+    expect(types(r.actions)).toEqual(["close_pr", "run_stage"]);
+  });
+  it("an unchanged head with no conflict pending is an ordinary fix (a fix told to change nothing and say so)", () => {
+    const r = transition(at("fix", { plan, pr: pr3, pendingFixInput: "look" }), fixOk(pr3.head_sha));
+    expect(r.state).toMatchObject({ stage: "verify", fixes: 1 });
+  });
+  it("a new head with a conflict pending is an ordinary fix", () => {
+    const r = transition(pending(), fixOk("c".repeat(40)));
+    expect(r.state).toMatchObject({ stage: "verify", fixes: 1, conflictPending: false, pendingFixInput: null, pr: { head_sha: "c".repeat(40) } });
+  });
+  it("an escalation from a fix with a conflict pending is still a question, not an unchanged head", () => {
+    const r = transition(pending(), { type: "stage_ok", stage: "fix", result: { escalation: q } as never, head: pr3.head_sha });
+    expect(r.state.stage).toBe("question-check");
+  });
+  it("conflict_gone ends the conflict with no agent run: the fix round is spent and verify runs (AC-4)", () => {
+    const r = transition(pending(), { type: "conflict_gone" });
+    expect(r.actions).toEqual([{ type: "verify" }]);
+    expect(r.state).toMatchObject({ stage: "verify", fixes: 1, conflictPending: false, pendingFixInput: null, rescueRun: false });
+    expect(r.state.history.at(-1)).toMatch(/conflict is gone/);
+  });
+  it("conflict_gone clears a rescue flag without giving the rescue back (AC-4)", () => {
+    const s = transition(at("review", { plan, pr: pr3, fixes: 2 }), conflict).state;
+    expect(s.rescueRun).toBe(true);
+    expect(transition(s, { type: "conflict_gone" }).state).toMatchObject({ stage: "verify", rescueRun: false, rescues: 1 });
+  });
+  it("conflict_gone with an answer still to record runs the fix for it, without the conflict (AC-4)", () => {
+    const s = { ...pending(), recordAnswer: true, recordIds: [5], recordKind: "technical" as const, answer: "Question #5: yes" };
+    const r = transition(s, { type: "conflict_gone" });
+    expect(r.state).toMatchObject({ stage: "fix", conflictPending: false, fixes: 1, recordAnswer: true });
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringMatching(/conflict is gone/) }]);
+  });
+  it("conflict_gone is invalid outside a fix with a conflict pending", () => {
+    expect(() => transition(at("fix", { pr: pr3 }), { type: "conflict_gone" })).toThrow(/^invalid event conflict_gone/);
+    expect(() => transition(at("review", { pr: pr3, conflictPending: true }), { type: "conflict_gone" })).toThrow(/^invalid event conflict_gone/);
+  });
+
+  /** Drives the chain with every review blocked by a conflict; `atFix` is what each conflict-pending fix ends in. */
+  function driveToEnd(atFix: (s: ChainState) => ChainEvent, over: Partial<ChainState> = {}): { state: ChainState; steps: number } {
+    let state = at("review", { plan, pr: pr3, ...over });
+    let steps = 0;
+    while (!["done", "released", "abandoned", "paused"].includes(state.stage)) {
+      if (++steps > 200) throw new Error(`no end: stage ${state.stage}, history ${state.history.join("|")}`);
+      const event: ChainEvent = state.stage === "review" ? conflict
+        : state.stage === "fix" ? atFix(state)
+          : state.stage === "verify" ? { type: "checks", status: "green", sensitive: false, at: AT }
+            : state.stage === "plan" ? { type: "stage_ok", stage: "plan", result: plan }
+              : state.stage === "implement" ? { type: "stage_ok", stage: "implement", result: impl, scope: { ok: true } }
+                : state.stage === "spec" ? { type: "stage_ok", stage: "spec", result: revised, scope: { ok: true } }
+                  : (() => { throw new Error(`unscripted stage ${state.stage}`); })();
+      state = transition(state, event).state;
+    }
+    return { state, steps };
+  }
+
+  it("terminates within the bounds when every fix returns the unchanged head", () => {
+    const { state } = driveToEnd((s) => fixOk(s.pr!.head_sha));
+    expect(state).toMatchObject({ stage: "abandoned", rescues: 1, replans: 1, specRevisions: 1, specRescues: 1 });
+    expect(state.history.join("\n")).toContain("Merge conflict in a.ts");
+  });
+  it("terminates within the bounds when a fix owing work finds the conflict gone and main moves into a new one before it runs (AC-4)", () => {
+    const { state } = driveToEnd((s) => (s.conflictPending ? { type: "conflict_gone" } : conflict), { recordAnswer: true, recordIds: [5], recordKind: "technical", answer: "Question #5: yes" });
+    expect(state).toMatchObject({ stage: "abandoned", rescues: 1, replans: 1, specRevisions: 1, specRescues: 1 });
+  });
+  it("terminates within the bounds when every fix finds the conflict gone and the next review finds it back", () => {
+    const { state } = driveToEnd(() => ({ type: "conflict_gone" }));
+    expect(state).toMatchObject({ stage: "abandoned", rescues: 1, replans: 1, specRevisions: 1, specRescues: 1 });
   });
 });

@@ -700,6 +700,8 @@ other pair is invalid and throws:
 - `rebase_conflict`: `plan`, `implement`, `review`, `fix`, `verify` and
   `merge` (the scheduler does not rebase for the spec stage or the question
   check);
+- `conflict_gone`: `fix`, with a conflict pending
+  ([spec 024](../024-rebase-respects-merged-main/spec.md) AC-4);
 - `answered`: `paused`;
 - `liveness_expired` and `chain_error`: every stage except `done`,
   `released`, `abandoned` and `paused`.

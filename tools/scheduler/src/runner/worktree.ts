@@ -37,8 +37,15 @@ export interface GitIdentity {
 /**
  * Rebase the worktree onto `base`. Rewritten commits keep their author; the committer is `identity`
  * when given, so the service never depends on the ambient git config (a CI runner has none).
+ * Spec 024: a head that already contains `base` is left alone (a rebase would linearise past a merge of main and raise
+ * the conflicts it resolved again), and so is a branch holding a merge: only a real conflict with `base` is reported.
  */
 export async function rebaseOntoMain(worktree: string, base = "origin/main", identity?: GitIdentity): Promise<{ ok: true; moved: boolean } | { ok: false; conflict: string }> {
+  if (await isAncestor(worktree, base, "HEAD")) return { ok: true, moved: false };
+  if (Number((await git(worktree, "rev-list", "--merges", "--count", `${base}..HEAD`)).stdout.trim()) > 0) {
+    const conflict = await mergeConflict(worktree, base);
+    return conflict === null ? { ok: true, moved: false } : { ok: false, conflict };
+  }
   const before = (await git(worktree, "rev-parse", "HEAD")).stdout.trim();
   const ident = identity ? ["-c", `user.name=${identity.name}`, "-c", `user.email=${identity.email}`] : [];
   try {
@@ -54,6 +61,19 @@ export async function rebaseOntoMain(worktree: string, base = "origin/main", ide
   }
   const after = (await git(worktree, "rev-parse", "HEAD")).stdout.trim();
   return { ok: true, moved: before !== after };
+}
+
+/** What merging `base` into HEAD would conflict on, or null when it merges cleanly. Touches neither the tree nor a ref. */
+async function mergeConflict(worktree: string, base: string): Promise<string | null> {
+  try {
+    await git(worktree, "merge-tree", "--write-tree", "--name-only", base, "HEAD");
+    return null;
+  } catch (e) {
+    const err = e as { code?: number; stdout?: string };
+    // Exit 1 is a conflict; anything else (a bad ref, a git too old for --write-tree) is a real error.
+    if (err.code !== 1) throw e;
+    return (err.stdout ?? "").trim();
+  }
 }
 
 export async function diffFilesAgainstBase(worktree: string, base = "origin/main"): Promise<string[]> {
