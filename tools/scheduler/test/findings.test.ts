@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { appendFindings } from "../src/state/findings.ts";
+import { appendFindings, onFindingsQueued } from "../src/state/findings.ts";
 import { savePatch } from "../src/state/patches.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 
@@ -37,5 +37,17 @@ describe("savePatch (AC-15)", () => {
     const path = await savePatch(p, 7, "diff --git a/x b/x\n", new Date("2026-10-12T01:02:03Z"));
     expect(path?.endsWith("patches/7-20261012T010203.patch")).toBe(true);
     expect(await savePatch(p, 7, "", new Date())).toBeNull();
+  });
+});
+
+describe("appendFindings exclusion (spec 020)", () => {
+  it("passes the excluded agent name to the queued listener, undefined when not given", async () => {
+    const p = statePaths(mkdtempSync(join(tmpdir(), "f-")));
+    await ensureStateDirs(p);
+    const calls: unknown[][] = [];
+    onFindingsQueued(p, async (...a) => { calls.push(a); });
+    await appendFindings(p, env, [good], { exclude: "x" });
+    await appendFindings(p, env, [good]);
+    expect(calls).toEqual([[1, 0, "x"], [1, expect.any(Number), undefined]]);
   });
 });

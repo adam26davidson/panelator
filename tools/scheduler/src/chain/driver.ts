@@ -48,7 +48,7 @@ export interface DriverDeps {
   /** Spec 013: the quota parameters; defaults when absent. */
   parameters?: ParameterStore;
   telegram?: import('../telegram/channel.ts').TelegramChannel|null;
-  emitEvent?: (event:string,payload:unknown)=>Promise<void>;
+  emitEvent?: (event:string,payload:unknown,exclude?:string)=>Promise<void>;
   cfg: Config;
   paths: StatePaths;
   gh: GitHubClient;

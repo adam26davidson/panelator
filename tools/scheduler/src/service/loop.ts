@@ -97,8 +97,8 @@ export class Scheduler {
     this.#deps = deps;
     this.telegramAnswers=new TelegramAnswers(deps,()=>this.wake());
     if(deps.registry) {
-      deps.emitEvent ??= (event,payload)=>emit(deps.paths,deps.registry!,event,payload,deps.now());
-      onFindingsQueued(deps.paths,(count,offset)=>deps.emitEvent!('finding_queued',{count,offset}));
+      deps.emitEvent ??= (event,payload,exclude)=>emit(deps.paths,deps.registry!,event,payload,deps.now(),exclude);
+      onFindingsQueued(deps.paths,(count,offset,exclude)=>deps.emitEvent!('finding_queued',{count,offset},exclude));
     }
     this.#drive = opts.driveChain ?? defaultDriveChain;
   }

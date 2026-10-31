@@ -4,9 +4,9 @@ import type {StandingDefinition} from '../types.ts';
 import type {GitHubClient} from '../github/client.ts';
 import {updateAgentState} from './state.ts';
 export const EVENT_NAMES=['merge','finding_queued','issue_abandoned','maintainer_reply','ci_failure_main','infra_alarm','credential_expiry','capability_answered'] as const;
-export async function emit(paths:StatePaths,registry:Record<string,StandingDefinition>,event:string,payload:unknown,now=new Date()):Promise<void> {
+export async function emit(paths:StatePaths,registry:Record<string,StandingDefinition>,event:string,payload:unknown,now=new Date(),exclude?:string):Promise<void> {
  if(!(EVENT_NAMES as readonly string[]).includes(event))throw new Error(`unknown event ${event}`);
- for(const d of Object.values(registry))if(d.trigger.events?.includes(event)) {
+ for(const d of Object.values(registry))if(d.name!==exclude&&d.trigger.events?.includes(event)) {
   await updateAgentState(paths,d.name,s=>s.pending_events.some(e=>e.event===event&&JSON.stringify(e.payload)===JSON.stringify(payload))?s:{...s,pending_events:[...s.pending_events,{event,payload,at:now.toISOString()}]});
  }
 }

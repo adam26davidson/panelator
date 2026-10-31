@@ -80,3 +80,17 @@ it('persists main check transitions without repeating after restart',async()=>{
  await watchMainChecks(gh,paths,registry,'new-sha',['test'],now);
  expect((await readAgentState(paths,'findings-filer'))?.pending_events).toHaveLength(2);
 });
+it('emit with an excluded agent delivers to every other subscriber and changes nothing else (spec 020 AC-1, AC-3, AC-4)',async()=>{
+ const paths=statePaths(await mkdtemp(join(tmpdir(),'standing-')));await ensureStateDirs(paths);
+ const registry=loadRegistry('agents/standing',EVENT_NAMES,registryActionsCheck('agents/actions.yaml'));
+ registry['second-filer']={...registry['findings-filer'],name:'second-filer'};
+ const parameters=new ParameterStore(paths,loadParameterDefinitions('agents/parameters.yaml',{slots:1},registry));
+ const now=new Date('2026-10-01');await initializeAgents(paths,registry,parameters,now);
+ const events=async(name:string)=>(await readAgentState(paths,name))!.pending_events;
+ await emit(paths,registry,'finding_queued',{count:1,offset:0},now,'findings-filer');
+ expect(await events('findings-filer')).toEqual([]);
+ expect(await events('second-filer')).toEqual([{event:'finding_queued',payload:{count:1,offset:0},at:now.toISOString()}]);
+ await emit(paths,registry,'finding_queued',{count:1,offset:0},now);
+ expect(await events('second-filer')).toHaveLength(1);expect(await events('findings-filer')).toHaveLength(1);
+ await expect(emit(paths,registry,'nope',{},now,'findings-filer')).rejects.toThrow('unknown event nope');
+});
