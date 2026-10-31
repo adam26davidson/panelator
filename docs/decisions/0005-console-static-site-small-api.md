@@ -3,9 +3,10 @@
 Status: accepted
 Date: 2026-11-01
 Decided by: the spec agent for issue #38 (design section 3: a large decision
-with one clearly right answer, recorded with its reasoning); carried by
-[docs/designs/design-stage-console.md](../designs/design-stage-console.md) and
-[specs/030-console/spec.md](../../specs/030-console/spec.md)
+with one clearly right answer, recorded with its reasoning) while writing
+[spec 029](../../specs/029-design-stage/spec.md), the first part of row E of
+the delivery-system design's section 11; carried by the console spec, row E's
+second part, which is filed as its own issue and derives from this ADR.
 
 ## Context
 
@@ -59,7 +60,8 @@ Options considered:
 - The pipeline's permission set (spec 022 section 8) needs the create and
   manage actions for CloudFormation, S3, CloudFront, Lambda, API Gateway,
   DynamoDB, IAM roles for the functions and, with a domain, Route 53 and ACM.
-  Spec 030 asks for them in one capability question, with the policy text.
+  The console spec asks for them in one capability question, with the
+  policy text.
 - Spec 022's budget action blocks `s3:CreateBucket`,
   `cloudfront:CreateDistribution`, `lambda:CreateFunction`,
   `dynamodb:CreateTable` and `cloudformation:CreateStack` at 100% of the cap,

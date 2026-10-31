@@ -1,16 +1,17 @@
 # 029. The design stage
 
-Status: written 2026-11-01 from the design-stage-and-console design (spec E,
-part 1) for issue #38; specs derived from that design need no maintainer
-approval (delivery-system design section 11). Needs spec 006 on `main` (it
-is).
+Status: written 2026-11-01 for issue #38 as the first part of row E of the
+delivery-system design's section 11 (the design stage; the console of design
+section 9 is row E's second part and is its own spec, filed as its own issue,
+blocked on this spec and on spec 022); specs derived from that design need no
+maintainer approval (delivery-system design section 11). Needs spec 006 on
+`main` (it is).
 Class: tooling. Domain: automation (sensitive path, process-spec section 5).
-Parent: docs/designs/design-stage-console.md
-Derives from: [design stage and console design](../../docs/designs/design-stage-console.md)
-sections 2 and 3; [delivery-system design](../../docs/delivery-system-design.md)
+Parent: docs/delivery-system-design.md
+Derives from: [delivery-system design](../../docs/delivery-system-design.md)
 sections 3 (UI and UX detail is decided by the design stage and its visual
 review), 4 (`needs-design` becomes work for an agent), 6.3 (independent
-reviewers) and 9 ("Design first"); [charter](../../docs/charter.md) ("Any UI
+reviewers), 9 ("Design first") and 11 (row E); [charter](../../docs/charter.md) ("Any UI
 design for the system's own interface must involve a dedicated design stage
 using design-specific tools and visual review by the model before
 implementation can begin"); [design-tree](../../docs/design-tree.md) R5.Q4
@@ -46,7 +47,9 @@ repository.
 
 ## 2. Out of scope
 
-- The console itself, its screens and hosting (spec 030). The console is this
+- The console itself, its screens and hosting (row E's second part, the
+  console spec, filed as its own issue with `blocked` until this spec and
+  spec 022 have merged; its hosting shape is ADR 0005). The console is this
   stage's first job, not part of it.
 - Designing the product's web app (`web/` is empty); the stage is ready for
   it when a `web-ui` spec for it exists.
@@ -197,6 +200,16 @@ iPhone-class, an iPad-class and a laptop width)*.
 - **The review is a profile of the review stage,** not a fourth reviewer, so
   the independent-reviewer rule, the fix loop and the merge are the ones
   already tested.
+- **What the console spec relies on from here.** The console is a `web-ui`
+  spec, so it cannot pass the UI-design gate until this stage has produced
+  its `design/`; it names its screens on its `Screens:` line and nothing
+  else about their look, and the stage fills its `design/` with the
+  artifacts of AC-2 and AC-5. Its package reuses the toolchain catalog of
+  AC-6. Row E was expected to become a sub-design with these two children
+  (design section 10); the spec PR scope of spec 006 AC-21 cannot add a
+  sub-design and a sibling spec in the PR of one spec, so the two parts hang
+  from the top design directly, and the order between them is carried by the
+  `blocked` label as in the metrics and reflection split (ADR 0004).
 
 ## 5. Interfaces and files
 
@@ -246,8 +259,8 @@ PR as spec 006 AC-9 says.
   - every earlier recorded chain unchanged (AC-9).
 - The design package's own suite renders the fixture spec at three
   viewports and checks the `panelator-render` chunk (AC-5, AC-6).
-- After the merge, the first real design run is the console's (spec 030);
-  its PR and renders are written up in `dev-logs/`.
+- After the merge, the first real design run is the console's (row E's
+  second part); its PR and renders are written up in `dev-logs/`.
 
 ## 7. Open decisions
 
