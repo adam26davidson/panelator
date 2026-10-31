@@ -42,6 +42,11 @@ statement design section 5 protects.
 | 2 | 027 Metrics as queries | definitions, seed set, report, `metrics` and `events query` commands | 028, E, the maintainer | about 1,000 lines, half of it fixtures and YAML, 18 files |
 | 3 | 028 Reflection agents and plans as issues | `min_events`, the three agents, input, plan issue, item issues | the shortlist, the maintainer | about 1,400 lines, 20 files |
 
+**The order is carried by the `blocked` label.** Issue 026 is filed ready.
+Issues 027 and 028 are filed with `blocked`, which the shortlist skips
+(`tools/scheduler/src/shortlist/select.ts`), and each has the label removed when
+its predecessor merges: 027 when 026 merges, 028 when 027 merges.
+
 Each child merges on its own, on top of the ones before it, and leaves `main`
 working:
 
@@ -59,7 +64,9 @@ working:
 
 - The event envelope, the kind list and `openIndex` belong to 026. 027 and 028
   tighten the `metrics.snapshot` and `reflection.plan` payload schemas as they
-  add the producers, and change nothing else in `schemas/scheduler/event.json`.
+  add the producers (in `schemas/scheduler/event.json` and the map in
+  `tools/scheduler/src/events/store.ts`, so both list that directory in scope),
+  and change nothing else about the envelope or the kinds.
 - `createIssueRecorded` belongs to 026. The one-caller test holds from 026 on,
   so `reflection/apply.ts` in 028 cannot call `createIssue` directly.
 - The report `computeMetrics` returns, and the one function that records a

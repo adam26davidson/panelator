@@ -180,6 +180,10 @@ accepts an entry ending in `/`): `tools/scheduler/src/metrics/`,
   buckets, the report, the snapshot function, AC-5),
   `tools/scheduler/src/metrics/format.ts` (the table for AC-6). Further helpers there
   are the implementer's call.
+- `tools/scheduler/src/events/store.ts` and `tools/scheduler/src/events/kinds.ts`: the
+  `metrics.snapshot` entry of the payload schema map (AC-5);
+  `tools/scheduler/src/events/index.ts`: exporting the table's SQL if the loader's
+  prepare check of AC-1 needs it. Spec 026 owns the rest of that directory.
 - `tools/scheduler/bin/scheduler.ts`: the `metrics`, `metrics show` and `events query`
   commands (AC-6); loading the definitions at service start (AC-1).
 - `tools/scheduler/src/schema/validate.ts`: the new schema names.

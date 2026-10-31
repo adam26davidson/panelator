@@ -105,7 +105,7 @@ the open reservations in the ledger (AC-6).
   and `pull_interval_h` (default 24, min 6). Given the block is absent, when
   the service starts, then AWS is off: the service log records `aws: off`
   with the reason, once, and every behaviour of earlier specs stays as it is
-  (the recorded chains of specs 006, 007, 008, 013, 026 and 028 pass unchanged).
+  (the recorded chains of specs 006, 007, 008, 013 and 026 pass unchanged).
   An `aws` block with an unknown key, or an `account_id` that is not twelve
   digits, fails config validation (spec 001 AC-1 rules). No access key,
   token or SSO cache content is ever written to the service log, a run

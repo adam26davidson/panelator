@@ -331,11 +331,19 @@ only if it is listed here in full (exactly, or under a listed entry ending in `/
 
 **Plan scope.** The plan for this spec lists as prefix entries (the scope gate accepts an
 entry ending in `/`): `tools/scheduler/src/reflection/`, `tools/scheduler/src/standing/`,
+`tools/scheduler/src/events/`, `tools/scheduler/src/state/`,
 `tools/scheduler/src/github/`, `tools/scheduler/test/`, `agents/standing/` and
 `schemas/scheduler/`. It also lists by name `tools/scheduler/bin/scheduler.ts`,
 `tools/scheduler/src/service/loop.ts`, `tools/scheduler/src/config.ts`,
 `tools/scheduler/src/types.ts`, `tools/scheduler/src/schema/validate.ts`,
-`tools/scheduler/src/state/paths.ts`, `agents/scheduler.yaml` and `tools/README.md`.
+`tools/scheduler/src/filer/input.ts`, `agents/scheduler.yaml` and `tools/README.md`.
+
+- `tools/scheduler/src/events/store.ts` and `tools/scheduler/src/events/kinds.ts`: the
+  `reflection.plan` entry of the payload schema map (AC-6). Spec 026 owns the rest of that
+  directory; `createIssueRecorded` and `openIndex` are used as they are.
+- `tools/scheduler/src/state/paths.ts`: `reflections/`. Other files under
+  `tools/scheduler/src/state/` and `tools/scheduler/src/filer/input.ts` change only if the
+  input of AC-5 needs a reader exported (`findings_pending`, `open_questions`).
 
 - `tools/scheduler/src/reflection/`: `tools/scheduler/src/reflection/input.ts` (AC-5,
   including the charter clauses, the maintainer-contact grouping, the issue timelines and the
@@ -350,7 +358,6 @@ entry ending in `/`): `tools/scheduler/src/reflection/`, `tools/scheduler/src/st
 - `tools/scheduler/src/service/loop.ts`, `tools/scheduler/bin/scheduler.ts`: passing the metric
   definitions to the standing runner. `tools/scheduler/src/config.ts`: `reflection_max_issues`
   (AC-7). `tools/scheduler/src/schema/validate.ts`: the new schema names.
-  `tools/scheduler/src/state/paths.ts`: `reflections/`.
 - `tools/scheduler/src/github/client.ts`: the GitHub operations of AC-8. `createIssue`,
   `comment`, `listComments`, `closeIssue`, `setIssueBody` and `searchOpenIssuesByMarker` exist;
   this spec adds the read of one issue's state, author and linked PR (for `previous_plans` and

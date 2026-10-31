@@ -64,7 +64,7 @@ Options considered:
 - Spec F1 (022) reads events through spec 026 now, not 012, and its links say so.
   Its implementation needs 026 on `main`.
 - 027 and 028 wait for the specs before them. Nothing derives that order from the
-  specs' text, so it is carried by when the issues are filed or by the `blocked`
-  label.
+  specs' text, so their issues are filed with the `blocked` label, which the
+  shortlist skips, and each loses it when its predecessor merges.
 - Three PRs mean three review rounds of smaller scope and more rebases between
   them; the contracts in the design are what keep those from reopening one another.
