@@ -17,7 +17,9 @@ eligible. A `web-ui` or `widget` spec's UI design section must carry a line
 must hold a story (`*.stories.tsx`, `*.stories.jsx` or `*.stories.mdx`) or a
 token prototype (`tokens*.html` or `*-prototype.html`) plus a
 `<screen>.png` for each named screen. The issue that carries a spec links it
-with a body line `Spec: specs/NNN-slug/spec.md`.
+with a body line `Spec: specs/NNN-slug/spec.md`. A spec split into a sub-design
+keeps its directory with a `README.md` pointer and no `spec.md`, so its number
+is not reused.
 
 A spec derived from its parent design needs no maintainer approval of its
 own (delivery-system design section 11, spec 006). Every spec carries a
