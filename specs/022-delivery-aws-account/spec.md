@@ -15,7 +15,7 @@ maintainer); [product-spec](../../docs/product-spec.md) 5.4 and 5.5 (the
 product's hosting and budget, which this spec leaves alone);
 [008-agent-registry](../008-agent-registry/spec.md) AC-11 and AC-12 (the
 `aws_cap_usd` parameter, locked, with no consumer until this spec);
-[012-metrics-reflection](../012-metrics-reflection/spec.md) AC-2 (the
+[026-event-store](../026-event-store/spec.md) AC-2 (the
 reserved event kind `aws.cost`) and the `maintainer.contact` kind `funds`
 it reserved for F2, which this spec produces for a refused launch;
 [007-telegram-channel](../007-telegram-channel/spec.md) section 8 (the
@@ -105,7 +105,7 @@ the open reservations in the ledger (AC-6).
   and `pull_interval_h` (default 24, min 6). Given the block is absent, when
   the service starts, then AWS is off: the service log records `aws: off`
   with the reason, once, and every behaviour of earlier specs stays as it is
-  (the recorded chains of specs 006, 007, 008, 012 and 013 pass unchanged).
+  (the recorded chains of specs 006, 007, 008, 013, 026 and 028 pass unchanged).
   An `aws` block with an unknown key, or an `account_id` that is not twelve
   digits, fails config validation (spec 001 AC-1 rules). No access key,
   token or SSO cache content is ever written to the service log, a run
@@ -143,7 +143,7 @@ the open reservations in the ledger (AC-6).
   second guard), and writes `aws/cost.json` in the state directory: `month`,
   `actual_usd`, `as_of` (the pull time), `cap_usd` (the cap at the pull),
   `reserved_usd`, `forecast_usd` (AC-5), `days_elapsed`, `days_in_month`,
-  `source: ce`. One `aws.cost` event (spec 012's reserved kind) with that
+  `source: ce`. One `aws.cost` event (spec 026's reserved kind) with that
   payload is recorded beside the write. Given the call fails, then the
   previous `cost.json` is kept, the failure is logged, and the pull is
   retried at the next tick after one hour, at most six times a day. Given
@@ -186,7 +186,7 @@ the open reservations in the ledger (AC-6).
   one notification is sent through the `Notifier` with label `aws-funds`
   and a text giving what, the expected monthly cost, the shortfall against
   the cap, the forecast and the charter goal the `why` names, and a
-  `maintainer.contact` event with `kind: funds` is recorded (spec 012 AC-2:
+  `maintainer.contact` event with `kind: funds` is recorded (spec 026 AC-2:
   the kind F2 will carry to Telegram). The same `what` is not notified
   again within `notify_rate_limit_hours`.
 

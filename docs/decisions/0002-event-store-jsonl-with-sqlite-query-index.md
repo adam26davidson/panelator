@@ -6,8 +6,10 @@ Settles: [delivery-system design](../delivery-system-design.md) section 13, "the
 event store's technology and schema"; section 7 leaves "the store itself" to the
 builder
 Decided by: the spec stage, as a large technical decision with one clearly right
-answer (design section 3, kind 2); carried by
-[specs/012-metrics-reflection](../../specs/012-metrics-reflection/spec.md)
+answer (design section 3, kind 2); carried by spec 012, since split
+([ADR 0004](0004-split-metrics-reflection-spec.md)): the store is
+[specs/026-event-store](../../specs/026-event-store/spec.md), the metric files
+[specs/027-metrics](../../specs/027-metrics/spec.md)
 
 ## Context
 

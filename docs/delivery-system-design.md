@@ -438,7 +438,7 @@ that account. *(author's call: the split)*
 | B | Chain without human stops | section 4, section 5, the spec agent, the section 3 classification check (question check), the design hierarchy of section 10 and its gate checks, process-spec, spec 001 and `specs/README.md` amendments, `docs/charter.md` on the sensitive list |
 | A | Telegram channel | long-poll service, questions with options, resume-on-reply, reminders |
 | C | Agent registry and direct actions | section 6: definition format, triggers, scheduler support, action log, locks enforced in code, action audit; the parameter store (auto and locked, enforced in code) and applying the system-vs-product work ratio in the shortlist (replacing the fixed 2:1); re-triaging abandoned issues, the recovery path for abandonment (until C, they stay open labelled `abandoned`; the maintainer is informed, not asked to act) |
-| D | Event store, metrics and reflection | section 7, the three reflection agents, plans as issues: issues filed from a plan are authored by the App and labelled `validated`, so the shortlist works them |
+| D | Event store, metrics and reflection | section 7, the three reflection agents, plans as issues: issues filed from a plan are authored by the App and labelled `validated`, so the shortlist works them. Split into the sub-design `docs/designs/metrics-reflection.md`, specs 026, 027 and 028 in that order (ADR 0004) |
 | F1 | Delivery-system AWS account and cap | section 8: the delivery-system AWS account, AWS Budgets enforcement, the scheduler's running estimate, daily forecasting |
 | E | Design stage and console | the design stage (design tools, visual review, three screen sizes), then the console of section 9, hosted in F1's account; re-evaluating the issues spec 006 parked with `needs-design-stage` and removing the label |
 | F2 | Reach beyond GitHub | section 8: credential store and wrappers, funds and first-contact requests, infra health and credential check agents |
@@ -490,7 +490,7 @@ are stale and are corrected as part of B.
 - `specs/009-postponed-chain-holds-slot/spec.md`
 - `specs/010-approve-esbuild-build/spec.md`
 - `specs/011-asking-stage-keeps-its-work/spec.md`
-- `specs/012-metrics-reflection/spec.md`
+- `docs/designs/metrics-reflection.md`
 - `specs/013-quota-planning/spec.md`
 - `specs/014-filer-batch-integrity/spec.md`
 - `specs/015-chain-keeps-its-work/spec.md`
