@@ -1,12 +1,13 @@
 // Spec 025: the repair turn and the debounce on finding_queued wakes, through the real runner and tick.
 import {describe,it,expect} from 'vitest';
-import {readFileSync,readdirSync} from 'node:fs';
+import {mkdtempSync,readFileSync,readdirSync,writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import type {StageRun} from '../src/adapters/types.ts';
 import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
 import {appendFindings} from '../src/state/findings.ts';
 import {emit} from '../src/standing/events.ts';
-import {eventsWake,DEBOUNCED_EVENTS,readAgentState,writeAgentState,type AgentState} from '../src/standing/state.ts';
+import {eventsWake,runningUnits,DEBOUNCED_EVENTS,readAgentState,writeAgentState,type AgentState} from '../src/standing/state.ts';
 import {standingWorld,RATE_LIMITED} from './helpers/e2e-routes.ts';
 type World=Awaited<ReturnType<typeof standingWorld>>;
 const idle=async(w:World)=>{for(let i=0;i<1000&&w.scheduler.active;i++)await new Promise(r=>setTimeout(r,25));expect(w.scheduler.active).toBe(0);};
@@ -26,6 +27,73 @@ describe('recorded shapes through the runner (spec 025 AC-2)',()=>{
   expect(JSON.parse(readFileSync(join(w.paths.runs,dir,'outcome.json'),'utf8')).normalised).toEqual(['1: flat title, body, class gathered into issue','1: missing reason replaced by a placeholder']);
   expect(JSON.parse(readFileSync(join(w.paths.runs,dir,'result.json'),'utf8')).decisions[0].title).toBe('Flat');
  },30000);
+});
+// A harness like the real one: no write tool, so the JSON arrives only as the final text.
+const finalTextOnly=(w:World,wrap:(text:string)=>string=t=>t)=>{
+ const texts:string[]=[];
+ const adapter={...w.adapter,
+  buildCommand(run:StageRun){const c=w.adapter.buildCommand(run);if(String(run.stage)===FILER)texts.push(wrap(c.argv.pop()!));return c;},
+  judge(e:unknown[],exit:number|null,t:boolean){const j=w.adapter.judge(e,exit,t);return j.outcome==='ok'&&texts.length?{...j,finalText:texts.at(-1)!}:j;},
+ };
+ w.deps.adapterFor=()=>adapter;
+};
+// A resume whose session is gone: the process starts and reports nothing, not even an init event.
+const resumeUnavailable=(w:World)=>{
+ const empty=join(mkdtempSync(join(tmpdir(),'no-events-')),'empty.jsonl');writeFileSync(empty,'');
+ w.deps.adapterFor=()=>({...w.adapter,buildCommand(run:StageRun){const c=w.adapter.buildCommand(run);if(run.resume)c.argv[2]=empty;return c;}});
+};
+const usage=(w:World)=>readdirSync(w.paths.usage).map(f=>JSON.parse(readFileSync(join(w.paths.usage,f),'utf8')) as {run_id:string;resume_fallback?:string});
+describe('a result in the final text, with no result file (spec 025 AC-1, AC-2)',()=>{
+ it('is read past prose and a code fence, normalised, applied and kept in result.json',async()=>{
+  const w=await standingWorld({[FILER]:[{summary:'x',decisions:[{ref:'1',outcome:'file',title:'Flat',body:'Flat body',class:'class:bug'}]}]});
+  finalTextOnly(w,t=>`Here is my result.\n\n\`\`\`json\n${t}\n\`\`\``);
+  await queue(w);await tick(w);
+  expect(filerRuns(w)).toHaveLength(1);
+  expect((await readJsonLines<TriageEntry>(w.paths.findingsTriage))[0]).toMatchObject({ref:'1',outcome:'file'});
+  const dir=readdirSync(w.paths.runs).find(d=>d.startsWith('standing-findings-filer'))!;
+  expect(JSON.parse(readFileSync(join(w.paths.runs,dir,'result.json'),'utf8')).decisions[0].title).toBe('Flat');
+ },30000);
+ it('an invalid final text gets the repair turn, whose own final text is the result',async()=>{
+  const w=await standingWorld({[FILER]:[unknownShape,good]});finalTextOnly(w);
+  await queue(w);await tick(w);
+  const runs=filerRuns(w);expect(runs).toHaveLength(2);expect(runs[1].resume?.sessionId).toBe(runs[0].sessionId);
+  expect(await readAgentState(w.paths,FILER)).toMatchObject({failures:0,last_run:{outcome:'ok'}});
+  expect((await readJsonLines<TriageEntry>(w.paths.findingsTriage)).map(t=>t.outcome)).toEqual(['discard']);
+ },30000);
+});
+describe('a repair turn whose session cannot be resumed (spec 025 AC-6)',()=>{
+ it('runs fresh under the turn cap, with the full prompt, and a valid result applies',async()=>{
+  let fresh:StageRun|undefined;
+  const w=await standingWorld({[FILER]:[unknownShape,unknownShape,(run:StageRun)=>{fresh=run;return good;}]});resumeUnavailable(w);
+  await queue(w);await tick(w);
+  const runs=filerRuns(w);expect(runs).toHaveLength(3);expect(runs[1].resume).toBeDefined();expect(runs[2].resume).toBeUndefined();
+  expect(fresh!.runId).toMatch(/-repair-fresh$/);expect(fresh!.bounds.max_turns).toBeLessThanOrEqual(5);
+  expect(fresh!.prompt).toContain('You are findings-filer');
+  expect(usage(w).find(u=>u.run_id.endsWith('-repair-fresh'))?.resume_fallback).toContain('no init');
+  expect(await readAgentState(w.paths,FILER)).toMatchObject({failures:0,last_run:{outcome:'ok'}});
+ },30000);
+ it('an invalid fresh result counts as the failure',async()=>{
+  const w=await standingWorld({[FILER]:[unknownShape,unknownShape,unknownShape]});resumeUnavailable(w);
+  await queue(w);await tick(w);
+  expect(filerRuns(w)).toHaveLength(3);expect((await readAgentState(w.paths,FILER))?.failures).toBe(1);
+ },30000);
+});
+describe('a restart while a repair turn is running (spec 025 AC-6)',()=>{
+ const repair='panelator-stage-standing-findings-filer-1-5-repair';
+ const interrupted=async(active:(unit:string)=>boolean)=>{
+  const w=await standingWorld({[FILER]:[good]});await queue(w);
+  await writeAgentState(w.paths,FILER,{...(await readAgentState(w.paths,FILER))!,running:{run_id:'standing-findings-filer-1-5-repair',started_at:w.deps.now().toISOString()}});
+  const asked:string[]=[];w.deps.unitActive=async u=>{asked.push(u);return active(u);};
+  await tick(w);return {w,asked};
+ };
+ it.each([repair,`${repair}-fresh`])('%s still active starts no second run',async unit=>{
+  const {w}=await interrupted(u=>u===unit);expect(filerRuns(w)).toHaveLength(0);
+ },30000);
+ it('neither unit active starts it again',async()=>{
+  const {w,asked}=await interrupted(()=>false);expect(filerRuns(w)).toHaveLength(1);
+  expect(asked).toEqual(expect.arrayContaining([repair,`${repair}-fresh`]));
+ },30000);
+ it('an ordinary run is checked under its own id only',()=>{expect(runningUnits('standing-x-1-5')).toEqual(['panelator-stage-standing-x-1-5']);});
 });
 describe('the repair turn (spec 025 AC-3 to AC-6)',()=>{
  it('resumes the session once with the errors, turn-capped, and the repaired result applies',async()=>{

@@ -139,7 +139,9 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   const settled=new Set(triage.filter(t=>!t.failed).map(t=>t.ref));
   // A copy re-offered with its entry (spec 025 AC-9) is settled again by this decision.
   const reopened=(ref:string)=>isRestingDiscard(triage.filter(t=>t.ref===ref).at(-1));
-  const copies=row.failed?[]:(record?.duplicate_refs??[]).filter(ref=>!settled.has(ref)||reopened(ref)).map(ref=>({...row,ref,reason:`same record as ref ${dec.ref}: ${row.reason}`,...(reopened(ref)?{reoffered:true}:{})}));
+  // `reoffered` is the copy's own: a new record riding on a re-offered entry has not used up a re-offer.
+  const {reoffered:_entryReoffered,...shared}=row;
+  const copies=row.failed?[]:(record?.duplicate_refs??[]).filter(ref=>!settled.has(ref)||reopened(ref)).map(ref=>({...shared,ref,reason:`same record as ref ${dec.ref}: ${row.reason}`,...(reopened(ref)?{reoffered:true}:{})}));
   await appendFile(d.paths.findingsTriage,[row,...copies].map(c=>JSON.stringify(c)+'\n').join(''));triage.push(row,...copies);
   // Logged once the decision is kept, so a settled ref or a batch that aborts earlier logs nothing (spec 018 AC-3).
   if(fb)d.log?.({kind:'filer-class-fallback',run_id:runId,ref:dec.ref,class:fb.class,used:fb.used});

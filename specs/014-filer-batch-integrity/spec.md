@@ -94,7 +94,8 @@ body carries the marker `<!-- panelator-capability:security-advisories -->`.
 - AC-2. **Settled records are not re-sent.** Given queue refs settled in an
   earlier, aborted batch, when the filer input is built, then they are not
   in the batch, and the input's `cursor` is the stored cursor advanced past
-  every consecutive settled ref.
+  every consecutive settled ref. (Amended by spec 025 section 4: a discard
+  resting on a PR that closes unmerged is offered again, at most twice.)
 - AC-3. **Decisions cover distinct refs.** Given an input, then a result is
   valid only when its decisions carry each distinct input ref (records and
   abandoned issues) exactly once and no other ref. An input that somehow

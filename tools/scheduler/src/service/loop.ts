@@ -8,7 +8,7 @@ import { appendFindings, onFindingsQueued } from "../state/findings.ts";
 import { livenessGate } from "../gates/index.ts";
 import { ensureWorktree, uncommittedPatch } from "../runner/worktree.ts";
 import { buildSelectContext } from "../shortlist/fetch.ts";
-import {eventsWake,initializeAgents,readAgentState} from '../standing/state.ts';
+import {eventsWake,initializeAgents,readAgentState,runningUnits} from '../standing/state.ts';
 import {parseDuration} from '../standing/registry.ts';
 import {runStandingAgent} from '../standing/run.ts';
 import {CAPABILITY_CLOSED_MARKER,isCapabilityIssue} from '../filer/input.ts';
@@ -522,7 +522,7 @@ export class Scheduler {
       const grantStanding = async (): Promise<boolean> => {
         for (let next = dueStanding.shift(); next; next = dueStanding.shift()) {
           const { def, state } = next;
-          if (state.running && await d.unitActive(`panelator-stage-${state.running.run_id}`)) continue;
+          if (state.running && (await Promise.all(runningUnits(state.running.run_id).map((u) => d.unitActive(u)))).some(Boolean)) continue;
           d.inhibitor.acquire();
           const p = (d.runStanding ?? runStandingAgent)({ ...d, parameters: d.parameters! }, def, state)
             .catch((e) => d.log({ kind: "standing-error", agent: def.name, error: String(e) }))

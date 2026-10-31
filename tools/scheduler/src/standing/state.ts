@@ -24,6 +24,11 @@ export function eventsWake(state:AgentState,nowMs:number,debounceMs:number):bool
  if(state.failures>0||!state.last_run||state.pending_events.some(e=>!DEBOUNCED_EVENTS.includes(e.event)))return true;
  return nowMs-Date.parse(state.last_run.at)>=debounceMs;
 }
+/**
+ * The stage units a recorded run may be running as. A repair turn whose session cannot be resumed continues as
+ * `<id>-fresh` in the runner, with no state write between them (spec 025 AC-6).
+ */
+export const runningUnits=(runId:string):string[]=>runId.endsWith('-repair')?[`panelator-stage-${runId}`,`panelator-stage-${runId}-fresh`]:[`panelator-stage-${runId}`];
 export async function updateAgentState(paths:StatePaths,name:string,fn:(state:AgentState)=>AgentState):Promise<void> {
  if(!/^[a-z][a-z0-9-]*$/.test(name))throw new Error('invalid agent name');
  await withStateLock(join(paths.agents,`${name}.json`),async()=>{

@@ -102,7 +102,9 @@ scripted harness of `tools/scheduler/test/helpers/e2e-routes.ts`.
   spec 013 AC-7 with no failure counted. Given the session cannot be resumed,
   then the runner's existing fall back to a fresh run applies, under the same
   turn cap, so it cannot become a full investigation; if it does not return a
-  valid result, that counts as AC-4.
+  valid result, that counts as AC-4. `running` keeps naming `<run id>-repair`, so
+  after a restart the scheduler checks both that unit and `<run id>-repair-fresh`
+  before it starts the agent again.
 
 ### A discard resting on a PR
 
@@ -119,7 +121,8 @@ scripted harness of `tools/scheduler/test/helpers/e2e-routes.ts`.
   `rests_on_pr_closed` and the earlier reason in `repeat`. Identical re-offered
   records collapse as in spec 019 AC-1, and one decision settles them all. The
   new decision is applied like any other, including the privacy of a security
-  record, and its rows carry `reoffered: true`.
+  record, and the rows of the refs actually re-offered carry `reoffered: true`. A
+  new record riding on the entry as a copy has used no re-offer of its own.
 - AC-10. **GitHub calls are bounded.** One input build asks about each PR once
   and about at most 20 distinct PRs, oldest discard first; the rest wait for a
   later run. A merge is recorded (`rests_on_pr_state: merged` on an appended
@@ -219,8 +222,10 @@ scripted harness of `tools/scheduler/test/helpers/e2e-routes.ts`.
 - `tools/scheduler/src/runner/run.ts`: calls it before validation; `normalised`
   in `outcome.json`.
 - `tools/scheduler/src/standing/run.ts`: the repair turn.
-- `tools/scheduler/src/standing/state.ts`: `eventsWake`, `DEBOUNCED_EVENTS`.
-- `tools/scheduler/src/service/loop.ts`: uses `eventsWake` in the due check.
+- `tools/scheduler/src/standing/state.ts`: `eventsWake`, `DEBOUNCED_EVENTS`,
+  `runningUnits`.
+- `tools/scheduler/src/service/loop.ts`: uses `eventsWake` in the due check and
+  `runningUnits` before it starts an agent.
 - `tools/scheduler/src/filer/input.ts`: `discardsToReoffer`, `isRestingDiscard`,
   `PR_CHECKS`, `REOFFER_LIMIT`, `QueueRecord.rests_on_pr_closed`.
 - `tools/scheduler/src/filer/apply.ts`: keeps `rests_on_pr`, applies a re-offered
@@ -229,6 +234,8 @@ scripted harness of `tools/scheduler/test/helpers/e2e-routes.ts`.
   `tools/scheduler/test/standing-wakes.test.ts`, and the spec 020 test in
   `tools/scheduler/test/e2e.test.ts`.
 - `docs/delivery-system-design.md`: this spec under `## Children`.
+- `specs/008-agent-registry/spec.md`, `specs/014-filer-batch-integrity/spec.md`,
+  `specs/020-failure-finding-does-not-wake-its-agent/spec.md`: amendment notes.
 
 `tools/scheduler/`, `agents/` and `docs/delivery-system-design.md` are sensitive
 paths; the security review applies (spec 006 AC-9).

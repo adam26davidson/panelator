@@ -173,6 +173,19 @@ describe('a discard resting on a pull request (spec 025 AC-7 to AC-11)',()=>{
   expect((await triage()).slice(3).map(t=>[t.ref,t.outcome,t.reoffered])).toEqual([['1','file',true],['2','file',true],['3','file',true]]);
   expect((await buildFilerInput(d)).records).toEqual([]);
  });
+ it('a new record riding on a re-offered entry keeps its own re-offers',async()=>{
+  const {queue,d,discard,closed,triage}=await setup();await queue(1,()=>'same');
+  await discard(await buildFilerInput(d),()=>73);closed(73);closed(74);closed(75);
+  await queue(1,()=>'same');
+  const input=await buildFilerInput(d);expect(input.records[0]).toMatchObject({ref:'1',duplicate_refs:['2'],rests_on_pr_closed:73});
+  await discard(input,()=>74);
+  const rows=(await triage()).slice(1);expect(rows.map(t=>[t.ref,t.reoffered])).toEqual([['1',true],['2',undefined]]);
+  expect(rows.map(t=>t.rests_on_pr)).toEqual([74,74]);
+  // The second round re-offers both. Ref 1 has then used its two and ref 2 only one, so ref 2 still comes back.
+  const second=await buildFilerInput(d);expect(second.records).toHaveLength(1);expect(second.records[0]).toMatchObject({ref:'1',duplicate_refs:['2']});
+  await discard(second,()=>75);
+  const third=await buildFilerInput(d);expect(third.records).toHaveLength(1);expect(third.records[0]).toMatchObject({ref:'2',rests_on_pr_closed:75});
+ });
  it('re-offers count toward the batch of 20, and what does not fit waits',async()=>{
   const {queue,d,discard,closed}=await setup();await queue(20);
   await discard(await buildFilerInput(d),ref=>Number(ref)===1?73:undefined);closed(73);

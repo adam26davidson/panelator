@@ -126,7 +126,10 @@ records as chain stages.
   (the laptop slept) runs once, not once per missed interval. (Amended by
   spec 013 AC-7: a run that hits a quota or rate limit is not a failure and
   is not retried at the next tick; the agent is postponed to the limit's
-  reset, keeping its failure count and pending events.)
+  reset, keeping its failure count and pending events. Amended by spec 025
+  section 4: a `finding_queued` event alone makes an agent due only once
+  `standing.event_debounce` has passed since its last run, and a first attempt
+  ending `result: invalid` gets one repair turn before it counts as a failure.)
 - AC-4. **Events wake agents.** The scheduler emits these events in code,
   each with a payload: `merge` (an issue PR or spec PR merged: issue, PR,
   SHA), `finding_queued` (lines appended to the findings queue: the count),
@@ -236,7 +239,8 @@ records as chain stages.
     (AC-13), created from the registry rather than listed in the file.
 
   Given a definition with an unknown key, an out-of-range default or a
-  duplicate name, then loading fails as in AC-1.
+  duplicate name, then loading fails as in AC-1. (Amended by spec 025 section
+  4: `standing.event_debounce` is added.)
 - AC-12. **Locks are enforced in code.** Changing a value goes through one
   function, `setParameter(name, value, actor)`, and changing a mode through
   `setParameterMode(name, mode, actor)`. Given `setParameter` for a `locked`
@@ -311,7 +315,9 @@ records as chain stages.
   issue or advisory created, the run id, the time), and only then does
   `findings/cursor.json` move past the batch. A crash between applying and
   moving the cursor makes the next run see the batch again, and a decision
-  already in `triage.jsonl` for a ref is not applied twice.
+  already in `triage.jsonl` for a ref is not applied twice. (Amended by spec
+  025 section 4: a `discard` may carry `rests_on_pr`, and a result in a recorded
+  shape is put right before validation.)
 - AC-17. **The maintainer's commands.** `panelator-scheduler param list`
   prints every parameter with its value, mode, `set_by` and time;
   `param set <name> <value>` and `param mode <name> auto|locked` call the
@@ -332,7 +338,9 @@ records as chain stages.
   `triage.jsonl` with its reason and nothing else happens. Given a record
   discarded whose `what` and `where` match a record discarded in the last 30
   days, then the filer's input marks it as a repeat with the earlier reason,
-  so it can decide whether the repetition itself is the issue.
+  so it can decide whether the repetition itself is the issue. (Amended by
+  spec 025 section 4: a discard resting on a PR that closes unmerged is offered
+  again, at most twice.)
 - AC-20. **Abandoned issues are re-triaged.** Given an issue labelled
   `abandoned` in the input, then the result carries one decision for it,
   with `ref: "issue:<number>"`, and one of these outcomes:
