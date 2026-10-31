@@ -8,6 +8,14 @@ key, the eligibility marker's home, the `ci.check` and `agent.run` rules, the
 liveness-expiry transition, the index log, the design-tree issue derivation,
 the plan body's open questions, the item bound on a retry, the `issue.filed`
 body, `metrics show`'s range, and the helper files).
+Revised 2026-10-31 after the second and third attempts (PRs #64, #72) failed
+the scope gate twice on files the plan had not listed (the test helper
+`e2e-routes.ts`, the backfill fixture state directory, a notifier wrapper
+module): section 5 now names every file and directory the implementation
+touches and tells the plan to list the directories where new files are
+expected as prefix entries; AC-2 names the capability issue of spec 014 as a
+caller of the one issue-creation wrapper, with a test; AC-15's `issues` list
+is stated to be complete, with no cap.
 Class: tooling. Domain: backend.
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
@@ -172,9 +180,15 @@ scheduler (spec 008 AC-5).
     returns to wait for the retry, so a run that fails once and then
     succeeds leaves two events;
   - `issue.filed`: `{ number, by, class, labels, marker, body }` for every
-    issue the scheduler creates (the filer, a reflection, spec 006's
-    escalation issues), `body` the issue body as created, so a query can
-    read what the issue cites (AC-6's `post_merge_defects`);
+    issue the scheduler creates (the filer's finding issues, the filer's
+    capability issue of spec 014, a reflection's plan and item issues, spec
+    006's escalation issues), `body` the issue body as created, so a query
+    can read what the issue cites (AC-6's `post_merge_defects`). Every
+    issue creation in `tools/scheduler/src/` goes through
+    `createIssueRecorded` in `src/events/filed.ts` (section 5), which
+    creates the issue and records the event; a test greps `src/` for calls
+    of the client's `createIssue` and asserts that `events/filed.ts` is the
+    only caller, so a new creation path cannot skip the record;
   - `reflection.plan`: the plan of AC-16 with its plan issue number;
   - `metrics.snapshot`: the report of AC-9 as computed for a reflection run or
     the `metrics --snapshot` command.
@@ -215,7 +229,11 @@ scheduler (spec 008 AC-5).
   (the backfill id is derived from the source record, so the second run finds
   every id present). Given a record that fails its payload schema (an old
   shape), then it is recorded with the envelope's `payload` as it is and the
-  count of such records is printed, rather than dropped.
+  count of such records is printed, rather than dropped. The test's source
+  is the fixture state directory
+  `tools/scheduler/test/fixtures/events/backfill-state/`, which carries one
+  file of each pre-spec record kind named above, including a usage record
+  of an old shape.
 
 **Metrics** (design section 7)
 
@@ -376,7 +394,11 @@ scheduler (spec 008 AC-5).
     `abandoned`, or `pause.started` event in the period, its timeline from
     the events: eligible, claimed and released times, each `chain.transition`
     with times, every `run.ended` with model, outcome and cost, its reviews,
-    its questions and pauses, and its total cost;
+    its questions and pauses, and its total cost. The list is complete and
+    ordered by issue number: no `LIMIT` and no cap, since a period that has
+    grown after failed runs (AC-20) is exactly the one in which nothing may
+    be dropped; a test over an event set with 70 qualifying issues asserts
+    70 timelines in the input;
   - `open_questions`: every `question` sent and not answered, with the issue,
     the asking stage, the question text and the time sent (design section 3:
     listed in each reflection plan);
@@ -562,6 +584,16 @@ scheduler (spec 008 AC-5).
   agents get the parameter and agent-pause kinds and nothing that writes the
   repository. Everything else is an issue, so the chain's review is the gate
   on the system changing itself, as the design wants.
+- **The plan names directories where files are the implementer's call.**
+  Three implementation attempts failed the scope gate on files no plan
+  could foresee by name: a wrapper module, a fixture directory, a test
+  helper. The gate already accepts a directory prefix; saying so in the
+  spec, and naming which directories, keeps the gate's purpose (the diff
+  stays where the plan said) without making a helper file a failure.
+- **The issue list has no cap.** A hidden `LIMIT` drops the issues with the
+  highest numbers, the most recent ones, on the period where it matters
+  most; a strong-tier model reads a few dozen compact timelines without
+  trouble, and the weekly cadence bounds the period in the normal case.
 - **Charter changes are filed, not swallowed.** A reflection may well
   conclude the charter should change; the design's path for that is a
   question to the maintainer (section 5), and the chain's spec stage and
@@ -578,8 +610,14 @@ scheduler (spec 008 AC-5).
   as a `const` array shared with the schema), `ci.ts` (the `ci.check`
   recorder with its index lookup, AC-2), `filed.ts` (the one wrapper every
   issue creation goes through, so `issue.filed` is recorded beside it,
-  AC-2). Further helper modules under `src/events/`, `src/metrics/` and
-  `src/reflection/` are the implementer's call; the plan lists them.
+  AC-2: `createIssueRecorded(gh, paths, { title, body, labels, by, class,
+  marker })`, called by the filer for finding issues and for spec 014's
+  capability issue, by the driver for escalation issues, and by
+  `reflection/apply.ts` for plan and item issues). Further helper modules
+  under `src/events/`, `src/metrics/`, `src/reflection/` and `src/notify/`
+  are the implementer's call; the plan lists those directories as prefix
+  entries (the "plan scope" bullet below) so that a module added there is
+  inside the scope.
 - `tools/scheduler/src/metrics/`: `definitions.ts` (loads
   `agents/metrics/*.yaml`, the checks of AC-5, AC-7 and AC-8, the read-only
   `SELECT` rule), `compute.ts` (`computeMetrics`, weekly buckets, the
@@ -597,14 +635,26 @@ scheduler (spec 008 AC-5).
   expiry, the first-start backfill), `src/runner/run.ts` or
   `src/state/runs.ts` (`run.ended`), `src/state/findings.ts`
   (`finding.queued`), `src/filer/apply.ts` (`finding.triaged`,
-  `issue.filed`), `src/actions/log.ts` (`action`), `src/state/questions.ts`
-  (`question`, and `maintainer.contact` for `sent` and `reminded`),
-  `src/notify/log.ts` and the Telegram notifier of spec 007
-  (`maintainer.contact` for notifications), `src/parameters/store.ts`
-  (`parameter.changed`), `src/standing/run.ts` (`agent.run` per attempt,
-  the plan key, the reflection input and apply dispatch),
-  `src/standing/events.ts` (`ci.check` for `main`). Any other state writer
-  that gains a one-line recording call is in scope.
+  `issue.filed` through `events/filed.ts`), `src/actions/log.ts`
+  (`action`), `src/state/questions.ts` (`question`, and
+  `maintainer.contact` for `sent` and `reminded`), `src/notify/`
+  (`maintainer.contact` for notifications: a wrapper module
+  `src/notify/recorded.ts` that takes any notifier, the log notifier of
+  `src/notify/log.ts` or the Telegram notifier of spec 007 under
+  `src/telegram/`, and records the contact beside each send, with
+  `src/notify/types.ts` and `src/notify/rate-limit.ts` changed as the
+  wrapper needs), `src/parameters/store.ts` (`parameter.changed`),
+  `src/standing/run.ts` (`agent.run` per attempt, the plan key, the
+  reflection input and apply dispatch), `src/standing/events.ts`
+  (`ci.check` for `main`), `src/state/claims.ts` (the claim's transition
+  helper, when the `chain.transition` record is placed there),
+  `src/service/log.ts` (the service log that `openIndex` appends to,
+  AC-3), `src/github/types.ts` (the issue, comment and label types the
+  client additions need). Any other state writer in `tools/scheduler/src/`
+  that gains a one-line recording call is in scope: the plan's recording
+  task (AC-2) lists `tools/scheduler/src/` itself as a prefix entry beside
+  the files named here, so that a writer found during implementation is
+  not a scope violation.
 - `tools/scheduler/src/standing/registry.ts`, `src/standing/state.ts` and
   `src/types.ts`: the `min_events` trigger field and the due rule (AC-14);
   `src/standing/state.ts` and `schemas/scheduler/agent-state.json`: the
@@ -642,10 +692,44 @@ scheduler (spec 008 AC-5).
   rule, the report's null buckets), `reflection.test.ts` (input building
   from the fixture events, recurring contacts, plan issue and item markers,
   the bound and deferrals, predecessor close, charter-change marking, the
-  write-only-under-state assertion, metric-change rationale), the registry
-  tests over `agents/standing/` and `agents/metrics/`, `min_events` in
-  `standing.test.ts`, and the recorded runs of section 6 in `e2e.test.ts`;
-  `test/fixtures/events/` with its `expected.json`.
+  write-only-under-state assertion, metric-change rationale, the complete
+  `issues` list), the registry tests over `agents/standing/` and
+  `agents/metrics/`, `min_events` in `standing.test.ts`, the recorded runs
+  of section 6 in `e2e.test.ts`, and every existing test file of a module
+  that gains a recording call (`driver.test.ts`, `loop.test.ts`,
+  `state.test.ts`, `filer.test.ts`, `notify.test.ts`, `actions.test.ts`,
+  `findings.test.ts`, `parameters.test.ts`, `run.test.ts`,
+  `smoke.test.ts`, `client.test.ts`, `config.test.ts`, `schema.test.ts`),
+  as their assertions need.
+- `tools/scheduler/test/helpers/`: `e2e-routes.ts` (the chain and
+  standing worlds the recorded runs use: the mocked routes for issue
+  creation, comments, closing, marker search, label listing and issue state
+  that AC-16 and AC-17 call, the standing world's event store wiring, and
+  the fake clock advanced between attempts), `mock-github.ts` (the routes
+  and page links), and `repo-pair.ts` and `fake-telegram.ts` when a run
+  needs them.
+- `tools/scheduler/test/fixtures/`: `events/` with the monthly JSONL
+  fixture files, `expected.json` (AC-6), and `backfill-state/` (AC-4: a
+  state directory with `usage/` holding a current-shape and an old-shape
+  record, `merges.jsonl`, `actions/log.jsonl`, `questions/log.jsonl`,
+  `findings/queue.jsonl`, `findings/triage.jsonl` and
+  `parameters/history.jsonl`); `stage-script.ts` (the scripted agent of the
+  fake harness, when a reflection run needs a new scripted result shape);
+  the fixture repository of AC-15's `design_tree` test is built in a
+  temporary directory by the test (as `repo-pair.ts` does), not checked in.
+- **Plan scope.** The scope gate (spec 001, `src/gates/scope.ts`) treats a
+  plan file entry that ends in `/` as a directory prefix, and an entry
+  without one as an exact file. The plan for this spec lists these
+  directories as prefix entries on the tasks that work under them, because
+  the files added there are the implementer's call: `tools/scheduler/src/events/`,
+  `tools/scheduler/src/metrics/`, `tools/scheduler/src/reflection/`,
+  `tools/scheduler/src/notify/`, `tools/scheduler/test/` (which covers
+  `test/helpers/` and `test/fixtures/`), `agents/metrics/`,
+  `agents/standing/` and `schemas/scheduler/`; and `tools/scheduler/src/`
+  on the recording task, as the bullet above says. Files elsewhere are
+  listed one by one. A diff inside those prefixes is inside the scope; the
+  sensitive-path rule is unchanged (`tools/scheduler/` and `agents/` are
+  listed below).
 - `tools/README.md`: the four commands, the `agents/metrics/` layout, the
   three agents and what a plan issue is (documentation of the tool, in its
   own package).
@@ -660,8 +744,10 @@ criteria, or what routes a sensitive diff to the security review.
 
 - `pnpm test` passes and `pnpm -F @panelator/scheduler typecheck` is clean,
   including:
-  - the append-only assertion over the source and the every-kind assertion
-    over the recorded chains (AC-1, AC-2);
+  - the append-only assertion over the source, the every-kind assertion
+    over the recorded chains, and the one-caller assertion for
+    `createIssue` (AC-1, AC-2);
+  - an input over 70 qualifying issues carrying all 70 timelines (AC-15);
   - index deletion and rebuild giving identical metric values (AC-3);
   - a backfill of a fixture state directory, run twice, with the second run
     recording nothing (AC-4);
