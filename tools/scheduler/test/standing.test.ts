@@ -1,5 +1,7 @@
+import { standingWorld } from './helpers/e2e-routes.ts';
+import { runStandingAgent, type StandingDeps } from '../src/standing/run.ts';
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -35,7 +37,7 @@ describe('standing registry', () => {
   it('rejects unknown placeholders', () => expect(() => renderStandingPrompt('{{oops}}', {})).toThrow());
   it('loads every real agent and cross-checks action code', () => {
     const kinds=registryActionsCheck('agents/actions.yaml');
-    expect(Object.keys(loadRegistry('agents/standing',EVENT_NAMES,kinds)).sort()).toEqual(['action-audit','findings-filer']);
+    expect(Object.keys(loadRegistry('agents/standing',EVENT_NAMES,kinds)).sort()).toEqual(['action-audit','charter-reflection','delivery-reflection','findings-filer','meta-reflection']);
   });
   it('still loads an agent that names a kind raised to level 2', async()=>{
     const dir=await mkdtemp(join(tmpdir(),'level2-'));
@@ -43,6 +45,18 @@ describe('standing registry', () => {
     const defs=join(dir,'standing');const {mkdir}=await import('node:fs/promises');await mkdir(defs);
     await writeFile(join(defs,'test.md'),text.replace('profile: none','profile: none\nactions: [set_parameter]'));
     expect(loadRegistry(defs,['merge'],registryActionsCheck(actions)).test.actions).toEqual(['set_parameter']);
+  });
+  it('accepts min_events with events and rejects it under 1, fractional, or without events (spec 012 AC-14)', () => {
+    expect(load(text.replace('events: [merge]','events: [merge], min_events: 10')).test.trigger.min_events).toBe(10);
+    for (const bad of ['events: [merge], min_events: 0','events: [merge], min_events: 1.5',"events: [merge], min_events: '3'"]) expect(()=>load(text.replace('events: [merge]',bad)),bad).toThrow(/min_events/);
+    expect(()=>load(text.replace('schedule: 1d, events: [merge]','schedule: 1d, min_events: 2'))).toThrow(/min_events/);
+  });
+  it('keeps the filer and the audit on the default of one event', () => {
+    const real=loadRegistry('agents/standing',EVENT_NAMES,registryActionsCheck('agents/actions.yaml'));
+    expect(real['findings-filer'].trigger.min_events).toBeUndefined();expect(real['action-audit'].trigger.min_events).toBeUndefined();
+    expect(real['delivery-reflection'].trigger).toEqual({schedule:'7d',events:['merge'],min_events:10});
+    expect(real['charter-reflection'].trigger).toEqual({schedule:'7d'});expect(real['meta-reflection'].trigger).toEqual({schedule:'30d'});
+    expect(real['meta-reflection'].actions).toEqual([]);
   });
   it('parses durations', () => { expect(parseDuration('1h')).toBe(3600000); expect(parseDuration('2d')).toBe(172800000); expect(() => parseDuration('bad')).toThrow(); });
 });
@@ -70,6 +84,21 @@ it('builds the action audit from the context window, grouped by kind and status'
  const input=await buildAuditInput(paths,'2026-10-10T00:00:00Z',new Date('2026-10-27'));
  expect(input.kinds.set_parameter.entries).toHaveLength(2);expect(input.kinds.set_parameter.undone).toBe(1);expect(input.kinds.set_parameter.refused).toBe(1);expect(input.parameter_history).toHaveLength(1);
 });
+it('runStandingAgent retains a stored reflection key even with failures zero and running set', async () => {
+ const result = {summary:'reflected',plan:{title:'t',summary:'s',observations:[],items:[{title:'Item',body:'Implement a targeted improvement because the event evidence shows repeated fix loops; verify that rework_per_merge decreases over four weekly snapshots without reducing the review bar or hiding failed attempts. '.repeat(2),class:'class:tooling',kind:'bottleneck'}],metrics_note:'m',open_questions_note:'none',deferred:[]}};
+ const w = await standingWorld({'charter-reflection':[result]});
+ const name='charter-reflection',key='charter-reflection-1756944000000';
+ const state=(await readAgentState(w.paths,name))!;
+ state.reflection={period_from:'2026-09-04T00:00:00.000Z',plan_key:key}; state.failures=0;
+ state.running={run_id:'interrupted',started_at:'2026-10-01T00:00:00.000Z'};
+ await writeAgentState(w.paths,name,state); w.setNow(new Date('2026-10-01T08:00:00Z'));
+ w.failNext.create=1; // fail mid-apply so the state still carries the key for inspection
+ await runStandingAgent(w.deps as StandingDeps,w.registry[name],state);
+ expect((await readAgentState(w.paths,name))?.reflection).toEqual(state.reflection);
+ expect((await readAgentState(w.paths,name))?.failures).toBe(1);
+ expect(readdirSync(join(w.paths.reflections,name))).toEqual([`${key}.json`]);
+},30000);
+
 it('persists main check transitions without repeating after restart',async()=>{
  const {paths,registry,now}=await stateSetup();
  registry['findings-filer'].trigger.events!.push('ci_failure_main');

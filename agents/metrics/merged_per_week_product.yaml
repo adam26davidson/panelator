@@ -1,0 +1,15 @@
+name: merged_per_week_product
+goal: delivery
+description: Merges per week of product work
+unit: merges
+direction: higher
+introduced: 2026-10-28
+rationale: >-
+  The product is what the maintainer ultimately wants shipped, and the charter asks that delivery of
+  it keeps going while the system improves itself. Counting product merges separately from system
+  merges shows whether the product is advancing at all in a given week, which the total hides when
+  system work dominates. It uses the work class recorded on the merge event. It drives the tuning of
+  the system work share parameter and the reflection's judgement of whether the balance serves the
+  charter.
+query: |-
+  SELECT date(at, 'weekday 0', '-6 days') AS bucket, count(*) AS value, count(*) AS n FROM events WHERE kind = 'merge' AND json_extract(payload, '$.work') = 'product' AND at >= :from AND at < :to GROUP BY bucket

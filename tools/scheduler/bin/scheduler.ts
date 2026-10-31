@@ -10,6 +10,7 @@ import { agentsDir, defaultConfigPath, loadConfig, repoRoot } from "../src/confi
 import { createAppClient } from "../src/github/auth.ts";
 import { GitHubClient } from "../src/github/client.ts";
 import { LogNotifier } from "../src/notify/log.ts";
+import { recordedNotifier } from "../src/notify/recorded.ts";
 import { rateLimited } from "../src/notify/rate-limit.ts";
 import { fastForwardMain, fetchOrigin } from "../src/service/git.ts";
 import { SleepInhibitor } from "../src/service/inhibit.ts";
@@ -28,6 +29,11 @@ import {registryActionsCheck,loadActionLevels,applyAction} from '../src/actions/
 import {ActionLog} from '../src/actions/log.ts';
 import {undoAction} from '../src/actions/undo.ts';
 import {onFindingsQueued} from '../src/state/findings.ts';
+import {loadMetricDefinitions,assertReadOnlySelect} from '../src/metrics/definitions.ts';
+import {computeMetrics,historyRange,recordSnapshot} from '../src/metrics/compute.ts';
+import {formatReport} from '../src/metrics/format.ts';
+import {openIndex} from '../src/events/index.ts';
+import {backfillEvents} from '../src/events/backfill.ts';
 
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
@@ -49,17 +55,41 @@ function fail(reason: string): never {
   process.exit(78);
 }
 
-const {registry,parameters,levels}=(()=>{try {
+const {registry,parameters,levels,metrics}=(()=>{try {
   const kinds=registryActionsCheck(join(agentsDir,'actions.yaml'));
   const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,kinds);
   const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),cfg,registry));
-  return {registry,parameters,levels:loadActionLevels(join(agentsDir,'actions.yaml'))};
+  return {registry,parameters,levels:loadActionLevels(join(agentsDir,'actions.yaml')),metrics:loadMetricDefinitions(join(agentsDir,'metrics'))};
 }catch(e){fail((e as Error).message);}})();
 await initializeAgents(paths,registry,parameters,new Date());
-const actionLog=new ActionLog(paths.actionsLog);
+const actionLog=new ActionLog(paths.actionsLog,paths);
 const emitEvent=(event:string,payload:unknown)=>emit(paths,registry,event,payload);
 onFindingsQueued(paths,(count,offset)=>emitEvent('finding_queued',{count,offset}));
 
+// Metrics and the event store are read on the laptop as the service user; only --snapshot and backfill write events.
+if(args[0]==='metrics'||args[0]==='events') {
+  try {
+    if(args[0]==='events'&&args[1]==='backfill')console.log(JSON.stringify(await backfillEvents(paths,rec=>serviceLog.write(rec)),null,2));
+    else if(args[0]==='events'&&args[1]==='query') {
+      if(!args[2])throw new Error('usage: events query "<sql>"');
+      assertReadOnlySelect(args[2]);
+      const db=openIndex(paths,{readOnly:true});
+      for(const row of db.prepare(args[2]).all())console.log(JSON.stringify(row));
+    } else if(args[0]==='metrics'&&args[1]==='show') {
+      const def=metrics[args[2]];if(!def)throw new Error(`unknown metric ${args[2]}`);
+      const to=new Date(),db=openIndex(paths,{readOnly:true});
+      const report=computeMetrics(db,metrics,{...historyRange(db,def,to),names:[def.name]});
+      console.log(JSON.stringify({definition:def,history:report.metrics[0]?.buckets},null,2));
+    } else if(args[0]==='metrics'&&!args[1]?.length||args[0]==='metrics'&&args[1]?.startsWith('--')) {
+      const weeks=Number(flag('--weeks')??12);if(!Number.isInteger(weeks)||weeks<1)throw new Error('--weeks must be a positive integer');
+      const to=new Date(),from=new Date(to.getTime()-weeks*7*86400000),db=openIndex(paths,{readOnly:true});
+      const report=computeMetrics(db,metrics,{from,to,includeRetired:has('--all')});
+      if(has('--snapshot'))await recordSnapshot(paths,report);
+      console.log(has('--json')?JSON.stringify(report,null,2):formatReport(report));
+    } else throw new Error('usage: metrics [--weeks n] [--json] [--snapshot] [--all]|show <name>; events backfill|query "<sql>"');
+    process.exit(0);
+  }catch(e){console.error((e as Error).message);process.exit(1);}
+}
 // Local administration works without service auth or the main-only checkout requirement.
 if(args[0]==='quota') {
   // Spec 013 AC-10: the quota book, with the claims and agents waiting on it.
@@ -131,7 +161,7 @@ const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec));
 let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
-  cfg, paths, gh, telegram,registry, parameters, emitEvent, notifier: rateLimited(new LogNotifier(paths.serviceLog), cfg.notify_rate_limit_hours),
+  cfg, paths, gh, telegram,registry, metrics, parameters, emitEvent, notifier: rateLimited(recordedNotifier(new LogNotifier(paths.serviceLog), paths), cfg.notify_rate_limit_hours),
   stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: repoRoot, binDir,
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),

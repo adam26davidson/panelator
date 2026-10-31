@@ -1,5 +1,5 @@
 import {it,expect,vi} from 'vitest';
-import {mkdtemp,appendFile,readFile,unlink} from 'node:fs/promises';
+import {mkdtemp,appendFile,readFile,readdir,unlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import type {GitHubClient} from '../src/github/client.ts';
@@ -136,6 +136,8 @@ it('holds a permission failure after three attempts and raises one content-free 
  expect(triage.slice(-2)).toEqual([expect.objectContaining({ref:'1',failed:true,attempt:3,held:true,capability_issue:42}),expect.objectContaining({ref:'2',held:true,capability_issue:42})]);
  expect(gh.createIssue).toHaveBeenCalledTimes(1);
  const [title,body,labels]=gh.createIssue.mock.calls[0];
+ const filedEvents=(await Promise.all((await readdir(paths.events)).filter(f=>f.endsWith('.jsonl')).map(f=>readFile(join(paths.events,f),'utf8')))).join('\n').split('\n').filter(Boolean).map(l=>JSON.parse(l)).filter(e=>e.kind==='issue.filed');
+ expect(filedEvents).toHaveLength(1);expect(filedEvents[0].payload).toMatchObject({number:42,class:'class:tooling',marker:expect.stringContaining('panelator-capability')});
  expect(labels).toEqual(['class:tooling','validated']);expect(body).toContain('<!-- panelator-capability:security-advisories -->');expect(body).toMatch(/kind `capability`/);expect(body).toContain('HTTP 403');
  for(const text of ['Token leaks','Second leak','secret-evidence','Secret title','Secret description'])expect(title+body).not.toContain(text);
  const held=notify.mock.calls.map(c=>String((c as unknown[])[0])).filter(t=>t.includes('held'));

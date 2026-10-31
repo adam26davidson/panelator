@@ -1,0 +1,15 @@
+name: merged_per_week
+goal: delivery
+description: Merges per week
+unit: merges
+direction: higher
+introduced: 2026-10-28
+rationale: >-
+  The charter wants the system to keep delivering, and the plainest signal that it does is the number
+  of changes that reach main each week. Counting merge events, which the scheduler records at the
+  moment it merges, makes the figure independent of how work is classified or how large a change is.
+  It is read with the quality and spend metrics beside it, because a count that rises while rework or
+  cost rises is not an improvement. It drives the question whether the shortlist and the slot count
+  are keeping the pipeline busy.
+query: |-
+  SELECT date(at, 'weekday 0', '-6 days') AS bucket, count(*) AS value, count(*) AS n FROM events WHERE kind = 'merge' AND at >= :from AND at < :to GROUP BY bucket

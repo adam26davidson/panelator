@@ -1,0 +1,294 @@
+{
+ "from": "2026-09-14T00:00:00.000Z",
+ "to": "2026-10-26T00:00:00.000Z",
+ "metrics": {
+  "issue_to_merge_days": [
+   {
+    "bucket": "2026-09-14",
+    "value": 3.75,
+    "n": 2
+   },
+   {
+    "bucket": "2026-09-21",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-09-28",
+    "value": 3.0,
+    "n": 1
+   },
+   {
+    "bucket": "2026-10-05",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-12",
+    "value": 2.0,
+    "n": 1
+   },
+   {
+    "bucket": "2026-10-19",
+    "value": null,
+    "n": 0
+   }
+  ],
+  "merged_per_week": [
+   {
+    "bucket": "2026-09-14",
+    "value": 2,
+    "n": 2
+   },
+   {
+    "bucket": "2026-09-21",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-09-28",
+    "value": 1,
+    "n": 1
+   },
+   {
+    "bucket": "2026-10-05",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-12",
+    "value": 1,
+    "n": 1
+   },
+   {
+    "bucket": "2026-10-19",
+    "value": null,
+    "n": 0
+   }
+  ],
+  "merged_per_week_system": [
+   {
+    "bucket": "2026-09-14",
+    "value": 1,
+    "n": 1
+   },
+   {
+    "bucket": "2026-09-21",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-09-28",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-05",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-12",
+    "value": 1,
+    "n": 1
+   },
+   {
+    "bucket": "2026-10-19",
+    "value": null,
+    "n": 0
+   }
+  ],
+  "merged_per_week_product": [
+   {
+    "bucket": "2026-09-14",
+    "value": 1,
+    "n": 1
+   },
+   {
+    "bucket": "2026-09-21",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-09-28",
+    "value": 1,
+    "n": 1
+   },
+   {
+    "bucket": "2026-10-05",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-12",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-19",
+    "value": null,
+    "n": 0
+   }
+  ],
+  "rework_per_merge": [
+   {
+    "bucket": "2026-09-14",
+    "value": 1.0,
+    "n": 2
+   },
+   {
+    "bucket": "2026-09-21",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-09-28",
+    "value": 0.0,
+    "n": 1
+   },
+   {
+    "bucket": "2026-10-05",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-12",
+    "value": 2.0,
+    "n": 1
+   },
+   {
+    "bucket": "2026-10-19",
+    "value": null,
+    "n": 0
+   }
+  ],
+  "post_merge_defects": [
+   {
+    "bucket": "2026-09-14",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-09-21",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-09-28",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-05",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-12",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-19",
+    "value": 1,
+    "n": 1
+   }
+  ],
+  "cost_per_merged_issue_usd": [
+   {
+    "bucket": "2026-09-14",
+    "value": 1.75,
+    "n": 2
+   },
+   {
+    "bucket": "2026-09-21",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-09-28",
+    "value": 1.0,
+    "n": 1
+   },
+   {
+    "bucket": "2026-10-05",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-12",
+    "value": 3.0,
+    "n": 1
+   },
+   {
+    "bucket": "2026-10-19",
+    "value": null,
+    "n": 0
+   }
+  ],
+  "questions_per_week": [
+   {
+    "bucket": "2026-09-14",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-09-21",
+    "value": 2,
+    "n": 2
+   },
+   {
+    "bucket": "2026-09-28",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-05",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-12",
+    "value": 1,
+    "n": 1
+   },
+   {
+    "bucket": "2026-10-19",
+    "value": null,
+    "n": 0
+   }
+  ],
+  "questions_decide_yourself": [
+   {
+    "bucket": "2026-09-14",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-09-21",
+    "value": 1,
+    "n": 1
+   },
+   {
+    "bucket": "2026-09-28",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-05",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-12",
+    "value": null,
+    "n": 0
+   },
+   {
+    "bucket": "2026-10-19",
+    "value": null,
+    "n": 0
+   }
+  ]
+ }
+}

@@ -27,6 +27,11 @@ export interface StatePaths {
   findingsTriage: string;
   /** Spec 013: the quota book. */
   quota: string;
+  events: string;
+  eventsIndex: string;
+  eventsBackfilled: string;
+  reflections: string;
+  eligibleMarks: string;
 }
 
 export function statePaths(root: string): StatePaths {
@@ -41,6 +46,11 @@ export function statePaths(root: string): StatePaths {
     mainChecks: join(root, 'main-checks.json'),
     findingsCursor: join(root, 'findings', 'cursor.json'),
     findingsTriage: join(root, 'findings', 'triage.jsonl'),
+    events: join(root, 'events'),
+    eventsIndex: join(root, 'events', 'index.sqlite'),
+    eventsBackfilled: join(root, 'events', 'backfilled.json'),
+    reflections: join(root, 'reflections'),
+    eligibleMarks: join(root, 'shortlist', 'eligible.json'),
     claims: join(root, "claims"),
     runs: join(root, "runs"),
     usage: join(root, "usage"),
@@ -59,5 +69,5 @@ export function statePaths(root: string): StatePaths {
 }
 
 export async function ensureStateDirs(p: StatePaths): Promise<void> {
-  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), p.agents]) await mkdir(d, { recursive: true });
+  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), p.agents, p.events, p.reflections, dirname(p.eligibleMarks)]) await mkdir(d, { recursive: true });
 }
