@@ -129,7 +129,9 @@ directory, written under the state lock.
   the limit that blocks the stage's model, not the fixed `POSTPONE_WAIT_S`,
   and no run of that stage starts before it. Given a postponed claim whose
   `postponedUntil` is in the future, then the liveness step does not expire
-  it (the wait is scheduled, not stalled).
+  it (the wait is scheduled, not stalled). *(Amended by spec 023 section 4:
+  this holds for any claim in stage `waiting`, whether `postponedUntil` has
+  passed or not.)*
 - AC-6. Given a chain stage is about to start and its model is blocked (and
   AC-9 offers no other model), then no run is started, no run directory or
   usage record is created, the chain is postponed to the reset as in AC-5,

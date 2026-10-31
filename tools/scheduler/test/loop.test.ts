@@ -787,11 +787,13 @@ describe("Scheduler.tick: a postponed chain holds its slot (spec 009)", () => {
     expect(h.gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues/1/comments")).toEqual([]);
     expect((await listClaims(h.paths)).map((c) => c.issue)).toEqual([7]);
     expect(existsSync(join(h.pair.worktrees, "issue-1"))).toBe(false);
-    h.setNow(new Date("2026-10-12T14:00:00Z"));
+    // Past the liveness window as well as the reset: the claim was last active at 12:00 (spec 023).
+    h.setNow(new Date("2026-10-12T14:30:00Z"));
     const t2 = await h.s.tick();
     await settle();
     expect(h.started).toEqual([7]);
     expect(t2.claimed).toEqual([]);
+    expect(t2.released).toEqual([]);
   }, 30_000);
 
   it("counts the waiting claim, not the running chain (AC-2)", async () => {
@@ -868,6 +870,102 @@ describe("Scheduler.tick: a postponed chain holds its slot (spec 009)", () => {
     expect((await h.s.tick()).claimed).toEqual([]);
     await rmClaim(h, 7);
     expect((await h.s.tick()).claimed).toEqual([1]);
+  }, 30_000);
+});
+
+describe("Scheduler.tick: a waiting claim is not stalled (spec 023)", () => {
+  const waitingClaim = (h: Harness, n: number, postponedUntil: string, last_activity_at: string, state: Partial<Claim["state"]> = {}) =>
+    writeClaim(h.paths, {
+      issue: n, slot: 0, state: { ...initialChainState(n), stage: "waiting", resumeStage: "plan", postponedUntil, ...state },
+      worktree: join(h.pair.worktrees, `issue-${n}`), started_at: "2026-10-09T00:00:00Z", last_activity_at, run_id: null,
+    });
+  const releaseCalls = (h: Harness, n: number) => h.gh.calls.filter((c) => (c.method === "POST" && c.url === `/repos/o/r/issues/${n}/comments`) || (c.method === "DELETE" && c.url === `/repos/o/r/issues/${n}/labels/in-progress`));
+  const prCalls = (h: Harness) => h.gh.calls.filter((c) => c.method !== "GET" && (c.url.includes("/pulls/") || c.url.includes("/git/refs/")));
+
+  it("starts a claim on the first tick after its reset, activity 2h12m old, closing nothing (AC-1, the #15 incident)", async () => {
+    const h = await setup(routes([]));
+    await waitingClaim(h, 15, "2026-10-12T12:00:00Z", "2026-10-12T09:48:00Z", { track: "spec", resumeStage: "spec", pr: { number: 73, head_sha: "abc" } });
+    h.setNow(new Date("2026-10-12T12:00:11Z"));
+    const t = await h.s.tick();
+    await settle();
+    expect(t.errors).toEqual([]);
+    expect(t.released).toEqual([]);
+    expect(h.started).toEqual([15]);
+    expect(releaseCalls(h, 15)).toEqual([]);
+    expect(prCalls(h)).toEqual([]);
+    expect((await listClaims(h.paths)).map((c) => c.issue)).toEqual([15]);
+  }, 30_000);
+
+  it("starts a claim on the first tick 43 hours after its reset (AC-2, a machine asleep through the reset)", async () => {
+    const h = await setup(routes([]));
+    await waitingClaim(h, 15, "2026-10-10T17:00:00Z", "2026-10-10T14:57:00Z");
+    h.setNow(new Date("2026-10-12T12:00:00Z"));
+    const t = await h.s.tick();
+    await settle();
+    expect(t.released).toEqual([]);
+    expect(h.started).toEqual([15]);
+    expect(releaseCalls(h, 15)).toEqual([]);
+  }, 30_000);
+
+  it("keeps a claim queued behind a full slot past the window, and starts it when the slot frees (AC-3, the #17 incident)", async () => {
+    const { st, drive } = holdingDrive();
+    const h = await setup(routes([issue(1)]), 1, drive);
+    await writeClaim(h.paths, { issue: 3, slot: 0, state: { ...initialChainState(3), stage: "verify" }, worktree: join(h.pair.worktrees, "issue-3"), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null });
+    await h.s.tick();
+    expect(st.started).toEqual([3]);
+    await waitingClaim(h, 7, "2026-10-12T12:05:00Z", "2026-10-12T12:00:00Z");
+    for (const at of ["2026-10-12T14:30:00Z", "2026-10-12T20:00:00Z"]) {
+      h.setNow(new Date(at));
+      const t = await h.s.tick();
+      expect(t.released).toEqual([]);
+      expect(t.claimed).toEqual([]);
+      expect(t.held).toBe(2);
+      expect(st.started).toEqual([3]);
+    }
+    expect(releaseCalls(h, 7)).toEqual([]);
+    await rmClaim(h, 3);
+    st.release();
+    await settle();
+    const t = await h.s.tick();
+    expect(t.released).toEqual([]);
+    expect(t.claimed).toEqual([]);
+    expect(st.started).toEqual([3, 7]);
+    st.release();
+  }, 30_000);
+
+  it.each([["ahead", FUTURE], ["passed", PAST]])("still drops a waiting claim whose in-progress label was removed, reset %s (AC-4)", async (_when, until) => {
+    const h = await setup(routes([], { 7: ["validated"] }));
+    await waitingClaim(h, 7, until, "2026-10-12T11:59:00Z");
+    const t = await h.s.tick();
+    await settle();
+    expect(t.released).toEqual([7]);
+    expect(h.started).toEqual([]);
+    expect(await listClaims(h.paths)).toEqual([]);
+  }, 30_000);
+
+  it.each(["implement", "verify"] as const)("still expires a claim in %s with stale activity (AC-5)", async (stage) => {
+    const h = await setup(routes([]));
+    const wt = join(h.pair.worktrees, "issue-7");
+    git(h.pair.repo, "worktree", "add", "-q", "-B", "issue-7", wt, "origin/main");
+    await writeClaim(h.paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage }, worktree: wt, started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T09:48:00Z", run_id: null });
+    const t = await h.s.tick();
+    expect(t.released).toEqual([7]);
+    expect(h.started).toEqual([]);
+  }, 30_000);
+
+  it("leaves waiting when stepped, with fresh activity, so normal liveness then applies (AC-6)", async () => {
+    const h = await setup(routes([]), 1, firstStep);
+    const wt = join(h.pair.worktrees, "issue-7");
+    git(h.pair.repo, "worktree", "add", "-q", "-B", "issue-7", wt, "origin/main");
+    await writeClaim(h.paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "waiting", resumeStage: "plan", postponedUntil: "2026-10-12T12:00:00Z" }, worktree: wt, started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T09:48:00Z", run_id: null });
+    h.setNow(new Date("2026-10-12T12:00:11Z"));
+    expect((await h.s.tick()).released).toEqual([]);
+    await settle();
+    const stepped = await readClaim(h.paths, 7);
+    expect(stepped?.state.stage).toBe("plan");
+    expect(stepped?.last_activity_at).toBe("2026-10-12T12:00:11.000Z");
+    h.setNow(new Date("2026-10-12T14:00:12Z"));
+    expect((await h.s.tick()).released).toEqual([7]);
   }, 30_000);
 });
 

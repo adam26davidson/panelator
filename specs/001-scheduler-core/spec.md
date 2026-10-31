@@ -121,7 +121,8 @@ fake harness and a mocked GitHub API unless marked (real).
   released, uncommitted changes in its worktree are saved as a patch in the
   state directory, and a comment on the issue says so. *(Amended by spec
   015 section 4: a claim retrying through a transient network outage counts
-  as active.)*
+  as active. Amended by spec 023 section 4: a claim in stage `waiting` is not
+  released by this rule.)*
 - AC-16. Given `main` has moved since a chain's worktree was created, when
   the next stage starts, then the worktree is rebased first; given the rebase
   conflicts, then the chain goes to fix with the conflict as input.
