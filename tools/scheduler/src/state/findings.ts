@@ -12,10 +12,11 @@ export interface FindingEnvelope {
   timestamp: string;
 }
 
-const listeners = new Map<string,(count:number,offset:number)=>Promise<void>>();
-export function onFindingsQueued(p:StatePaths,fn:(count:number,offset:number)=>Promise<void>):void {listeners.set(p.root,fn);}
+type QueuedListener=(count:number,offset:number,exclude?:string)=>Promise<void>;
+const listeners = new Map<string,QueuedListener>();
+export function onFindingsQueued(p:StatePaths,fn:QueuedListener):void {listeners.set(p.root,fn);}
 
-export async function appendFindings(p: StatePaths, env: FindingEnvelope, findings: unknown[], emit?: (count:number,offset:number)=>Promise<void>): Promise<{ queued: number; rejected: string[] }> {
+export async function appendFindings(p: StatePaths, env: FindingEnvelope, findings: unknown[], opts: {exclude?:string;emit?:QueuedListener} = {}): Promise<{ queued: number; rejected: string[] }> {
   let queued = 0;
   const rejected: string[] = [];
   let lines = "";
@@ -32,7 +33,7 @@ export async function appendFindings(p: StatePaths, env: FindingEnvelope, findin
   }
   if (lines) await withStateLock(p.findingsQueue,async()=>{
     const offset=await stat(p.findingsQueue).then(s=>s.size).catch(e=>{if((e as NodeJS.ErrnoException).code==='ENOENT')return 0;throw e;});
-    await (emit ?? listeners.get(p.root))?.(queued,offset);
+    await (opts.emit ?? listeners.get(p.root))?.(queued,offset,opts.exclude);
     await appendFile(p.findingsQueue, lines);
   });
   return { queued, rejected };

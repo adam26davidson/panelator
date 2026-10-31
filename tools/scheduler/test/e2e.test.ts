@@ -28,6 +28,7 @@ import {loadActionLevels,applyAction} from '../src/actions/index.ts';
 import {appendFindings} from '../src/state/findings.ts';
 import {observeRun} from '../src/quota/book.ts';
 import {readAgentState,writeAgentState} from '../src/standing/state.ts';
+import {emit} from '../src/standing/events.ts';
 import {runStandingAgent} from '../src/standing/run.ts';
 import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
 import { chainWorld, standingWorld, scripted, RATE_LIMITED, type ChainWorld } from "./helpers/e2e-routes.ts";
@@ -861,6 +862,47 @@ describe('standing agents: recorded runs through the real runner and mocked App'
   const state=(await readAgentState(w.paths,'operator'))!;state.next_run=w.deps.now().toISOString();await writeAgentState(w.paths,'operator',state);
   await w.scheduler.tick();await idle(w);expect((await readAgentState(w.paths,'operator'))?.failures).toBe(1);
   await w.scheduler.tick();await idle(w);expect((await readAgentState(w.paths,'operator'))?.last_run?.outcome).toBe('failed');
+  expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);expect(w.notifications).toHaveLength(1);
+ },30000);
+const FAILED_TWICE='standing agent findings-filer failed twice';
+ const filerRunWords=(w:Awaited<ReturnType<typeof standingWorld>>)=>readdirSync(w.paths.runs).filter(d=>d.startsWith('standing-findings-filer')).sort((x,y)=>Number(x.split('-')[4])-Number(y.split('-')[4]));
+ const lastFilerInput=(w:Awaited<ReturnType<typeof standingWorld>>)=>{const dirs=filerRunWords(w);return JSON.parse(readFileSync(join(w.paths.runs,dirs[dirs.length-1],'input.json'),'utf8'));};
+ const failFilerTwice=async()=>{
+  const w=await standingWorld({'findings-filer':[undefined,undefined,{summary:'triaged',decisions:[]}],operator:[{summary:'quiet'},{summary:'quiet'}]});
+  const state=(await readAgentState(w.paths,'findings-filer'))!;state.next_run=w.deps.now().toISOString();await writeAgentState(w.paths,'findings-filer',state);
+  await w.scheduler.tick();await idle(w);await w.scheduler.tick();await idle(w);
+  return w;
+ };
+ it('a twice-failed filer is not woken by its own failure finding before its schedule (spec 020 AC-1, AC-2, AC-5)',async()=>{
+  const w=await failFilerTwice();
+  expect(await readAgentState(w.paths,'findings-filer')).toMatchObject({failures:0,next_run:'2026-10-02T00:00:00.000Z',pending_events:[],last_run:{outcome:'failed'}});
+  const queue=await readJsonLines<{finding:{what:string}}>(w.paths.findingsQueue);
+  expect(queue.map(r=>r.finding.what)).toEqual([FAILED_TWICE]);expect(w.notifications).toHaveLength(1);
+  const runs=readdirSync(w.paths.runs).length;
+  for(let i=1;i<=3;i++){w.setNow(new Date(w.deps.now().getTime()+i*2*60_000));await w.scheduler.tick();await idle(w);}
+  expect(w.adapter.ran.filter(s=>s==='findings-filer')).toHaveLength(2);
+  expect(readdirSync(w.paths.runs)).toHaveLength(runs);
+  expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);expect(w.notifications).toHaveLength(1);
+  w.setNow(new Date('2026-10-02T00:00:30Z'));for(let i=0;i<2;i++){await w.scheduler.tick();await idle(w);}
+  expect(w.adapter.ran.filter(s=>s==='findings-filer')).toHaveLength(3);
+  expect(JSON.stringify(lastFilerInput(w))).toContain(FAILED_TWICE);
+ },30000);
+ it('a twice-failed filer is still woken by a foreign finding and reads its own failure record (spec 020 AC-2, AC-5)',async()=>{
+  const w=await failFilerTwice();w.setNow(new Date(w.deps.now().getTime()+60_000));
+  await appendFindings(w.paths,{issue:7,stage:'review',run_id:'r1',timestamp:w.deps.now().toISOString()},[{what:'foreign finding',where:'a.txt',evidence:'observed',noticed_how:'review'}]);
+  await w.scheduler.tick();await idle(w);
+  expect(w.adapter.ran.filter(s=>s==='findings-filer')).toHaveLength(3);
+  const input=JSON.stringify(lastFilerInput(w));expect(input).toContain('foreign finding');expect(input).toContain(FAILED_TWICE);
+ },30000);
+ it('the exclusion holds with the service\'s two-parameter emitEvent, as bin/scheduler.ts supplies it (spec 020 AC-1, AC-2)',async()=>{
+  const w=await standingWorld({'findings-filer':[undefined,undefined,{summary:'triaged',decisions:[]}]});
+  // bin/scheduler.ts injects an emitEvent that never sees a third argument; the failure finding must still skip its agent.
+  w.deps.emitEvent=(event:string,payload:unknown)=>emit(w.paths,w.registry,event,payload,w.deps.now());
+  const state=(await readAgentState(w.paths,'findings-filer'))!;state.next_run=w.deps.now().toISOString();await writeAgentState(w.paths,'findings-filer',state);
+  await w.scheduler.tick();await idle(w);await w.scheduler.tick();await idle(w);
+  expect(await readAgentState(w.paths,'findings-filer')).toMatchObject({failures:0,pending_events:[],last_run:{outcome:'failed'}});
+  w.setNow(new Date(w.deps.now().getTime()+2*60_000));await w.scheduler.tick();await idle(w);
+  expect(w.adapter.ran.filter(s=>s==='findings-filer')).toHaveLength(2);
   expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);expect(w.notifications).toHaveLength(1);
  },30000);
  it('a standing agent already blocked when it comes due starts no run and waits for the reset (spec 013 AC-7)',async()=>{
