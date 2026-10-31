@@ -72,8 +72,8 @@ export interface DriverDeps {
 export type StepStatus = "continue" | "waiting" | "ended";
 const AGENT_STAGES: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "question-check"];
 const ENDED: ChainState["stage"][] = ["done", "released", "abandoned", "paused"];
-/** C1: prepended to the fix input when the fix stage has to resolve a rebase conflict itself. */
-export const CONFLICT_FIX_LINE = "Rebase this branch onto origin/main and resolve the conflicts before addressing the items below.";
+/** C1: prepended to the fix input when the fix stage has to resolve a conflict itself. Spec 024: names no method; the input says which. */
+export const CONFLICT_FIX_LINE = "Bring this branch up to date with origin/main and resolve the conflicts before addressing the items below.";
 /** AC-10: prepended to a fix input that names the charter (a security finding or a scope violation). */
 export const CHARTER_REVERT_LINE = `Revert every change this PR makes to ${ROOT}: the charter is never changed by a pull request. Restore the file exactly as it is on origin/main.`;
 /** AC-21: a spec PR body must not close any issue, by number, by owner/repo#N or by URL (D8). */

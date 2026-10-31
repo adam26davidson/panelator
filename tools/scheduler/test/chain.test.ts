@@ -1308,7 +1308,7 @@ describe("chain: a fix must resolve a pending rebase conflict (spec 024)", () =>
   const pending = () => transition(at("review", { plan, pr: pr3 }), conflict).state;
 
   it("a rebase conflict leaves a history entry carrying its detail (AC-5)", () => {
-    expect(pending().history.at(-1)).toMatch(/^Rebase onto main conflicted[^\n]*:\n.*Merge conflict in a\.ts/s);
+    expect(pending().history.at(-1)).toMatch(/^origin\/main conflicted before review[^\n]*:\n.*Merge conflict in a\.ts/s);
   });
   it("the abandonment comment explains itself: it quotes the conflict (AC-5)", () => {
     const s = at("review", { plan, pr: pr3, fixes: 2, rescues: 1, replans: 1, specRevisions: 1 });
@@ -1325,7 +1325,8 @@ describe("chain: a fix must resolve a pending rebase conflict (spec 024)", () =>
     expect(r.state).toMatchObject({ stage: "fix", fixes: 0, conflictPending: true, rescues: 1, rescueRun: true, pr: pr3 });
     expect(r.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining(pr3.head_sha) }]);
     expect(r.state.pendingFixInput).toMatch(/unchanged/);
-    expect(r.state.pendingFixInput).toMatch(/still conflicts/);
+    expect(r.state.pendingFixInput).toMatch(/does not end/);
+    expect(r.state.pendingFixInput).not.toMatch(/scheduler checks/);
     expect(r.state.pendingFixInput).toContain("Merge conflict in a.ts");
     expect(r.state.history.join("\n")).toMatch(/fix attempt 1 failed: .*unchanged/);
   });
@@ -1361,7 +1362,7 @@ describe("chain: a fix must resolve a pending rebase conflict (spec 024)", () =>
   it("conflict_gone with an answer still to record runs the fix for it, without the conflict (AC-4)", () => {
     const s = { ...pending(), recordAnswer: true, recordIds: [5], recordKind: "technical" as const, answer: "Question #5: yes" };
     const r = transition(s, { type: "conflict_gone" });
-    expect(r.state).toMatchObject({ stage: "fix", conflictPending: false, fixes: 0, recordAnswer: true });
+    expect(r.state).toMatchObject({ stage: "fix", conflictPending: false, fixes: 1, recordAnswer: true });
     expect(r.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringMatching(/conflict is gone/) }]);
   });
   it("conflict_gone is invalid outside a fix with a conflict pending", () => {
@@ -1370,8 +1371,8 @@ describe("chain: a fix must resolve a pending rebase conflict (spec 024)", () =>
   });
 
   /** Drives the chain with every review blocked by a conflict; `atFix` is what each conflict-pending fix ends in. */
-  function driveToEnd(atFix: (s: ChainState) => ChainEvent): { state: ChainState; steps: number } {
-    let state = at("review", { plan, pr: pr3 });
+  function driveToEnd(atFix: (s: ChainState) => ChainEvent, over: Partial<ChainState> = {}): { state: ChainState; steps: number } {
+    let state = at("review", { plan, pr: pr3, ...over });
     let steps = 0;
     while (!["done", "released", "abandoned", "paused"].includes(state.stage)) {
       if (++steps > 200) throw new Error(`no end: stage ${state.stage}, history ${state.history.join("|")}`);
@@ -1391,6 +1392,10 @@ describe("chain: a fix must resolve a pending rebase conflict (spec 024)", () =>
     const { state } = driveToEnd((s) => fixOk(s.pr!.head_sha));
     expect(state).toMatchObject({ stage: "abandoned", rescues: 1, replans: 1, specRevisions: 1, specRescues: 1 });
     expect(state.history.join("\n")).toContain("Merge conflict in a.ts");
+  });
+  it("terminates within the bounds when a fix owing work finds the conflict gone and main moves into a new one before it runs (AC-4)", () => {
+    const { state } = driveToEnd((s) => (s.conflictPending ? { type: "conflict_gone" } : conflict), { recordAnswer: true, recordIds: [5], recordKind: "technical", answer: "Question #5: yes" });
+    expect(state).toMatchObject({ stage: "abandoned", rescues: 1, replans: 1, specRevisions: 1, specRescues: 1 });
   });
   it("terminates within the bounds when every fix finds the conflict gone and the next review finds it back", () => {
     const { state } = driveToEnd(() => ({ type: "conflict_gone" }));

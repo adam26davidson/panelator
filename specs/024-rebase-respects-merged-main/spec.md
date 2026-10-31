@@ -68,10 +68,12 @@ mocked GitHub API, as in the worktree and driver tests.
   `pr.head_sha`, then the run is a failed fix: `fixes` is not counted,
   `conflictPending` stays, and the failure takes the existing fix-failure path
   (a rescue, and for a failed rescue the PR closes and the issue is planned
-  again). The next run's input says the head came back unchanged, names it, and
-  says the conflict is real. Every conflict's fix input says that resolving it
-  means a new head containing origin/main, and that a branch already holding a
-  merge of main takes another merge, not a rebase. An unchanged head with no
+  again). The next run's input says the head came back unchanged and names it.
+  It does not say the scheduler checked the conflict: no check runs before a
+  resumed session or held work (AC-4). Every conflict's fix input opens without
+  naming a method, says that resolving it means a new head containing
+  origin/main, and says that a branch already holding a merge of main takes
+  another merge, not a rebase. An unchanged head with no
   conflict pending is an ordinary fix, as a fix may be told to change nothing.
 - AC-4. **No agent is told about a conflict that is gone.** Given a fix about
   to run with `conflictPending` and no held work on the PR's branch, then the
@@ -84,7 +86,9 @@ mocked GitHub API, as in the worktree and driver tests.
   counted). The round is spent so that a conflict that keeps coming and going
   still reaches `MAX_FIXES`. Given the fix still owes work (`recordAnswer`,
   `recordIds`, `answer` or `decideInput`), it runs instead with an input saying
-  the conflict is gone, and nothing is counted until it ends.
+  the conflict is gone. The round is spent on this path too, because main can
+  move into a new conflict before that run starts; a success of that run then
+  counts as well.
 - AC-5. **The record explains itself.** Every `rebase_conflict` adds a history
   entry naming the stage, the head and the conflict's detail, so the rescue's
   history and the abandonment comment show it.

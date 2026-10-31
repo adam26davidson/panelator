@@ -282,7 +282,7 @@ describe("driveChain", () => {
     expect(head(claim.worktree)).toBe(fixed);
     const fixRun = readdirSync(paths.runs).find((d) => d.startsWith("7-fix-"))!;
     const input = JSON.parse(readFileSync(join(paths.runs, fixRun, "input.json"), "utf8"));
-    expect(input.fix_input).toMatch(/^Rebase this branch onto origin\/main and resolve the conflicts before addressing the items below\.\nRebase onto main conflicted:/);
+    expect(input.fix_input).toMatch(/^Bring this branch up to date with origin\/main and resolve the conflicts before addressing the items below\.\norigin\/main conflicts with this branch:/);
   }, 60_000);
 
   it("starts plan from origin/main even when the worktree carries a stray commit (C1)", async () => {
@@ -1823,7 +1823,7 @@ describe("driver: a rebase respects merged main (spec 024)", () => {
     const atReview: Claim = { ...claim, state: { ...claim.state, stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } } };
     let r = await step(deps, atReview);
     expect(r.claim.state).toMatchObject({ stage: "fix", conflictPending: true });
-    expect(r.claim.state.history.at(-1)).toMatch(/Rebase onto main conflicted[\s\S]*CONFLICT/);
+    expect(r.claim.state.history.at(-1)).toMatch(/origin\/main conflicted before review[\s\S]*CONFLICT/);
     r = await step(deps, r.claim);
     expect(r.claim.state).toMatchObject({ stage: "fix", fixes: 0, conflictPending: true, rescues: 1, rescueRun: true });
     r = await step(deps, r.claim);
@@ -1831,6 +1831,32 @@ describe("driver: a rebase respects merged main (spec 024)", () => {
     expect(fixInputs(paths)[1]).toMatch(/unchanged/);
     expect(fixInputs(paths)[1]).toContain(sha);
     expect(r.claim.state).toMatchObject({ stage: "plan", replans: 1, pr: null, conflictPending: false });
+  }, 60_000);
+
+  it("a branch holding a merge with a real conflict is told to merge, not rebase, and its merge survives (AC-2, AC-3)", async () => {
+    let wtPath = "";
+    const resolve = (run: StageRun) => { mergeMainResolved(run.worktree); return { head_sha: head(run.worktree), addressed: [] }; };
+    const { deps, claim, adapter, paths, sha } = await setup(() => ({ fix: [resolve], review: [approve] }), (sha) => ghRoutes(sha, { prs: { 9: { head: () => head(wtPath) } } }), (pair, wt) => {
+      wtPath = wt;
+      conflicting(pair, wt);
+      mergeMainResolved(wt);
+      writeFileSync(join(pair.repo, "a.txt"), "main again\n");
+      git(pair.repo, "commit", "-q", "-am", "main again");
+      git(pair.repo, "push", "-q", "origin", "main");
+    });
+    const atReview: Claim = { ...claim, state: { ...claim.state, stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } } };
+    let r = await step(deps, atReview);
+    expect(r.claim.state).toMatchObject({ stage: "fix", conflictPending: true });
+    expect(head(claim.worktree)).toBe(sha);
+    r = await step(deps, r.claim);
+    const [input] = fixInputs(paths);
+    expect(input).toMatch(/^Bring this branch up to date with origin\/main/);
+    expect(input).not.toMatch(/rebase this branch|rebase onto/i);
+    expect(input).toMatch(/merge origin\/main into it rather than rebasing/);
+    expect(r.claim.state).toMatchObject({ stage: "verify", fixes: 1, conflictPending: false });
+    expect((await steps(deps, r.claim, 2)).state.stage).toBe("merge");
+    expect(adapter.ran).toEqual(["fix:claude-sonnet-5-5", "review:claude-fable-5-1"]);
+    expect(git(claim.worktree, "rev-list", "--merges", "--count", "origin/main..HEAD").trim()).toBe("2");
   }, 60_000);
 
   it("a conflict pending on a head that already holds main runs no agent and goes to verify (AC-4)", async () => {

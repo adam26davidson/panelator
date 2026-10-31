@@ -344,27 +344,27 @@ const violationList = (violations: string[]) => violations.map((v) => `- ${v}`).
 const CONFLICT_GUIDANCE = "Resolving this means pushing a new head that contains origin/main. If this branch already holds a merge of main, merge origin/main into it rather than rebasing: a rebase would linearise past that merge and raise the conflicts it resolved again. Returning the head you started from counts as a failed fix.";
 
 /**
- * Spec 024 AC-3: a fix that returns the head it started from did not resolve the conflict the driver found real just
- * before the run. It is a failed fix, down the existing path (rescue, then the PR closes): no fix is counted, and the
- * next run is told the real state.
+ * Spec 024 AC-3: a fix that returns the head it started from did not resolve the conflict. It is a failed fix, down the
+ * existing path (rescue, then the PR closes): no fix is counted, and the next run is told so. The text claims no check:
+ * the driver makes none for a resumed session or held work, though it does before a fresh run, so a gone conflict never reaches this retry.
  */
 function conflictUnresolved(state: ChainState, head: string): Step {
-  const retry = `The previous fix run returned head ${head} unchanged, and origin/main still conflicts with that head: the scheduler checks this before each such run, so the conflict is real. A run that changes nothing cannot end it.\n\n${state.pendingFixInput ?? ""}`;
+  const retry = `The previous fix run returned head ${head} unchanged, which does not end a pending conflict with origin/main. Resolve it and push a new head; do not return this head again.\n\n${state.pendingFixInput ?? ""}`;
   return baseTransition({ ...state, pendingFixInput: retry }, { type: "stage_failed", stage: "fix", reason: `conflict still pending: the fix returned head ${head} unchanged` });
 }
 
 /**
  * Spec 024 AC-4: no agent is told about a conflict that is gone. The round is spent as a fix, which is what bounds a
- * conflict that keeps coming and going. Work the fix still owes (an answer to record, a decision to apply) runs without it.
+ * conflict that keeps coming and going, on either path. Work the fix still owes (an answer to record, a decision to apply) runs without it.
  */
 function conflictGone(state: ChainState): Step {
   const text = `The rebase conflict is gone: origin/main no longer conflicts with head ${state.pr?.head_sha ?? "(no PR)"}.`;
-  const s = note({ ...state, conflictPending: false }, `${text} No fix ran for it.`);
+  const s = note({ ...state, conflictPending: false, fixes: state.fixes + 1 }, `${text} No fix ran for it.`);
   if (s.recordAnswer || s.recordIds.length > 0 || s.answer !== null || s.decideInput !== null) {
     const input = `${text} Do the work below; there is no conflict to resolve.`;
     return run(s, "fix", { fixInput: input }, { pendingFixInput: input });
   }
-  return { state: { ...s, stage: "verify", fixes: s.fixes + 1, rescueRun: false, pendingFixInput: null }, actions: [{ type: "verify" }] };
+  return { state: { ...s, stage: "verify", rescueRun: false, pendingFixInput: null }, actions: [{ type: "verify" }] };
 }
 
 function stageOk(state: ChainState, event: StageOk): Step {
@@ -670,8 +670,8 @@ function baseTransition(state: ChainState, event: ChainEvent): Step {
   if (event.type === "rebase_conflict") {
     if (!["plan", "implement", "review", "fix", "verify", "merge"].includes(state.stage)) invalid(state, event);
     // Spec 024 AC-5: the entry the escalation record explains itself with; the fix input alone is overwritten by the next.
-    const noted = note(state, `Rebase onto main conflicted before ${state.stage}, on head ${state.pr?.head_sha ?? "(no PR)"}:\n${event.detail}`);
-    return toFix(noted, `Rebase onto main conflicted:\n${event.detail}\n\n${CONFLICT_GUIDANCE}`, { conflictPending: true });
+    const noted = note(state, `origin/main conflicted before ${state.stage}, on head ${state.pr?.head_sha ?? "(no PR)"}:\n${event.detail}`);
+    return toFix(noted, `origin/main conflicts with this branch:\n${event.detail}\n\n${CONFLICT_GUIDANCE}`, { conflictPending: true });
   }
   if (event.type === "conflict_gone") {
     if (state.stage !== "fix" || !state.conflictPending) invalid(state, event);
