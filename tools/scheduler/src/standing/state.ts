@@ -13,6 +13,22 @@ export interface AgentState {
  /** Spec 013 AC-7: not started again before this instant (a quota limit or a deferral). */
  postponed_until?:string;
 }
+/** The routine events: only these wait for the debounce; anything else may need an answer now (spec 025 AC-12, AC-13). */
+export const DEBOUNCED_EVENTS:readonly string[]=['finding_queued'];
+/**
+ * Whether the pending events make an agent due. A debounced event waits until `debounceMs` after the last run ended,
+ * and stays pending meanwhile. An agent that has not run yet, or owes the retry after a first failure, does not wait.
+ */
+export function eventsWake(state:AgentState,nowMs:number,debounceMs:number):boolean {
+ if(!state.pending_events.length)return false;
+ if(state.failures>0||!state.last_run||state.pending_events.some(e=>!DEBOUNCED_EVENTS.includes(e.event)))return true;
+ return nowMs-Date.parse(state.last_run.at)>=debounceMs;
+}
+/**
+ * The stage units a recorded run may be running as. A repair turn whose session cannot be resumed continues as
+ * `<id>-fresh` in the runner, with no state write between them (spec 025 AC-6).
+ */
+export const runningUnits=(runId:string):string[]=>runId.endsWith('-repair')?[`panelator-stage-${runId}`,`panelator-stage-${runId}-fresh`]:[`panelator-stage-${runId}`];
 export async function updateAgentState(paths:StatePaths,name:string,fn:(state:AgentState)=>AgentState):Promise<void> {
  if(!/^[a-z][a-z0-9-]*$/.test(name))throw new Error('invalid agent name');
  await withStateLock(join(paths.agents,`${name}.json`),async()=>{

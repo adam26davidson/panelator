@@ -22,6 +22,9 @@ import {updateAgentState,type AgentState} from './state.ts';
 import {parseDuration} from './registry.ts';
 const exec=promisify(execFile);
 export interface StandingDeps extends DriverDeps {parameters:ParameterStore;botLogin:string}
+/** A repair turn only rewrites JSON it already has; the cap also keeps a session-lost fresh run from a full investigation. */
+const REPAIR_MAX_TURNS=5,REPAIR_MAX_ERRORS=40;
+const repairPrompt=(errors:string[])=>`Your result failed validation:\n${errors.slice(0,REPAIR_MAX_ERRORS).map(e=>`- ${e}`).join('\n')}${errors.length>REPAIR_MAX_ERRORS?`\n- and ${errors.length-REPAIR_MAX_ERRORS} more`:''}\n\nDo not investigate further and call no tools. Return the complete corrected result JSON as your final message, every decision included, changing only what these errors name. Keep your decisions as they are.`;
 export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,state:AgentState):Promise<void> {
  const received=state.pending_events;
  const now=d.now(),attempt=state.failures+1,runId=`standing-${def.name}-${attempt}-${now.getTime()}`;
@@ -59,6 +62,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   const req={def,input:{} as StageInput,standingInput:{agent:def.name,events:input?{events:received,input}:received,since:state.last_run?.at??null,parameters},issue:0,attempt,worktree,profile:safeProfile,runId};
   const context={paths:d.paths,adapter:d.adapterFor(def.harness),systemdScope:d.systemdScope,systemdRunBin:d.systemdRunBin,now:d.now,binDir:d.binDir,sessionWindowMs:quota.sessionWindowMs};
   const logLimit=(r:StageOutcome)=>{if(r.limit)d.log({kind:'quota-limit',agent:def.name,run_id:r.runId,key:r.limit.key,scope:r.limit.scope,resets_at:r.limit.resets_at,source:r.limit.source});};
+  let ran={harness:moved?.harness??def.harness,model:moved?.model??def.model};
   let result=moved?await runStage({...context,adapter:d.adapterFor(moved.harness)},{...req,model:moved.model,harness:moved.harness,runId:runId+'-fallback'}):await runStage(context,req);
   logLimit(result);
   if(moved) {
@@ -69,10 +73,20 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
    if(retry.kind==='fallback') {
     if(retry.model===toModel)d.log({kind:'quota-fallback',agent:def.name,from:def.model,to:toModel,key:result.limit?.key});
     await updateAgentState(d.paths,def.name,s=>({...s,running:{run_id:runId+'-fallback',started_at:d.now().toISOString()}}));
+    ran={harness:retry.harness,model:retry.model};
     result=await runStage({...context,adapter:d.adapterFor(retry.harness)},{...req,model:retry.model,harness:retry.harness,runId:runId+'-fallback'});
     logLimit(result);
     if(afterFallback(def as unknown as StageDefinition,result.judgement).kind==='postpone')await postpone('rate limited (429)');
    } else if(retry.kind==='postpone')await postpone('rate limited (429)');
+  }
+  // Spec 025 AC-3 to AC-5: one repair turn in the session that did the work, on the first attempt only, so a wake
+  // costs at most three runs: the attempt, its repair, and the one fresh retry of spec 008 AC-3.
+  if(attempt===1&&result.judgement.reason==='result: invalid') {
+   const repairId=runId+'-repair';
+   d.log({kind:'standing-repair',agent:def.name,run_id:result.runId,errors:result.resultErrors.length});
+   await updateAgentState(d.paths,def.name,s=>({...s,running:{run_id:repairId,started_at:d.now().toISOString()}}));
+   result=await runStage({...context,adapter:d.adapterFor(ran.harness)},{...req,...ran,def:{...def,bounds:{...def.bounds,max_turns:Math.min(def.bounds.max_turns,REPAIR_MAX_TURNS)}},resume:{sessionId:result.sessionId,...ran},replyPrompt:repairPrompt(result.resultErrors),runId:repairId});
+   logLimit(result);
   }
   // Spec 013 AC-7: a run still rate limited is postponed whatever the tier, never counted as a failure.
   if(result.judgement.outcome==='failed'&&result.judgement.apiErrorStatus===429)await postpone('rate limited (429)');

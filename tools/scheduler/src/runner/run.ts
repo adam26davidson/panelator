@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { finished } from "node:stream/promises";
 import { JsonlSplitter } from "../adapters/jsonl.ts";
+import { normalizeFilerResult } from "../filer/normalize.ts";
 import type { Adapter, Judgement, RunOutcome, StageRun } from "../adapters/types.ts";
 import { validate, type SchemaName } from "../schema/validate.ts";
 import { renderReplyPrompt, renderPrompt, type StageInput } from "../stages/prompt.ts";
@@ -184,6 +185,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   let result: unknown | null = null;
   let parsed: unknown = null;
   let resultErrors: string[] = [];
+  let normalised: string[] = [];
   if (spawned !== null && judgement.outcome !== "timeout" && judgement.outcome !== "bounds") {
     let raw = await readFile(resultPath, "utf8").catch(() => null);
     // T1: a read-only stage on a harness that gives it no write tool returns its result in the final text.
@@ -195,6 +197,8 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
     else {
       try {
         parsed = JSON.parse(raw);
+        // Spec 025 AC-2: the recorded shapes are put right first; result.json keeps what the model returned.
+        if (req.def.output === "filer-result") ({ result: parsed, notes: normalised } = normalizeFilerResult(parsed));
         const v = validate(req.def.output as SchemaName, parsed);
         if (v.ok) result = parsed;
         else resultErrors = v.errors;
@@ -229,6 +233,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   // AC-21/AC-22: the reason and errors behind the outcome are kept with the run, not only returned.
   const persisted = {
     outcome: judgement.outcome, reason, apiErrorStatus: judgement.apiErrorStatus, resultErrors, malformed, findings, spawnError, ioErrors: ioMessages,
+    ...(normalised.length ? { normalised } : {}),
   };
   await writeFile(join(dir, "outcome.json"), JSON.stringify(persisted, null, 2));
 

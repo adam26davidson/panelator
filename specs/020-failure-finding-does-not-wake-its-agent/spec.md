@@ -107,7 +107,10 @@ world) and `test/standing.test.ts`.
   from outside the filer arrives (a `finding_queued` from a chain stage's
   findings or another agent's result, an `issue_abandoned`, a
   `capability_answered`; the events the filer subscribes to), then the filer is started as usual, and that run's
-  input lists its own failure record among the unsettled records.
+  input lists its own failure record among the unsettled records. *(Amended by
+  spec 025 section 4: a foreign `finding_queued` is delivered at once but starts
+  the filer only after `standing.event_debounce` has passed since its last run;
+  the other events still start it at once.)*
 - AC-3. **Every other subscriber is still woken.** Given a second subscriber
   to `finding_queued` (a test registry entry), when agent X's failure finding
   is appended, then that subscriber's `pending_events` gains the event with

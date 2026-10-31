@@ -503,3 +503,4 @@ are stale and are corrected as part of B.
 - `specs/022-delivery-aws-account/spec.md`
 - `specs/023-waiting-claim-is-not-stalled/spec.md`
 - `specs/024-rebase-respects-merged-main/spec.md`
+- `specs/025-filer-results-and-wakes/spec.md`

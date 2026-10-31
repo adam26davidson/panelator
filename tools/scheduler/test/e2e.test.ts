@@ -887,9 +887,14 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   expect(w.adapter.ran.filter(s=>s==='findings-filer')).toHaveLength(3);
   expect(JSON.stringify(lastFilerInput(w))).toContain(FAILED_TWICE);
  },30000);
- it('a twice-failed filer is still woken by a foreign finding and reads its own failure record (spec 020 AC-2, AC-5)',async()=>{
+ it('a twice-failed filer is still woken by a foreign finding, after the debounce, and reads its own failure record (spec 020 AC-2, AC-5; spec 025 AC-14)',async()=>{
   const w=await failFilerTwice();w.setNow(new Date(w.deps.now().getTime()+60_000));
   await appendFindings(w.paths,{issue:7,stage:'review',run_id:'r1',timestamp:w.deps.now().toISOString()},[{what:'foreign finding',where:'a.txt',evidence:'observed',noticed_how:'review'}]);
+  // Spec 025 AC-14: the event is delivered, and waits out the debounce from the failed run.
+  await w.scheduler.tick();await idle(w);
+  expect(w.adapter.ran.filter(s=>s==='findings-filer')).toHaveLength(2);
+  expect((await readAgentState(w.paths,'findings-filer'))?.pending_events).toHaveLength(1);
+  await w.parameters.setParameter('standing.event_debounce','0m','maintainer');
   await w.scheduler.tick();await idle(w);
   expect(w.adapter.ran.filter(s=>s==='findings-filer')).toHaveLength(3);
   const input=JSON.stringify(lastFilerInput(w));expect(input).toContain('foreign finding');expect(input).toContain(FAILED_TWICE);
