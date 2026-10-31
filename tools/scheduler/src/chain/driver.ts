@@ -595,13 +595,22 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   // Spec 011: held work on the PR's branch is not rebased: the rewritten commits would be unpushed and diverged, and
   // the next preparation would drop them. The resumed stage pushes it; a later stage rebases.
   const heldOnPr = claim.state.heldWork !== null && claim.state.heldWork.branch === branchOf(claim.state);
-  if (!state.conversation&&!state.resumeSession&&stage !== "spec" && stage !== "question-check" && state.pr !== null && !state.conflictPending && !heldOnPr) {
+  if (!state.conversation&&!state.resumeSession&&stage !== "spec" && stage !== "question-check" && state.pr !== null && !heldOnPr && (!state.conflictPending || stage === "fix")) {
     const before = await worktreeHead(claim.worktree);
     const rebase = await rebaseOntoMain(claim.worktree, "origin/main", botIdentity(deps));
-    if (!rebase.ok) return { type: "rebase_conflict", detail: rebase.conflict };
-    if (rebase.moved) beforeRebase = before;
+    if (state.conflictPending) {
+      // C1: a conflict still real is the fix stage's to resolve (its input says so). Spec 024 AC-4: one that is gone
+      // (a pushed merge of main, a main that moved) runs no agent, and this check leaves no unpushed rebase behind.
+      if (rebase.ok) {
+        if (rebase.moved) await gitOut(claim.worktree, "reset", "-q", "--hard", before);
+        deps.log({ kind: "conflict-gone", issue: claim.issue, head: before });
+        return { type: "conflict_gone" };
+      }
+    } else {
+      if (!rebase.ok) return { type: "rebase_conflict", detail: rebase.conflict };
+      if (rebase.moved) beforeRebase = before;
+    }
   }
-  // C1: with a conflict pending the fix stage rebases and resolves it itself (its input says so).
 
   // TI1: where this run starts; a recording run's marks must be in what it adds after this commit.
   const start = await worktreeHead(claim.worktree);

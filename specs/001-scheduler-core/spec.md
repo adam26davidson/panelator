@@ -126,6 +126,8 @@ fake harness and a mocked GitHub API unless marked (real).
 - AC-16. Given `main` has moved since a chain's worktree was created, when
   the next stage starts, then the worktree is rebased first; given the rebase
   conflicts, then the chain goes to fix with the conflict as input.
+  (Amended by [spec 024](../024-rebase-respects-merged-main/spec.md) section
+  4: a branch that holds main or a merge is not rebased.)
 - AC-17. Given the scheduler's own checkout is behind `origin/main`, when a
   poll starts, then it fast-forwards and, if `tools/scheduler/` changed,
   restarts itself after the current stages finish.

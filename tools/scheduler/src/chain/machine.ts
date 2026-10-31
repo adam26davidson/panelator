@@ -340,6 +340,33 @@ function scopeOf(state: ChainState, event: { stage: string; scope?: ScopeResult 
 
 const violationList = (violations: string[]) => violations.map((v) => `- ${v}`).join("\n");
 
+/** Spec 024 AC-3: told what ending a conflict takes, since a rebase over a merge of main raises the conflicts it resolved. */
+const CONFLICT_GUIDANCE = "Resolving this means pushing a new head that contains origin/main. If this branch already holds a merge of main, merge origin/main into it rather than rebasing: a rebase would linearise past that merge and raise the conflicts it resolved again. Returning the head you started from counts as a failed fix.";
+
+/**
+ * Spec 024 AC-3: a fix that returns the head it started from did not resolve the conflict the driver found real just
+ * before the run. It is a failed fix, down the existing path (rescue, then the PR closes): no fix is counted, and the
+ * next run is told the real state.
+ */
+function conflictUnresolved(state: ChainState, head: string): Step {
+  const retry = `The previous fix run returned head ${head} unchanged, and origin/main still conflicts with that head: the scheduler checks this before each such run, so the conflict is real. A run that changes nothing cannot end it.\n\n${state.pendingFixInput ?? ""}`;
+  return baseTransition({ ...state, pendingFixInput: retry }, { type: "stage_failed", stage: "fix", reason: `conflict still pending: the fix returned head ${head} unchanged` });
+}
+
+/**
+ * Spec 024 AC-4: no agent is told about a conflict that is gone. The round is spent as a fix, which is what bounds a
+ * conflict that keeps coming and going. Work the fix still owes (an answer to record, a decision to apply) runs without it.
+ */
+function conflictGone(state: ChainState): Step {
+  const text = `The rebase conflict is gone: origin/main no longer conflicts with head ${state.pr?.head_sha ?? "(no PR)"}.`;
+  const s = note({ ...state, conflictPending: false }, `${text} No fix ran for it.`);
+  if (s.recordAnswer || s.recordIds.length > 0 || s.answer !== null || s.decideInput !== null) {
+    const input = `${text} Do the work below; there is no conflict to resolve.`;
+    return run(s, "fix", { fixInput: input }, { pendingFixInput: input });
+  }
+  return { state: { ...s, stage: "verify", fixes: s.fixes + 1, rescueRun: false, pendingFixInput: null }, actions: [{ type: "verify" }] };
+}
+
 function stageOk(state: ChainState, event: StageOk): Step {
   switch (event.stage) {
     case "plan": {
@@ -355,8 +382,9 @@ function stageOk(state: ChainState, event: StageOk): Step {
     case "implement":
     case "fix": {
       if (event.result.escalation) return ask(state, event.stage, event.result.escalation, event.head);
-      const scope = scopeOf(state, event);
       const result = event.result as ImplementResult | { head_sha: string };
+      if (event.stage === "fix" && state.conflictPending && result.head_sha === state.pr?.head_sha) return conflictUnresolved(state, result.head_sha);
+      const scope = scopeOf(state, event);
       const pr = event.stage === "implement"
         ? { number: (result as ImplementResult).pr_number, head_sha: result.head_sha }
         : state.pr ? { ...state.pr, head_sha: result.head_sha } : null;
@@ -641,7 +669,13 @@ function baseTransition(state: ChainState, event: ChainEvent): Step {
   }
   if (event.type === "rebase_conflict") {
     if (!["plan", "implement", "review", "fix", "verify", "merge"].includes(state.stage)) invalid(state, event);
-    return toFix(state, `Rebase onto main conflicted:\n${event.detail}`, { conflictPending: true });
+    // Spec 024 AC-5: the entry the escalation record explains itself with; the fix input alone is overwritten by the next.
+    const noted = note(state, `Rebase onto main conflicted before ${state.stage}, on head ${state.pr?.head_sha ?? "(no PR)"}:\n${event.detail}`);
+    return toFix(noted, `Rebase onto main conflicted:\n${event.detail}\n\n${CONFLICT_GUIDANCE}`, { conflictPending: true });
+  }
+  if (event.type === "conflict_gone") {
+    if (state.stage !== "fix" || !state.conflictPending) invalid(state, event);
+    return conflictGone(state);
   }
   if (event.type === "stage_failed") {
     if (event.stage !== state.stage) invalid(state, event);

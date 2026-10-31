@@ -25,7 +25,10 @@ export interface ChainState {
   pendingFixInput: string | null;
   postponedUntil: string | null;
   resumeStage: AgentStageName | null;
-  /** C1: set by a rebase conflict, cleared by the next successful fix; the driver skips the rebase while it is set. */
+  /**
+   * C1: set by a rebase conflict, cleared by the next successful fix (spec 024: one that returns a new head) or by
+   * `conflict_gone`; while it is set the driver only checks that the conflict is still real before the fix runs.
+   */
   conflictPending: boolean;
   /** Which PR the chain works on: the issue PR (`issue-<issue>`) or a spec PR (`spec-<issue>`). Every entry into the spec stage sets "spec". */
   track: "issue" | "spec";
@@ -92,6 +95,8 @@ export type ChainEvent =
   /** `specGate`: on the spec track, spec-present and the UI-design gate run again on origin/main after the merge (AC-4). */
   | { type: "merge_result"; status: "merged" | "not_mergeable"; detail?: string; specGate?: { ok: true } | { ok: false; gate: "spec-present" | "ui-design"; reason: string } }
   | { type: "rebase_conflict"; detail: string }
+  /** Spec 024: before a conflict-pending fix runs, the driver found origin/main no longer conflicts with the head. Valid only in that fix. */
+  | { type: "conflict_gone" }
   /** The PR head moved after verify and review; valid only in stage merge, which goes back to verify. */
   | { type: "head_moved"; head_sha: string }
   | { type: "answered"; answer: string; questionId: number }
