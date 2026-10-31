@@ -26,6 +26,11 @@ function buildCommand(run: ClaudeStageRun): Command {
     "--max-budget-usd", String(run.bounds.max_cost_usd),
     ...(run.resume?['--resume',run.resume.sessionId]:['--session-id',run.sessionId]),
     "--permission-mode", "dontAsk",
+    // A run must not inherit the maintainer's desktop: no user MCP servers or claude.ai connectors, and no user settings,
+    // which is where the hooks and enabled plugins come from. Login is not a setting, so subscription auth still works;
+    // "project" keeps the profile skills linked at .claude/skills, and AGENTS.md loads regardless.
+    "--strict-mcp-config",
+    "--setting-sources", "project",
   ];
   if (run.effort) argv.push("--effort", run.effort);
   if (run.fallbackModel) argv.push("--fallback-model", run.fallbackModel);

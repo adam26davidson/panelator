@@ -17,6 +17,15 @@ describe("claudeAdapter.buildCommand (AC-18)", () => {
     const {argv}=claudeAdapter.buildCommand({...run,stage:'implement',resume:{sessionId:'old-session'},conversation:true});
     expect(argv).not.toContain('--session-id');expect(argv[argv.indexOf('--resume')+1]).toBe('old-session');expect(argv[argv.indexOf('--allowedTools')+1]).toBe('Read,Glob,Grep,Edit(//tmp/r.json)');
   });
+  it("isolates every run from the user's MCP servers, settings, hooks and plugins", () => {
+    const backend = { name: "backend", dir: "/a", skillsDir: "/a/skills", instructions: "", tools: ["Read", "Bash"] };
+    for (const r of [run, { ...run, stage: "implement" as const, profile: backend }, { ...run, resume: { sessionId: "old-session" }, conversation: true }]) {
+      const { argv } = claudeAdapter.buildCommand(r);
+      expect(argv).toContain("--strict-mcp-config");
+      expect(argv).not.toContain("--mcp-config");
+      expect(argv[argv.indexOf("--setting-sources") + 1]).toBe("project");
+    }
+  });
   it("builds the headless command with bounds, session id and no-prompt permission", () => {
     const { argv, env } = claudeAdapter.buildCommand(run);
     expect(argv[0]).toBe("claude");
