@@ -61,6 +61,11 @@
                 "type": "integer",
                 "minimum": 1
               },
+              "rests_on_pr": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Spec 025: on a discard, the unmerged PR it relies on; the record is offered again if that PR closes unmerged."
+              },
               "question": {
                 "$ref": "question.json"
               },
@@ -99,6 +104,19 @@
             ],
             "additionalProperties": false,
             "allOf": [
+              {
+                "if": {
+                  "properties": {"rests_on_pr": {}},
+                  "required": ["rests_on_pr"]
+                },
+                "then": {
+                  "properties": {
+                    "outcome": {
+                      "const": "discard"
+                    }
+                  }
+                }
+              },
               {
                 "if": {
                   "properties": {

@@ -8,7 +8,8 @@ import { appendFindings, onFindingsQueued } from "../state/findings.ts";
 import { livenessGate } from "../gates/index.ts";
 import { ensureWorktree, uncommittedPatch } from "../runner/worktree.ts";
 import { buildSelectContext } from "../shortlist/fetch.ts";
-import {initializeAgents,readAgentState} from '../standing/state.ts';
+import {eventsWake,initializeAgents,readAgentState} from '../standing/state.ts';
+import {parseDuration} from '../standing/registry.ts';
 import {runStandingAgent} from '../standing/run.ts';
 import {CAPABILITY_CLOSED_MARKER,isCapabilityIssue} from '../filer/input.ts';
 import type {StandingDefinition} from '../types.ts';
@@ -509,8 +510,10 @@ export class Scheduler {
       if (d.registry && d.parameters) {
         const states = await Promise.all(Object.values(d.registry).map(async (def) => ({ def, state: (await readAgentState(d.paths, def.name))! })));
         states.sort((a, b) => (a.state.next_run ?? "").localeCompare(b.state.next_run ?? ""));
+        const debounceMs = parseDuration(String((await d.parameters.read("standing.event_debounce")).value));
         for (const s of states) {
-          const due = (s.state.next_run && Date.parse(s.state.next_run) <= d.now().getTime()) || s.state.pending_events.length;
+          // Spec 025 AC-12: a routine event waits out the debounce; the schedule never does.
+          const due = (s.state.next_run && Date.parse(s.state.next_run) <= d.now().getTime()) || eventsWake(s.state, d.now().getTime(), debounceMs);
           // Spec 013 AC-7: a standing agent postponed on a quota limit is skipped until then, whatever events arrive.
           if (s.state.postponed_until && Date.parse(s.state.postponed_until) > d.now().getTime()) continue;
           if (!s.state.paused && !this.#activeStanding.has(s.def.name) && due) dueStanding.push(s);

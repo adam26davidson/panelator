@@ -18,6 +18,19 @@
     "at": {
       "type": "string",
       "format": "date-time"
+    },
+    "rests_on_pr": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "rests_on_pr_state": {
+      "enum": [
+        "merged",
+        "reoffer_limit"
+      ]
+    },
+    "reoffered": {
+      "type": "boolean"
     }
   },
   "required": [

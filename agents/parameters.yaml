@@ -18,6 +18,13 @@
   max: 4
   mode: auto
   description: Concurrent runs; initial value comes from scheduler configuration.
+- name: standing.event_debounce
+  type: duration
+  default: 6h
+  min: 0m
+  max: 30d
+  mode: auto
+  description: After a standing agent's last run, how long a finding_queued event waits before it starts a run; the schedule and every other event do not wait, and 0m turns it off (spec 025).
 - name: first_contact_needs_approval
   type: boolean
   default: true

@@ -1,8 +1,8 @@
 import {appendFile,writeFile,rename} from 'node:fs/promises';
 import type {Question} from '../types.ts';
 import {validate} from '../schema/validate.ts';
-import {readJsonLines,recordKey,settledCursor,advisoryAttempts,isCapabilityIssue,stripCapabilityMarkers,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,CAPABILITY_TITLE,CAPABILITY_CLOSED_MARKER,type AdvisoryFailure,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
-export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'}}
+import {readJsonLines,recordKey,settledCursor,advisoryAttempts,isRestingDiscard,isCapabilityIssue,stripCapabilityMarkers,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,CAPABILITY_TITLE,CAPABILITY_CLOSED_MARKER,type AdvisoryFailure,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
+export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'};rests_on_pr?:number}
 export interface FilerResult {summary:string;decisions:Decision[]}
 export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput,result:FilerResult):Promise<void> {
  const valid=validate('filer-result',result);if(!valid.ok)throw new Error(valid.errors.join('; '));
@@ -69,9 +69,9 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
  for(const dec of result.decisions) {
   const abandoned=input.abandoned.find(r=>r.ref===dec.ref),record=input.records.find(r=>r.ref===dec.ref);
   const prior=triage.filter(t=>t.ref===dec.ref).at(-1);
-  if(prior&&!prior.failed&&(!abandoned||Date.parse(prior.at)>d.now().getTime()-7*86400000))continue;
+  if(prior&&!prior.failed&&!record?.rests_on_pr_closed&&(!abandoned||Date.parse(prior.at)>d.now().getTime()-7*86400000))continue;
   if(prior?.held&&prior.capability_issue!==undefined)touchedHeld=true;
-  const row:TriageEntry={ref:dec.ref,outcome:dec.outcome,reason:dec.reason,run_id:runId,at:d.now().toISOString(),...(record?{finding:record.finding}:{})};
+  const row:TriageEntry={ref:dec.ref,outcome:dec.outcome,reason:dec.reason,run_id:runId,at:d.now().toISOString(),...(record?{finding:record.finding}:{}),...(record?.rests_on_pr_closed?{reoffered:true}:{}),...(dec.outcome==='discard'&&dec.rests_on_pr!==undefined?{rests_on_pr:dec.rests_on_pr}:{})};
   const marker=`<!-- panelator-finding:${runId}:${dec.ref} -->`;
   // Set when an issue is created with the default label because the model's class could not be resolved (spec 018 AC-3).
   const applied:{fallback?:{class:string;used:string}}={};
@@ -137,7 +137,9 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   // The decision settles the identical records it stood for, with no further effect, in the same write as its own
   // row so a crash cannot split them; a failed advisory leaves them to ride on its retry (spec 019 AC-2).
   const settled=new Set(triage.filter(t=>!t.failed).map(t=>t.ref));
-  const copies=row.failed?[]:(record?.duplicate_refs??[]).filter(ref=>!settled.has(ref)).map(ref=>({...row,ref,reason:`same record as ref ${dec.ref}: ${row.reason}`}));
+  // A copy re-offered with its entry (spec 025 AC-9) is settled again by this decision.
+  const reopened=(ref:string)=>isRestingDiscard(triage.filter(t=>t.ref===ref).at(-1));
+  const copies=row.failed?[]:(record?.duplicate_refs??[]).filter(ref=>!settled.has(ref)||reopened(ref)).map(ref=>({...row,ref,reason:`same record as ref ${dec.ref}: ${row.reason}`,...(reopened(ref)?{reoffered:true}:{})}));
   await appendFile(d.paths.findingsTriage,[row,...copies].map(c=>JSON.stringify(c)+'\n').join(''));triage.push(row,...copies);
   // Logged once the decision is kept, so a settled ref or a batch that aborts earlier logs nothing (spec 018 AC-3).
   if(fb)d.log?.({kind:'filer-class-fallback',run_id:runId,ref:dec.ref,class:fb.class,used:fb.used});
