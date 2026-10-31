@@ -4,6 +4,7 @@ kind: standing
 trigger: {schedule: 7d}
 harness: claude
 model: claude-fable-5-1
+effort: high
 tier: strong
 bounds: {timeout_min: 20, max_turns: 50, max_cost_usd: 4}
 permission: no-prompt
