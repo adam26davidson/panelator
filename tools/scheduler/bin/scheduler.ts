@@ -57,8 +57,8 @@ const {registry,parameters,levels}=(()=>{try {
 }catch(e){fail((e as Error).message);}})();
 await initializeAgents(paths,registry,parameters,new Date());
 const actionLog=new ActionLog(paths.actionsLog);
-const emitEvent=(event:string,payload:unknown)=>emit(paths,registry,event,payload);
-onFindingsQueued(paths,(count,offset)=>emitEvent('finding_queued',{count,offset}));
+const emitEvent=(event:string,payload:unknown,exclude?:string)=>emit(paths,registry,event,payload,new Date(),exclude);
+onFindingsQueued(paths,(count,offset,exclude)=>emitEvent('finding_queued',{count,offset},exclude));
 
 // Local administration works without service auth or the main-only checkout requirement.
 if(args[0]==='quota') {
