@@ -264,9 +264,8 @@ export class Scheduler {
     const ghActivity = await d.gh.issueActivityAt(claim.issue).catch(() => claim.last_activity_at);
     const last = ghActivity > claim.last_activity_at ? ghActivity : claim.last_activity_at;
     const g = livenessGate(last, claim.run_id !== null, d.now(), d.cfg.liveness_hours);
-    // Spec 013 AC-5: a chain postponed to a known instant (a quota reset) is scheduled, not stalled.
-    const scheduled = claim.state.stage === "waiting" && claim.state.postponedUntil !== null && new Date(claim.state.postponedUntil) > d.now();
-    if (g.ok || !expirable(claim) || scheduled) return false;
+    // Spec 023: a waiting claim is not stalled, before or after its reset: each tick starts it or it is queued for a slot, and starting it leaves `waiting`.
+    if (g.ok || !expirable(claim) || claim.state.stage === "waiting") return false;
     await this.#expire(claim);
     return true;
   }
