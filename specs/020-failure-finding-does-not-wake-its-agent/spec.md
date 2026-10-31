@@ -105,8 +105,8 @@ world) and `test/standing.test.ts`.
   filer is not started: no run directory, no usage record and no further
   queue record or notification. Given `next_run` then passes, or an event
   from outside the filer arrives (a `finding_queued` from a chain stage's
-  findings or another agent's result, a `merge`, an `issue_abandoned`, a
-  `capability_answered`), then the filer is started as usual, and that run's
+  findings or another agent's result, an `issue_abandoned`, a
+  `capability_answered`; the events the filer subscribes to), then the filer is started as usual, and that run's
   input lists its own failure record among the unsettled records.
 - AC-3. **Every other subscriber is still woken.** Given a second subscriber
   to `finding_queued` (a test registry entry), when agent X's failure finding
@@ -139,7 +139,7 @@ world) and `test/standing.test.ts`.
   fixes within the design: not delivering the failure finding's event to the
   agent that produced it, or holding a twice-failed agent until its
   `next_run` as spec 013 AC-7 holds a rate-limited one. The hold would make a
-  twice-failed filer ignore every event for a day, including a `merge`, an
+  twice-failed filer ignore every event for a day, including an
   `issue_abandoned` or a `capability_answered` that has nothing to do with
   the failure, and the design's reason for events (section 6.1: agents woken
   by what happens) is lost for that day. Excluding the producer removes the
