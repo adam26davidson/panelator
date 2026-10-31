@@ -499,3 +499,4 @@ are stale and are corrected as part of B.
 - `specs/018-filer-class-labels/spec.md`
 - `specs/019-filer-collapses-identical-records/spec.md`
 - `specs/020-failure-finding-does-not-wake-its-agent/spec.md`
+- `specs/021-stale-spec-text-after-008/spec.md`
