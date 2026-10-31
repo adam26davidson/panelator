@@ -314,6 +314,13 @@ Rules:
 
 ## 7. Shortlist stub
 
+> Superseded in part by [008-agent-registry](../008-agent-registry/spec.md)
+> AC-14: the ranking by the 2:1 feature-to-debt ratio of process-spec 4.5 is
+> replaced by the `system_work_share` parameter of the delivery-system design
+> section 9 (a maintainer priority label first, then the preferred kind of
+> work by share, then oldest first). The eligibility rules, the pagination
+> and the count assertion below still apply.
+
 Until spec 002, the shortlist is: open issues, label `validated` present,
 author is the App bot or the `validated` label event's actor is the
 maintainer, not already claimed, not labelled `needs-*` or `blocked`, with
