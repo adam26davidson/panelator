@@ -8,7 +8,9 @@ import { adapterFor as defaultAdapterFor } from "../adapters/index.ts";
 import type { Adapter } from "../adapters/types.ts";
 import type { Config } from "../config.ts";
 import { ROOT } from "../gates/design-tree.ts";
-import { isSensitive, scopeGate, specPresentGate, specScopeGate, uiDesignGate, type ScopeResult } from "../gates/index.ts";
+import { designScopeGate, isSensitive, scopeGate, specPresentGate, specScopeGate, uiDesignGate, type ScopeResult } from "../gates/index.ts";
+import { readRenderChunk } from "../../../design-stage/src/png-text.ts";
+import { DEVICE_SCALE, VIEWPORTS } from "../../../design-stage/src/viewports.ts";
 import type { GitHubClient } from "../github/client.ts";
 import type { PullRequestInfo } from "../github/types.ts";
 import type { Notifier } from "../notify/types.ts";
@@ -36,7 +38,7 @@ import { answeredEntry, answeredForIssue, appendQuestionLog } from "../state/que
 import { newRunId, runDir } from "../state/runs.ts";
 import { classOf } from "../shortlist/rank.ts";
 import type {
-  AgentStageName, FixOutcome, Harness, ImplementOutcome, ImplementResult, IssueData, PlanOutcome, Profile, SpecResult, StageDefinition,
+  AgentStageName, DesignResult, FixOutcome, Harness, ImplementOutcome, ImplementResult, IssueData, PlanOutcome, Profile, SpecResult, StageDefinition,
 } from "../types.ts";
 import { CLAIM_LABEL, NEEDS_DECISION_LABEL, POSTPONE_WAIT_S, branchOf, initialChainState, ledgerOf, transition } from "./machine.ts";
 import { formatQuestion, questionBody, questionMarker } from "./question.ts";
@@ -70,7 +72,9 @@ export interface DriverDeps {
 }
 
 export type StepStatus = "continue" | "waiting" | "ended";
-const AGENT_STAGES: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "question-check"];
+const AGENT_STAGES: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "design", "question-check"];
+/** Spec 029 AC-1: the viewports as the design stage is told them. */
+const VIEWPORTS_TEXT = `${VIEWPORTS.map((v) => `${v.name} ${v.width}x${v.height}`).join(", ")} at device scale ${DEVICE_SCALE}`;
 const ENDED: ChainState["stage"][] = ["done", "released", "abandoned", "paused"];
 /** C1: prepended to the fix input when the fix stage has to resolve a conflict itself. Spec 024: names no method; the input says which. */
 export const CONFLICT_FIX_LINE = "Bring this branch up to date with origin/main and resolve the conflicts before addressing the items below.";
@@ -287,6 +291,10 @@ async function buildInput(
         ? `Sent back earlier for the asking stage to decide: ${s.decidedQuestion.question}\nThe reasoning given: ${s.decideInput}`
         : s.decideInput,
     spec_problem: s.specProblem ?? undefined,
+    // Spec 029 AC-1: the design stage's input.
+    design_problem: s.designProblem ?? undefined,
+    spec_path: s.track === "design" ? specPathFromIssueBody(issueBody) ?? undefined : undefined,
+    viewports: s.track === "design" ? VIEWPORTS_TEXT : undefined,
     answered_questions: answered,
     held_work: claim.state.stage === "question-check" ? undefined : await heldWorkText(deps, claim),
     result_path: "", profile_instructions: "",
@@ -299,6 +307,8 @@ function pickProfile(deps: DriverDeps, def: StageDefinition, state: ChainState, 
   if (def.name === "review" && security) return resolveProfile(deps.agentsDir, "security");
   // D9: everything on the spec PR (its review, fix and implement) works under the spec profile.
   if (state.track === "spec" && (def.name === "review" || def.name === "fix" || def.name === "implement")) return resolveProfile(deps.agentsDir, "spec");
+  // Spec 029 AC-3: everything on the design PR works under the design profile.
+  if (state.track === "design" && (def.name === "review" || def.name === "fix" || def.name === "implement")) return resolveProfile(deps.agentsDir, "design");
   if (def.profile === "none") return null;
   // I4: an unknown profile throws; the plan stage already refused a domain with no profile.
   return resolveProfile(deps.agentsDir, def.profile === "from-issue" ? state.plan?.domain ?? "backend" : def.profile);
@@ -562,15 +572,17 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   // and on which model. A resumed session or conversation keeps its model and meets a limit as a 429.
   const quota = await quotaParams(deps.parameters);
   const what = `issue:${claim.issue}`;
-  const primaryModel = state.rescueRun ? deps.cfg.rescue_model : def.model;
-  const primaryHarness = state.rescueRun ? harnessForModel(primaryModel) : def.harness;
-  const tier = state.rescueRun ? "strong" : def.tier;
+  // Spec 029 AC-3: a fix on the design PR runs on the design stage's model, harness and tier.
+  const stageDef = state.track === "design" && stage === "fix" ? { ...def, model: deps.stages.design.model, harness: deps.stages.design.harness, tier: deps.stages.design.tier, fallback: deps.stages.design.fallback, independent: deps.stages.design.independent } : def;
+  const primaryModel = state.rescueRun ? deps.cfg.rescue_model : stageDef.model;
+  const primaryHarness = state.rescueRun ? harnessForModel(primaryModel) : stageDef.harness;
+  const tier = state.rescueRun ? "strong" : stageDef.tier;
   let firstRun: { model: string; harness: Harness } | null = null;
   if (!state.conversation && !state.resumeSession) {
     // A rescue is "one more attempt on the strongest model" (design section 4): never the model-limit fallback.
     const launch = await planLaunch(deps.paths, {
       what, stage, tier, harness: primaryHarness, model: primaryModel,
-      fallback: state.rescueRun ? undefined : def.fallback, independent: state.rescueRun ? false : def.independent,
+      fallback: state.rescueRun ? undefined : stageDef.fallback, independent: state.rescueRun ? false : stageDef.independent,
     }, state.rescueRun ? { ...quota, modelFallback: false } : quota, deps.now());
     if (launch.kind === "wait") {
       deps.log({ kind: launch.defer ? "quota-defer" : "quota-wait", issue: claim.issue, stage, model: primaryModel, key: launch.key, until: launch.until, reason: launch.reason, ...launch.defer });
@@ -595,7 +607,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   // Spec 011: held work on the PR's branch is not rebased: the rewritten commits would be unpushed and diverged, and
   // the next preparation would drop them. The resumed stage pushes it; a later stage rebases.
   const heldOnPr = claim.state.heldWork !== null && claim.state.heldWork.branch === branchOf(claim.state);
-  if (!state.conversation&&!state.resumeSession&&stage !== "spec" && stage !== "question-check" && state.pr !== null && !heldOnPr && (!state.conflictPending || stage === "fix")) {
+  if (!state.conversation&&!state.resumeSession&&stage !== "spec" && stage !== "design" && stage !== "question-check" && state.pr !== null && !heldOnPr && (!state.conflictPending || stage === "fix")) {
     const before = await worktreeHead(claim.worktree);
     const rebase = await rebaseOntoMain(claim.worktree, "origin/main", botIdentity(deps));
     if (state.conflictPending) {
@@ -642,7 +654,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   const beforeIndex=state.conversation?await gitOut(claim.worktree,'diff','--cached','--binary'):'';
   const attempt = state.attempt;
   const exec = async (model?: string, harness?: Harness, tag?: string): Promise<StageOutcome> => {
-    const h = harness ?? def.harness;
+    const h = harness ?? stageDef.harness;
     // I2: the real run id, persisted before the run, so a restart can find the run's scope unit. A rescue or a
     // fallback, or a run in the same second as an earlier one, gets its own id so no run record is overwritten.
     const base = newRunId(claim.issue, stage, attempt, deps.now()) + (tag ? `-${tag}` : "");
@@ -656,7 +668,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
           paths: deps.paths, adapter: deps.adapterFor(h), systemdScope: deps.systemdScope, systemdRunBin: deps.systemdRunBin, binDir: deps.binDir, now: deps.now,
           gitIdentity: botIdentity(deps), sessionWindowMs: quota.sessionWindowMs,
         },
-        { def, input, issue: claim.issue, attempt, worktree: claim.worktree, profile, model, harness, runId,
+        { def: stageDef, input, issue: claim.issue, attempt, worktree: claim.worktree, profile, model: model ?? (stageDef !== def ? stageDef.model : undefined), harness: harness ?? (stageDef !== def ? stageDef.harness : undefined), runId,
           conversation:!!state.conversation,
           resume:state.resumeSession&&(state.resumeSession.harness===h||state.resumeSession.harness===deps.adapterFor(h).harness)?{sessionId:state.resumeSession.session_id,harness:h,model:state.resumeSession.model}:undefined }, 
       );
@@ -693,7 +705,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   if (out.outcome !== "ok") {
     // A rescue is never downgraded: like any strong-tier stage it is postponed on a rate limit (AC-27), and it never
     // takes the model-limit fallback of spec 013 AC-9.
-    const retryDef: StageDefinition = state.rescueRun ? { ...def, tier: "strong", independent: false, fallback: undefined } : def;
+    const retryDef: StageDefinition = state.rescueRun ? { ...stageDef, tier: "strong", independent: false, fallback: undefined } : stageDef;
     if (firstRun) {
       // Already on the fallback: only afterFallback judges it (AC-26).
       if (afterFallback(retryDef, out.judgement).kind === "postpone") return postponed(out.reason ?? out.outcome);
@@ -745,6 +757,8 @@ async function stageEvent(deps: DriverDeps, claim: Claim, stage: AgentStageName,
       return { type: "stage_ok", stage: "question-check", result: result as never };
     case "spec":
       return specEvent(deps, claim, issueBody, result as SpecResult, start);
+    case "design":
+      return designEvent(deps, claim, issueBody, specText, result as DesignResult);
     case "implement":
     case "fix":
       return codeEvent(deps, claim, stage, result as ImplementOutcome | FixOutcome, issueBody, specText, sensitiveGlobs, start);
@@ -776,6 +790,7 @@ async function codeEvent(
   const diff = await diffFilesAgainstBase(claim.worktree);
   let scope: ScopeResult = { ok: true };
   if (state.track === "spec") scope = await specTrackScope(deps, claim, diff, specPathFromIssueBody(issueBody));
+  else if (state.track === "design") scope = designScopeGate(diff, specPathFromIssueBody(issueBody) ?? "specs/000-none/spec.md");
   else if (state.plan) {
     // C6: an ADR the PR adds is in scope (design section 3 item 2: an agent records its own large decision); an edit to an
     // existing ADR is in scope only for a recording fix or with a verified mark.
@@ -802,6 +817,40 @@ async function specEvent(deps: DriverDeps, claim: Claim, issueBody: string, r: S
   const scope = await specTrackScope(deps, claim, await diffFilesAgainstBase(claim.worktree), specPath);
   if (issueSpec === null) await deps.gh.setIssueBody(claim.issue, `${issueBody}\n\nSpec: ${specPath}`);
   return { type: "stage_ok", stage: "spec", result: r, scope };
+}
+
+/**
+ * Spec 029 AC-2, AC-5: the checks on a design stage result: the spec it designs, the PR binding and body, every screen the
+ * spec names with a story and three renders that exist and carry the renderer's `panelator-render` chunk; then the scope.
+ */
+async function designEvent(deps: DriverDeps, claim: Claim, issueBody: string, specText: string, r: DesignResult): Promise<ChainEvent> {
+  const failed = (reason: string): ChainEvent => ({ type: "stage_failed", stage: "design", reason });
+  if (r.verdict === "question") return { type: "stage_ok", stage: "design", result: r, head: await holdWork(deps, claim, "design") };
+  const issueSpec = specPathFromIssueBody(issueBody);
+  if (issueSpec === null) return failed("result: the issue body has no Spec: line");
+  if (r.spec_path !== issueSpec) return failed("result: spec_path differs from the issue's Spec: line");
+  const pr = r.pr_number === undefined || r.head_sha === undefined ? null : await prBound(deps, claim, { prNumber: r.pr_number, branch: `design-${claim.issue}` }, r.head_sha);
+  if (!pr) return failed("result: pr mismatch");
+  if (CLOSING_KEYWORD.test(pr.body)) return failed("result: design PR body closes an issue");
+  if (!pr.body.trimStart().startsWith(`Refs #${claim.issue}`)) return failed(`result: design PR body does not start with Refs #${claim.issue}`);
+  const designDir = join(claim.worktree, issueSpec, "..", "design");
+  const screens = r.screens ?? [];
+  for (const name of parseSpec(specText).uiScreens) {
+    const screen = screens.find((s) => s.name === name);
+    if (!screen) return failed(`result: invalid: screen ${name} is named by the spec but not in the result`);
+    if (screen.stories.length < 1) return failed(`result: invalid: screen ${name} has no story`);
+    if (screen.renders.length < 3) return failed(`result: invalid: screen ${name} has ${screen.renders.length} render(s), three are needed`);
+    for (const f of [...screen.stories, ...screen.renders]) {
+      const path = join(designDir, f);
+      if (f.includes("/") || !existsSync(path)) return failed(`result: invalid: ${f} of screen ${name} is not in the spec's design/`);
+    }
+    for (const f of screen.renders) {
+      const chunk = readRenderChunk(new Uint8Array(await readFile(join(designDir, f))));
+      if (!chunk) return failed(`result: invalid: ${f} of screen ${name} carries no panelator-render chunk (renders are made by the renderer only)`);
+    }
+  }
+  const scope = designScopeGate(await diffFilesAgainstBase(claim.worktree), issueSpec);
+  return { type: "stage_ok", stage: "design", result: r, scope };
 }
 
 async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> {
@@ -855,7 +904,7 @@ async function mergeEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> {
   }
   await deps.emitEvent?.('merge',{issue:claim.issue,pr:pr.number,sha:pr.head_sha});
   // AC-4: a spec PR is not a feature or debt merge; the chain goes on after the gates on main.
-  if (claim.state.track === "spec") return { type: "merge_result", status: "merged", specGate: await specGateOnMain(deps, claim) };
+  if (claim.state.track === "spec" || claim.state.track === "design") return { type: "merge_result", status: "merged", specGate: await specGateOnMain(deps, claim) };
   // The issue's labels give the merge record its class; no label refuses the merge (spec 006 AC-9).
   const labels = await deps.gh.issueLabels(claim.issue);
   const cls = classOf({ number: claim.issue, title: "", author: "", body: "", labels, labelEvents: [], createdAt: "" }, deps.cfg.labels);
@@ -1113,7 +1162,7 @@ export async function step(deps: DriverDeps, claim: Claim): Promise<{ claim: Cla
   }
 
   const before = claim.state;
-  const next = transition(before, event);
+  const next = transition(before, event, { designRevisions: deps.cfg.bounds.design_revisions });
   // Tm3: a transition that went through is progress: the count of consecutive chain errors starts again.
   const state = next.state.chainFailures === null ? next.state : { ...next.state, chainFailures: null };
   const actions = next.actions;

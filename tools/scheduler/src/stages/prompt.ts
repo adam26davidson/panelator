@@ -15,6 +15,10 @@ export interface StageInput {
   mode?: SpecMode;
   decide_input?: string;
   spec_problem?: string;
+  /** Spec 029 AC-1: the design stage's input. */
+  design_problem?: string;
+  spec_path?: string;
+  viewports?: string;
   answered_questions?: string;
   held_work?: string;
   result_path: string;
@@ -42,6 +46,9 @@ export function renderPrompt(template: string, input: StageInput): string {
     mode: input.mode ?? NONE,
     decide_input: input.decide_input ?? NONE,
     spec_problem: input.spec_problem ?? NONE,
+    design_problem: input.design_problem ?? NONE,
+    spec_path: input.spec_path ?? NONE,
+    viewports: input.viewports ?? NONE,
     answered_questions: input.answered_questions ?? NONE,
     held_work: input.held_work ?? NONE,
     result_path: input.result_path,

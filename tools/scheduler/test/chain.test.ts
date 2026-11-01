@@ -334,7 +334,7 @@ describe("chain: escalation path (AC-1 to AC-6)", () => {
 
 describe("chain: ledger and claim state (AC-7)", () => {
   const ledger: LedgerCounts = {
-    rescues: 1, specRescues: 0, replans: 0, specRevisions: 0, specAnswers: 1, decideReturns: 1, history: ["plan: failed twice: old"], pendingAnswer: null, chainFailures: null, chainErrors: 0,
+    rescues: 1, specRescues: 0, replans: 0, specRevisions: 0, specAnswers: 1, decideReturns: 1, history: ["plan: failed twice: old"], pendingAnswer: null, chainFailures: null, chainErrors: 0, designRevisions: 0, designRescues: 0,
   };
   it("a seeded ledger carries counts into a new chain (AC-7)", () => {
     const s = initialChainState(1, null, ledger);
@@ -571,12 +571,10 @@ describe("chain: spec stage and spec track (AC-4, AC-19, AC-21, AC-22)", () => {
     expect(types(r2.actions)).toEqual(["delete_branch", "comment", "label", "finding", "notify", "done"]);
 
     const ui = transition(at("merge", { track: "spec", pr: pr8 }), { type: "merge_result", status: "merged", specGate: { ok: false, gate: "ui-design", reason: "spec E will provide the design stage: no design/" } });
-    expect(ui.state).toMatchObject({ stage: "released", pr: null });
-    expect(types(ui.actions)).toEqual(["delete_branch", "comment", "label", "notify", "release"]);
-    expect((ui.actions[1] as { text: string }).text).toContain("no design/");
-    expect(ui.actions[2]).toEqual({ type: "label", add: ["needs-design-stage"], remove: ["in-progress"] });
-    expect(ui.actions.at(-1)).toEqual({ type: "release", reason: expect.any(String), savePatch: false });
-    expect(ui.actions.some((a) => a.type === "finding")).toBe(false);
+    // Spec 029 AC-1: the design stage runs in place of the park; no label, no notification.
+    expect(ui.state).toMatchObject({ stage: "design", track: "design", pr: null, designProblem: expect.stringContaining("no design/") });
+    expect(ui.actions).toEqual([{ type: "delete_branch", branch: "spec-1" }, { type: "run_stage", stage: "design", attempt: 1 }]);
+    expect(branchOf(ui.state)).toBe("design-1");
   });
   it("a merged record PR restores the parked issue PR and runs a fix (AC-18)", () => {
     const s = at("merge", { track: "spec", pr: pr8, parkedPr: pr3, fixes: 1, answerQuestionId: 5, answerQuestionIds: [5], answerKind: "product", specProblem: null });

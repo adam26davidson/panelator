@@ -1,6 +1,8 @@
 import {TelegramAnswers} from '../telegram/answers.ts';
 import {questionMessage,reminderText} from '../telegram/questions.ts';
 import { applyActions, sendPausedQuestion, completePause, driveChain as defaultDriveChain, step, type DriverDeps } from "../chain/driver.ts";
+/** Spec 029 AC-8: the label spec 006 AC-20 applied; removed once per issue, applied by no code path any more. */
+const NEEDS_DESIGN_STAGE = "needs-design-stage";
 import { CLAIM_LABEL, ENDED, HISTORY_ENTRY_MAX, NEEDS_DECISION_LABEL, initialChainState, ledgerOf, stuckOf as stuckStage, transition } from "../chain/machine.ts";
 import {emit} from '../standing/events.ts';
 import { quotaSummary } from "../quota/book.ts";
@@ -18,6 +20,7 @@ import {watchMainChecks} from '../standing/events.ts';
 import {execFileSync} from 'node:child_process';
 import { rankIssues, classifyWork } from "../shortlist/rank.ts";
 import { selectEligible } from "../shortlist/select.ts";
+import { markRelabelled, readRelabelled } from "../state/relabelled.ts";
 import { listClaims, readClaim, removeClaim, writeClaim, type Claim, type Outage } from "../state/claims.ts";
 import { CEILING_MIN_FAILURES, CEILING_MIN_SPAN_MS, forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, PAST_CEILING, transientCause } from "../chain/transient.ts";
 import { readLedger, writeLedger } from "../state/ledger.ts";
@@ -537,14 +540,30 @@ export class Scheduler {
       // The ranked shortlist, computed once and only when a new claim fits under the held count.
       let ranked: Awaited<ReturnType<typeof d.gh.listOpenIssues>> | null = null;
       let specProblems = new Map<number, string>();
+      let designProblems = new Map<number, string>();
       const shortlist = async () => {
         if (ranked) return ranked;
         if (!(await openIssues())) return (ranked = []);
+        // Spec 029 AC-8: an issue parked with needs-design-stage goes back to the shortlist, once, with one comment.
+        const relabelled = await readRelabelled(d.paths);
+        for (const issue of issues!) {
+          if (!issue.labels.includes(NEEDS_DESIGN_STAGE) || relabelled.has(issue.number)) continue;
+          try {
+            await d.gh.removeLabel(issue.number, NEEDS_DESIGN_STAGE);
+            await d.gh.comment(issue.number, "The design stage now exists (spec 029): this issue goes back to the shortlist and is designed before it is planned.");
+            await markRelabelled(d.paths, issue.number);
+            d.serviceLog.write({ kind: "design-relabelled", issue: issue.number });
+            issue.labels = issue.labels.filter((l) => l !== NEEDS_DESIGN_STAGE);
+          } catch (e) {
+            info.errors.push(`relabel ${issue.number}: ${(e as Error).message}`);
+          }
+        }
         // AC-13: the shortlist treats an issue with a paused record as claimed.
         const claimed = new Set([...(await listClaims(d.paths)).map((c) => c.issue), ...(await listPaused(d.paths)).map((r) => r.issue)]);
         const ctx = buildSelectContext(d.repoDir, d.cfg, claimed, d.botLogin);
         const sel = selectEligible(issues!, ctx);
         specProblems = sel.specProblems;
+        designProblems = sel.designProblems;
         info.eligible = sel.eligible.length;
         // Only needs-design-stage labels now (AC-20); the needs- prefix then hides the issue, so it is applied once.
         for (const dec of sel.decisions) {
@@ -582,7 +601,7 @@ export class Scheduler {
                 d.serviceLog.write({ kind: "chain-errors-forgiven", issue: issue.number, forgiven: f.forgiven });
               }
             }
-            const state = initialChainState(issue.number, specProblems.get(issue.number) ?? null, ledger);
+            const state = initialChainState(issue.number, specProblems.get(issue.number) ?? null, ledger, designProblems.get(issue.number) ?? null);
             const c: Claim = {
               issue: issue.number, slot: this.#active.size, state, worktree: wt.path,
               started_at: d.now().toISOString(), last_activity_at: d.now().toISOString(), run_id: null,

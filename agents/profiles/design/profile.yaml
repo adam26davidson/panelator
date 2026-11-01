@@ -1,0 +1,4 @@
+name: design
+tools: [Read, Glob, Grep, Bash, Edit, Write]
+credential_hook: null
+review_criteria: review-criteria.md

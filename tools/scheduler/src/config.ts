@@ -26,6 +26,8 @@ export interface Config {
   };
   systemd: { scope: boolean; inhibit: boolean };
   decide: { base_url: string; key_env: string };
+  /** Spec 029 AC-4: design runs after a merge that left the UI-design gate failing, before the spec is revised. */
+  bounds: { design_revisions: number };
 }
 
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -52,6 +54,10 @@ export function loadConfig(path: string): Config {
   const labels = (raw.labels ?? {}) as Record<string, unknown>;
   const systemd = (raw.systemd ?? {}) as Record<string, unknown>;
   const decide = (raw.decide ?? {}) as Record<string, unknown>;
+  const bounds = (raw.bounds ?? {}) as Record<string, unknown>;
+  if (typeof bounds !== "object" || bounds === null || Array.isArray(bounds)) throw new Error("config bounds must be an object");
+  const designRevisions = bounds.design_revisions ?? 2;
+  if (typeof designRevisions !== "number" || !Number.isInteger(designRevisions) || designRevisions < 1) throw new Error("config bounds.design_revisions must be a positive integer");
   const telegram = raw.telegram ?? {};
   if(typeof telegram!=='object'||telegram===null||Array.isArray(telegram))throw new Error('config telegram must be an object');
   const tg=telegram as Record<string,unknown>;
@@ -84,6 +90,7 @@ export function loadConfig(path: string): Config {
     },
     systemd: { scope: systemd.scope !== false, inhibit: systemd.inhibit !== false },
     decide: { base_url: String(decide.base_url ?? ""), key_env: String(decide.key_env ?? "PANELATOR_DECIDE_KEY") },
+    bounds: { design_revisions: designRevisions },
   };
   if (cfg.slots < 1) throw new Error("config slots must be >= 1");
   if (cfg.poll_interval_s < 5) throw new Error("config poll_interval_s must be >= 5");

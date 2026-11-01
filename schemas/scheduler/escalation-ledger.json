@@ -107,6 +107,14 @@
       "type": "integer",
       "minimum": 0,
       "description": "C7: releases for repeated chain errors."
+    },
+    "designRevisions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "designRescues": {
+      "type": "integer",
+      "minimum": 0
     }
   }
 }

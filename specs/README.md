@@ -15,8 +15,11 @@ The Open decisions section body must be empty or `None.` for the spec to be
 eligible. A `web-ui` or `widget` spec's UI design section must carry a line
 `Screens: <name>, <name>` naming each screen, and `design/` beside the spec
 must hold a story (`*.stories.tsx`, `*.stories.jsx` or `*.stories.mdx`) or a
-token prototype (`tokens*.html` or `*-prototype.html`) plus a
-`<screen>.png` for each named screen. The issue that carries a spec links it
+token prototype (`tokens*.html` or `*-prototype.html`) plus three renders for
+each named screen: `<screen>.png` (desktop), `<screen>.mobile.png` and
+`<screen>.tablet.png`, produced by `pnpm -F @panelator/design-stage render
+<spec dir>` (spec 029). A UI spec without them is designed by the design
+stage before it is planned. The issue that carries a spec links it
 with a body line `Spec: specs/NNN-slug/spec.md`. A spec split into a sub-design
 keeps its directory with a `README.md` pointer and no `spec.md`, so its number
 is not reused.

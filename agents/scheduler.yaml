@@ -24,6 +24,8 @@ labels:
 systemd:
   scope: true                # wrap stages in systemd-run --user --scope
   inhibit: true              # hold systemd-inhibit while a stage is in flight
+bounds:
+  design_revisions: 2        # design runs after a merge that leaves the UI-design gate failing (spec 029)
 decide:
   base_url: ""               # /v1/systemone; unused in v0
   key_env: PANELATOR_DECIDE_KEY

@@ -84,6 +84,15 @@
     "spec_problem": {
       "type": "string"
     },
+    "design_problem": {
+      "type": "string"
+    },
+    "spec_path": {
+      "type": "string"
+    },
+    "viewports": {
+      "type": "string"
+    },
     "answered_questions": {
       "type": "string"
     },
