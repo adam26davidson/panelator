@@ -23,6 +23,12 @@ describe("statePaths", () => {
     for (const d of [p.paused, p.escalations, join(p.root, "questions")]) expect(statSync(d).isDirectory()).toBe(true);
     expect(p.questionsLog).toBe(join(p.root, "questions", "log.jsonl"));
   });
+  it("keeps the design re-evaluation record under design/ (spec 029 AC-8)", async () => {
+    const p = fresh();
+    await ensureStateDirs(p);
+    expect(p.designRelabelled).toBe(join(p.root, "design", "relabelled.json"));
+    expect(statSync(join(p.root, "design")).isDirectory()).toBe(true);
+  });
 });
 
 describe("claims", () => {

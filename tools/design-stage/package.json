@@ -1,0 +1,35 @@
+{
+  "name": "@panelator/design-stage",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Storybook catalogue and three-viewport renderer for the design stage (spec 029).",
+  "scripts": {
+    "storybook": "storybook dev -p 6006 --config-dir .storybook",
+    "render": "node src/cli.ts",
+    "test": "cd ../.. && vitest run tools/design-stage",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "engines": { "node": ">=26" },
+  "dependencies": {
+    "@playwright/browser-chromium": "catalog:",
+    "@storybook/react-vite": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "playwright-core": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "storybook": "catalog:",
+    "tailwindcss": "catalog:",
+    "vite": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@types/node": "^26.6.5",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "knip": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

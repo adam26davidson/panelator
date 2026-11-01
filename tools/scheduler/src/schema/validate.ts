@@ -16,6 +16,7 @@ export type SchemaName =
   | "stage-input"
   | "question"
   | "spec-result"
+  | "design-result"
   | "question-check-result"
   | "paused"
   | "escalation-ledger"
@@ -35,6 +36,7 @@ const NAMES: SchemaName[] = [
   "stage-input",
   "question",
   "spec-result",
+  "design-result",
   "question-check-result",
   "paused",
   "escalation-ledger",

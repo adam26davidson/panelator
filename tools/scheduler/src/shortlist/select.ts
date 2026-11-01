@@ -31,12 +31,15 @@ export interface Selection {
   decisions: Decision[];
   /** AC-19: the spec-present failure of each eligible issue whose spec is missing or incomplete; its chain starts at the spec stage. */
   specProblems: Map<number, string>;
+  /** Spec 029 AC-1: the UI-design failure of each eligible issue whose UI spec lacks its design; its chain starts at the design stage. */
+  designProblems: Map<number, string>;
 }
 
 export function selectEligible(issues: IssueData[], ctx: SelectContext): Selection {
   const eligible: IssueData[] = [];
   const decisions: Decision[] = [];
   const specProblems = new Map<number, string>();
+  const designProblems = new Map<number, string>();
   for (const issue of issues) {
     if (ctx.claimed.has(issue.number)) continue;
     if (issue.labels.includes(CLAIM_LABEL) || issue.labels.includes(BLOCKED) || issue.labels.includes(ABANDONED_LABEL) || issue.labels.some((l) => l.startsWith(SKIP_PREFIX))) continue;
@@ -56,6 +59,10 @@ export function selectEligible(issues: IssueData[], ctx: SelectContext): Selecti
           specProblems.set(issue.number, result.reason);
           eligible.push(issue);
         }
+        if (gate === "ui-design" && result.action === "ignore") {
+          designProblems.set(issue.number, result.reason);
+          eligible.push(issue);
+        }
         failed = true;
         break;
       }
@@ -65,7 +72,7 @@ export function selectEligible(issues: IssueData[], ctx: SelectContext): Selecti
       eligible.push(issue);
     }
   }
-  return { eligible, decisions, specProblems };
+  return { eligible, decisions, specProblems, designProblems };
 }
 
 function specText(issue: IssueData, ctx: SelectContext): string | null {

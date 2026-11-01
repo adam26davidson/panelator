@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   authorityGate, fixLoopGate, isSensitive, latestLabelActor, livenessGate,
-  readyGate, scopeGate, specPresentGate, specScopeGate, uiDesignGate, validatedGate,
+  readyGate, scopeGate, specPresentGate, specScopeGate, designScopeGate, uiDesignGate, validatedGate,
 } from "../src/gates/index.ts";
 import { parseSpec } from "../src/spec/parse.ts";
 import type { IssueData, LabelEvent, PlanResult } from "../src/types.ts";
@@ -93,14 +93,27 @@ describe("uiDesignGate (AC-8)", () => {
   it("passes a non-UI domain with no design dir", () => {
     expect(uiDesignGate(parseSpec(fx("good-backend.md")), [])).toEqual({ ok: true });
   });
-  it("labels needs-design-stage on an empty design dir, naming spec E (AC-20)", () => {
-    expect(uiDesignGate(web, [])).toMatchObject({ ok: false, action: "label", label: "needs-design-stage" });
-    expect(uiDesignGate(web, [])).toMatchObject({ reason: expect.stringMatching(/^spec E will provide the design stage: /) });
+  const all = ["editor-empty.png", "editor-empty.mobile.png", "editor-empty.tablet.png", "editor-populated.png", "editor-populated.mobile.png", "editor-populated.tablet.png"];
+  it("fails with an ignore result, not a label, on an empty design dir (spec 029 AC-1, AC-7)", () => {
+    const r = uiDesignGate(web, []);
+    expect(r).toMatchObject({ ok: false, action: "ignore", reason: expect.stringMatching(/editor-empty\.mobile\.png.*editor-populated\.tablet\.png/) });
+    expect(JSON.stringify(r)).not.toMatch(/needs-design-stage|spec E/);
   });
-  it("requires a story or token prototype and a PNG per screen", () => {
-    expect(uiDesignGate(web, ["editor.stories.tsx", "editor-empty.png"])).toMatchObject({ ok: false, reason: expect.stringMatching(/editor-populated\.png/) });
-    expect(uiDesignGate(web, ["editor-empty.png", "editor-populated.png"])).toMatchObject({ ok: false, reason: expect.stringMatching(/story or token prototype/) });
-    expect(uiDesignGate(web, ["tokens.html", "editor-empty.png", "editor-populated.png"])).toEqual({ ok: true });
+  it("fails the old rule of one desktop PNG per screen and names each missing size", () => {
+    const r = uiDesignGate(web, ["editor.stories.tsx", "editor-empty.png", "editor-populated.png"]);
+    expect(r).toMatchObject({ ok: false, action: "ignore", reason: expect.stringMatching(/editor-empty\.mobile\.png/) });
+    expect(r).toMatchObject({ reason: expect.stringMatching(/editor-populated\.tablet\.png/) });
+  });
+  it("fails when one size is missing", () => {
+    const files = ["editor.stories.tsx", ...all.filter((f) => f !== "editor-populated.tablet.png")];
+    expect(uiDesignGate(web, files)).toMatchObject({ ok: false, reason: expect.stringMatching(/missing editor-populated\.tablet\.png$/) });
+  });
+  it("requires a story or token prototype", () => {
+    expect(uiDesignGate(web, all)).toMatchObject({ ok: false, reason: expect.stringMatching(/story or token prototype/) });
+    expect(uiDesignGate(web, ["tokens.html", ...all])).toEqual({ ok: true });
+  });
+  it("passes a story and all three sizes per screen", () => {
+    expect(uiDesignGate(web, ["editor.stories.tsx", ...all])).toEqual({ ok: true });
   });
 });
 
@@ -207,5 +220,18 @@ describe("livenessGate (AC-15)", () => {
   });
   it("expires after the window with no run", () => {
     expect(livenessGate("2026-10-12T09:59:00Z", false, now, 2)).toMatchObject({ ok: false, action: "ignore", reason: expect.stringMatching(/liveness/) });
+  });
+});
+
+describe("designScopeGate (spec 029 AC-2)", () => {
+  const SPEC = "specs/030-console/spec.md";
+  it("allows files under the spec's design/ directory", () => {
+    expect(designScopeGate(["specs/030-console/design/home.stories.tsx", "specs/030-console/design/home.mobile.png"], SPEC)).toEqual({ ok: true });
+  });
+  it("rejects the spec itself, docs and tools", () => {
+    expect(designScopeGate([SPEC, "docs/x.md", "tools/a.ts", "specs/031-other/design/a.png"], SPEC)).toEqual({
+      ok: false,
+      violations: [`${SPEC}: outside design PR scope`, "docs/x.md: outside design PR scope", "tools/a.ts: outside design PR scope", "specs/031-other/design/a.png: outside design PR scope"],
+    });
   });
 });

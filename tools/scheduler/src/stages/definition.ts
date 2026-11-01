@@ -13,7 +13,7 @@ export function parseAgentDefinition(markdown:string,events:readonly string[]=[]
  return fm.kind==='standing'?parseStandingDefinition(markdown,events,actions):parseStageDefinition(markdown);
 }
 
-const STAGES: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "question-check"];
+const STAGES: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "design", "question-check"];
 
 export function splitFrontmatter(markdown: string): { frontmatter: string; body: string } {
   const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(markdown);

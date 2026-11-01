@@ -29,3 +29,14 @@ export function repoPair(files: Record<string, string> = { "a.txt": "a\n" }) {
 export function withTopDesign(files: Record<string, string>, specPath: string): Record<string, string> {
   return { ...files, "docs/top.md": `# Top design\n\n## Children\n\n- \`${specPath}\`\n` };
 }
+
+/**
+ * `files` plus a complete `design/` beside the spec at `specPath` (spec 029 AC-7): a story and, for each screen, the three
+ * renders. The gate checks names, so the PNG bytes are placeholders.
+ */
+export function withDesign(files: Record<string, string>, specPath: string, screens: string[]): Record<string, string> {
+  const dir = specPath.replace(/spec\.md$/, "design/");
+  const out: Record<string, string> = { ...files, [`${dir}editor.stories.tsx`]: "export default {};\n" };
+  for (const s of screens) for (const suffix of ["", ".mobile", ".tablet"]) out[`${dir}${s}${suffix}.png`] = "png\n";
+  return out;
+}

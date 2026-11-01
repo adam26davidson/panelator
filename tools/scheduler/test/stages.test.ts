@@ -56,9 +56,9 @@ describe("parseStageDefinition", () => {
 });
 
 describe("committed stage definitions", () => {
-  it("load all six stages with the spec's tiers", () => {
+  it("load all seven stages with the spec's tiers", () => {
     const d = loadStageDefinitions(`${agentsDir}/stages`);
-    expect(Object.keys(d).sort()).toEqual(["fix", "implement", "plan", "question-check", "review", "spec"]);
+    expect(Object.keys(d).sort()).toEqual(["design", "fix", "implement", "plan", "question-check", "review", "spec"]);
     expect(d.plan.tier).toBe("strong");
     expect(d.review.tier).toBe("strong");
     expect(d.implement.tier).toBe("standard");
@@ -76,6 +76,34 @@ describe("committed stage definitions", () => {
     expect(s).toMatchObject({ tier: "strong", profile: "spec", output: "spec-result", harness: "claude", model: "claude-fable-5-1" });
     expect(s.fallback).toBeUndefined();
     expect(s.independent).toBe(false);
+  });
+});
+
+describe("the design stage (spec 029)", () => {
+  const defs = loadStageDefinitions(`${agentsDir}/stages`);
+  const input = {
+    issue: { number: 7, title: "Console", body: "Spec: specs/030-console/spec.md" }, spec: "# spec", result_path: "/tmp/r.json", profile_instructions: "Design profile.",
+    spec_path: "specs/030-console/spec.md", design_problem: "missing home.tablet.png", viewports: "mobile 390x844, tablet 820x1180, desktop 1440x900",
+  };
+  it("is strong tier on Claude with the design profile and result schema (AC-1)", () => {
+    expect(defs.design).toMatchObject({ name: "design", tier: "strong", harness: "claude", profile: "design", input: "stage-input", output: "design-result", model: "claude-fable-5-1" });
+    expect(defs.design.independent).toBe(false);
+  });
+  it("renderPrompt fills spec_path, design_problem and viewports, and NONE when absent", () => {
+    const out = renderPrompt(defs.design.prompt, input);
+    expect(out).toContain("specs/030-console/spec.md");
+    expect(out).toContain("missing home.tablet.png");
+    expect(out).toContain("mobile 390x844");
+    const bare = renderPrompt(defs.design.prompt, { ...input, spec_path: undefined, design_problem: undefined, viewports: undefined });
+    expect(bare).not.toContain("{{");
+    expect(bare).toContain("Why the design stage runs (missing screens and files, or earlier review findings): (none)");
+  });
+  it("tells the agent to render with the package's command, never hand-make a PNG, and open a Refs PR", () => {
+    const t = defs.design.prompt.replace(/\s+/g, " ");
+    expect(t).toContain("pnpm -F @panelator/design-stage render");
+    expect(t).toMatch(/Never draw, paste or edit a PNG/);
+    expect(t).toContain("body starts with `Refs #<issue>`");
+    expect(t).toContain("design-<issue>");
   });
 });
 
