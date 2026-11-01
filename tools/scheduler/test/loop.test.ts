@@ -154,21 +154,38 @@ describe("Scheduler.tick", () => {
     expect(c.state.history).toEqual(["plan failed"]);
   }, 30_000);
 
-  it("labels a UI issue without design artifacts needs-design-stage once, with its comment and one notification (spec 006 AC-20)", async () => {
+  it("claims a UI issue without design artifacts with the gate's reason, and applies no label (spec 029 AC-1)", async () => {
     const ui = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-webui.md"), "utf8");
-    const rs = routes([issue(4)]);
-    const { s, gh, notifications, paths } = await setup(rs, 1, undefined, ui);
+    const { s, gh, notifications, paths } = await setup(routes([issue(4)]), 1, undefined, ui);
     const t = await s.tick();
-    expect(t.claimed).toEqual([]);
-    expect(await listClaims(paths)).toEqual([]);
-    expect(gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues/4/labels").map((c) => c.body)).toEqual([{ labels: ["needs-design-stage"] }]);
-    expect(gh.calls.filter((c) => c.url === "/repos/o/r/issues/4/comments").map((c) => c.body)).toEqual([{ body: expect.stringContaining("spec E will provide the design stage") }]);
-    expect(notifications).toEqual([expect.objectContaining({ issue: 4, label: "needs-design-stage" })]);
-    rs[1] = { method: "GET", path: /^\/repos\/o\/r\/issues$/, reply: (_m, _b, url) => ({ body: [issue(4, ["validated", "class:product", "needs-design-stage"])], headers: pageLink(url, 1, 1) }) };
-    gh.calls.length = 0;
-    await s.tick();
-    expect(gh.calls.filter((c) => c.method === "POST")).toEqual([expect.objectContaining({ url: "/graphql" })]);
-    expect(notifications).toHaveLength(1);
+    expect(t.claimed).toEqual([4]);
+    const [c] = await listClaims(paths);
+    expect(c.state.designProblem).toMatch(/missing editor-empty\.png/);
+    expect(gh.calls.filter((x) => x.url === "/repos/o/r/issues/4/labels").map((x) => x.body)).toEqual([{ labels: ["in-progress"] }]);
+    expect(notifications).toEqual([]);
+  }, 30_000);
+
+  it("removes needs-design-stage from a parked issue once, with one comment, and not again after a restart (spec 029 AC-8)", async () => {
+    const parked = issue(4, ["validated", "class:product", "needs-design-stage"]);
+    const env = await setup(routes([parked]), 1);
+    await env.s.tick();
+    const mine = (calls: typeof env.gh.calls) => calls.filter((c) => c.url === "/repos/o/r/issues/4/labels/needs-design-stage" || (c.url === "/repos/o/r/issues/4/comments" && c.method === "POST"));
+    expect(mine(env.gh.calls).map((c) => c.method)).toEqual(["DELETE", "POST"]);
+    expect(env.gh.calls.find((c) => c.method === "POST" && c.url === "/repos/o/r/issues/4/comments")?.body).toEqual({ body: expect.stringContaining("design stage now exists") });
+    expect(JSON.parse(readFileSync(env.paths.designRelabelled, "utf8"))).toEqual([4]);
+    env.gh.calls.length = 0;
+    await env.s.tick();
+    // A fresh Scheduler on the same state directory (the issue list still shows the label): nothing happens.
+    const again = new Scheduler(env.deps, { driveChain: async (_d, claim) => claim });
+    await again.tick();
+    expect(mine(env.gh.calls)).toEqual([]);
+  }, 30_000);
+
+  it("does nothing about the label when no open issue carries it (spec 029 AC-8)", async () => {
+    const env = await setup(routes([issue(4)]), 1);
+    await env.s.tick();
+    expect(env.gh.calls.filter((c) => c.url.includes("needs-design-stage"))).toEqual([]);
+    expect(existsSync(env.paths.designRelabelled)).toBe(false);
   }, 30_000);
 
   it("does not claim when the issue list is incomplete (review focus 1)", async () => {

@@ -26,6 +26,16 @@ describe("loadConfig", () => {
     writeFileSync(p, "repo: a/b\nmaintainer: a\napp: {id: 1, installation_id: 1, private_key_path: /k, bot_login: \"x[bot]\"}\n");
     expect(loadConfig(p).rescue_model).toBe("claude-fable-5-1");
   });
+  it("defaults bounds.design_revisions to 2 and reads an explicit one (spec 029 AC-4)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cfg-"));
+    const p = join(dir, "s.yaml");
+    const base = "repo: a/b\nmaintainer: a\napp: {id: 1, installation_id: 1, private_key_path: /k, bot_login: \"x[bot]\"}\n";
+    writeFileSync(p, base);
+    expect(loadConfig(p).bounds.design_revisions).toBe(2);
+    writeFileSync(p, `${base}bounds:\n  design_revisions: 4\n`);
+    expect(loadConfig(p).bounds.design_revisions).toBe(4);
+    expect(loadConfig(defaultConfigPath).bounds.design_revisions).toBe(2);
+  });
   it("rejects slots below 1", () => {
     const dir = mkdtempSync(join(tmpdir(), "cfg-"));
     const p = join(dir, "s.yaml");

@@ -7,7 +7,12 @@ import { listProfiles, readSensitiveGlobs, resolveProfile } from "../src/profile
 
 describe("profiles", () => {
   it("lists the committed v0 profiles", () => {
-    expect(listProfiles(agentsDir)).toEqual(["backend", "security", "spec"]);
+    expect(listProfiles(agentsDir)).toEqual(["backend", "design", "security", "spec"]);
+  });
+  it("resolves design with its review criteria (spec 029)", () => {
+    const p = resolveProfile(agentsDir, "design");
+    expect(p.instructions).toContain("Design profile");
+    expect(p.reviewCriteria).toContain("panelator-render");
   });
   it("resolves backend with its skills dir, instructions and tools", () => {
     const p = resolveProfile(agentsDir, "backend");

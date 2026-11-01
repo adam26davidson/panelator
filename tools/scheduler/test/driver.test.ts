@@ -1137,7 +1137,7 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     expect(inputOf(paths, "7-spec-")).toMatchObject({ mode: "write", spec_problem: "specs/011-gone/spec.md not found on main" });
   }, 60_000);
 
-  it("parks a UI issue for the design stage when the UI-design gate fails after the merge, keeping the ledger (AC-4, AC-20)", async () => {
+  it("starts the design stage when the UI-design gate fails after the merge, applying no label (spec 029 AC-1)", async () => {
     const ui = "specs/011-ui/spec.md";
     const files = {
       "a.txt": "a\n", "specs/010-thing/spec.md": spec, [ui]: readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-webui.md"), "utf8"),
@@ -1146,13 +1146,11 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     const { deps, claim, gh, paths, sha } = await setup(() => ({}), (sha) => ghRoutes(sha, { issueBody: `Spec: ${ui}`, prs: { 12: { headRef: "spec-7", head: sha } } }), onSpec7, files);
     const c = at(claim, { stage: "merge", track: "spec", pr: { number: 12, head_sha: sha }, specRescues: 1 });
     await writeClaim(paths, c);
-    await writeLedger(paths, 7, ledgerOf(c.state));
     const r = await step(deps, c);
-    expect(r.status).toBe("ended");
-    expect(gh.calls.find((x) => x.url === "/repos/o/r/issues/7/labels")?.body).toEqual({ labels: ["needs-design-stage"] });
-    expect(writes(gh)).toContain("DELETE /repos/o/r/issues/7/labels/in-progress");
-    expect(await readClaim(paths, 7)).toBeNull();
-    expect(existsSync(ledgerFile(paths))).toBe(true);
+    expect(r.status).toBe("continue");
+    expect(r.claim.state).toMatchObject({ stage: "design", track: "design", pr: null, designProblem: expect.stringMatching(/missing editor-empty\.png/) });
+    expect(JSON.stringify(gh.calls.map((x) => x.body))).not.toContain("needs-design-stage");
+    expect(writes(gh)).not.toContain("DELETE /repos/o/r/issues/7/labels/in-progress");
   }, 60_000);
 
   async function specRun(result: Scripted, over: RouteOver = {}, prepare?: (pair: ReturnType<typeof repoPair>, wt: string) => void) {
@@ -1884,5 +1882,59 @@ describe("driver: a rebase respects merged main (spec 024)", () => {
     expect(adapter.ran).toEqual(["fix:claude-sonnet-5-5"]);
     expect(git(claim.worktree, "status", "--porcelain").trim()).toBe("");
     expect(head(claim.worktree)).toBe(sha);
+  }, 60_000);
+});
+
+describe("driver: the design stage (spec 029 AC-1, AC-2)", () => {
+  const ui = "specs/011-ui/spec.md";
+  const screens = ["editor-empty", "editor-populated"];
+  const sizes = (n: string) => [`${n}.png`, `${n}.mobile.png`, `${n}.tablet.png`];
+  const files = {
+    "a.txt": "a\n", "specs/010-thing/spec.md": spec, [ui]: readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-webui.md"), "utf8"),
+    "docs/top.md": `# Top design\n\n## Children\n\n- \`specs/010-thing/spec.md\`\n- \`${ui}\`\n`,
+  };
+  const design = (wt: string, names: string[] = screens) => commitIn(wt, {
+    ...Object.fromEntries(names.flatMap((n) => [[`specs/011-ui/design/${n}.stories.tsx`, "export {};\n"], ...sizes(n).map((f) => [`specs/011-ui/design/${f}`, "png"])])),
+  }, "design");
+  const result = (sha: string, over: Record<string, unknown> = {}, names: string[] = screens) => ({
+    verdict: "designed", spec_path: ui, pr_number: 12, head_sha: sha,
+    screens: names.map((name) => ({ name, stories: [`${name}.stories.tsx`], renders: sizes(name) })), ...over,
+  });
+  async function designRun(make: (run: StageRun) => unknown, body = "Refs #7\n\n![a](a.png)") {
+    let wt = "";
+    const env = await setup(() => ({ design: [make, make] }), (sha) => ghRoutes(sha, { issueBody: `Spec: ${ui}`, prs: { 12: { headRef: "design-7", head: () => head(wt), body } } }), (_p, w) => {
+      wt = w;
+      git(w, "checkout", "-q", "-b", "design-7");
+    }, files);
+    const c = at(env.claim, { stage: "design", track: "design", designProblem: "missing editor-empty.png" });
+    await writeClaim(env.paths, c);
+    return { ...env, r: await step(env.deps, c) };
+  }
+
+  it("runs on design-<issue> with the spec path, the reason and the viewports in its input, and accepts a complete result", async () => {
+    const { r, adapter, paths } = await designRun((run) => result(design(run.worktree).length ? head(run.worktree) : ""));
+    expect(adapter.ran).toEqual(["design:claude-fable-5-1"]);
+    expect(adapter.heads).toEqual(["design-7"]);
+    expect(inputOf(paths, "7-design-")).toMatchObject({ spec_path: ui, design_reason: "missing editor-empty.png", viewports: expect.stringContaining("mobile: 390 by 844") });
+    expect(r.claim.state).toMatchObject({ stage: "verify", track: "design", pr: { number: 12 } });
+  }, 60_000);
+
+  it("fails a result missing a named screen, a render, or the Refs line, and one whose body closes the issue", async () => {
+    const one = await designRun((run) => { design(run.worktree); return result(head(run.worktree), {}, ["editor-empty"]); });
+    expect(one.r.claim.state.history).toContain("design attempt 1 failed: result: invalid: screen editor-populated is not in the result");
+    const two = await designRun((run) => {
+      design(run.worktree);
+      return result(head(run.worktree), { screens: screens.map((name) => ({ name, stories: [`${name}.stories.tsx`], renders: sizes(name).slice(0, 2) })) });
+    });
+    expect(two.r.claim.state.history).toContain("design attempt 1 failed: result: invalid");
+    const closes = await designRun((run) => { design(run.worktree); return result(head(run.worktree)); }, "Closes #7");
+    expect(closes.r.claim.state.history).toContain("design attempt 1 failed: result: invalid: design PR body closes an issue");
+    const noRefs = await designRun((run) => { design(run.worktree); return result(head(run.worktree)); }, "The design");
+    expect(noRefs.r.claim.state.history.some((h) => h.includes("must start with Refs #7"))).toBe(true);
+  }, 120_000);
+
+  it("fails a result that lists a render the worktree does not hold", async () => {
+    const { r } = await designRun((run) => { design(run.worktree, ["editor-empty"]); return result(head(run.worktree)); });
+    expect(r.claim.state.history.some((h) => h.includes("is not in specs/011-ui/design/"))).toBe(true);
   }, 60_000);
 });

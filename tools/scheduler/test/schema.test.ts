@@ -137,6 +137,17 @@ describe("spec 006 schemas", () => {
     expect(validate("spec-result", { verdict: "question" }).ok).toBe(false);
   });
 
+  it("design-result: designed needs three renders and a story per screen; question needs question (spec 029 AC-2)", () => {
+    const screen = { name: "editor", stories: ["editor.stories.tsx"], renders: ["editor.png", "editor.mobile.png", "editor.tablet.png"] };
+    const designed = { verdict: "designed", spec_path: "specs/030-console/spec.md", pr_number: 3, head_sha: sha, screens: [screen] };
+    expect(validate("design-result", designed).ok).toBe(true);
+    expect(validate("design-result", { ...designed, screens: [{ ...screen, renders: screen.renders.slice(0, 2) }] }).ok).toBe(false);
+    expect(validate("design-result", { ...designed, screens: [{ ...screen, stories: [] }] }).ok).toBe(false);
+    expect(validate("design-result", { ...designed, screens: undefined }).ok).toBe(false);
+    expect(validate("design-result", { verdict: "question", question: q }).ok).toBe(true);
+    expect(validate("design-result", { verdict: "question" }).ok).toBe(false);
+  });
+
   it("question-check-result is send or decide_yourself with reasoning (AC-12)", () => {
     expect(validate("question-check-result", { verdict: "send", reasoning: "needs the maintainer" }).ok).toBe(true);
     expect(validate("question-check-result", { verdict: "decide_yourself", reasoning: "r" }).ok).toBe(true);

@@ -56,9 +56,10 @@ describe("parseStageDefinition", () => {
 });
 
 describe("committed stage definitions", () => {
-  it("load all six stages with the spec's tiers", () => {
+  it("load all seven stages with the spec's tiers", () => {
     const d = loadStageDefinitions(`${agentsDir}/stages`);
-    expect(Object.keys(d).sort()).toEqual(["fix", "implement", "plan", "question-check", "review", "spec"]);
+    expect(Object.keys(d).sort()).toEqual(["design", "fix", "implement", "plan", "question-check", "review", "spec"]);
+    expect(d.design).toMatchObject({ tier: "strong", harness: "claude", profile: "design", output: "design-result", input: "stage-input" });
     expect(d.plan.tier).toBe("strong");
     expect(d.review.tier).toBe("strong");
     expect(d.implement.tier).toBe("standard");

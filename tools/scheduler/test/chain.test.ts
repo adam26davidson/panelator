@@ -7,7 +7,7 @@ import type { Action, ChainEvent, ChainStage, ChainState } from "../src/chain/ty
 import { MAX_FIXES } from "../src/gates/index.ts";
 import { validate } from "../src/schema/validate.ts";
 import { formatQuestion, questionBody, questionMarker } from "../src/chain/question.ts";
-import type { AgentStageName, ImplementResult, PlanResult, Question, ReviewResult, SpecResult } from "../src/types.ts";
+import type { AgentStageName, ImplementResult, PlanResult, Question, ReviewResult, SpecResult, DesignResult } from "../src/types.ts";
 
 const plan: PlanResult = { verdict: "ready", domain: "backend", tasks: [{ id: "T1", description: "d", files: ["a.ts"] }] };
 const impl: ImplementResult = { pr_number: 3, head_sha: "b".repeat(40), tasks_done: ["T1"] };
@@ -21,6 +21,7 @@ const qProduct: Question = { ...q, kind: "product", question: "Ship widget X?" }
 const qCapability: Question = { ...q, kind: "capability", question: "No GPU on this runner" };
 const qOther: Question = { ...q, kind: "other", question: "The suite cannot run here" };
 const revised: SpecResult = { verdict: "revised", spec_path: "specs/010-x/spec.md", pr_number: 8, head_sha: "f".repeat(40) };
+const designed: DesignResult = { verdict: "designed", spec_path: "specs/010-x/spec.md", pr_number: 8, head_sha: "f".repeat(40), screens: [{ name: "a", stories: ["a.stories.tsx"], renders: ["a.png", "a.mobile.png", "a.tablet.png"] }] };
 const pr8 = { number: 8, head_sha: "f".repeat(40) };
 const plusH = (h: number) => new Date(Date.parse(AT) + h * 3_600_000).toISOString();
 
@@ -560,7 +561,7 @@ describe("chain: spec stage and spec track (AC-4, AC-19, AC-21, AC-22)", () => {
     expect(r.state).toMatchObject({ fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, specProblem: null, answer: null, answerQuestionId: null, answerKind: null });
     expect(r.actions.some((a) => a.type === "done" || a.type === "label")).toBe(false);
   });
-  it("after a spec-track merge, a spec-present failure reruns the spec stage within bounds and a UI failure parks the issue (AC-4)", () => {
+  it("after a spec-track merge, a spec-present failure reruns the spec stage within bounds and a UI failure starts the design stage (AC-4, spec 029 AC-1)", () => {
     const failed = { type: "merge_result" as const, status: "merged" as const, specGate: { ok: false as const, gate: "spec-present" as const, reason: "spec lacks a Parent: line" } };
     const r1 = transition(at("merge", { track: "spec", pr: pr8 }), failed);
     expect(r1.actions).toEqual([{ type: "delete_branch", branch: "spec-1" }, { type: "run_stage", stage: "spec", attempt: 1 }]);
@@ -570,13 +571,10 @@ describe("chain: spec stage and spec track (AC-4, AC-19, AC-21, AC-22)", () => {
     expect(r2.state.stage).toBe("abandoned");
     expect(types(r2.actions)).toEqual(["delete_branch", "comment", "label", "finding", "notify", "done"]);
 
-    const ui = transition(at("merge", { track: "spec", pr: pr8 }), { type: "merge_result", status: "merged", specGate: { ok: false, gate: "ui-design", reason: "spec E will provide the design stage: no design/" } });
-    expect(ui.state).toMatchObject({ stage: "released", pr: null });
-    expect(types(ui.actions)).toEqual(["delete_branch", "comment", "label", "notify", "release"]);
-    expect((ui.actions[1] as { text: string }).text).toContain("no design/");
-    expect(ui.actions[2]).toEqual({ type: "label", add: ["needs-design-stage"], remove: ["in-progress"] });
-    expect(ui.actions.at(-1)).toEqual({ type: "release", reason: expect.any(String), savePatch: false });
-    expect(ui.actions.some((a) => a.type === "finding")).toBe(false);
+    const ui = transition(at("merge", { track: "spec", pr: pr8 }), { type: "merge_result", status: "merged", specGate: { ok: false, gate: "ui-design", reason: "missing editor.png" } });
+    expect(ui.actions).toEqual([{ type: "delete_branch", branch: "spec-1" }, { type: "run_stage", stage: "design", attempt: 1 }]);
+    expect(ui.state).toMatchObject({ stage: "design", track: "design", designProblem: "missing editor.png", pr: null, designRevisions: 0 });
+    expect(JSON.stringify(ui.actions)).not.toContain("needs-design-stage");
   });
   it("a merged record PR restores the parked issue PR and runs a fix (AC-18)", () => {
     const s = at("merge", { track: "spec", pr: pr8, parkedPr: pr3, fixes: 1, answerQuestionId: 5, answerQuestionIds: [5], answerKind: "product", specProblem: null });
@@ -1078,11 +1076,69 @@ describe("chain: formatQuestion (AC-13)", () => {
 
 const headOf = (e: ChainEvent) => (e as { head?: string }).head;
 
+describe("chain: the design track (spec 029)", () => {
+  const gateFailed = { type: "merge_result" as const, status: "merged" as const, specGate: { ok: false as const, gate: "ui-design" as const, reason: "missing a.mobile.png" } };
+  const designAt = (stage: ChainStage, over: Partial<ChainState> = {}) => at(stage, { track: "design", pr: pr8, designProblem: "missing a.mobile.png", ...over });
+
+  it("starts at the design stage, on the design track, when the shortlist found a design problem (AC-1)", () => {
+    const r = transition(initialChainState(1, null, null, "missing a.png"), { type: "start" });
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "design", attempt: 1 }]);
+    expect(r.state).toMatchObject({ stage: "design", track: "design", designProblem: "missing a.png" });
+    expect(branchOf(r.state)).toBe("design-1");
+  });
+  it("sends a design question to the question check and holds the work (AC-2)", () => {
+    const r = transition(at("design", { track: "design" }), { type: "stage_ok", stage: "design", result: { verdict: "question", question: qProduct }, head: HEAD });
+    expect(r.state).toMatchObject({ stage: "question-check", askingStage: "design", heldWork: { branch: "design-1", head: HEAD } });
+  });
+  it("designed goes to verify, review changes go to the fix stage, approve merges (AC-3)", () => {
+    const v = transition(at("design", { track: "design" }), { type: "stage_ok", stage: "design", result: designed, scope: { ok: true } });
+    expect(v.state).toMatchObject({ stage: "verify", pr: pr8, track: "design" });
+    expect(v.actions).toEqual([{ type: "verify" }]);
+    const rev = transition(designAt("review"), { type: "stage_ok", stage: "review", result: changes, security: false });
+    expect(rev.state).toMatchObject({ stage: "fix", track: "design", fixes: 0 });
+    expect(rev.actions[0]).toMatchObject({ type: "run_stage", stage: "fix" });
+    const fixed = transition(designAt("fix", { fixes: 1 }), fixOk("9".repeat(40)));
+    expect(fixed.state).toMatchObject({ stage: "verify", pr: { number: 8, head_sha: "9".repeat(40) } });
+    const ok = transition(designAt("review"), { type: "stage_ok", stage: "review", result: approve, security: false });
+    expect(ok.actions).toEqual([{ type: "merge" }]);
+  });
+  it("a design diff outside design/ goes to the fix stage once, then escalates (AC-2)", () => {
+    const bad = { ok: false as const, violations: ["web/x.ts"] };
+    const first = transition(at("design", { track: "design" }), { type: "stage_ok", stage: "design", result: designed, scope: bad });
+    expect(first.state).toMatchObject({ stage: "fix", scopeViolations: 1 });
+  });
+  it("a merge with the gate passing runs plan with fresh counters and keeps held work (AC-4)", () => {
+    const held = { branch: "issue-1", head: HEAD };
+    const r = transition(designAt("merge", { fixes: 2, specRevisions: 0, heldWork: held, designRevisions: 1 }), { type: "merge_result", status: "merged", specGate: { ok: true } });
+    expect(r.actions).toEqual([{ type: "delete_branch", branch: "design-1" }, { type: "run_stage", stage: "plan", attempt: 1 }]);
+    expect(r.state).toMatchObject({ stage: "plan", track: "issue", pr: null, fixes: 0, designProblem: null, designRevisions: 0, heldWork: held });
+  });
+  it("a merge with the gate still failing runs design again, then asks the spec agent to revise at the bound (AC-4)", () => {
+    const first = transition(designAt("merge"), gateFailed);
+    expect(first.actions).toEqual([{ type: "delete_branch", branch: "design-1" }, { type: "run_stage", stage: "design", attempt: 1 }]);
+    expect(first.state).toMatchObject({ stage: "design", designRevisions: 1, designProblem: "missing a.mobile.png", pr: null });
+    const second = transition(designAt("merge", { designRevisions: 1 }), gateFailed);
+    expect(second.actions).toEqual([{ type: "delete_branch", branch: "design-1" }, { type: "run_stage", stage: "spec", attempt: 1 }]);
+    expect(second.state).toMatchObject({ stage: "spec", track: "spec", specMode: "revise", specProblem: "missing a.mobile.png", specRevisions: 1 });
+    expect(transition(designAt("merge", { designRevisions: 1 }), gateFailed, { designRevisions: 3 }).state.stage).toBe("design");
+  });
+  it("a design stage that fails twice is rescued once, then the PR closes and the spec agent revises (AC-4)", () => {
+    const f = (s: ChainState) => transition(s, { type: "stage_failed", stage: "design", reason: "boom" });
+    const retry = f(at("design", { track: "design", designProblem: "p" }));
+    expect(retry.state).toMatchObject({ stage: "design", attempt: 2 });
+    const rescue = f({ ...retry.state });
+    expect(rescue.state).toMatchObject({ stage: "design", rescueRun: true, specRescues: 1, track: "design" });
+    const revise = f({ ...rescue.state, pr: pr8 });
+    expect(revise.state).toMatchObject({ stage: "spec", specMode: "revise", specRevisions: 1, pr: null });
+    expect(revise.actions[0]).toMatchObject({ type: "close_pr", pr: 8, branch: "design-1" });
+  });
+});
+
 describe("chain: every event in every stage (AC-27)", () => {
   const STAGES: ChainStage[] = [
-    "claimed", "plan", "implement", "verify", "review", "fix", "merge", "spec", "question-check", "done", "released", "waiting", "paused", "abandoned",
+    "claimed", "plan", "implement", "verify", "review", "fix", "merge", "spec", "design", "question-check", "done", "released", "waiting", "paused", "abandoned",
   ];
-  const AGENT: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "question-check"];
+  const AGENT: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "design", "question-check"];
   const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused"];
   const EVENTS_FAILED: ChainEvent[] = AGENT.flatMap((stage): ChainEvent[] => [
     { type: "stage_failed", stage, reason: "boom" },
@@ -1108,6 +1164,10 @@ describe("chain: every event in every stage (AC-27)", () => {
     { type: "stage_ok", stage: "spec", result: revised, scope: scopeBad },
     { type: "stage_ok", stage: "spec", result: { verdict: "question", question: qProduct }, head: HEAD },
     { type: "stage_ok", stage: "spec", result: { verdict: "question", question: qOther }, head: HEAD },
+    { type: "stage_ok", stage: "design", result: designed, scope: { ok: true } },
+    { type: "stage_ok", stage: "design", result: designed, scope: scopeBad },
+    { type: "stage_ok", stage: "design", result: { verdict: "question", question: qProduct }, head: HEAD },
+    { type: "stage_ok", stage: "design", result: { verdict: "question", question: qOther }, head: HEAD },
     { type: "stage_ok", stage: "question-check", result: { verdict: "send", reasoning: "r" } },
     { type: "stage_ok", stage: "question-check", result: { verdict: "decide_yourself", reasoning: "r" } },
     ...EVENTS_FAILED,
@@ -1146,9 +1206,9 @@ describe("chain: every event in every stage (AC-27)", () => {
   }
 
   // A state that makes each stage's transitions meaningful: a PR, a plan, a pending question, a saved spec mode, a stage to resume.
-  function fixture(stage: ChainStage, track: "issue" | "spec", variant: Partial<ChainState>): ChainState {
+  function fixture(stage: ChainStage, track: "issue" | "spec" | "design", variant: Partial<ChainState>): ChainState {
     return at(stage, {
-      track, pr: track === "spec" ? pr8 : pr3, plan, specMode: "write", question: q, askingStage: "implement", resumeStage: "plan", pendingFixInput: "fix it",
+      track, pr: track === "issue" ? pr3 : pr8, plan, specMode: "write", question: q, askingStage: "implement", resumeStage: "plan", pendingFixInput: "fix it",
       ...variant,
     });
   }
@@ -1164,7 +1224,7 @@ describe("chain: every event in every stage (AC-27)", () => {
     let valid = 0;
     let invalidPairs = 0;
     for (const stage of STAGES) {
-      for (const track of stage === "spec" ? (["spec"] as const) : (["issue", "spec"] as const)) {
+      for (const track of stage === "spec" ? (["spec"] as const) : stage === "design" ? (["design"] as const) : (["issue", "spec", "design"] as const)) {
         for (const variant of VARIANTS) {
           const state = fixture(stage, track, variant);
           for (const event of EVENTS) {
@@ -1178,6 +1238,7 @@ describe("chain: every event in every stage (AC-27)", () => {
               const labels = r!.actions.filter((a): a is Extract<Action, { type: "label" }> => a.type === "label");
               expect(labels.some((a) => a.add.includes("needs-human")), label).toBe(false);
               if (r!.state.stage === "spec") expect(r!.state.track, label).toBe("spec");
+              if (r!.state.stage === "design") expect(r!.state.track, label).toBe("design");
               // Nothing waits on a human but paused: only a pause action stops for the maintainer.
               if (r!.state.stage === "paused") expect(r!.actions.map((a) => a.type), label).toEqual(["pause"]);
             } else {
@@ -1204,7 +1265,7 @@ describe("chain: every event in every stage (AC-27)", () => {
       fixes: s.fixes, planFailures: s.planFailures, implementFailures: s.implementFailures, scopeViolations: s.scopeViolations, attempt: s.attempt, history: s.history,
     });
     for (const stage of AGENT) {
-      const s = fixture(stage, stage === "spec" ? "spec" : "issue", { rescueRun: true, rescues: 1, specRescues: 1, fixes: 1, attempt: 2, history: ["h"] });
+      const s = fixture(stage, stage === "spec" ? "spec" : stage === "design" ? "design" : "issue", { rescueRun: true, rescues: 1, specRescues: 1, fixes: 1, attempt: 2, history: ["h"] });
       const r = transition(s, { type: "stage_failed", stage, reason: "429", postpone: true });
       expect(r.state, stage).toMatchObject({ stage: "waiting", resumeStage: stage, rescueRun: true });
       expect(counters(r.state), stage).toEqual(counters(s));
@@ -1218,7 +1279,7 @@ describe("chain: every event in every stage (AC-27)", () => {
     let cleared = 0;
     let set = 0;
     for (const stage of STAGES) {
-      for (const track of stage === "spec" ? (["spec"] as const) : (["issue", "spec"] as const)) {
+      for (const track of stage === "spec" ? (["spec"] as const) : stage === "design" ? (["design"] as const) : (["issue", "spec", "design"] as const)) {
         for (const variant of VARIANTS) {
           for (const heldWork of heldVariants) {
             const state = fixture(stage, track, { ...variant, heldWork });
@@ -1229,8 +1290,8 @@ describe("chain: every event in every stage (AC-27)", () => {
               const after = r.state.heldWork;
               if (event.type === "stage_ok" && headOf(event) !== undefined && r.state.stage !== "abandoned" && r.state.stage !== "released") {
                 // A question routed from a plan, implement, fix or spec result records the new head, replacing any held work.
-                if (after !== null && (r.state.stage === "question-check" || r.state.stage === "paused" || (r.state.stage === "spec" && r.state.specMode === "decide"))) {
-                  expect(after, label).toEqual({ branch: track === "spec" ? "spec-1" : "issue-1", head: headOf(event) });
+                if (after !== null && (r.state.stage === "question-check" || r.state.stage === "paused" || (r.state.stage === "spec" && r.state.specMode === "decide") || (r.state.stage === "design" && state.decideInput === null && r.state.decideInput !== null))) {
+                  expect(after, label).toEqual({ branch: `${track}-1`, head: headOf(event) });
                   set++;
                   continue;
                 }
@@ -1244,7 +1305,7 @@ describe("chain: every event in every stage (AC-27)", () => {
               // Cleared: only by a bound PR, the asking stage's failure, or an escalation (rescue, re-plan, spec revision).
               expect(after, label).toBeNull();
               cleared++;
-              const bound = event.type === "stage_ok" && (event.stage === "implement" || event.stage === "fix" || event.stage === "spec") && r.state.pr !== null && heldWork!.branch === (track === "spec" ? "spec-1" : "issue-1");
+              const bound = event.type === "stage_ok" && (event.stage === "implement" || event.stage === "fix" || event.stage === "spec" || event.stage === "design") && r.state.pr !== null && heldWork!.branch === `${track}-1`;
               const askerFailed = (event.type === "stage_failed" && !event.postpone && event.stage === state.askingStage)
                 // An unmarked question in decide mode counts as a failed run.
                 || (event.type === "stage_ok" && headOf(event) !== undefined && state.decideInput !== null && event.stage === state.askingStage);
