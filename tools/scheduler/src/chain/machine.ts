@@ -32,15 +32,19 @@ const KIND_OTHER_REASONING = "kind other is not a question for the maintainer";
 export const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused"];
 
 export type LedgerCounts = Pick<
-  ChainState, "rescues" | "specRescues" | "replans" | "specRevisions" | "designRevisions" | "specAnswers" | "decideReturns" | "history" | "pendingAnswer" | "chainFailures" | "chainErrors"
->;
+  ChainState, "rescues" | "specRescues" | "replans" | "specRevisions" | "specAnswers" | "decideReturns" | "history" | "pendingAnswer" | "chainFailures" | "chainErrors"
+> & {
+  /** Spec 029: written only once non-zero, so a ledger of a chain that never needed a design revision keeps its earlier shape. */
+  designRevisions?: number;
+};
 
 /** The ledger's fields of a state; a ledger written before T4 and C7 lacks the last three, which default. */
-export function ledgerOf(state: Omit<LedgerCounts, "pendingAnswer" | "chainFailures" | "chainErrors" | "designRevisions"> & Partial<LedgerCounts>): LedgerCounts {
+export function ledgerOf(state: Omit<LedgerCounts, "pendingAnswer" | "chainFailures" | "chainErrors"> & Partial<LedgerCounts>): LedgerCounts {
   return {
-    rescues: state.rescues, specRescues: state.specRescues, replans: state.replans, specRevisions: state.specRevisions, designRevisions: state.designRevisions ?? 0,
+    rescues: state.rescues, specRescues: state.specRescues, replans: state.replans, specRevisions: state.specRevisions,
     specAnswers: state.specAnswers, decideReturns: state.decideReturns, history: [...state.history],
     pendingAnswer: state.pendingAnswer ?? null, chainFailures: state.chainFailures ?? null, chainErrors: state.chainErrors ?? 0,
+    ...(state.designRevisions ? { designRevisions: state.designRevisions } : {}),
   };
 }
 

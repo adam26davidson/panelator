@@ -334,7 +334,7 @@ describe("chain: escalation path (AC-1 to AC-6)", () => {
 
 describe("chain: ledger and claim state (AC-7)", () => {
   const ledger: LedgerCounts = {
-    rescues: 1, specRescues: 0, replans: 0, specRevisions: 0, designRevisions: 0, specAnswers: 1, decideReturns: 1, history: ["plan: failed twice: old"], pendingAnswer: null, chainFailures: null, chainErrors: 0,
+    rescues: 1, specRescues: 0, replans: 0, specRevisions: 0, specAnswers: 1, decideReturns: 1, history: ["plan: failed twice: old"], pendingAnswer: null, chainFailures: null, chainErrors: 0,
   };
   it("a seeded ledger carries counts into a new chain (AC-7)", () => {
     const s = initialChainState(1, null, ledger);
@@ -966,7 +966,7 @@ describe("chain: answer chains and unrecorded answers (final review T3, T4, T-mi
     // A ledger written before T4 and C7 loads with the new fields defaulted.
     const old = { rescues: 1, specRescues: 0, replans: 0, specRevisions: 0, specAnswers: 0, decideReturns: 0, history: [] };
     expect(initialChainState(1, null, old)).toMatchObject({ pendingAnswer: null, chainFailures: null, chainErrors: 0 });
-    expect(ledgerOf(initialChainState(1, null, old))).toEqual({ ...old, pendingAnswer: null, chainFailures: null, chainErrors: 0, designRevisions: 0 });
+    expect(ledgerOf(initialChainState(1, null, old))).toEqual({ ...old, pendingAnswer: null, chainFailures: null, chainErrors: 0 });
   });
   it("a liveness release keeps the unrecorded answer in the ledger (T4)", () => {
     const pending = { ids: [5], kind: "technical" as const, text: "Question #5: lru" };
@@ -1481,6 +1481,8 @@ describe("chain: the design track (spec 029)", () => {
   it("defaults the new fields on a state written before spec 029", () => {
     const { designProblem: _a, designRevisions: _b, ...old } = initialChainState(3);
     expect(normalizeChainState(old)).toMatchObject({ designProblem: null, designRevisions: 0 });
-    expect(ledgerOf({ ...old, designRevisions: undefined } as never).designRevisions).toBe(0);
+    expect(ledgerOf({ ...old, designRevisions: undefined } as never)).not.toHaveProperty("designRevisions");
+    expect(ledgerOf({ ...old, designRevisions: 2 } as never).designRevisions).toBe(2);
+    expect(initialChainState(3, null, ledgerOf({ ...old, designRevisions: 2 } as never)).designRevisions).toBe(2);
   });
 });
