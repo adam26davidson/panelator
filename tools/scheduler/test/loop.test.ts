@@ -240,10 +240,11 @@ describe("Scheduler.tick", () => {
     for (let i = 1; i <= 3; i++) {
       const t = await s.tick();
       expect(t.released).toEqual([]);
-      await new Promise((r) => setTimeout(r, 50));
+      for (let w = 0; w < 200 && errors.length < i; w++) await new Promise((r) => setTimeout(r, 25));
       expect(errors).toHaveLength(i);
       expect(errors[i - 1]).toMatchObject({ kind: "error", issue: 7, error: "boom" });
     }
+    await new Promise((r) => setTimeout(r, 250));
     const t4 = await s.tick();
     expect(calls).toBe(3);
     expect(t4.released).toEqual([7]);
