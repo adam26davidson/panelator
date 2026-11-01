@@ -98,3 +98,37 @@ describe("selectEligible", () => {
     expect(r.decisions[0].gate).toBe("authority");
   });
 });
+
+describe("selectEligible: UI design (spec 029 AC-1)", () => {
+  const web = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-webui.md"), "utf8");
+  const ctxFor = (design: string[]) => ({
+    appBot: BOT, maintainer: ME, labels, claimed: new Set<number>(),
+    readSpec: (p: string) => withTopDesign({ "specs/010-thing/spec.md": web }, "specs/010-thing/spec.md")[p] ?? null,
+    listDesign: () => design,
+  });
+  const sizes = ["editor-empty", "editor-populated"].flatMap((n) => [`${n}.png`, `${n}.mobile.png`, `${n}.tablet.png`]);
+
+  it("makes an issue eligible with the reason when design/ lacks the three renders", () => {
+    const r = selectEligible([issue(1)], ctxFor(["editor.stories.tsx", "editor-empty.png", "editor-populated.png"]));
+    expect(r.eligible.map((i) => i.number)).toEqual([1]);
+    expect(r.designProblems.get(1)).toMatch(/editor-empty\.mobile\.png/);
+    expect(r.decisions.find((d) => d.issue === 1)).toMatchObject({ gate: "ui-design", result: { ok: false, action: "ignore" } });
+    expect(r.specProblems.size).toBe(0);
+  });
+  it("is eligible without a design problem when design/ is complete", () => {
+    const r = selectEligible([issue(1)], ctxFor(["editor.stories.tsx", ...sizes]));
+    expect(r.eligible.map((i) => i.number)).toEqual([1]);
+    expect(r.designProblems.size).toBe(0);
+    expect(r.decisions.at(-1)).toMatchObject({ gate: "eligible" });
+  });
+  it("leaves a non-UI spec unchanged", () => {
+    const r = selectEligible([issue(1)], { ...ctxFor([]), readSpec: (p) => withTopDesign({ "specs/010-thing/spec.md": good }, "specs/010-thing/spec.md")[p] ?? null });
+    expect(r.designProblems.size).toBe(0);
+    expect(r.eligible).toHaveLength(1);
+  });
+  it("still skips an issue labelled needs-design-stage", () => {
+    const r = selectEligible([issue(1, { labels: ["validated", "needs-design-stage"] })], ctxFor([]));
+    expect(r.eligible).toEqual([]);
+    expect(r.designProblems.size).toBe(0);
+  });
+});

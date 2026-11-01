@@ -3,6 +3,7 @@ import {telegramChannel} from '../src/telegram/channel.ts';
 import {fakeTelegram} from './helpers/fake-telegram.ts';
 import {emptyTelegram} from '../src/state/paused.ts';
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
@@ -154,21 +155,45 @@ describe("Scheduler.tick", () => {
     expect(c.state.history).toEqual(["plan failed"]);
   }, 30_000);
 
-  it("labels a UI issue without design artifacts needs-design-stage once, with its comment and one notification (spec 006 AC-20)", async () => {
-    const ui = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-webui.md"), "utf8");
-    const rs = routes([issue(4)]);
-    const { s, gh, notifications, paths } = await setup(rs, 1, undefined, ui);
+  const uiSpec = () => readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-webui.md"), "utf8");
+  const labelPosts = (gh: { calls: { method: string; url: string; body?: unknown }[] }) => gh.calls.filter((c) => c.method === "POST" && /\/labels$/.test(c.url));
+
+  it("claims a UI issue without design artifacts for the design stage and applies no needs-design-stage label (spec 029 AC-1)", async () => {
+    const { s, gh, notifications, paths } = await setup(routes([issue(4)]), 1, undefined, uiSpec());
     const t = await s.tick();
-    expect(t.claimed).toEqual([]);
-    expect(await listClaims(paths)).toEqual([]);
-    expect(gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues/4/labels").map((c) => c.body)).toEqual([{ labels: ["needs-design-stage"] }]);
-    expect(gh.calls.filter((c) => c.url === "/repos/o/r/issues/4/comments").map((c) => c.body)).toEqual([{ body: expect.stringContaining("spec E will provide the design stage") }]);
-    expect(notifications).toEqual([expect.objectContaining({ issue: 4, label: "needs-design-stage" })]);
-    rs[1] = { method: "GET", path: /^\/repos\/o\/r\/issues$/, reply: (_m, _b, url) => ({ body: [issue(4, ["validated", "class:product", "needs-design-stage"])], headers: pageLink(url, 1, 1) }) };
+    expect(t.claimed).toEqual([4]);
+    const [c] = await listClaims(paths);
+    expect(c.state.designProblem).toMatch(/editor-empty\.mobile\.png/);
+    expect(labelPosts(gh).map((x) => x.body)).toEqual([{ labels: ["in-progress"] }]);
+    expect(notifications).toEqual([]);
+  }, 30_000);
+
+  it("removes needs-design-stage from a parked issue once, with one comment, and claims it (spec 029 AC-8)", async () => {
+    const parked = issue(4, ["validated", "class:product", "needs-design-stage"]);
+    const rs = routes([parked]);
+    const { s, gh, paths, deps } = await setup(rs, 1, undefined, uiSpec());
+    const t = await s.tick();
+    expect(gh.calls.filter((c) => c.method === "DELETE").map((c) => c.url)).toEqual(["/repos/o/r/issues/4/labels/needs-design-stage"]);
+    expect(gh.calls.filter((c) => c.url === "/repos/o/r/issues/4/comments" && c.method === "POST")).toHaveLength(1);
+    expect(JSON.parse(readFileSync(paths.designRelabelled, "utf8"))).toEqual([4]);
+    expect(t.claimed).toEqual([4]);
+    expect(labelPosts(gh).map((x) => x.body)).toEqual([{ labels: ["in-progress"] }]);
+
+    // A restart over the same state directory, with the label back on GitHub: nothing is removed or posted again.
+    rs[1] = { method: "GET", path: /^\/repos\/o\/r\/issues$/, reply: (_m, _b, url) => ({ body: [parked], headers: pageLink(url, 1, 1) }) };
+    for (const c of await listClaims(paths)) await rm(join(paths.claims, `${c.issue}.json`), { force: true });
     gh.calls.length = 0;
+    const again = new Scheduler(deps, { driveChain: async (_d, claim) => claim });
+    await again.tick();
+    expect(gh.calls.filter((c) => c.method === "DELETE")).toEqual([]);
+    expect(gh.calls.filter((c) => c.url === "/repos/o/r/issues/4/comments" && c.method === "POST")).toEqual([]);
+  }, 30_000);
+
+  it("leaves an issue without the label alone and never creates the design state file (spec 029 AC-8)", async () => {
+    const { s, gh, paths } = await setup(routes([issue(4)]), 1, undefined, uiSpec());
     await s.tick();
-    expect(gh.calls.filter((c) => c.method === "POST")).toEqual([expect.objectContaining({ url: "/graphql" })]);
-    expect(notifications).toHaveLength(1);
+    expect(gh.calls.filter((c) => c.method === "DELETE")).toEqual([]);
+    expect(existsSync(paths.designRelabelled)).toBe(false);
   }, 30_000);
 
   it("does not claim when the issue list is incomplete (review focus 1)", async () => {

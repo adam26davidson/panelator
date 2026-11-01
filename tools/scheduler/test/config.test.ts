@@ -20,6 +20,20 @@ describe("loadConfig", () => {
     expect(c.required_checks).toEqual(["test"]);
     expect(c.rescue_model).toBe("claude-fable-5-1");
   });
+  it("reads bounds.design_revisions, default 2, a positive integer (spec 029 AC-4)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cfg-"));
+    const p = join(dir, "s.yaml");
+    const base = "repo: a/b\nmaintainer: a\napp: {bot_login: bot}\n";
+    expect(loadConfig(defaultConfigPath).bounds.design_revisions).toBe(2);
+    writeFileSync(p, base);
+    expect(loadConfig(p).bounds.design_revisions).toBe(2);
+    writeFileSync(p, base + "bounds: {design_revisions: 5}\n");
+    expect(loadConfig(p).bounds.design_revisions).toBe(5);
+    for (const bad of ["0", "1.5", "nope", "-1"]) {
+      writeFileSync(p, base + `bounds: {design_revisions: ${bad}}\n`);
+      expect(() => loadConfig(p), bad).toThrow(/design_revisions/);
+    }
+  });
   it("defaults rescue_model when the key is absent", () => {
     const dir = mkdtempSync(join(tmpdir(), "cfg-"));
     const p = join(dir, "s.yaml");

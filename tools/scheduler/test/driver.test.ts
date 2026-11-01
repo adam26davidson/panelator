@@ -25,6 +25,7 @@ import { mockGitHub, type Route } from "./helpers/mock-github.ts";
 import { ParameterStore } from "../src/parameters/store.ts";
 import { loadParameterDefinitions } from "../src/parameters/definitions.ts";
 import { observeRun } from "../src/quota/book.ts";
+import { validate } from "../src/schema/validate.ts";
 import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
 
 const script = join(import.meta.dirname, "fixtures", "stage-script.ts");
@@ -1137,7 +1138,7 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     expect(inputOf(paths, "7-spec-")).toMatchObject({ mode: "write", spec_problem: "specs/011-gone/spec.md not found on main" });
   }, 60_000);
 
-  it("parks a UI issue for the design stage when the UI-design gate fails after the merge, keeping the ledger (AC-4, AC-20)", async () => {
+  it("starts the design stage, not a park, when the UI-design gate fails after the spec merge (spec 029 AC-1)", async () => {
     const ui = "specs/011-ui/spec.md";
     const files = {
       "a.txt": "a\n", "specs/010-thing/spec.md": spec, [ui]: readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-webui.md"), "utf8"),
@@ -1148,12 +1149,94 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     await writeClaim(paths, c);
     await writeLedger(paths, 7, ledgerOf(c.state));
     const r = await step(deps, c);
-    expect(r.status).toBe("ended");
-    expect(gh.calls.find((x) => x.url === "/repos/o/r/issues/7/labels")?.body).toEqual({ labels: ["needs-design-stage"] });
-    expect(writes(gh)).toContain("DELETE /repos/o/r/issues/7/labels/in-progress");
-    expect(await readClaim(paths, 7)).toBeNull();
-    expect(existsSync(ledgerFile(paths))).toBe(true);
+    expect(r.status).toBe("continue");
+    expect(r.claim.state).toMatchObject({ stage: "design", track: "design", pr: null, specRescues: 1 });
+    expect(r.claim.state.designProblem).toMatch(/editor-empty\.mobile\.png/);
+    expect(gh.calls.some((x) => x.url === "/repos/o/r/issues/7/labels" && x.method === "POST")).toBe(false);
+    expect(writes(gh)).not.toContain("DELETE /repos/o/r/issues/7/labels/in-progress");
+    expect(await readClaim(paths, 7)).not.toBeNull();
   }, 60_000);
+
+  describe("design track (spec 029)", () => {
+    const uiSpec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-webui.md"), "utf8");
+    const uiFiles = withTopDesign({ "a.txt": "a\n", "specs/010-thing/spec.md": uiSpec }, "specs/010-thing/spec.md");
+    const onDesign7 = (_pair: ReturnType<typeof repoPair>, wt: string) => {
+      git(wt, "checkout", "-q", "-b", "design-7");
+      commitIn(wt, { "specs/010-thing/design/editor.stories.tsx": "export default {};\n" }, "design work");
+      git(wt, "push", "-q", "-u", "origin", "design-7");
+    };
+    const screens = [
+      { name: "editor-empty", stories: ["editor-empty--default"], renders: ["a.png", "a.mobile.png", "a.tablet.png"] },
+      { name: "editor-populated", stories: ["editor-populated--default"], renders: ["b.png", "b.mobile.png", "b.tablet.png"] },
+    ];
+    const designed = (sha: string, extra: Record<string, unknown> = {}) => ({ verdict: "designed", spec_path: "specs/010-thing/spec.md", pr_number: 12, head_sha: sha, screens, ...extra });
+    async function designRun(result: Scripted, over: RouteOver = {}, prepare?: (pair: ReturnType<typeof repoPair>, wt: string) => void) {
+      const env = await setup(() => ({ design: [result], fix: [] }), (sha) => ghRoutes(sha, { prs: { 12: { headRef: "design-7", head: sha, body: "Refs #7\n\n![a](a.png)" } }, ...over }), prepare, uiFiles);
+      const c = at(env.claim, { stage: "design", track: "design", designProblem: "the design is incomplete: missing editor-empty.png" });
+      await writeClaim(env.paths, c);
+      return { ...env, r: await step(env.deps, c) };
+    }
+
+    it("gives the design stage the spec path, the problem and the viewports, valid against stage-input (AC-1)", async () => {
+      const { paths, adapter } = await designRun((run: StageRun) => designed(head(run.worktree)));
+      const input = inputOf(paths, "7-design-");
+      expect(input).toMatchObject({ spec_path: "specs/010-thing/spec.md", design_problem: "the design is incomplete: missing editor-empty.png", viewports: expect.stringContaining("tablet 820x1180") });
+      expect(validate("stage-input", input).ok).toBe(true);
+      expect(adapter.heads).toEqual(["design-7"]);
+      expect(adapter.ran).toEqual(["design:claude-fable-5-1"]);
+    }, 60_000);
+
+    it("fails a result with a screen of two renders, or without stories, as an invalid result (AC-2)", async () => {
+      const two = await designRun((run: StageRun) => designed(head(run.worktree), { screens: [{ ...screens[0], renders: ["a.png", "a.mobile.png"] }, screens[1]] }));
+      expect(two.r.claim.state.history).toContain("design attempt 1 failed: result: invalid");
+      const none = await designRun((run: StageRun) => designed(head(run.worktree), { screens: [{ ...screens[0], stories: [] }, screens[1]] }));
+      expect(none.r.claim.state.history).toContain("design attempt 1 failed: result: invalid");
+    }, 60_000);
+
+    it("fails a result that leaves a named screen out (AC-2)", async () => {
+      const { r } = await designRun((run: StageRun) => designed(head(run.worktree), { screens: [screens[0]] }));
+      expect(r.claim.state.history).toContain("design attempt 1 failed: result: invalid: screen editor-populated has no story");
+    }, 60_000);
+
+    it("fails a design PR body that closes an issue or does not start with Refs (AC-2)", async () => {
+      let wt = "";
+      const prepare = (_p: ReturnType<typeof repoPair>, w: string) => { wt = w; };
+      const closes = await designRun((run: StageRun) => designed(head(run.worktree)), { prs: { 12: { headRef: "design-7", head: () => head(wt), body: "Refs #7\nCloses #7" } } }, prepare);
+      expect(closes.r.claim.state.history).toContain("design attempt 1 failed: result: design PR body closes an issue");
+      const bare = await designRun((run: StageRun) => designed(head(run.worktree)), { prs: { 12: { headRef: "design-7", head: () => head(wt), body: "The design" } } }, prepare);
+      expect(bare.r.claim.state.history.join("\n")).toContain("does not start with Refs #7");
+    }, 60_000);
+
+    it("reports a design PR diff outside design/ as a scope violation, handled as a spec PR's (AC-2)", async () => {
+      let wt = "";
+      const edit = (run: StageRun) => designed(commitIn(run.worktree, { "docs/x.md": "x\n", "specs/010-thing/design/editor.stories.tsx": "export default {};\n" }));
+      const { r } = await designRun(edit, { prs: { 12: { headRef: "design-7", head: () => head(wt), body: "Refs #7" } } }, (_p, w) => { wt = w; });
+      expect(r.claim.state).toMatchObject({ stage: "fix", track: "design", scopeViolations: 1 });
+      expect(r.claim.state.pendingFixInput).toContain("docs/x.md: outside design PR scope");
+    }, 60_000);
+
+    it("runs the fix on the design PR under the design profile and the design stage's model (AC-3)", async () => {
+      const env = await setup(() => ({ fix: [(run: StageRun) => ({ head_sha: head(run.worktree), addressed: [0] })] }), (sha) => ghRoutes(sha, { prs: { 12: { headRef: "design-7", head: sha } } }), onDesign7, uiFiles);
+      const c = at(env.claim, { stage: "fix", track: "design", pr: { number: 12, head_sha: env.sha }, pendingFixInput: "Review requested changes" });
+      await writeClaim(env.paths, c);
+      await step(env.deps, c);
+      expect(env.adapter.ran).toEqual(["fix:claude-fable-5-1"]);
+      expect(env.adapter.heads).toEqual(["design-7"]);
+      expect(inputOf(env.paths, "7-fix-").profile_instructions).toContain("Design profile");
+    }, 60_000);
+
+    it("reports the gate on main after a design merge: a still-missing render is another design run (AC-4)", async () => {
+      const env = await setup(() => ({}), (sha) => ghRoutes(sha, { prs: { 12: { headRef: "design-7", head: sha } } }), onDesign7, uiFiles);
+      const c = at(env.claim, { stage: "merge", track: "design", pr: { number: 12, head_sha: env.sha } });
+      await writeClaim(env.paths, c);
+      const r = await step(env.deps, c);
+      expect(writes(env.gh)).toContain("PUT /repos/o/r/pulls/12/merge");
+      expect(writes(env.gh)).toContain("DELETE /repos/o/r/git/refs/heads/design-7");
+      expect(existsSync(join(env.paths.root, "merges.jsonl"))).toBe(false);
+      expect(r.claim.state).toMatchObject({ stage: "design", track: "design", designRevisions: 1, pr: null });
+      expect(r.claim.state.designProblem).toMatch(/missing editor-empty\.png/);
+    }, 60_000);
+  });
 
   async function specRun(result: Scripted, over: RouteOver = {}, prepare?: (pair: ReturnType<typeof repoPair>, wt: string) => void) {
     const env = await setup(() => ({ spec: [result], fix: [] }), (sha) => ghRoutes(sha, { prs: { 12: { headRef: "spec-7", head: sha } }, ...over }), prepare);

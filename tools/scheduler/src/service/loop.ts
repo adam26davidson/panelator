@@ -29,6 +29,8 @@ import { pruneUsage } from "../state/runs.ts";
 import { readToken } from "../state/token.ts";
 import type { SleepInhibitor } from "./inhibit.ts";
 import type { ServiceLog } from "./log.ts";
+import { readFile, rename, writeFile } from "node:fs/promises";
+import type { StatePaths } from "../state/paths.ts";
 import { schedulerChanged } from "./git.ts";
 
 export interface SchedulerDeps extends DriverDeps {
@@ -73,6 +75,26 @@ type DriveFn = (deps: DriverDeps, claim: Claim, isStopping: () => boolean) => Pr
 const carriesPending = (c: Claim): boolean => c.pendingEvent !== undefined || Boolean(c.pendingActions?.length);
 /** `liveness_expired` is valid only in a stage the chain is still working in. */
 const expirable = (c: Claim): boolean => !carriesPending(c) && !ENDED.includes(c.state.stage);
+
+/** Spec 029 AC-8: the label spec 006 AC-20 applied; no code path applies it any more, and parked issues lose it once. */
+const DESIGN_PARK_LABEL = "needs-design-stage";
+
+/** The issues already re-evaluated (spec 029 AC-8), empty when the file is absent. */
+async function readRelabelled(p: StatePaths): Promise<number[]> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(p.designRelabelled, "utf8"));
+    return Array.isArray(parsed) ? parsed.filter((n): n is number => typeof n === "number") : [];
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw e;
+  }
+}
+
+async function appendRelabelled(p: StatePaths, issue: number): Promise<void> {
+  const tmp = `${p.designRelabelled}.tmp`;
+  await writeFile(tmp, JSON.stringify([...new Set([...(await readRelabelled(p)), issue])]));
+  await rename(tmp, p.designRelabelled);
+}
 
 export class Scheduler {
   #deps: SchedulerDeps;
@@ -537,23 +559,31 @@ export class Scheduler {
       // The ranked shortlist, computed once and only when a new claim fits under the held count.
       let ranked: Awaited<ReturnType<typeof d.gh.listOpenIssues>> | null = null;
       let specProblems = new Map<number, string>();
+      let designProblems = new Map<number, string>();
       const shortlist = async () => {
         if (ranked) return ranked;
         if (!(await openIssues())) return (ranked = []);
         // AC-13: the shortlist treats an issue with a paused record as claimed.
         const claimed = new Set([...(await listClaims(d.paths)).map((c) => c.issue), ...(await listPaused(d.paths)).map((r) => r.issue)]);
         const ctx = buildSelectContext(d.repoDir, d.cfg, claimed, d.botLogin);
+        // Spec 029 AC-8: an issue parked with needs-design-stage goes back to the shortlist, once.
+        const done = new Set(await readRelabelled(d.paths));
+        for (const issue of issues!) {
+          if (!issue.labels.includes(DESIGN_PARK_LABEL) || done.has(issue.number)) continue;
+          try {
+            await d.gh.removeLabel(issue.number, DESIGN_PARK_LABEL);
+            await d.gh.comment(issue.number, "The design stage now exists (spec 029); this issue goes back to the shortlist and its design is produced by the chain.").catch((e) => info.errors.push(`comment ${issue.number}: ${(e as Error).message}`));
+            await appendRelabelled(d.paths, issue.number);
+            issue.labels = issue.labels.filter((l) => l !== DESIGN_PARK_LABEL);
+            d.serviceLog.write({ kind: "design-relabelled", issue: issue.number });
+          } catch (e) {
+            info.errors.push(`relabel ${issue.number}: ${(e as Error).message}`);
+          }
+        }
         const sel = selectEligible(issues!, ctx);
         specProblems = sel.specProblems;
+        designProblems = sel.designProblems;
         info.eligible = sel.eligible.length;
-        // Only needs-design-stage labels now (AC-20); the needs- prefix then hides the issue, so it is applied once.
-        for (const dec of sel.decisions) {
-          if (dec.result.ok || dec.result.action !== "label") continue;
-          const r = dec.result;
-          await d.gh.addLabels(dec.issue, [r.label]).catch((e) => info.errors.push(`label ${dec.issue}: ${(e as Error).message}`));
-          await d.gh.comment(dec.issue, `${r.label}: ${r.reason}`).catch((e) => info.errors.push(`comment ${dec.issue}: ${(e as Error).message}`));
-          await d.notifier.notify({ issue: dec.issue, gate: dec.gate, label: r.label, text: r.reason });
-        }
         const share = d.parameters ? Number((await d.parameters.read('system_work_share')).value) : 0.75;
         return (ranked = rankIssues(sel.eligible, d.cfg.labels, await recentMerges(d.paths, d.now()), share, (i) => classifyWork(i, ctx.readSpec)));
       };
@@ -582,7 +612,7 @@ export class Scheduler {
                 d.serviceLog.write({ kind: "chain-errors-forgiven", issue: issue.number, forgiven: f.forgiven });
               }
             }
-            const state = initialChainState(issue.number, specProblems.get(issue.number) ?? null, ledger);
+            const state = initialChainState(issue.number, specProblems.get(issue.number) ?? null, ledger, designProblems.get(issue.number) ?? null);
             const c: Claim = {
               issue: issue.number, slot: this.#active.size, state, worktree: wt.path,
               started_at: d.now().toISOString(), last_activity_at: d.now().toISOString(), run_id: null,

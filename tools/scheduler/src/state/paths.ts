@@ -27,6 +27,8 @@ export interface StatePaths {
   findingsTriage: string;
   /** Spec 013: the quota book. */
   quota: string;
+  /** Spec 029 AC-8: the issues whose needs-design-stage label was removed, so a restart comments once. */
+  designRelabelled: string;
 }
 
 export function statePaths(root: string): StatePaths {
@@ -55,9 +57,10 @@ export function statePaths(root: string): StatePaths {
     escalations: join(root, "escalations"),
     questionsLog: join(root, "questions", "log.jsonl"),
     quota: join(root, "quota.json"),
+    designRelabelled: join(root, "design", "relabelled.json"),
   };
 }
 
 export async function ensureStateDirs(p: StatePaths): Promise<void> {
-  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), p.agents]) await mkdir(d, { recursive: true });
+  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), p.agents]) await mkdir(d, { recursive: true });
 }

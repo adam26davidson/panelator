@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialChainState } from "../src/chain/machine.ts";
+import { initialChainState, ledgerOf } from "../src/chain/machine.ts";
 import { validate } from "../src/schema/validate.ts";
 
 const finding = {
@@ -11,7 +11,7 @@ const finding = {
 
 describe("result schemas", () => {
   it('accepts settled conversation turns only with a non-empty decision on every asking stage',()=>{
-    for(const name of ['plan-result','implement-result','review-result','fix-result','spec-result'] as const){
+    for(const name of ['plan-result','implement-result','review-result','fix-result','spec-result','design-result'] as const){
       expect(validate(name,{conversation:'settled',decision:'Use second for simplicity',findings:[finding]}).ok).toBe(true);
       expect(validate(name,{conversation:'settled',decision:''}).ok).toBe(false);
       expect(validate(name,{conversation:'settled',decision:'yes',extra:true}).ok).toBe(false);
@@ -192,5 +192,39 @@ describe("spec 006 schemas", () => {
     const e = { issue: 7, at: "2026-10-27T10:00:00Z", event: "answered", asking_stage: "plan", question_comment_id: 99, reply_comment_id: 101, question: q, answer: "WAMR" };
     expect(validate("question-log-entry", e).ok).toBe(true);
     expect(validate("question-log-entry", { ...e, event: "guessed" }).ok).toBe(false);
+  });
+});
+
+describe("spec 029 schemas", () => {
+  const q = { kind: "product", question: "Ship it?", options: [{ label: "yes", cost: "c" }], recommendation: "yes" };
+  const sha = "a".repeat(40);
+  const screen = { name: "home", stories: ["home--default"], renders: ["home.png", "home.mobile.png", "home.tablet.png"] };
+  const designed = { verdict: "designed", spec_path: "specs/030-console/spec.md", pr_number: 5, head_sha: sha, screens: [screen], findings: [] };
+
+  it("design-result accepts a full designed result and a question", () => {
+    expect(validate("design-result", designed).ok).toBe(true);
+    expect(validate("design-result", { verdict: "question", question: q, findings: [] }).ok).toBe(true);
+  });
+  it("design-result rejects a screen with two renders or no stories, a missing field and an unknown property", () => {
+    expect(validate("design-result", { ...designed, screens: [{ ...screen, renders: ["a.png", "b.png"] }] }).ok).toBe(false);
+    expect(validate("design-result", { ...designed, screens: [{ ...screen, stories: [] }] }).ok).toBe(false);
+    expect(validate("design-result", { ...designed, screens: undefined }).ok).toBe(false);
+    expect(validate("design-result", { ...designed, extra: 1 }).ok).toBe(false);
+    expect(validate("design-result", { verdict: "question" }).ok).toBe(false);
+  });
+  it("stage-input accepts spec_path, design_problem and viewports", () => {
+    const base = { issue: { number: 1, title: "t", body: "b" }, spec: "s", result_path: "/r", profile_instructions: "p" };
+    expect(validate("stage-input", { ...base, spec_path: "specs/030-console/spec.md", design_problem: "missing", viewports: "mobile 390x844" }).ok).toBe(true);
+    expect(validate("stage-input", { ...base, spec_path: 3 }).ok).toBe(false);
+  });
+  it("claim, paused, question log and ledger accept the design stage, track and counters", () => {
+    const claim = (state: unknown) => validate("claim", { issue: 7, slot: 0, state, worktree: "/w", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null }).ok;
+    expect(claim({ ...initialChainState(7), stage: "design", track: "design", designProblem: "x", designRevisions: 1, askingStage: "design", resumeStage: "design" })).toBe(true);
+    expect(claim({ ...initialChainState(7), track: "elsewhere" })).toBe(false);
+    const ledger = ledgerOf(initialChainState(7));
+    expect(validate("escalation-ledger", { ...ledger, designRevisions: 2 }).ok).toBe(true);
+    const { designRevisions: _omitted, ...old } = ledger;
+    expect(validate("escalation-ledger", old).ok).toBe(true);
+    expect(validate("escalation-ledger", { ...ledger, designRevisions: -1 }).ok).toBe(false);
   });
 });

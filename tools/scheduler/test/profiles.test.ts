@@ -7,7 +7,7 @@ import { listProfiles, readSensitiveGlobs, resolveProfile } from "../src/profile
 
 describe("profiles", () => {
   it("lists the committed v0 profiles", () => {
-    expect(listProfiles(agentsDir)).toEqual(["backend", "security", "spec"]);
+    expect(listProfiles(agentsDir)).toEqual(["backend", "design", "security", "spec"]);
   });
   it("resolves backend with its skills dir, instructions and tools", () => {
     const p = resolveProfile(agentsDir, "backend");
@@ -23,6 +23,13 @@ describe("profiles", () => {
     const p = resolveProfile(agentsDir, "spec");
     expect(p.reviewCriteria?.length).toBeGreaterThan(0);
     expect(p.reviewCriteria).toMatch(/maintainer answer, question #/);
+  });
+  it("resolves design with the visual review criteria (spec 029 AC-3)", () => {
+    const p = resolveProfile(agentsDir, "design");
+    const c = p.reviewCriteria ?? "";
+    for (const need of ["390x844", "820x1180", "1440x900", "44 CSS pixels", "14 CSS pixels", "WCAG AA", "direction A", "panelator-render"]) expect(c).toContain(need);
+    expect(p.instructions).toContain("pnpm -F @panelator/design-stage render");
+    expect(p.instructions).toContain("specs/NNN-<slug>/design/");
   });
   it("gives every profile a committed skills directory, so the skills link never dangles (final review T-minor 6)", () => {
     for (const name of listProfiles(agentsDir)) {
