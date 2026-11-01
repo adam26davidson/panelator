@@ -27,3 +27,5 @@ systemd:
 decide:
   base_url: ""               # /v1/systemone; unused in v0
   key_env: PANELATOR_DECIDE_KEY
+bounds:
+  design_revisions: 2         # design PRs that may merge without passing the UI-design gate (spec 029)

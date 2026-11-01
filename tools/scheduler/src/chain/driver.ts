@@ -2,13 +2,14 @@ import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { promisify } from "node:util";
 import { adapterFor as defaultAdapterFor } from "../adapters/index.ts";
 import type { Adapter } from "../adapters/types.ts";
 import type { Config } from "../config.ts";
+import { DEVICE_SCALE, VIEWPORTS } from "../../../design-stage/src/viewports.ts";
 import { ROOT } from "../gates/design-tree.ts";
-import { isSensitive, scopeGate, specPresentGate, specScopeGate, uiDesignGate, type ScopeResult } from "../gates/index.ts";
+import { designScopeGate, isSensitive, scopeGate, specPresentGate, specScopeGate, uiDesignGate, type ScopeResult } from "../gates/index.ts";
 import type { GitHubClient } from "../github/client.ts";
 import type { PullRequestInfo } from "../github/types.ts";
 import type { Notifier } from "../notify/types.ts";
@@ -36,7 +37,7 @@ import { answeredEntry, answeredForIssue, appendQuestionLog } from "../state/que
 import { newRunId, runDir } from "../state/runs.ts";
 import { classOf } from "../shortlist/rank.ts";
 import type {
-  AgentStageName, FixOutcome, Harness, ImplementOutcome, ImplementResult, IssueData, PlanOutcome, Profile, SpecResult, StageDefinition,
+  AgentStageName, FixOutcome, Harness, ImplementOutcome, ImplementResult, IssueData, PlanOutcome, Profile, SpecResult, DesignResult, StageDefinition,
 } from "../types.ts";
 import { CLAIM_LABEL, NEEDS_DECISION_LABEL, POSTPONE_WAIT_S, branchOf, initialChainState, ledgerOf, transition } from "./machine.ts";
 import { formatQuestion, questionBody, questionMarker } from "./question.ts";
@@ -70,7 +71,7 @@ export interface DriverDeps {
 }
 
 export type StepStatus = "continue" | "waiting" | "ended";
-const AGENT_STAGES: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "question-check"];
+const AGENT_STAGES: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "design", "question-check"];
 const ENDED: ChainState["stage"][] = ["done", "released", "abandoned", "paused"];
 /** C1: prepended to the fix input when the fix stage has to resolve a conflict itself. Spec 024: names no method; the input says which. */
 export const CONFLICT_FIX_LINE = "Bring this branch up to date with origin/main and resolve the conflicts before addressing the items below.";
@@ -287,6 +288,13 @@ async function buildInput(
         ? `Sent back earlier for the asking stage to decide: ${s.decidedQuestion.question}\nThe reasoning given: ${s.decideInput}`
         : s.decideInput,
     spec_problem: s.specProblem ?? undefined,
+    ...(s.track === "design" || s.stage === "design"
+      ? {
+        spec_path: specPathFromIssueBody(issueBody) ?? undefined,
+        design_reason: s.designProblem ?? undefined,
+        viewports: VIEWPORTS.map((v) => `${v.name}: ${v.width} by ${v.height} CSS pixels at device scale ${DEVICE_SCALE}`).join("\n"),
+      }
+      : {}),
     answered_questions: answered,
     held_work: claim.state.stage === "question-check" ? undefined : await heldWorkText(deps, claim),
     result_path: "", profile_instructions: "",
@@ -299,6 +307,8 @@ function pickProfile(deps: DriverDeps, def: StageDefinition, state: ChainState, 
   if (def.name === "review" && security) return resolveProfile(deps.agentsDir, "security");
   // D9: everything on the spec PR (its review, fix and implement) works under the spec profile.
   if (state.track === "spec" && (def.name === "review" || def.name === "fix" || def.name === "implement")) return resolveProfile(deps.agentsDir, "spec");
+  // Spec 029 AC-3: the design PR's review and fix work under the design profile.
+  if (state.track === "design" && (def.name === "review" || def.name === "fix")) return resolveProfile(deps.agentsDir, "design");
   if (def.profile === "none") return null;
   // I4: an unknown profile throws; the plan stage already refused a domain with no profile.
   return resolveProfile(deps.agentsDir, def.profile === "from-issue" ? state.plan?.domain ?? "backend" : def.profile);
@@ -540,7 +550,9 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
     deps.log({ kind: "stage-still-running", issue: claim.issue, run_id: claim.run_id });
     return null;
   }
-  const def = deps.stages[stage];
+  // Spec 029 AC-3: a fix on the design PR runs on the design stage's model, so the renders it redoes come from the model that made them.
+  const design = deps.stages.design;
+  const def = state.track === "design" && stage === "fix" ? { ...deps.stages.fix, model: design.model, harness: design.harness, tier: design.tier, fallback: design.fallback } : deps.stages[stage];
   if(state.conversation&&state.decideInput!==null)throw new Error('conversation turn in decide mode');
   if(state.resumeSession&&state.resumeSession.harness!==def.harness)deps.log({kind:'resume-fresh',issue:claim.issue,reason:'harness changed'});
   const sensitiveGlobs = readSensitiveGlobs(deps.agentsDir);
@@ -745,6 +757,8 @@ async function stageEvent(deps: DriverDeps, claim: Claim, stage: AgentStageName,
       return { type: "stage_ok", stage: "question-check", result: result as never };
     case "spec":
       return specEvent(deps, claim, issueBody, result as SpecResult, start);
+    case "design":
+      return designEvent(deps, claim, issueBody, specText, result as DesignResult, start);
     case "implement":
     case "fix":
       return codeEvent(deps, claim, stage, result as ImplementOutcome | FixOutcome, issueBody, specText, sensitiveGlobs, start);
@@ -776,6 +790,7 @@ async function codeEvent(
   const diff = await diffFilesAgainstBase(claim.worktree);
   let scope: ScopeResult = { ok: true };
   if (state.track === "spec") scope = await specTrackScope(deps, claim, diff, specPathFromIssueBody(issueBody));
+  else if (state.track === "design") scope = designScopeGate(diff, specPathFromIssueBody(issueBody) ?? "");
   else if (state.plan) {
     // C6: an ADR the PR adds is in scope (design section 3 item 2: an agent records its own large decision); an edit to an
     // existing ADR is in scope only for a recording fix or with a verified mark.
@@ -802,6 +817,33 @@ async function specEvent(deps: DriverDeps, claim: Claim, issueBody: string, r: S
   const scope = await specTrackScope(deps, claim, await diffFilesAgainstBase(claim.worktree), specPath);
   if (issueSpec === null) await deps.gh.setIssueBody(claim.issue, `${issueBody}\n\nSpec: ${specPath}`);
   return { type: "stage_ok", stage: "spec", result: r, scope };
+}
+
+/** Spec 029 AC-2: the checks on a design stage result, in order, then the design PR's scope. */
+async function designEvent(deps: DriverDeps, claim: Claim, issueBody: string, specText: string, r: DesignResult, _start: string): Promise<ChainEvent> {
+  const failed = (reason: string): ChainEvent => ({ type: "stage_failed", stage: "design", reason });
+  if (r.verdict === "question") return { type: "stage_ok", stage: "design", result: r, head: await holdWork(deps, claim, "design") };
+  const specPath = r.spec_path!;
+  const issueSpec = specPathFromIssueBody(issueBody);
+  if (issueSpec === null || issueSpec !== specPath) return failed("result: invalid: spec_path differs from the issue's Spec: line");
+  const pr = r.pr_number === undefined || r.head_sha === undefined ? null : await prBound(deps, claim, { prNumber: r.pr_number, branch: `design-${claim.issue}` }, r.head_sha);
+  if (!pr) return failed("result: pr mismatch");
+  if (CLOSING_KEYWORD.test(pr.body)) return failed("result: invalid: design PR body closes an issue");
+  if (!pr.body.startsWith(`Refs #${claim.issue}`)) return failed(`result: invalid: design PR body must start with Refs #${claim.issue}`);
+  const designDir = posix.join(posix.dirname(specPath), "design");
+  for (const screen of parseSpec(specText).uiScreens) {
+    const entry = (r.screens ?? []).find((x) => x.name === screen);
+    if (!entry) return failed(`result: invalid: screen ${screen} is not in the result`);
+    if (entry.stories.length < 1) return failed(`result: invalid: screen ${screen} has no story`);
+    if (entry.renders.length < 3) return failed(`result: invalid: screen ${screen} has fewer than three renders`);
+  }
+  for (const entry of r.screens ?? []) {
+    for (const file of [...entry.stories, ...entry.renders]) {
+      if (!existsSync(join(claim.worktree, designDir, posix.basename(file)))) return failed(`result: invalid: ${file} is not in ${designDir}/`);
+    }
+  }
+  const scope = designScopeGate(await diffFilesAgainstBase(claim.worktree), specPath);
+  return { type: "stage_ok", stage: "design", result: r, scope };
 }
 
 async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> {
@@ -855,7 +897,7 @@ async function mergeEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> {
   }
   await deps.emitEvent?.('merge',{issue:claim.issue,pr:pr.number,sha:pr.head_sha});
   // AC-4: a spec PR is not a feature or debt merge; the chain goes on after the gates on main.
-  if (claim.state.track === "spec") return { type: "merge_result", status: "merged", specGate: await specGateOnMain(deps, claim) };
+  if (claim.state.track !== "issue") return { type: "merge_result", status: "merged", specGate: await specGateOnMain(deps, claim) };
   // The issue's labels give the merge record its class; no label refuses the merge (spec 006 AC-9).
   const labels = await deps.gh.issueLabels(claim.issue);
   const cls = classOf({ number: claim.issue, title: "", author: "", body: "", labels, labelEvents: [], createdAt: "" }, deps.cfg.labels);
@@ -1113,7 +1155,7 @@ export async function step(deps: DriverDeps, claim: Claim): Promise<{ claim: Cla
   }
 
   const before = claim.state;
-  const next = transition(before, event);
+  const next = transition(before, event, { designRevisions: deps.cfg.bounds.design_revisions });
   // Tm3: a transition that went through is progress: the count of consecutive chain errors starts again.
   const state = next.state.chainFailures === null ? next.state : { ...next.state, chainFailures: null };
   const actions = next.actions;

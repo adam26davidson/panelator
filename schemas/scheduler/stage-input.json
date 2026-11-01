@@ -99,6 +99,15 @@
         "record"
       ]
     },
+    "spec_path": {
+      "type": "string"
+    },
+    "design_reason": {
+      "type": "string"
+    },
+    "viewports": {
+      "type": "string"
+    },
     "decision": {
       "type": "string"
     }

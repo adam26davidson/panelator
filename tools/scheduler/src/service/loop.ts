@@ -1,3 +1,4 @@
+import { readFile, writeFile } from "node:fs/promises";
 import {TelegramAnswers} from '../telegram/answers.ts';
 import {questionMessage,reminderText} from '../telegram/questions.ts';
 import { applyActions, sendPausedQuestion, completePause, driveChain as defaultDriveChain, step, type DriverDeps } from "../chain/driver.ts";
@@ -469,6 +470,25 @@ export class Scheduler {
         if (!(claim.state.stage === "waiting" && claim.state.postponedUntil && new Date(claim.state.postponedUntil) > d.now())) (claim.pendingEvent?.type === "answered" ? answeredClaims : startable).push(claim);
       }
 
+      // Spec 029 AC-8: an issue parked by spec 006 AC-20 is re-evaluated once: the label comes off and the shortlist claims it.
+      const relabelParked = async (open: { number: number; labels: string[] }[]): Promise<void> => {
+        const parked = open.filter((i) => i.labels.includes("needs-design-stage"));
+        if (!parked.length) return;
+        const done = new Set<number>(await readFile(d.paths.designRelabelled, "utf8").then((t) => JSON.parse(t) as number[], () => []));
+        for (const i of parked) {
+          if (done.has(i.number)) continue;
+          try {
+            await d.gh.removeLabel(i.number, "needs-design-stage");
+            await d.gh.comment(i.number, "The design stage now exists (spec 029): the label is removed and the shortlist will claim this issue; its chain starts at the design stage.");
+            done.add(i.number);
+            i.labels = i.labels.filter((l) => l !== "needs-design-stage");
+            await writeFile(d.paths.designRelabelled, JSON.stringify([...done].sort((a, b) => a - b)));
+          } catch (e) {
+            info.errors.push(`relabel ${i.number}: ${(e as Error).message}`);
+          }
+        }
+      };
+
       let issues: Awaited<ReturnType<typeof d.gh.listOpenIssues>> | null = null;
       let listed = false;
       const openIssues = async () => {
@@ -479,6 +499,7 @@ export class Scheduler {
         } catch (e) {
           info.errors.push((e as Error).message);
         }
+        if (issues) await relabelParked(issues);
         return issues;
       };
 
@@ -537,6 +558,7 @@ export class Scheduler {
       // The ranked shortlist, computed once and only when a new claim fits under the held count.
       let ranked: Awaited<ReturnType<typeof d.gh.listOpenIssues>> | null = null;
       let specProblems = new Map<number, string>();
+      let designProblems = new Map<number, string>();
       const shortlist = async () => {
         if (ranked) return ranked;
         if (!(await openIssues())) return (ranked = []);
@@ -545,6 +567,7 @@ export class Scheduler {
         const ctx = buildSelectContext(d.repoDir, d.cfg, claimed, d.botLogin);
         const sel = selectEligible(issues!, ctx);
         specProblems = sel.specProblems;
+        designProblems = sel.designProblems;
         info.eligible = sel.eligible.length;
         // Only needs-design-stage labels now (AC-20); the needs- prefix then hides the issue, so it is applied once.
         for (const dec of sel.decisions) {
@@ -582,7 +605,7 @@ export class Scheduler {
                 d.serviceLog.write({ kind: "chain-errors-forgiven", issue: issue.number, forgiven: f.forgiven });
               }
             }
-            const state = initialChainState(issue.number, specProblems.get(issue.number) ?? null, ledger);
+            const state = initialChainState(issue.number, specProblems.get(issue.number) ?? null, ledger, designProblems.get(issue.number) ?? null);
             const c: Claim = {
               issue: issue.number, slot: this.#active.size, state, worktree: wt.path,
               started_at: d.now().toISOString(), last_activity_at: d.now().toISOString(), run_id: null,

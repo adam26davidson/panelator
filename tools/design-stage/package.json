@@ -1,0 +1,38 @@
+{
+  "name": "@panelator/design-stage",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The design stage's tools (spec 029): a Storybook of specs/*/design/*.stories.tsx and a renderer that screenshots it at three viewports.",
+  "scripts": {
+    "storybook": "storybook dev -p 6006 -c .storybook",
+    "render": "node src/cli.ts",
+    "test": "cd ../.. && vitest run tools/design-stage",
+    "lint": "biome check . && knip"
+  },
+  "exports": {
+    "./viewports": "./src/viewports.ts"
+  },
+  "engines": { "node": ">=26" },
+  "dependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@playwright/browser-chromium": "catalog:",
+    "@storybook/react-vite": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "^26.6.5",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "knip": "catalog:",
+    "playwright": "catalog:",
+    "storybook": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

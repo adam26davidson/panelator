@@ -1,11 +1,11 @@
 import type { ScopeResult } from "../gates/scope.ts";
 import type {
   AgentStageName, AskingStage, Finding, FixOutcome, ImplementOutcome, PendingAnswer, PlanOutcome, PlanResult, Question, QuestionCheckResult, ReviewResult, SpecMode,
-  SpecResult,
+  SpecResult, DesignResult,
 } from "../types.ts";
 
 export type ChainStage =
-  | "claimed" | "plan" | "implement" | "verify" | "review" | "fix" | "merge" | "spec" | "question-check"
+  | "claimed" | "plan" | "implement" | "verify" | "review" | "fix" | "merge" | "spec" | "design" | "question-check"
   | "done" | "released" | "waiting" | "paused" | "abandoned";
 
 export interface ChainState {
@@ -31,7 +31,11 @@ export interface ChainState {
    */
   conflictPending: boolean;
   /** Which PR the chain works on: the issue PR (`issue-<issue>`) or a spec PR (`spec-<issue>`). Every entry into the spec stage sets "spec". */
-  track: "issue" | "spec";
+  track: "issue" | "spec" | "design";
+  /** Spec 029: why the UI-design gate failed, the design stage's input; set while the design stage is wanted. */
+  designProblem: string | null;
+  /** Spec 029 AC-4: design PRs merged without the UI-design gate passing. */
+  designRevisions: number;
   /** The escalation ledger (AC-7): kept per issue across releases. */
   rescues: number;
   specRescues: number;
@@ -88,6 +92,8 @@ export type ChainEvent =
   | { type: "stage_ok"; stage: "review"; result: ReviewResult; security: boolean; sensitive?: boolean }
   /** `scope`: the spec PR's scope check (AC-22), required for `revised`, absent for `question`. */
   | { type: "stage_ok"; stage: "spec"; result: SpecResult; scope?: ScopeResult; head?: string }
+  /** Spec 029: the design PR's scope check, required for `designed`. */
+  | { type: "stage_ok"; stage: "design"; result: DesignResult; scope?: ScopeResult; head?: string }
   | { type: "stage_ok"; stage: "question-check"; result: QuestionCheckResult }
   | { type: "stage_failed"; stage: AgentStageName; reason: string; postpone?: boolean; /** Spec 013 AC-5: when the quota that postponed it resets. */ until?: string }
   /** `at`: when the checks were read; `pending`: the required checks still pending or missing. */

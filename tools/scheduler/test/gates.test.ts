@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  authorityGate, fixLoopGate, isSensitive, latestLabelActor, livenessGate,
+  authorityGate, designScopeGate, fixLoopGate, isSensitive, latestLabelActor, livenessGate,
   readyGate, scopeGate, specPresentGate, specScopeGate, uiDesignGate, validatedGate,
 } from "../src/gates/index.ts";
 import { parseSpec } from "../src/spec/parse.ts";
@@ -93,14 +93,23 @@ describe("uiDesignGate (AC-8)", () => {
   it("passes a non-UI domain with no design dir", () => {
     expect(uiDesignGate(parseSpec(fx("good-backend.md")), [])).toEqual({ ok: true });
   });
-  it("labels needs-design-stage on an empty design dir, naming spec E (AC-20)", () => {
-    expect(uiDesignGate(web, [])).toMatchObject({ ok: false, action: "label", label: "needs-design-stage" });
-    expect(uiDesignGate(web, [])).toMatchObject({ reason: expect.stringMatching(/^spec E will provide the design stage: /) });
+  it("ignores an empty design dir with a reason that names each missing file, and labels nothing (spec 029 AC-7)", () => {
+    const r = uiDesignGate(web, []);
+    expect(r).toMatchObject({ ok: false, action: "ignore", reason: expect.stringMatching(/missing editor-empty\.mobile\.png.*missing editor-empty\.tablet\.png/) });
+    expect(JSON.stringify(r)).not.toContain("needs-design-stage");
   });
-  it("requires a story or token prototype and a PNG per screen", () => {
-    expect(uiDesignGate(web, ["editor.stories.tsx", "editor-empty.png"])).toMatchObject({ ok: false, reason: expect.stringMatching(/editor-populated\.png/) });
-    expect(uiDesignGate(web, ["editor-empty.png", "editor-populated.png"])).toMatchObject({ ok: false, reason: expect.stringMatching(/story or token prototype/) });
-    expect(uiDesignGate(web, ["tokens.html", "editor-empty.png", "editor-populated.png"])).toEqual({ ok: true });
+  it("requires a story or token prototype and three renders per screen", () => {
+    const sizes = (n: string) => [`${n}.png`, `${n}.mobile.png`, `${n}.tablet.png`];
+    expect(uiDesignGate(web, ["editor.stories.tsx", ...sizes("editor-empty"), "editor-populated.png"])).toMatchObject({ ok: false, reason: expect.stringMatching(/missing editor-populated\.mobile\.png; missing editor-populated\.tablet\.png/) });
+    expect(uiDesignGate(web, [...sizes("editor-empty"), ...sizes("editor-populated")])).toMatchObject({ ok: false, reason: expect.stringMatching(/story or token prototype/) });
+    expect(uiDesignGate(web, ["tokens.html", ...sizes("editor-empty"), ...sizes("editor-populated")])).toEqual({ ok: true });
+  });
+});
+
+describe("designScopeGate (spec 029)", () => {
+  it("accepts files under the spec's design/ and rejects everything else", () => {
+    expect(designScopeGate(["specs/011-x/design/a.png"], "specs/011-x/spec.md")).toEqual({ ok: true });
+    expect(designScopeGate(["specs/011-x/spec.md", "web/x.ts"], "specs/011-x/spec.md")).toMatchObject({ ok: false, violations: [expect.stringContaining("specs/011-x/spec.md"), expect.stringContaining("web/x.ts")] });
   });
 });
 

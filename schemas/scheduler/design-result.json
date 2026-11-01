@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "design-result.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "verdict"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "verdict": {
+          "enum": [
+            "designed",
+            "question"
+          ]
+        },
+        "spec_path": {
+          "type": "string",
+          "pattern": "^specs/[0-9]{3}-[a-z0-9-]+/spec\\.md$"
+        },
+        "pr_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "head_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "question": {
+          "$ref": "question.json"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Side-channel finding records; each is validated against finding.json when queued (AC-28), never a reason to fail the stage."
+        },
+        "screens": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "stories",
+              "renders"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "stories": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              },
+              "renders": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 3
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "designed"
+              }
+            },
+            "required": [
+              "verdict"
+            ]
+          },
+          "then": {
+            "required": [
+              "spec_path",
+              "pr_number",
+              "head_sha",
+              "screens"
+            ],
+            "properties": {
+              "spec_path": true,
+              "pr_number": true,
+              "head_sha": true,
+              "screens": true
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "question"
+              }
+            },
+            "required": [
+              "verdict"
+            ]
+          },
+          "then": {
+            "required": [
+              "question"
+            ],
+            "properties": {
+              "question": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "conversation",
+        "decision"
+      ],
+      "properties": {
+        "conversation": {
+          "const": "settled"
+        },
+        "decision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "finding.json"
+          }
+        }
+      }
+    }
+  ]
+}

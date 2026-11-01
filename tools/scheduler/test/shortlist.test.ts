@@ -92,6 +92,15 @@ describe("selectEligible", () => {
     expect(r.eligible).toEqual([]);
     expect(r.decisions).toEqual([]);
   });
+  it("makes a UI spec without its design eligible with the gate's reason, and labels nothing (spec 029 AC-1)", () => {
+    const ui = good.replace(/Domain: \w[\w-]*\./, "Domain: web-ui.") + "\n## 6. UI design\n\nScreens: editor\n";
+    const readSpec = (p: string) => withTopDesign({ "specs/010-thing/spec.md": ui }, "specs/010-thing/spec.md")[p] ?? null;
+    const r = selectEligible([issue(1)], { ...ctx, readSpec });
+    if (!r.eligible.length) throw new Error(JSON.stringify(r.decisions));
+    expect(r.eligible.map((i) => i.number)).toEqual([1]);
+    expect(r.designProblems.get(1)).toMatch(/missing editor\.png; missing editor\.mobile\.png; missing editor\.tablet\.png/);
+    expect(r.decisions).toEqual([{ issue: 1, gate: "ui-design", result: expect.objectContaining({ ok: false, action: "ignore" }) }]);
+  });
   it("stops at the first failing gate per issue", () => {
     const r = selectEligible([issue(9, { author: "stranger", labels: [] })], ctx);
     expect(r.decisions.filter((d) => d.issue === 9)).toHaveLength(1);

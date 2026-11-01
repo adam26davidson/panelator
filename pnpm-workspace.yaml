@@ -2,5 +2,26 @@ packages:
   - "tools/*"
   - "web"
   - "sdk/assemblyscript"
+# One bump moves tools/design-stage, the console and web/ together (spec 029 AC-6).
+catalog:
+  react: 19.3.1
+  react-dom: 19.3.1
+  "@types/react": 19.3.0
+  "@types/react-dom": 19.3.0
+  typescript: 7.0.2
+  vite: 8.3.5
+  "@vitejs/plugin-react": 6.1.2
+  tailwindcss: 4.3.3
+  "@tailwindcss/vite": 4.3.3
+  storybook: 10.6.5
+  "@storybook/react-vite": 10.6.5
+  playwright: 1.64.1
+  "@playwright/browser-chromium": 1.64.1
+  vitest: ^3.2.4
+  "@biomejs/biome": 2.6.4
+  knip: 6.44.1
 allowBuilds:
   esbuild: true
+  "@playwright/browser-chromium": true
+minimumReleaseAgeExclude:
+  - knip@6.44.1
