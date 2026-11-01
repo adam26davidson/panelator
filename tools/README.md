@@ -1,5 +1,6 @@
 Workspace packages for automation and CI scripts. One directory per tool.
 
+- `design-stage/`: the design package of spec 029 (the charter's "design-specific tools"). `pnpm -F @panelator/design-stage storybook` serves a Storybook of every `specs/*/design/*.stories.tsx` with Tailwind and the base tokens of `src/tokens.css`. `pnpm -F @panelator/design-stage render <spec dir> [--screen <name>]` builds that Storybook, opens each named screen's stories with Playwright at `mobile` 390x844, `tablet` 820x1180 and `desktop` 1440x900 (device scale 2) and writes `<screen>.png` (desktop), `<screen>.mobile.png`, `<screen>.tablet.png` and `<screen>--<state>.png` with their siblings beside the stories. It is the only way renders are made: each PNG carries a `panelator-render` tEXt chunk (viewport, story id, commit), and the design review rejects one without it. The toolchain versions live in the `catalog:` of `pnpm-workspace.yaml`, so `console/` and `web/` reuse them with one bump; Chromium comes from `@playwright/browser-chromium`, whose install script is approved in `allowBuilds`. `pnpm test` builds and renders a fixture spec in a temporary directory, so a toolchain break fails CI.
 - `scheduler/`: the deterministic scheduler of spec 001. `pnpm -F @panelator/scheduler typecheck` for types; tests run from the root `pnpm test`.
   Install the service: `mkdir -p ~/.config/systemd/user && ln -sf "$PWD/tools/scheduler/systemd/panelator-scheduler.service" ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now panelator-scheduler`. Logs: `~/.local/state/panelator-scheduler/log/service.jsonl` and `journalctl --user -u panelator-scheduler`. Self-update exits 75 so `Restart=on-failure` restarts it.
 
@@ -9,11 +10,15 @@ Run the service from a dedicated clone of the repository, checked out on `main` 
 
 The scheduler acts as a GitHub App installed on the repository with the permissions of spec section 12: issues, pull requests and contents (write), checks and actions (read), metadata (read), plus repository security advisories (write) once the filing agent (design spec C) lands. Set `app.id`, `app.installation_id`, `app.private_key_path` and `app.bot_login` in `agents/scheduler.yaml`; `repo`, `maintainer`, `slots`, `poll_interval_s`, `required_checks` and `state_dir` live in the same file. A missing App id, an unreadable private key, a checkout that is not on `main` or an origin that is not https makes the scheduler log a `config-error` record and exit 78, which the unit does not restart.
 
-These labels must exist in the repository: `validated`, `in-progress`, `needs-decision`, `abandoned`, `needs-design-stage`, `blocked`, `priority`, `class:product`, `class:bug`, `class:tooling`, `class:dependency`. The old `needs-spec`, `needs-design`, `needs-clarification`, `needs-human` and `security-review` labels are no longer applied (spec 006). Enable branch protection on `main` requiring the `test` check, so a PR the scheduler merges has passed CI.
+These labels must exist in the repository: `validated`, `in-progress`, `needs-decision`, `abandoned`, `blocked`, `priority`, `class:product`, `class:bug`, `class:tooling`, `class:dependency`. `needs-design-stage` may still exist in the repository but no code path applies it any more (spec 029): once per issue, the scheduler removes it from an issue parked with it and comments that the design stage now exists. The old `needs-spec`, `needs-design`, `needs-clarification`, `needs-human` and `security-review` labels are no longer applied (spec 006). Enable branch protection on `main` requiring the `test` check, so a PR the scheduler merges has passed CI.
 
 The first run is `node tools/scheduler/bin/scheduler.ts --check-auth`, which prints the bot login and token expiry, then `--once`, which runs one tick and waits for the chains it started. Only then enable the service.
 
 Security findings go to the fix loop and nothing waits for a human to clear a label; see spec 006 (`specs/006-no-human-stops/spec.md`) for the escalation path, the question flow and the labels.
+
+## The design stage
+
+A `web-ui` or `widget` spec on `main` without its design artifacts (three renders per named screen and a story or token prototype) starts the `design` stage (`agents/stages/design.md`, strong tier) instead of parking the issue. It runs on branch `design-<issue>`, writes Storybook stories under `specs/NNN-<slug>/design/` and renders them with the package above, and opens a design PR whose body starts with `Refs #<issue>`. The PR's scope is that `design/` directory and nothing else. It is reviewed under the `design` profile (`agents/profiles/design/`: the visual criteria in `review-criteria.md`) by an independent reviewer, goes through the fix loop on the design stage's model, and merges. The gate is then checked on `main`: if it still fails, the design stage runs again, up to `bounds.design_revisions` in `agents/scheduler.yaml` (default 2), after which the spec agent revises the UI design section. When the gate passes, the chain plans the implementation.
 
 ## Standing agents, actions and parameters
 
@@ -49,4 +54,4 @@ Security findings are routed to draft repository advisories, never public issues
 
 Wiping the state directory forgets every claim but leaves their `in-progress` labels on GitHub; remove those by hand, or the issues are never picked up again.
 
-v0 ships only the `backend` and `security` profiles. A plan whose domain names any other profile fails, and the firmware HIL check of spec section 8 has no owner until the firmware profile spec.
+The shipped profiles are `backend`, `design`, `security` and `spec`. A plan whose domain names any other profile fails, and the firmware HIL check of spec section 8 has no owner until the firmware profile spec.

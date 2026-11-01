@@ -32,7 +32,7 @@ import {emit} from '../src/standing/events.ts';
 import {runStandingAgent} from '../src/standing/run.ts';
 import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
 import { chainWorld, standingWorld, scripted, RATE_LIMITED, type ChainWorld } from "./helpers/e2e-routes.ts";
-import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
+import { git, repoPair, withDesign, withTopDesign } from "./helpers/repo-pair.ts";
 
 const spec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
 const BOT = { login: "panelator-pipeline[bot]", type: "Bot" };
@@ -987,4 +987,123 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   expect(ticks[1].quota).toEqual({limits:[{key:'claude:claude-fable-5-1',scope:'unknown',resets_at:'2026-10-01T00:15:00.000Z',source:'backoff'}],waiting:[{what:'agent:operator',until:'2026-10-01T00:15:00.000Z'}]});
   expect(ticks.at(-1).quota).toBeUndefined();
  },30000);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Spec 029 section 6: the design stage, recorded through the real Scheduler, driver and machine.
+
+describe("end to end: the design stage (spec 029)", () => {
+  const uiSpec = () => readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-webui.md"), "utf8").replace("Parent: docs/top.md", `Parent: ${PARENT}`);
+  const SCREENS = ["editor-empty", "editor-populated"];
+  const DESIGN = "specs/010-thing/design/";
+  const uiFiles = (design: boolean) => {
+    const files = { ...repoFiles(), "specs/010-thing/spec.md": uiSpec() };
+    return design ? withDesign(files, "specs/010-thing/spec.md", SCREENS) : files;
+  };
+  /** A design run's git work: a story and the renders (all three sizes unless `drop` names one), the PR, and the result. */
+  const design = (w: () => ChainWorld, n: number, o: { drop?: string; tag?: string; renders?: number } = {}) => (run: StageRun) => {
+    const files: Record<string, string> = { [`${DESIGN}editor.stories.tsx`]: `export default {}; // ${o.tag ?? "a"}\n` };
+    for (const s of SCREENS) for (const suffix of ["", ".mobile", ".tablet"]) if (`${s}${suffix}.png` !== o.drop) files[`${DESIGN}${s}${suffix}.png`] = `png ${o.tag ?? "a"}\n`;
+    const sha = w().push(run, files, "design");
+    w().openPr(run, n, sha, `Refs #7\n\n![editor-empty](${DESIGN}editor-empty.png)`);
+    const renders = ["x.png", "x.mobile.png", "x.tablet.png"].slice(0, o.renders ?? 3);
+    return { verdict: "designed", spec_path: "specs/010-thing/spec.md", pr_number: n, head_sha: sha, screens: SCREENS.map((name) => ({ name, stories: [`${name}--default`], renders })) };
+  };
+  const newMerge = (w: ChainWorld) => w.mergeRequests;
+
+  it("runs the design stage on design-7 for a UI spec without design/, reviews it with the design profile, fixes, merges, then plans (AC-1, AC-3, AC-4)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({
+      files: uiFiles(false),
+      results: {
+        design: [design(() => w, 12)],
+        review: [CHANGES, APPROVE, APPROVE],
+        fix: [a.fix({ [`${DESIGN}editor-empty.png`]: "re-rendered\n" })],
+        plan: [PLAN], implement: [a.implement(13)],
+      },
+    });
+    expect((await w.tick()).claimed).toEqual([7]);
+    await expectSettled(w);
+
+    expect(w.adapter.ran).toEqual(["design", "review", "fix", "review", "plan", "implement", "review"]);
+    const [d] = runsOf(w, "design");
+    expect(d).toMatchObject({ branch: "design-7", profile: "design" });
+    expect(d.input).toMatchObject({ spec_path: "specs/010-thing/spec.md", viewports: expect.stringContaining("desktop 1440x900") });
+    expect(d.input.design_problem).toMatch(/editor-empty\.mobile\.png/);
+    expect(runsOf(w, "review").map((r) => [r.branch, r.profile])).toEqual([["design-7", "design"], ["design-7", "design"], ["issue-7", "backend"]]);
+    expect(runsOf(w, "fix")[0]).toMatchObject({ branch: "design-7", profile: "design", model: d.model });
+    expect(runsOf(w, "review")[0].input.pr?.number).toBe(12);
+    expect(newMerge(w)).toEqual([12, 13]);
+    expect(w.writes()).toContain("DELETE /repos/o/r/git/refs/heads/design-7");
+    expect(w.onMain(`${DESIGN}editor-populated.tablet.png`)).not.toBeNull();
+    expect(w.onMain(`${DESIGN}editor-empty.png`)).toBe("re-rendered\n");
+    // The plan runs on issue-7 from the merged design, with fresh counters.
+    expect(runsOf(w, "plan")[0].branch).toBe("issue-7");
+    expect(w.issueOpen).toBe(false);
+    // No code path applies needs-design-stage, and nothing is commented.
+    expect(w.labelLog).toEqual(["+in-progress", "-in-progress"]);
+    expect(w.comments).toEqual([]);
+  }, 180_000);
+
+  it("fails a design result with a screen of fewer than three renders as an invalid result, then accepts the retry (AC-2)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({
+      files: uiFiles(false),
+      results: { design: [design(() => w, 12, { renders: 2 }), design(() => w, 12)], review: [APPROVE, APPROVE], plan: [PLAN], implement: [a.implement(13)] },
+    });
+    await w.tick();
+    await expectSettled(w);
+    expect(w.adapter.ran.slice(0, 3)).toEqual(["design", "design", "review"]);
+    const first = readdirSync(w.paths.runs).find((r) => r.startsWith("7-design-1-"))!;
+    expect(readFileSync(join(w.paths.runs, first, "outcome.json"), "utf8")).toMatch(/renders/);
+    expect(inputsOf(w, "design")[1].history).toContain("design attempt 1 failed: result: invalid");
+    expect(newMerge(w)).toEqual([12, 13]);
+  }, 180_000);
+
+  it("sends the spec agent in revise mode when the gate still fails after two design merges, then designs again (AC-4)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    const revisedSpec = uiSpec().replace("A screen.", "A screen, simpler.");
+    const specRun = (run: StageRun) => {
+      const sha = w.push(run, { "specs/010-thing/spec.md": revisedSpec }, "spec");
+      w.openPr(run, 14, sha, "Refs #7\n\nRevised UI design section");
+      return { verdict: "revised", spec_path: "specs/010-thing/spec.md", pr_number: 14, head_sha: sha };
+    };
+    w = await chainWorld({
+      files: uiFiles(false),
+      results: {
+        design: [design(() => w, 12, { drop: "editor-populated.tablet.png" }), design(() => w, 13, { drop: "editor-populated.tablet.png", tag: "b" }), design(() => w, 15, { tag: "c" })],
+        spec: [specRun],
+        review: [APPROVE, APPROVE, APPROVE, APPROVE, APPROVE],
+        plan: [PLAN], implement: [a.implement(16)],
+      },
+    });
+    await w.tick();
+    await expectSettled(w);
+    expect(w.adapter.ran).toEqual(["design", "review", "design", "review", "spec", "review", "design", "review", "plan", "implement", "review"]);
+    const [spec1] = runsOf(w, "spec");
+    expect(spec1.input.mode).toBe("revise");
+    expect(spec1.input.spec_problem).toContain("the design stage could not satisfy the UI design section");
+    expect(spec1.input.spec_problem).toContain("editor-populated.tablet.png");
+    expect(runsOf(w, "design").map((r) => r.branch)).toEqual(["design-7", "design-7", "design-7"]);
+    expect(newMerge(w)).toEqual([12, 13, 14, 15, 16]);
+    expect(w.labelLog).toEqual(["+in-progress", "-in-progress"]);
+  }, 240_000);
+
+  it("removes needs-design-stage from a parked issue once, with one comment, and a restart comments nothing (AC-8)", async () => {
+    const w = await chainWorld({ files: uiFiles(true), labels: ["validated", "class:product", "needs-design-stage", "blocked"], results: {} });
+    await w.tick();
+    expect(w.labelLog).toEqual(["-needs-design-stage"]);
+    expect(w.comments.map((c) => c.body)).toEqual([expect.stringContaining("design stage now exists")]);
+    expect(JSON.parse(readFileSync(w.paths.designRelabelled, "utf8"))).toEqual([7]);
+    // The label comes back; a new Scheduler over the same state directory leaves the issue alone.
+    w.labels.add("needs-design-stage");
+    w.labelLog.length = 0;
+    await new Scheduler(w.deps).tick();
+    expect(w.labelLog).toEqual([]);
+    expect(w.comments).toHaveLength(1);
+    expect(w.adapter.ran).toEqual([]);
+  }, 120_000);
 });
