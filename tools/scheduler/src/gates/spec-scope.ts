@@ -40,3 +40,10 @@ export function specScopeGate(
   }
   return violations.length ? { ok: false, violations } : { ok: true };
 }
+
+/** The design PR's scope (spec 029 AC-2): the spec's design/ directory and nothing else. */
+export function designScopeGate(diffFiles: string[], specPath: string): ScopeResult {
+  const designDir = posix.dirname(specPath) + "/design/";
+  const violations = diffFiles.filter((f) => !f.startsWith(designDir)).map((f) => `${f}: outside design PR scope`);
+  return violations.length ? { ok: false, violations } : { ok: true };
+}

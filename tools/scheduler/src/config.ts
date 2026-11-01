@@ -16,6 +16,7 @@ export interface Config {
   /** the strongest model, used for rescue attempts (spec 006 AC-1) */
   rescue_model: string;
   notify_rate_limit_hours: number;
+  bounds: { design_revisions: number };
   /** check-run names the verify stage waits on; [] means every check run on the head SHA */
   required_checks: string[];
   state_dir: string;
@@ -59,6 +60,12 @@ export function loadConfig(path: string): Config {
   if(tg.credentials_path!==undefined&&(typeof tg.credentials_path!=='string'||!tg.credentials_path))throw new Error('config telegram credentials_path must be a string');
   const timeout=tg.long_poll_timeout_s??50;
   if(typeof timeout!=='number'||!Number.isFinite(timeout)||timeout<1)throw new Error('config telegram long_poll_timeout_s must be >= 1');
+  const bounds = raw.bounds ?? {};
+  if (typeof bounds !== "object" || bounds === null || Array.isArray(bounds)) throw new Error("config bounds must be an object");
+  const designRevisions = (bounds as Record<string, unknown>).design_revisions ?? 2;
+  if (typeof designRevisions !== "number" || !Number.isInteger(designRevisions) || designRevisions < 1) {
+    throw new Error("config bounds.design_revisions must be a positive integer");
+  }
   const cfg: Config = {
     telegram:{credentials_path:expandHome(String(tg.credentials_path??'~/.config/panelator/telegram.json')),long_poll_timeout_s:timeout},
     repo: str("repo"),
@@ -75,6 +82,7 @@ export function loadConfig(path: string): Config {
     retry_cost_limit_usd: num("retry_cost_limit_usd", 1),
     rescue_model: typeof raw.rescue_model === "string" && raw.rescue_model ? raw.rescue_model : "claude-fable-5-1",
     notify_rate_limit_hours: num("notify_rate_limit_hours", 4),
+    bounds: { design_revisions: designRevisions },
     required_checks: Array.isArray(raw.required_checks) ? (raw.required_checks as string[]) : [],
     state_dir: expandHome(String(raw.state_dir ?? "~/.local/state/panelator-scheduler")),
     labels: {

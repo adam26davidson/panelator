@@ -1,11 +1,11 @@
 import type { ScopeResult } from "../gates/scope.ts";
 import type {
   AgentStageName, AskingStage, Finding, FixOutcome, ImplementOutcome, PendingAnswer, PlanOutcome, PlanResult, Question, QuestionCheckResult, ReviewResult, SpecMode,
-  SpecResult,
+  SpecResult, DesignResult,
 } from "../types.ts";
 
 export type ChainStage =
-  | "claimed" | "plan" | "implement" | "verify" | "review" | "fix" | "merge" | "spec" | "question-check"
+  | "claimed" | "plan" | "implement" | "verify" | "review" | "fix" | "merge" | "spec" | "design" | "question-check"
   | "done" | "released" | "waiting" | "paused" | "abandoned";
 
 export interface ChainState {
@@ -30,13 +30,15 @@ export interface ChainState {
    * `conflict_gone`; while it is set the driver only checks that the conflict is still real before the fix runs.
    */
   conflictPending: boolean;
-  /** Which PR the chain works on: the issue PR (`issue-<issue>`) or a spec PR (`spec-<issue>`). Every entry into the spec stage sets "spec". */
-  track: "issue" | "spec";
+  /** Which PR the chain works on: the issue PR (`issue-<issue>`), a spec PR (`spec-<issue>`) or a design PR (`design-<issue>`). Every entry into the spec or design stage sets its track. */
+  track: "issue" | "spec" | "design";
   /** The escalation ledger (AC-7): kept per issue across releases. */
   rescues: number;
   specRescues: number;
   replans: number;
   specRevisions: number;
+  /** Spec 029 AC-4: design PRs merged whose UI-design gate still failed; at the configured bound the spec agent revises. */
+  designRevisions: number;
   specAnswers: number;
   decideReturns: number;
   history: string[];
@@ -44,6 +46,8 @@ export interface ChainState {
   rescueRun: boolean;
   specMode: SpecMode | null;
   specProblem: string | null;
+  /** Spec 029 AC-1: why the design stage runs (the gate's reason); null when it does not. */
+  designProblem: string | null;
   question: Question | null;
   askingStage: AskingStage | null;
   /** The maintainer's replies not yet spent, each prefixed "Question #<id>: " (T3: a follow-up chain accumulates them). */
@@ -88,11 +92,13 @@ export type ChainEvent =
   | { type: "stage_ok"; stage: "review"; result: ReviewResult; security: boolean; sensitive?: boolean }
   /** `scope`: the spec PR's scope check (AC-22), required for `revised`, absent for `question`. */
   | { type: "stage_ok"; stage: "spec"; result: SpecResult; scope?: ScopeResult; head?: string }
+  /** `scope`: the design PR's scope check (spec 029 AC-2), required for `designed`, absent for `question`. */
+  | { type: "stage_ok"; stage: "design"; result: DesignResult; scope?: ScopeResult; head?: string }
   | { type: "stage_ok"; stage: "question-check"; result: QuestionCheckResult }
   | { type: "stage_failed"; stage: AgentStageName; reason: string; postpone?: boolean; /** Spec 013 AC-5: when the quota that postponed it resets. */ until?: string }
   /** `at`: when the checks were read; `pending`: the required checks still pending or missing. */
   | { type: "checks"; status: "green" | "failed" | "pending"; log?: string; sensitive: boolean; at: string; pending?: string[] }
-  /** `specGate`: on the spec track, spec-present and the UI-design gate run again on origin/main after the merge (AC-4). */
+  /** `specGate`: on the spec and design tracks, spec-present and the UI-design gate run again on origin/main after the merge (AC-4). */
   | { type: "merge_result"; status: "merged" | "not_mergeable"; detail?: string; specGate?: { ok: true } | { ok: false; gate: "spec-present" | "ui-design"; reason: string } }
   | { type: "rebase_conflict"; detail: string }
   /** Spec 024: before a conflict-pending fix runs, the driver found origin/main no longer conflicts with the head. Valid only in that fix. */

@@ -81,6 +81,15 @@
     "decide_input": {
       "type": "string"
     },
+    "spec_path": {
+      "type": "string"
+    },
+    "design_problem": {
+      "type": "string"
+    },
+    "viewports": {
+      "type": "string"
+    },
     "spec_problem": {
       "type": "string"
     },

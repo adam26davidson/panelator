@@ -56,6 +56,7 @@
             "fix",
             "merge",
             "spec",
+            "design",
             "question-check",
             "done",
             "released",
@@ -136,6 +137,7 @@
             "review",
             "fix",
             "spec",
+            "design",
             "question-check",
             null
           ]
@@ -146,7 +148,8 @@
         "track": {
           "enum": [
             "issue",
-            "spec"
+            "spec",
+            "design"
           ]
         },
         "rescues": {
@@ -194,6 +197,13 @@
             null
           ]
         },
+        "designProblem": {
+          "type": ["string", "null"]
+        },
+        "designRevisions": {
+          "type": "integer",
+          "minimum": 0
+        },
         "specProblem": {
           "type": [
             "string",
@@ -217,6 +227,7 @@
             "review",
             "fix",
             "spec",
+            "design",
             "verify",
             null
           ]
@@ -635,7 +646,7 @@
       "additionalProperties": false,
       "required": ["stage", "attempt", "run_id", "result", "start", "security", "sensitive"],
       "properties": {
-        "stage": { "enum": ["plan", "implement", "review", "fix", "spec", "question-check"] },
+        "stage": { "enum": ["plan", "implement", "review", "fix", "spec", "design", "question-check"] },
         "attempt": { "type": "integer", "minimum": 1 },
         "run_id": { "type": "string", "minLength": 1 },
         "result": {},

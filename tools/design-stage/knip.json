@@ -1,0 +1,4 @@
+{
+  "entry": ["src/cli.ts", ".storybook/main.ts", ".storybook/preview.ts", "test/**/*.test.ts", "test/fixtures/**/*.stories.tsx"],
+  "project": ["src/**/*.ts", "test/**/*.{ts,tsx}", ".storybook/**/*.ts"]
+}

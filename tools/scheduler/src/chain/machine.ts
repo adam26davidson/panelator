@@ -1,4 +1,4 @@
-import { fixLoopGate, NEEDS_DESIGN_STAGE, readyGate, type ScopeResult } from "../gates/index.ts";
+import { fixLoopGate, readyGate, type ScopeResult } from "../gates/index.ts";
 import type { AgentStageName, AskingStage, ImplementResult, PendingAnswer, PlanResult, Question, SpecMode } from "../types.ts";
 import type { Action, ChainEvent, ChainStage, ChainState } from "./types.ts";
 
@@ -14,6 +14,9 @@ export const MAX_REPLANS = 1;
 export const MAX_SPEC_REVISIONS = 1;
 export const MAX_SPEC_ANSWERS = 1;
 export const MAX_DECIDE_RETURNS = 1;
+/** Spec 029 AC-4: the configured bound (`bounds.design_revisions`) is passed to `transition`; this is its default. */
+export interface Bounds { designRevisions: number }
+export const DEFAULT_BOUNDS: Bounds = { designRevisions: 2 };
 /** C7: releases for repeated chain errors; the next one abandons the issue. */
 export const MAX_CHAIN_ERRORS = 1;
 export const VERIFY_PENDING_MAX_H = 6;
@@ -29,13 +32,13 @@ const KIND_OTHER_REASONING = "kind other is not a question for the maintainer";
 export const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused"];
 
 export type LedgerCounts = Pick<
-  ChainState, "rescues" | "specRescues" | "replans" | "specRevisions" | "specAnswers" | "decideReturns" | "history" | "pendingAnswer" | "chainFailures" | "chainErrors"
+  ChainState, "rescues" | "specRescues" | "replans" | "specRevisions" | "designRevisions" | "specAnswers" | "decideReturns" | "history" | "pendingAnswer" | "chainFailures" | "chainErrors"
 >;
 
 /** The ledger's fields of a state; a ledger written before T4 and C7 lacks the last three, which default. */
-export function ledgerOf(state: Omit<LedgerCounts, "pendingAnswer" | "chainFailures" | "chainErrors"> & Partial<LedgerCounts>): LedgerCounts {
+export function ledgerOf(state: Omit<LedgerCounts, "pendingAnswer" | "chainFailures" | "chainErrors" | "designRevisions"> & Partial<LedgerCounts>): LedgerCounts {
   return {
-    rescues: state.rescues, specRescues: state.specRescues, replans: state.replans, specRevisions: state.specRevisions,
+    rescues: state.rescues, specRescues: state.specRescues, replans: state.replans, specRevisions: state.specRevisions, designRevisions: state.designRevisions ?? 0,
     specAnswers: state.specAnswers, decideReturns: state.decideReturns, history: [...state.history],
     pendingAnswer: state.pendingAnswer ?? null, chainFailures: state.chainFailures ?? null, chainErrors: state.chainErrors ?? 0,
   };
@@ -47,12 +50,12 @@ const clip = (text: string): string => text.slice(0, HISTORY_ENTRY_MAX);
  * A new chain; `ledger` seeds the escalation counts and history of an issue claimed before (AC-7), trimmed like any
  * history, and an answer a release left unrecorded (T4).
  */
-export function initialChainState(issue: number, specProblem: string | null = null, ledger: Parameters<typeof ledgerOf>[0] | null = null): ChainState {
+export function initialChainState(issue: number, specProblem: string | null = null, ledger: Parameters<typeof ledgerOf>[0] | null = null, designProblem: string | null = null): ChainState {
   return {
     issue, stage: "claimed", attempt: 1, fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0,
     sensitive: false, pr: null, plan: null, pendingFixInput: null, postponedUntil: null, resumeStage: null, conflictPending: false,
-    track: "issue", rescues: 0, specRescues: 0, replans: 0, specRevisions: 0, specAnswers: 0, decideReturns: 0, history: [],
-    rescueRun: false, specMode: null, specProblem, question: null, askingStage: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
+    track: "issue", rescues: 0, specRescues: 0, replans: 0, specRevisions: 0, designRevisions: 0, specAnswers: 0, decideReturns: 0, history: [],
+    rescueRun: false, specMode: null, specProblem, designProblem, question: null, askingStage: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
     pendingAnswer: null, recordIds: [], recordKind: null, recordAnswer: false, decideInput: null, decidedQuestion: null, parkedPr: null, pendingSince: null, checksRerun: false, securityPass: false,
     chainFailures: null, chainErrors: 0, heldWork: null,
     ...(ledger ? { ...ledgerOf(ledger), history: ledger.history.slice(-HISTORY_MAX_ENTRIES).map(clip) } : {}),
@@ -68,9 +71,9 @@ export function normalizeChainState(raw: unknown): ChainState {
   return { ...initialChainState(rest.issue as number), ...rest } as ChainState;
 }
 
-/** The branch of the PR the chain works on; the spec stage always runs on the spec track. */
+/** The branch of the PR the chain works on; the spec stage always runs on the spec track, the design stage on the design track. */
 export function branchOf(state: Pick<ChainState, "issue" | "track">): string {
-  return state.track === "spec" ? `spec-${state.issue}` : `issue-${state.issue}`;
+  return state.track === "spec" ? `spec-${state.issue}` : state.track === "design" ? `design-${state.issue}` : `issue-${state.issue}`;
 }
 
 type Step = { state: ChainState; actions: Action[] };
@@ -78,7 +81,7 @@ type Step = { state: ChainState; actions: Action[] };
 type Stuck = Exclude<AgentStageName, "question-check">;
 type StageOk = Extract<ChainEvent, { type: "stage_ok" }>;
 
-const POSTPONABLE: ChainStage[] = ["plan", "implement", "review", "fix", "spec", "question-check"];
+const POSTPONABLE: ChainStage[] = ["plan", "implement", "review", "fix", "spec", "design", "question-check"];
 
 function invalid(state: ChainState, event: ChainEvent): never {
   throw new Error(`invalid event ${event.type} in stage ${state.stage} (issue ${state.issue})`);
@@ -103,6 +106,11 @@ function restorePending(s: ChainState): Partial<ChainState> {
 /** Every entry into the spec stage goes through here and sets the spec track; an unrecorded answer comes along (T4). */
 function toSpec(state: ChainState, mode: SpecMode, patch: Partial<ChainState> = {}): Step {
   return run({ ...state, track: "spec", specMode: mode }, "spec", {}, { ...patch, ...restorePending({ ...state, ...patch }) });
+}
+
+/** Every entry into the design stage goes through here and sets the design track (spec 029 AC-1). */
+function toDesign(state: ChainState, patch: Partial<ChainState> = {}): Step {
+  return run({ ...state, track: "design" }, "design", {}, patch);
 }
 
 /** A fresh plan, unless an answer is still unrecorded (T4): then the spec stage records it first, and plan runs after that merge. */
@@ -131,6 +139,8 @@ function rerun(state: ChainState, stuck: Stuck, fixInput: string, patch: Partial
       return run(state, "review", reviewProfile(state), patch);
     case "spec":
       return toSpec(state, state.specMode ?? "write", patch);
+    case "design":
+      return toDesign(state, patch);
     default:
       return run(state, stuck, {}, patch);
   }
@@ -145,6 +155,12 @@ function escalate(state: ChainState, stuck: Stuck, reason: string, fixInput: str
   if (s.track === "spec" || stuck === "spec") {
     if (s.specRescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { specRescues: s.specRescues + 1, rescueRun: true, track: "spec" });
     return abandon(s, stuck);
+  }
+  // Spec 029 AC-4: the design track gets one rescue, then the spec agent revises the UI design section, then the issue is abandoned.
+  if (s.track === "design" || stuck === "design") {
+    if (s.rescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { rescues: s.rescues + 1, rescueRun: true, track: "design" });
+    const next = designToSpecRevise(s, reason);
+    return next ?? abandon(s, stuck);
   }
   if (s.rescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { rescues: s.rescues + 1, rescueRun: true });
   // The PR is closed: its fix input, conflict and rescue flag go with it, and so do a decide-mode input, an ADR requirement on its
@@ -165,8 +181,20 @@ function escalate(state: ChainState, stuck: Stuck, reason: string, fixInput: str
   return abandon(s, stuck);
 }
 
+/** The record goes to the spec agent in `revise` mode with the design attempts as history, on the theory that the UI design section is unbuildable; null once the revisions are spent. */
+function designToSpecRevise(s: ChainState, reason: string): Step | null {
+  if (s.specRevisions >= MAX_SPEC_REVISIONS) return null;
+  const problem = `the design stage could not satisfy the UI design section: ${reason}\n\nDesign attempts:\n${s.history.filter((h) => h.startsWith("design") || h.startsWith("fix") || h.startsWith("review")).join("\n")}`;
+  const closes: Action[] = s.pr ? [{ type: "close_pr", pr: s.pr.number, branch: branchOf(s), comment: `Closed by the scheduler to revise the spec: ${clip(reason)}` }] : [];
+  const next = toSpec(s, "revise", {
+    pr: null, pendingFixInput: null, conflictPending: false, rescueRun: false, decideInput: null, decidedQuestion: null, recordAnswer: false, securityPass: false,
+    designProblem: null, designRevisions: 0, fixes: 0, scopeViolations: 0, specProblem: problem, specRevisions: s.specRevisions + 1,
+  });
+  return { state: next.state, actions: [...closes, ...next.actions] };
+}
+
 function boundsText(s: ChainState): string {
-  return `rescue ${s.rescues}/${MAX_RESCUES}, spec-track rescue ${s.specRescues}/${MAX_RESCUES}, re-plan ${s.replans}/${MAX_REPLANS}, spec revision ${s.specRevisions}/${MAX_SPEC_REVISIONS}, chain-error release ${s.chainErrors}/${MAX_CHAIN_ERRORS}`;
+  return `design revision ${s.designRevisions}, rescue ${s.rescues}/${MAX_RESCUES}, spec-track rescue ${s.specRescues}/${MAX_RESCUES}, re-plan ${s.replans}/${MAX_REPLANS}, spec revision ${s.specRevisions}/${MAX_SPEC_REVISIONS}, chain-error release ${s.chainErrors}/${MAX_CHAIN_ERRORS}`;
 }
 
 /** Informational only: no @ anywhere (AC-5, C11), the newest history entries that fit. The driver appends the run-record paths. */
@@ -240,6 +268,8 @@ function resume(s: ChainState, asking: AskingStage, patch: Partial<ChainState> =
   switch (asking) {
     case "spec":
       return toSpec(s, mode ?? s.specMode ?? "write", patch);
+    case "design":
+      return toDesign(s, patch);
     case "verify":
       // A new six-hour window (AC-17).
       return { state: { ...s, ...patch, stage: "verify", attempt: 1, pendingSince: null }, actions: [{ type: "verify" }] };
@@ -350,7 +380,7 @@ const CONFLICT_GUIDANCE = "Resolving this means pushing a new head that contains
  */
 function conflictUnresolved(state: ChainState, head: string): Step {
   const retry = `The previous fix run returned head ${head} unchanged, which does not end a pending conflict with origin/main. Resolve it and push a new head; do not return this head again.\n\n${state.pendingFixInput ?? ""}`;
-  return baseTransition({ ...state, pendingFixInput: retry }, { type: "stage_failed", stage: "fix", reason: `conflict still pending: the fix returned head ${head} unchanged` });
+  return baseTransition({ ...state, pendingFixInput: retry }, { type: "stage_failed", stage: "fix", reason: `conflict still pending: the fix returned head ${head} unchanged` }, DEFAULT_BOUNDS);
 }
 
 /**
@@ -438,6 +468,24 @@ function stageOk(state: ChainState, event: StageOk): Step {
       const text = `Diff touches files outside the spec PR's scope:\n${violationList(scope.violations)}`;
       return toFix(note(done, text), text, { scopeViolations: 1 });
     }
+    case "design": {
+      const r = event.result;
+      if (r.verdict === "question") {
+        if (!r.question) throw new Error(`design question without a question object (issue ${state.issue})`);
+        if (r.question.kind !== "other") return ask(state, "design", r.question, event.head);
+        if (state.decideInput !== null) return failedInDecideMode(state, "design");
+        return decideYourself({ ...state, rescueRun: false, ...heldPatch(state, "design", event.head) }, "design", KIND_OTHER_REASONING, r.question);
+      }
+      if (r.pr_number === undefined || r.head_sha === undefined) throw new Error(`design designed without a PR (issue ${state.issue})`);
+      const scope = scopeOf(state, event);
+      const done: ChainState = {
+        ...unholdIfBound(settle(state, "design")), pr: { number: r.pr_number, head_sha: r.head_sha }, fixes: 0, scopeViolations: 0,
+        pendingFixInput: null, conflictPending: false,
+      };
+      if (scope.ok) return { state: { ...done, stage: "verify" }, actions: [{ type: "verify" }] };
+      const text = `Diff touches files outside the design PR's scope:\n${violationList(scope.violations)}`;
+      return toFix(note(done, text), text, { scopeViolations: 1 });
+    }
     case "question-check": {
       const { question, askingStage } = state;
       if (!question || !askingStage) throw new Error(`question check without a question (issue ${state.issue})`);
@@ -491,44 +539,54 @@ function verifyChecks(state: ChainState, event: Extract<ChainEvent, { type: "che
   return run(moved, "review", reviewProfile(moved));
 }
 
-/** AC-4: after a spec PR merges, spec-present and the UI-design gate ran again on origin/main. The chain is not done. */
-function specMerged(state: ChainState, gate: NonNullable<Extract<ChainEvent, { type: "merge_result" }>["specGate"]>): Step {
-  const deleteBranch: Action = { type: "delete_branch", branch: branchOf(state) };
-  const fresh: Partial<ChainState> = {
-    fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, conflictPending: false, pendingFixInput: null, pendingSince: null, checksRerun: false,
-    rescueRun: false, specProblem: null, specMode: null, decideInput: null, decidedQuestion: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
-    recordIds: [], recordKind: null,
-    recordAnswer: false, securityPass: false,
-    // T4: a merged spec PR on this chain carried the unrecorded answer (the driver refused one without its mark).
-    pendingAnswer: null,
-  };
-  const after = (next: Step): Step => ({ state: next.state, actions: [deleteBranch, ...next.actions] });
-  if (gate.ok) {
-    const base: ChainState = { ...state, ...fresh, track: "issue" };
-    if (state.parkedPr) {
-      return after(toFix({ ...base, pr: state.parkedPr, parkedPr: null },
-        `Apply the maintainer's decision to ${state.answerQuestionIds.map((id) => `question #${id}`).join(", ")}, now recorded on main. Read it in the spec and the top designs, then change this PR to follow it.`));
-    }
-    return after(run({ ...base, pr: null, plan: null }, "plan"));
+type PostMergeGate = NonNullable<Extract<ChainEvent, { type: "merge_result" }>["specGate"]>;
+
+/** The counters a merged spec or design PR starts the next stage with. */
+const FRESH: Partial<ChainState> = {
+  fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, conflictPending: false, pendingFixInput: null, pendingSince: null, checksRerun: false,
+  rescueRun: false, specProblem: null, specMode: null, decideInput: null, decidedQuestion: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
+  recordIds: [], recordKind: null,
+  recordAnswer: false, securityPass: false,
+};
+
+/** The gates passed on origin/main: the issue's plan runs (or, for a parked issue PR, the fix that applies the decision). */
+function proceedToPlan(state: ChainState, fresh: Partial<ChainState>, after: (next: Step) => Step): Step {
+  const base: ChainState = { ...state, ...fresh, designProblem: null, track: "issue" };
+  if (state.parkedPr) {
+    return after(toFix({ ...base, pr: state.parkedPr, parkedPr: null },
+      `Apply the maintainer's decision to ${state.answerQuestionIds.map((id) => `question #${id}`).join(", ")}, now recorded on main. Read it in the spec and the top designs, then change this PR to follow it.`));
   }
+  return after(toPlan({ ...base, pr: null, plan: null }));
+}
+
+/** AC-4: after a spec PR merges, spec-present and the UI-design gate ran again on origin/main. The chain is not done. */
+function specMerged(state: ChainState, gate: PostMergeGate): Step {
+  const deleteBranch: Action = { type: "delete_branch", branch: branchOf(state) };
+  // T4: a merged spec PR on this chain carried the unrecorded answer (the driver refused one without its mark).
+  const fresh: Partial<ChainState> = { ...FRESH, pendingAnswer: null };
+  const after = (next: Step): Step => ({ state: next.state, actions: [deleteBranch, ...next.actions] });
+  if (gate.ok) return proceedToPlan(state, fresh, after);
   if (gate.gate === "spec-present") {
     return after(escalate({ ...state, pr: null, specProblem: gate.reason, specMode: "write" }, "spec", `spec-present failed after merge: ${gate.reason}`));
   }
-  // AC-20: wait for spec E's design stage; the ledger is kept (not archived).
-  const closeParked: Action[] = state.parkedPr
-    ? [{ type: "close_pr", pr: state.parkedPr.number, branch: `issue-${state.issue}`, comment: "Closed by the scheduler: the issue waits for its design stage." }]
-    : [];
-  return {
-    state: { ...state, ...fresh, stage: "released", pr: null, parkedPr: null, heldWork: null },
-    actions: [
-      deleteBranch,
-      ...closeParked,
-      { type: "comment", text: `The spec PR merged, but the UI-design gate failed on main: ${gate.reason}` },
-      { type: "label", add: [NEEDS_DESIGN_STAGE], remove: [CLAIM_LABEL] },
-      { type: "notify", gate: "ui-design", label: NEEDS_DESIGN_STAGE, text: `Issue #${state.issue} waits for the design stage: ${gate.reason}` },
-      { type: "release", reason: "ui design missing after the spec merge", savePatch: false },
-    ],
-  };
+  // Spec 029 AC-1: the UI design is missing on main, so the design stage runs with the gate's reason, on a fresh revision count.
+  return after(toDesign(note({ ...state, ...fresh, pr: null }, `spec merged, UI-design gate failed: ${gate.reason}`), { designProblem: gate.reason, designRevisions: 0 }));
+}
+
+/** Spec 029 AC-4: after a design PR merges the gates ran again on origin/main; a failing UI-design gate is another design run until the bound, then the spec agent revises. */
+function designMerged(state: ChainState, gate: PostMergeGate, bounds: Bounds): Step {
+  const deleteBranch: Action = { type: "delete_branch", branch: branchOf(state) };
+  const after = (next: Step): Step => ({ state: next.state, actions: [deleteBranch, ...next.actions] });
+  if (gate.ok) return proceedToPlan(state, FRESH, after);
+  const merged: ChainState = { ...state, ...FRESH, pr: null };
+  if (gate.gate === "spec-present") {
+    return after(escalate({ ...merged, specProblem: gate.reason, specMode: "write" }, "spec", `spec-present failed after the design merge: ${gate.reason}`));
+  }
+  const noted = note(merged, `design PR merged but the UI-design gate still fails: ${gate.reason}`);
+  const failed = state.designRevisions + 1;
+  if (failed < bounds.designRevisions) return after(toDesign(noted, { designProblem: gate.reason, designRevisions: failed }));
+  const revise = designToSpecRevise({ ...noted, designRevisions: failed }, gate.reason);
+  return after(revise ?? abandon(noted, "design"));
 }
 
 const KIND_STRENGTH: Question["kind"][] = ["other", "capability", "technical", "product"];
@@ -572,6 +630,12 @@ function answered(state: ChainState, event: Extract<ChainEvent, { type: "answere
   const marks = recordIds.map((r) => `(maintainer answer, question #${r})`).join(", ");
   if (asking === "review" || asking === "fix") {
     // On a spec PR the decision is recorded in that PR; there is no issue PR to park.
+    if (s.track === "design") {
+      // The design PR's scope is design/ only: the decision is recorded by the spec agent first, and the design is redone after its merge.
+      const next = toSpec(s, "record", { pr: null });
+      const close: Action[] = s.pr ? [{ type: "close_pr", pr: s.pr.number, branch: branchOf(s), comment: "Closed by the scheduler: a maintainer decision is recorded in the spec first, and the design is redone after." }] : [];
+      return { state: next.state, actions: [...close, ...next.actions] };
+    }
     if (s.track === "spec") {
       return toFix(s, `Record the maintainer's decision in this spec PR, marked ${marks}, then apply it:\n${decision}`);
     }
@@ -588,12 +652,12 @@ function answered(state: ChainState, event: Extract<ChainEvent, { type: "answere
 function releaseClaim(state: ChainState, why: string, text: string, gate: string, reason: string, extra: Action[] = []): Step {
   const closeComment = `Closed by the scheduler: the claim was released ${why}.`;
   const closes: Action[] = [];
-  if (state.track === "spec") {
+  if (state.track !== "issue") {
     closes.push(state.pr ? { type: "close_pr", pr: state.pr.number, branch: branchOf(state), comment: closeComment } : { type: "delete_branch", branch: branchOf(state) });
   }
   if (state.parkedPr) closes.push({ type: "close_pr", pr: state.parkedPr.number, branch: `issue-${state.issue}`, comment: closeComment });
   return {
-    state: { ...state, stage: "released", ...(state.track === "spec" ? { pr: null } : {}), parkedPr: null, heldWork: null },
+    state: { ...state, stage: "released", ...(state.track !== "issue" ? { pr: null } : {}), parkedPr: null, heldWork: null },
     actions: [
       ...closes,
       { type: "comment", text },
@@ -609,7 +673,7 @@ function releaseClaim(state: ChainState, why: string, text: string, gate: string
 export function stuckOf(s: ChainState): Stuck {
   const stage = s.stage === "waiting" ? s.resumeStage : s.stage;
   if (stage === "question-check") return s.askingStage && s.askingStage !== "verify" ? s.askingStage : "fix";
-  if (stage === "plan" || stage === "implement" || stage === "review" || stage === "fix" || stage === "spec") return stage;
+  if (stage === "plan" || stage === "implement" || stage === "review" || stage === "fix" || stage === "spec" || stage === "design") return stage;
   return s.stage === "claimed" ? "plan" : "fix";
 }
 
@@ -633,7 +697,7 @@ function chainError(state: ChainState, error: string): Step {
   return releaseClaim({ ...s, chainErrors: s.chainErrors + 1 }, "after repeated scheduler errors", text, "chain_error", "chain error", [finding]);
 }
 
-export function transition(state:ChainState,event:ChainEvent):Step {
+export function transition(state:ChainState,event:ChainEvent,bounds:Bounds=DEFAULT_BOUNDS):Step {
  if(state.conversation&&(event.type==='stage_ok'||event.type==='stage_failed')){
   const c=state.conversation;
   const result=event.type==='stage_ok'?event.result as unknown as {conversation?:string;decision?:string;escalation?:Question}:null;
@@ -644,7 +708,7 @@ export function transition(state:ChainState,event:ChainEvent):Step {
   }
   return {state:{...state,conversation:{...c,retried:true}},actions:[{type:'thread_reply',text:`The ${c.asking} run failed; the chain retries`},{type:'run_stage',stage:c.asking,attempt:state.attempt,conversation:true}]};
  }
- const next=baseTransition(state,event);
+ const next=baseTransition(state,event,bounds);
  if(event.type==='answered'&&state.resumeSession&&state.askingStage!=='verify'){
   const asking=state.askingStage!;
   const action=next.actions.find(a=>a.type==='run_stage');
@@ -660,7 +724,7 @@ export function transition(state:ChainState,event:ChainEvent):Step {
  return next;
 }
 
-function baseTransition(state: ChainState, event: ChainEvent): Step {
+function baseTransition(state: ChainState, event: ChainEvent, bounds: Bounds): Step {
   if (event.type === "liveness_expired" || event.type === "chain_error") {
     if (ENDED.includes(state.stage)) invalid(state, event);
     if (event.type === "chain_error") return chainError(state, event.error);
@@ -702,6 +766,9 @@ function baseTransition(state: ChainState, event: ChainEvent): Step {
       case "spec":
         if (s.attempt === 1) return toSpec(s, s.specMode ?? "write", { attempt: 2 });
         return escalate(s, "spec", `failed twice: ${event.reason}`);
+      case "design":
+        if (s.attempt === 1) return toDesign(s, { attempt: 2 });
+        return escalate(s, "design", `failed twice: ${event.reason}`);
       case "question-check": {
         if (!s.askingStage) throw new Error(`question check without an asking stage (issue ${state.issue})`);
         if (s.attempt === 1) return run(s, "question-check", {}, { attempt: 2 });
@@ -720,11 +787,17 @@ function baseTransition(state: ChainState, event: ChainEvent): Step {
   switch (state.stage) {
     case "claimed":
       // AC-19: a missing or incomplete spec starts at the spec stage.
-      if (event.type === "start") return state.specProblem ? toSpec(state, "write") : toPlan(state);
+      if (event.type === "start") {
+        if (state.specProblem) return toSpec(state, "write");
+        // Spec 029 AC-1: a missing design starts the design stage; an unrecorded answer is recorded by the spec stage first, and its merge then finds the design missing.
+        if (state.designProblem) return state.pendingAnswer ? toSpec(state, "record") : toDesign(state);
+        return toPlan(state);
+      }
       break;
     case "waiting":
       if (event.type === "start" && state.resumeStage) {
         if (state.resumeStage === "spec") return toSpec(state, state.specMode ?? "write", { attempt: state.attempt });
+        if (state.resumeStage === "design") return toDesign(state, { attempt: state.attempt });
         const extra = state.resumeStage === "fix" && state.pendingFixInput ? { fixInput: state.pendingFixInput }
           : state.resumeStage === "review" ? reviewProfile(state) : {};
         return run(state, state.resumeStage, extra, { attempt: state.attempt });
@@ -736,7 +809,9 @@ function baseTransition(state: ChainState, event: ChainEvent): Step {
     case "merge":
       if (event.type === "merge_result") {
         if (event.status === "merged") {
-          if (state.track === "spec") return specMerged(state, event.specGate ?? { ok: false, gate: "spec-present", reason: "the post-merge spec gates did not run" });
+          const gate = event.specGate ?? { ok: false as const, gate: "spec-present" as const, reason: "the post-merge spec gates did not run" };
+          if (state.track === "spec") return specMerged(state, gate);
+          if (state.track === "design") return designMerged(state, gate, bounds);
           return { state: { ...state, stage: "done", pendingAnswer: null, heldWork: null }, actions: [{ type: "label", add: [], remove: [CLAIM_LABEL] }, { type: "done" }] };
         }
         return toFix(state, `PR not mergeable:\n${event.detail ?? ""}`);

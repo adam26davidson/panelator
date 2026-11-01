@@ -7,7 +7,7 @@ import type { Action, ChainEvent, ChainStage, ChainState } from "../src/chain/ty
 import { MAX_FIXES } from "../src/gates/index.ts";
 import { validate } from "../src/schema/validate.ts";
 import { formatQuestion, questionBody, questionMarker } from "../src/chain/question.ts";
-import type { AgentStageName, ImplementResult, PlanResult, Question, ReviewResult, SpecResult } from "../src/types.ts";
+import type { AgentStageName, DesignResult, ImplementResult, PlanResult, Question, ReviewResult, SpecResult } from "../src/types.ts";
 
 const plan: PlanResult = { verdict: "ready", domain: "backend", tasks: [{ id: "T1", description: "d", files: ["a.ts"] }] };
 const impl: ImplementResult = { pr_number: 3, head_sha: "b".repeat(40), tasks_done: ["T1"] };
@@ -334,7 +334,7 @@ describe("chain: escalation path (AC-1 to AC-6)", () => {
 
 describe("chain: ledger and claim state (AC-7)", () => {
   const ledger: LedgerCounts = {
-    rescues: 1, specRescues: 0, replans: 0, specRevisions: 0, specAnswers: 1, decideReturns: 1, history: ["plan: failed twice: old"], pendingAnswer: null, chainFailures: null, chainErrors: 0,
+    rescues: 1, specRescues: 0, replans: 0, specRevisions: 0, designRevisions: 0, specAnswers: 1, decideReturns: 1, history: ["plan: failed twice: old"], pendingAnswer: null, chainFailures: null, chainErrors: 0,
   };
   it("a seeded ledger carries counts into a new chain (AC-7)", () => {
     const s = initialChainState(1, null, ledger);
@@ -570,13 +570,11 @@ describe("chain: spec stage and spec track (AC-4, AC-19, AC-21, AC-22)", () => {
     expect(r2.state.stage).toBe("abandoned");
     expect(types(r2.actions)).toEqual(["delete_branch", "comment", "label", "finding", "notify", "done"]);
 
-    const ui = transition(at("merge", { track: "spec", pr: pr8 }), { type: "merge_result", status: "merged", specGate: { ok: false, gate: "ui-design", reason: "spec E will provide the design stage: no design/" } });
-    expect(ui.state).toMatchObject({ stage: "released", pr: null });
-    expect(types(ui.actions)).toEqual(["delete_branch", "comment", "label", "notify", "release"]);
-    expect((ui.actions[1] as { text: string }).text).toContain("no design/");
-    expect(ui.actions[2]).toEqual({ type: "label", add: ["needs-design-stage"], remove: ["in-progress"] });
-    expect(ui.actions.at(-1)).toEqual({ type: "release", reason: expect.any(String), savePatch: false });
-    expect(ui.actions.some((a) => a.type === "finding")).toBe(false);
+    const ui = transition(at("merge", { track: "spec", pr: pr8 }), { type: "merge_result", status: "merged", specGate: { ok: false, gate: "ui-design", reason: "the design is incomplete: no design/" } });
+    expect(ui.actions).toEqual([{ type: "delete_branch", branch: "spec-1" }, { type: "run_stage", stage: "design", attempt: 1 }]);
+    expect(ui.state).toMatchObject({ stage: "design", track: "design", pr: null, designProblem: "the design is incomplete: no design/", designRevisions: 0 });
+    expect(branchOf(ui.state)).toBe("design-1");
+    expect(JSON.stringify(ui.actions)).not.toContain("needs-design-stage");
   });
   it("a merged record PR restores the parked issue PR and runs a fix (AC-18)", () => {
     const s = at("merge", { track: "spec", pr: pr8, parkedPr: pr3, fixes: 1, answerQuestionId: 5, answerQuestionIds: [5], answerKind: "product", specProblem: null });
@@ -968,7 +966,7 @@ describe("chain: answer chains and unrecorded answers (final review T3, T4, T-mi
     // A ledger written before T4 and C7 loads with the new fields defaulted.
     const old = { rescues: 1, specRescues: 0, replans: 0, specRevisions: 0, specAnswers: 0, decideReturns: 0, history: [] };
     expect(initialChainState(1, null, old)).toMatchObject({ pendingAnswer: null, chainFailures: null, chainErrors: 0 });
-    expect(ledgerOf(initialChainState(1, null, old))).toEqual({ ...old, pendingAnswer: null, chainFailures: null, chainErrors: 0 });
+    expect(ledgerOf(initialChainState(1, null, old))).toEqual({ ...old, pendingAnswer: null, chainFailures: null, chainErrors: 0, designRevisions: 0 });
   });
   it("a liveness release keeps the unrecorded answer in the ledger (T4)", () => {
     const pending = { ids: [5], kind: "technical" as const, text: "Question #5: lru" };
@@ -1080,9 +1078,9 @@ const headOf = (e: ChainEvent) => (e as { head?: string }).head;
 
 describe("chain: every event in every stage (AC-27)", () => {
   const STAGES: ChainStage[] = [
-    "claimed", "plan", "implement", "verify", "review", "fix", "merge", "spec", "question-check", "done", "released", "waiting", "paused", "abandoned",
+    "claimed", "plan", "implement", "verify", "review", "fix", "merge", "spec", "design", "question-check", "done", "released", "waiting", "paused", "abandoned",
   ];
-  const AGENT: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "question-check"];
+  const AGENT: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "design", "question-check"];
   const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused"];
   const EVENTS_FAILED: ChainEvent[] = AGENT.flatMap((stage): ChainEvent[] => [
     { type: "stage_failed", stage, reason: "boom" },
@@ -1400,5 +1398,89 @@ describe("chain: a fix must resolve a pending rebase conflict (spec 024)", () =>
   it("terminates within the bounds when every fix finds the conflict gone and the next review finds it back", () => {
     const { state } = driveToEnd(() => ({ type: "conflict_gone" }));
     expect(state).toMatchObject({ stage: "abandoned", rescues: 1, replans: 1, specRevisions: 1, specRescues: 1 });
+  });
+});
+
+describe("chain: the design track (spec 029)", () => {
+  const designed: DesignResult = {
+    verdict: "designed", spec_path: "specs/010-x/spec.md", pr_number: 9, head_sha: "d".repeat(40),
+    screens: [{ name: "home", stories: ["home--default"], renders: ["a.png", "a.mobile.png", "a.tablet.png"] }],
+  };
+  const pr9 = { number: 9, head_sha: "d".repeat(40) };
+  const designOk = (scope: { ok: true } | { ok: false; violations: string[] }, result: DesignResult = designed): ChainEvent => ({ type: "stage_ok", stage: "design", result, scope, head: "d".repeat(40) });
+  const gateFails = { type: "merge_result" as const, status: "merged" as const, specGate: { ok: false as const, gate: "ui-design" as const, reason: "missing home.tablet.png" } };
+
+  it("a claim with a design problem runs the design stage on the design track, not plan", () => {
+    const s = initialChainState(1, null, null, "missing home.png");
+    expect(s.designProblem).toBe("missing home.png");
+    const r = transition(s, { type: "start" });
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "design", attempt: 1 }]);
+    expect(r.state).toMatchObject({ stage: "design", track: "design" });
+    expect(branchOf(r.state)).toBe("design-1");
+    expect(transition(initialChainState(1), { type: "start" }).state.stage).toBe("plan");
+    expect(transition(initialChainState(1, "no spec", null, "x"), { type: "start" }).state.stage).toBe("spec");
+  });
+  it("a designed result with a clean scope goes to verify with the PR bound", () => {
+    const r = transition(at("design", { track: "design" }), designOk({ ok: true }));
+    expect(r.actions).toEqual([{ type: "verify" }]);
+    expect(r.state).toMatchObject({ stage: "verify", track: "design", pr: pr9, fixes: 0, scopeViolations: 0 });
+  });
+  it("a scope violation goes to one fix and the second escalates (AC-2)", () => {
+    const r1 = transition(at("design", { track: "design" }), designOk({ ok: false, violations: ["docs/x.md: outside design PR scope"] }));
+    expect(r1.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining("design PR's scope") }]);
+    expect(r1.state).toMatchObject({ stage: "fix", track: "design", scopeViolations: 1 });
+    const r2 = transition(r1.state, { type: "stage_ok", stage: "fix", result: { head_sha: "c".repeat(40), addressed: [0] }, scope: { ok: false, violations: ["tools/a.ts: outside design PR scope"] } });
+    expect(r2.state).toMatchObject({ stage: "fix", rescues: 1, rescueRun: true, track: "design" });
+  });
+  it("request_changes on the design PR runs fix; approve and green checks merge it", () => {
+    const review = transition(at("review", { track: "design", pr: pr9 }), { type: "stage_ok", stage: "review", result: changes, security: false });
+    expect(review.actions[0]).toMatchObject({ type: "run_stage", stage: "fix" });
+    expect(review.state.track).toBe("design");
+    const ok = transition(at("review", { track: "design", pr: pr9 }), { type: "stage_ok", stage: "review", result: approve, security: false });
+    expect(ok.actions).toEqual([{ type: "merge" }]);
+  });
+  it("a merge with a passing gate deletes design-<n> and runs plan with fresh counters and held work", () => {
+    const held = { branch: "issue-1", head: "a".repeat(40) };
+    const r = transition(at("merge", { track: "design", pr: pr9, fixes: 2, scopeViolations: 1, designProblem: "x", designRevisions: 1, heldWork: held }), { type: "merge_result", status: "merged", specGate: { ok: true } });
+    expect(r.actions).toEqual([{ type: "delete_branch", branch: "design-1" }, { type: "run_stage", stage: "plan", attempt: 1 }]);
+    expect(r.state).toMatchObject({ stage: "plan", track: "issue", pr: null, plan: null, fixes: 0, scopeViolations: 0, designProblem: null, heldWork: held });
+  });
+  it("a gate that still fails reruns the design once, then the spec agent revises with the design history (AC-4)", () => {
+    const first = transition(at("merge", { track: "design", pr: pr9 }), gateFails);
+    expect(first.actions).toEqual([{ type: "delete_branch", branch: "design-1" }, { type: "run_stage", stage: "design", attempt: 1 }]);
+    expect(first.state).toMatchObject({ stage: "design", track: "design", designProblem: "missing home.tablet.png", designRevisions: 1, pr: null });
+    const second = transition({ ...first.state, stage: "merge", pr: pr9 }, gateFails);
+    expect(second.actions[0]).toEqual({ type: "delete_branch", branch: "design-1" });
+    expect(second.actions[1]).toEqual({ type: "run_stage", stage: "spec", attempt: 1 });
+    expect(second.state).toMatchObject({ stage: "spec", track: "spec", specMode: "revise", specRevisions: 1, pr: null });
+    expect(second.state.specProblem).toContain("the design stage could not satisfy the UI design section: missing home.tablet.png");
+    expect(second.state.specProblem).toContain("UI-design gate still fails");
+  });
+  it("the bound honours transition's bounds parameter", () => {
+    const r = transition(at("merge", { track: "design", pr: pr9 }), gateFails, { designRevisions: 4 });
+    expect(r.state).toMatchObject({ stage: "design", designRevisions: 1 });
+    const r1 = transition(at("merge", { track: "design", pr: pr9 }), gateFails, { designRevisions: 1 });
+    expect(r1.state).toMatchObject({ stage: "spec", specMode: "revise" });
+  });
+  it("revise exhausted abandons the issue", () => {
+    const r = transition(at("merge", { track: "design", pr: pr9, designRevisions: 1, specRevisions: 1 }), gateFails);
+    expect(r.state.stage).toBe("abandoned");
+  });
+  it("a design question pauses via the question check with askingStage design", () => {
+    const r = transition(at("design", { track: "design" }), { type: "stage_ok", stage: "design", result: { verdict: "question", question: qProduct }, head: "d".repeat(40) });
+    expect(r.state).toMatchObject({ stage: "question-check", askingStage: "design", heldWork: { branch: "design-1", head: "d".repeat(40) } });
+    const paused = transition(r.state, { type: "stage_ok", stage: "question-check", result: { verdict: "send", reasoning: "r" } });
+    expect(paused.actions[0]).toMatchObject({ type: "pause", asking: "design" });
+  });
+  it("a design stage failure retries once, then escalates with one rescue", () => {
+    const f1 = transition(at("design", { track: "design" }), { type: "stage_failed", stage: "design", reason: "boom" });
+    expect(f1.state).toMatchObject({ stage: "design", attempt: 2 });
+    const f2 = transition(f1.state, { type: "stage_failed", stage: "design", reason: "boom" });
+    expect(f2.state).toMatchObject({ stage: "design", rescueRun: true, rescues: 1 });
+  });
+  it("defaults the new fields on a state written before spec 029", () => {
+    const { designProblem: _a, designRevisions: _b, ...old } = initialChainState(3);
+    expect(normalizeChainState(old)).toMatchObject({ designProblem: null, designRevisions: 0 });
+    expect(ledgerOf({ ...old, designRevisions: undefined } as never).designRevisions).toBe(0);
   });
 });

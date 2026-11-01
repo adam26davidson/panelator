@@ -29,6 +29,10 @@
       "type": "integer",
       "minimum": 0
     },
+    "designRevisions": {
+      "type": "integer",
+      "minimum": 0
+    },
     "specAnswers": {
       "type": "integer",
       "minimum": 0
