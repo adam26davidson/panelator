@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   authorityGate, fixLoopGate, isSensitive, latestLabelActor, livenessGate,
-  readyGate, scopeGate, specPresentGate, specScopeGate, uiDesignGate, validatedGate,
+  designScopeGate, readyGate, scopeGate, specPresentGate, specScopeGate, uiDesignGate, validatedGate,
 } from "../src/gates/index.ts";
 import { parseSpec } from "../src/spec/parse.ts";
 import type { IssueData, LabelEvent, PlanResult } from "../src/types.ts";
@@ -93,14 +93,19 @@ describe("uiDesignGate (AC-8)", () => {
   it("passes a non-UI domain with no design dir", () => {
     expect(uiDesignGate(parseSpec(fx("good-backend.md")), [])).toEqual({ ok: true });
   });
-  it("labels needs-design-stage on an empty design dir, naming spec E (AC-20)", () => {
-    expect(uiDesignGate(web, [])).toMatchObject({ ok: false, action: "label", label: "needs-design-stage" });
-    expect(uiDesignGate(web, [])).toMatchObject({ reason: expect.stringMatching(/^spec E will provide the design stage: /) });
+  it("fails with a reason, not a label, on an empty design dir (spec 029 AC-7)", () => {
+    expect(uiDesignGate(web, [])).toMatchObject({ ok: false, action: "ignore" });
+    expect(uiDesignGate(web, [])).toMatchObject({ reason: expect.stringMatching(/^UI design incomplete: /) });
   });
   it("requires a story or token prototype and a PNG per screen", () => {
-    expect(uiDesignGate(web, ["editor.stories.tsx", "editor-empty.png"])).toMatchObject({ ok: false, reason: expect.stringMatching(/editor-populated\.png/) });
-    expect(uiDesignGate(web, ["editor-empty.png", "editor-populated.png"])).toMatchObject({ ok: false, reason: expect.stringMatching(/story or token prototype/) });
-    expect(uiDesignGate(web, ["tokens.html", "editor-empty.png", "editor-populated.png"])).toEqual({ ok: true });
+    const sizes = (s: string) => [`${s}.png`, `${s}.mobile.png`, `${s}.tablet.png`];
+    expect(uiDesignGate(web, ["editor.stories.tsx", ...sizes("editor-empty")])).toMatchObject({ ok: false, reason: expect.stringMatching(/editor-populated\.png, editor-populated\.mobile\.png, editor-populated\.tablet\.png/) });
+    // Spec 029 AC-7: a design complete under the old rule (one PNG per screen) fails for its two missing sizes.
+    expect(uiDesignGate(web, ["editor.stories.tsx", "editor-empty.png", "editor-populated.png"])).toMatchObject({ ok: false, reason: expect.stringMatching(/editor-empty\.mobile\.png, editor-empty\.tablet\.png/) });
+    expect(uiDesignGate(web, [...sizes("editor-empty"), ...sizes("editor-populated")])).toMatchObject({ ok: false, reason: expect.stringMatching(/story or token prototype/) });
+    expect(uiDesignGate(web, ["tokens.html", ...sizes("editor-empty"), ...sizes("editor-populated")])).toEqual({ ok: true });
+    expect(designScopeGate(["specs/011-ui/design/a.png", "specs/011-ui/spec.md"], "specs/011-ui/spec.md")).toEqual({ ok: false, violations: [expect.stringContaining("specs/011-ui/spec.md")] });
+    expect(designScopeGate(["specs/011-ui/design/a.stories.tsx"], "specs/011-ui/spec.md")).toEqual({ ok: true });
   });
 });
 

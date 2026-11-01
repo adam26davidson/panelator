@@ -966,7 +966,7 @@ describe("chain: answer chains and unrecorded answers (final review T3, T4, T-mi
     // A ledger written before T4 and C7 loads with the new fields defaulted.
     const old = { rescues: 1, specRescues: 0, replans: 0, specRevisions: 0, specAnswers: 0, decideReturns: 0, history: [] };
     expect(initialChainState(1, null, old)).toMatchObject({ pendingAnswer: null, chainFailures: null, chainErrors: 0 });
-    expect(ledgerOf(initialChainState(1, null, old))).toEqual({ ...old, pendingAnswer: null, chainFailures: null, chainErrors: 0 });
+    expect(ledgerOf(initialChainState(1, null, old))).toEqual({ ...old, pendingAnswer: null, chainFailures: null, chainErrors: 0, designRevisions: 0, designRescues: 0 });
   });
   it("a liveness release keeps the unrecorded answer in the ledger (T4)", () => {
     const pending = { ids: [5], kind: "technical" as const, text: "Question #5: lru" };
@@ -1078,7 +1078,7 @@ const headOf = (e: ChainEvent) => (e as { head?: string }).head;
 
 describe("chain: every event in every stage (AC-27)", () => {
   const STAGES: ChainStage[] = [
-    "claimed", "plan", "implement", "verify", "review", "fix", "merge", "spec", "question-check", "done", "released", "waiting", "paused", "abandoned",
+    "claimed", "plan", "implement", "verify", "review", "fix", "merge", "spec", "design", "question-check", "done", "released", "waiting", "paused", "abandoned",
   ];
   const AGENT: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "question-check"];
   const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused"];

@@ -58,7 +58,7 @@ describe("parseStageDefinition", () => {
 describe("committed stage definitions", () => {
   it("load all six stages with the spec's tiers", () => {
     const d = loadStageDefinitions(`${agentsDir}/stages`);
-    expect(Object.keys(d).sort()).toEqual(["fix", "implement", "plan", "question-check", "review", "spec"]);
+    expect(Object.keys(d).sort()).toEqual(["design", "fix", "implement", "plan", "question-check", "review", "spec"]);
     expect(d.plan.tier).toBe("strong");
     expect(d.review.tier).toBe("strong");
     expect(d.implement.tier).toBe("standard");

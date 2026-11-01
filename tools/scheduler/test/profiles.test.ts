@@ -7,7 +7,7 @@ import { listProfiles, readSensitiveGlobs, resolveProfile } from "../src/profile
 
 describe("profiles", () => {
   it("lists the committed v0 profiles", () => {
-    expect(listProfiles(agentsDir)).toEqual(["backend", "security", "spec"]);
+    expect(listProfiles(agentsDir)).toEqual(["backend", "design", "security", "spec"]);
   });
   it("resolves backend with its skills dir, instructions and tools", () => {
     const p = resolveProfile(agentsDir, "backend");
