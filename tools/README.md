@@ -9,11 +9,17 @@ Run the service from a dedicated clone of the repository, checked out on `main` 
 
 The scheduler acts as a GitHub App installed on the repository with the permissions of spec section 12: issues, pull requests and contents (write), checks and actions (read), metadata (read), plus repository security advisories (write) once the filing agent (design spec C) lands. Set `app.id`, `app.installation_id`, `app.private_key_path` and `app.bot_login` in `agents/scheduler.yaml`; `repo`, `maintainer`, `slots`, `poll_interval_s`, `required_checks` and `state_dir` live in the same file. A missing App id, an unreadable private key, a checkout that is not on `main` or an origin that is not https makes the scheduler log a `config-error` record and exit 78, which the unit does not restart.
 
-These labels must exist in the repository: `validated`, `in-progress`, `needs-decision`, `abandoned`, `needs-design-stage`, `blocked`, `priority`, `class:product`, `class:bug`, `class:tooling`, `class:dependency`. The old `needs-spec`, `needs-design`, `needs-clarification`, `needs-human` and `security-review` labels are no longer applied (spec 006). Enable branch protection on `main` requiring the `test` check, so a PR the scheduler merges has passed CI.
+These labels must exist in the repository: `validated`, `in-progress`, `needs-decision`, `abandoned`, `blocked`, `priority`, `class:product`, `class:bug`, `class:tooling`, `class:dependency`. The old `needs-spec`, `needs-design`, `needs-clarification`, `needs-human` and `security-review` labels are no longer applied (spec 006), and neither is `needs-design-stage` (spec 029): the scheduler removes it once, with one comment, from an issue that still carries it. Enable branch protection on `main` requiring the `test` check, so a PR the scheduler merges has passed CI.
 
 The first run is `node tools/scheduler/bin/scheduler.ts --check-auth`, which prints the bot login and token expiry, then `--once`, which runs one tick and waits for the chains it started. Only then enable the service.
 
 Security findings go to the fix loop and nothing waits for a human to clear a label; see spec 006 (`specs/006-no-human-stops/spec.md`) for the escalation path, the question flow and the labels.
+
+## The design stage and `tools/design-stage/` (spec 029)
+
+A `web-ui` or `widget` spec on `main` without its design starts a chain at the **design stage** (`agents/stages/design.md`, strong tier, branch `design-<issue>`), which writes the spec's `design/` as Storybook stories, renders every named screen at mobile (390 by 844), tablet (820 by 1180) and desktop (1440 by 900) and opens a design PR. The PR is reviewed under the `design` profile (`agents/profiles/design/review-criteria.md`) by an independent reviewer who reads the PNGs, goes through the fix loop and merges; the chain then plans from the merged design. `bounds.design_revisions` in `agents/scheduler.yaml` (default 2) bounds design merges that still fail the UI-design gate before the spec agent revises the spec.
+
+`tools/design-stage/` is the design tooling: `pnpm -F @panelator/design-stage storybook` serves every `specs/*/design/*.stories.tsx` with the base tokens of `src/tokens.css`; `pnpm -F @panelator/design-stage render <spec dir> [--screen <name>]` builds that spec's Storybook and writes `<screen>.png` (desktop), `<screen>.mobile.png`, `<screen>.tablet.png` and `<screen>--<state>.png` siblings beside the stories, each carrying a `panelator-render` PNG text chunk (viewport, story id, commit). The renderer needs Chromium, which `@playwright/browser-chromium` installs under `pnpm install`. Its toolchain versions are pinned once in the `catalog:` of `pnpm-workspace.yaml`, for `web/` and the console to reuse.
 
 ## Standing agents, actions and parameters
 

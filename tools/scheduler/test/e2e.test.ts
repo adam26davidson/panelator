@@ -711,6 +711,94 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
  * The world's GitHub behind a switchable network (`down` set: every request fails as a DNS failure does, or, with
  * `genuine`, answers 422), without Octokit's own retries, and a clock the test moves forward.
  */
+describe("end to end: the design stage (spec 029 section 6)", () => {
+  const uiSpec = specOf().replace("Domain: backend", "Domain: web-ui") + "\n## 6. UI design\n\nScreens: editor\n";
+  const DIR = "specs/010-thing/design";
+  const sizes = ["editor.png", "editor.mobile.png", "editor.tablet.png"];
+  /** The design agent's git work: a story and renders under design/, a PR whose body starts with Refs #7. */
+  const design = (w: () => ChainWorld, n: number, renders: string[] = sizes) => (run: StageRun) => {
+    const sha = w().push(run, { [`${DIR}/editor.stories.tsx`]: "export {};\n", ...Object.fromEntries(renders.map((f) => [`${DIR}/${f}`, `png ${n}`])) }, "design");
+    w().openPr(run, n, sha, "Refs #7\n\n![editor](editor.png)");
+    return { verdict: "designed", spec_path: "specs/010-thing/spec.md", pr_number: n, head_sha: sha, screens: [{ name: "editor", stories: ["editor.stories.tsx"], renders }] };
+  };
+
+  it("a UI spec without design/ runs the design stage on design-7: invalid result, request_changes, fix, merge, plan; no label (AC-1 to AC-4)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    const twoRenders = { verdict: "designed", spec_path: "specs/010-thing/spec.md", pr_number: 8, head_sha: "a".repeat(40), screens: [{ name: "editor", stories: ["editor.stories.tsx"], renders: sizes.slice(0, 2) }] };
+    w = await chainWorld({
+      files: repoFiles({ spec: uiSpec }),
+      results: {
+        design: [twoRenders, design(() => w, 9)],
+        review: [CHANGES, APPROVE, APPROVE],
+        fix: [(run: StageRun) => ({ head_sha: w.push(run, { [`${DIR}/flow.md`]: "flow\n" }, "fix"), addressed: [0] })],
+        plan: [PLAN],
+        implement: [a.implement(13)],
+      },
+    });
+    await w.tick();
+    await expectSettled(w);
+
+    expect(w.adapter.ran).toEqual(["design", "design", "review", "fix", "review", "plan", "implement", "review"]);
+    expect(runsOf(w, "design").map((r) => r.branch)).toEqual(["design-7", "design-7"]);
+    expect(runsOf(w, "design")[0].input).toMatchObject({ spec_path: "specs/010-thing/spec.md", design_reason: expect.stringContaining("missing editor.mobile.png"), viewports: expect.stringContaining("tablet: 820 by 1180") });
+    expect(runsOf(w, "design")[1].input.history).toContain("design attempt 1 failed: result: invalid");
+    // AC-3: the design PR is reviewed and fixed under the design profile, the fix on the design stage's model.
+    expect(runsOf(w, "review").map((r) => [r.branch, r.profile])).toEqual([["design-7", "design"], ["design-7", "design"], ["issue-7", "backend"]]);
+    expect(runsOf(w, "fix")[0]).toMatchObject({ branch: "design-7", profile: "design", model: runsOf(w, "design")[0].model });
+    // AC-4: merged, branch deleted, the gate passes on main, and the chain plans from the merged design.
+    expect(w.mergeRequests).toEqual([9, 13]);
+    expect(w.writes()).toContain("DELETE /repos/o/r/git/refs/heads/design-7");
+    for (const f of [...sizes, "flow.md", "editor.stories.tsx"]) expect(w.onMain(`${DIR}/${f}`)).not.toBeNull();
+    expect(runsOf(w, "plan")[0].branch).toBe("issue-7");
+    expect(w.issueOpen).toBe(false);
+    expect(w.labelLog).toEqual(["+in-progress", "-in-progress"]);
+    expect(w.labelLog.join()).not.toContain("needs-design-stage");
+  }, 120_000);
+
+  it("a design merged without all three sizes twice sends the spec agent in revise mode (AC-4)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    const partial = ["editor.png", "editor.mobile.png", "editor.extra.png"];
+    const revised = uiSpec.replace("Do a thing.", "Do a thing, in one pass.");
+    w = await chainWorld({
+      files: repoFiles({ spec: uiSpec }),
+      results: {
+        design: [design(() => w, 9, partial), design(() => w, 10, partial), design(() => w, 12)],
+        review: [APPROVE, APPROVE, APPROVE, APPROVE, APPROVE],
+        spec: [a.spec(11, { "specs/010-thing/spec.md": revised })],
+        plan: [PLAN],
+        implement: [a.implement(13)],
+      },
+    });
+    await w.tick();
+    await expectSettled(w);
+
+    expect(w.adapter.ran).toEqual(["design", "review", "design", "review", "spec", "review", "design", "review", "plan", "implement", "review"]);
+    const [specRun] = runsOf(w, "spec");
+    expect(specRun.input.mode).toBe("revise");
+    expect(specRun.input.spec_problem).toContain("missing editor.tablet.png");
+    expect(w.mergeRequests).toEqual([9, 10, 11, 12, 13]);
+    expect(w.labelLog.join()).not.toContain("needs-design-stage");
+    expect(w.onMain(`${DIR}/editor.tablet.png`)).not.toBeNull();
+  }, 120_000);
+
+  it("an issue labelled needs-design-stage at start loses the label, with one comment (AC-8)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({
+      files: repoFiles(), labels: ["needs-design-stage"],
+      results: { plan: [PLAN], implement: [a.implement(9)], review: [APPROVE] },
+    });
+    await w.tick();
+    await expectSettled(w);
+    expect(w.labelLog).toEqual(["-needs-design-stage", "+in-progress", "-in-progress"]);
+    expect(w.comments.filter((c) => c.body.includes("design stage now exists"))).toHaveLength(1);
+    expect(JSON.parse(readFileSync(w.paths.designRelabelled, "utf8"))).toEqual([7]);
+    expect(w.issueOpen).toBe(false);
+  }, 120_000);
+});
+
 function network(w: ChainWorld) {
   const n = { down: false, genuine: false, offset: 0 };
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {

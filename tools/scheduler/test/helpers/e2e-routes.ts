@@ -103,7 +103,7 @@ export interface MockComment { id: number; author: string; body: string; at: str
  * One issue (#7) on a mocked GitHub backed by a real bare origin: stages commit and push in their worktree and open
  * PRs here; a merge squashes the PR's branch into origin's main, a branch DELETE removes it from origin.
  */
-export async function chainWorld(opts: { files: Record<string, string>; issueBody?: string; results: Record<string, Scripted[]> }) {
+export async function chainWorld(opts: { files: Record<string, string>; issueBody?: string; labels?: string[]; results: Record<string, Scripted[]> }) {
   const pair = repoPair(opts.files);
   const paths: StatePaths = statePaths(join(pair.root, "state"));
   await ensureStateDirs(paths);
@@ -113,7 +113,7 @@ export async function chainWorld(opts: { files: Record<string, string>; issueBod
 
   const cfg = { ...loadConfig(defaultConfigPath), repo: "o/r", required_checks: ["test"], state_dir: paths.root, slots: 1, rescue_model: "claude-rescue-test" };
   // A rescue model distinct from every stage model, so a run shows whether it was the rescue (AC-1).
-  const labels = new Set(["validated", "class:product"]);
+  const labels = new Set(["validated", "class:product", ...(opts.labels ?? [])]);
   const labelLog: string[] = [];
   const comments: MockComment[] = [];
   const prComments: { pr: number; body: string }[] = [];
