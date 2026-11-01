@@ -5,7 +5,11 @@ delivery-system design's section 11 (the design stage; the console of design
 section 9 is row E's second part and is its own spec, filed as its own issue,
 blocked on this spec and on spec 022); specs derived from that design need no
 maintainer approval (delivery-system design section 11). Needs spec 006 on
-`main` (it is).
+`main` (it is). Revised 2026-11-01 after the implementation failed the plan's
+file scope twice: section 5 now names every file the implementation changes
+(the plan copies that list), AC-6 names the Chromium build approval that
+spec 010's test guards, and AC-2 names the design PR's own scope; no
+acceptance criterion changes its meaning.
 Class: tooling. Domain: automation (sensitive path, process-spec section 5).
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
@@ -102,7 +106,11 @@ iPhone-class, an iPad-class and a laptop width)*.
   `head_sha` and `screens: [{ name, stories, renders }]`, or
   `verdict: question` in the shape of spec 006 AC-21, plus `findings`. Given
   a result that names a screen with fewer than three renders, or a named
-  screen with no story, then the stage fails as an invalid result.
+  screen with no story, then the stage fails as an invalid result. The
+  design PR's scope is `specs/NNN-<slug>/design/` and nothing else
+  (`designScopeGate` beside `specScopeGate`); a file outside it is a scope
+  violation handled as a spec PR's is (spec 006 AC-22: one fix with the
+  violations, a second violation escalates).
 - AC-3. **The visual review.** Given a design PR, then the review stage runs
   with profile `design` (`agents/profiles/design/`), on an independent
   reviewer (design section 6.3: a fresh session, the other vendor when quota
@@ -153,14 +161,26 @@ iPhone-class, an iPad-class and a laptop width)*.
   every `specs/*/design/*.stories.tsx` with Tailwind and the tokens of
   `tools/design-stage/src/tokens.css` (the base tokens; a spec's
   `tokens.html` extends them for its own prototype). `pnpm test` runs the
-  package's vitest suite, which builds the Storybook for the fixture spec
-  under `tools/design-stage/test/fixtures/` and renders it headless, so a
-  toolchain break fails CI, not a design run. The package pins the
+  package's vitest suite (the root `vitest.config.ts` already includes
+  `tools/**/*.test.ts`), which copies the fixture spec under
+  `tools/design-stage/test/fixtures/` into a directory under the operating
+  system's temporary directory, builds its Storybook there and renders it
+  headless, so a toolchain break fails CI, not a design run; the fixture's
+  renders are never written into the repository, and the package's
+  `.gitignore` keeps `storybook-static/` out of git. The package pins the
   toolchain of design-tree R5.Q4 (React, Vite, TypeScript strict, Biome,
   Tailwind, Vitest, Playwright, Storybook, knip) at versions `console/` and
   later `web/` reuse through the workspace catalog in
   `pnpm-workspace.yaml` *(agent's call: a catalog, so one bump moves all
-  three)*.
+  three)*. The browser comes from `@playwright/browser-chromium`, whose
+  install script downloads Chromium, so `allowBuilds` in
+  `pnpm-workspace.yaml` gains `"@playwright/browser-chromium": true` beside
+  `esbuild`, and spec 010's test `tools/scheduler/test/workspace-config.test.ts`
+  now asserts exactly those two approvals and still no other build-script
+  option *(agent's call: approve the one package that needs it, as spec 010
+  did for esbuild; spec 010's "no package other than esbuild" was that
+  spec's scope, not a standing rule, and a fresh worktree's first
+  `pnpm test` must still pass without a prompt)*.
 
 **The gate and the parked issues**
 
@@ -213,35 +233,75 @@ iPhone-class, an iPad-class and a laptop width)*.
 
 ## 5. Interfaces and files
 
-- `agents/stages/design.md` (the stage definition and prompt: the artifacts
-  of AC-2, run the renderer, open the PR, the result shape, the question
-  rules of the spec stage). `agents/profiles/design/`: `profile.yaml`,
-  `instructions.md`, `review-criteria.md` (AC-3).
-- `schemas/scheduler/design-result.json` (AC-2); `schemas/scheduler/stage-input.json`
-  gains the design fields of AC-1.
-- `tools/scheduler/src/chain/types.ts`: stage `design`, track `design`,
-  `bounds.design_revisions`; `tools/scheduler/src/chain/machine.ts`: the
-  claim and post-merge paths of AC-1, the design PR's review, fix and merge
-  of AC-3 and AC-4; `tools/scheduler/src/gates/ui-design.ts` (AC-7);
-  `tools/scheduler/src/service/loop.ts`: the re-evaluation of AC-8;
-  `tools/scheduler/src/state/paths.ts`: `design/relabelled.json` (AC-8);
-  `agents/scheduler.yaml`: `bounds.design_revisions`.
-- `tools/design-stage/`: `package.json` (`@panelator/design-stage`, scripts
-  `storybook`, `render`, `test`), `.storybook/` (config globbing
-  `../../specs/*/design/*.stories.tsx`), `src/viewports.ts`,
-  `src/tokens.css`, `src/render.ts` (AC-5), `test/` with a fixture spec
-  directory (AC-6). Root `package.json` and `pnpm-workspace.yaml`: the new
-  workspace package and the toolchain catalog.
-- `specs/README.md`: the three renders per screen (AC-7).
-- `tools/scheduler/test/`: `ui-design.test.ts` (AC-7), `machine.test.ts`
-  (AC-1, AC-3, AC-4), `loop.test.ts` (AC-8), recorded runs of section 6 in
-  `e2e.test.ts`. `tools/README.md`: the design package and the stage.
+This list is the implementation's file scope: the plan's tasks name these
+files (a whole directory, written with a trailing slash, where the list
+gives one) and no other. A file is listed even when its change is one line,
+because the scope gate of spec 006 holds the implementation to the plan's
+list and a fix cannot widen it. An existing test that asserts the previous
+shape of a file changed here changes with it and is listed.
+
+- **The stage and the profile.** `agents/stages/design.md` (the stage
+  definition and prompt: the artifacts of AC-2, run the renderer, open the
+  PR, the result shape, the question rules of the spec stage).
+  `agents/profiles/design/` as a directory: `profile.yaml`,
+  `instructions.md`, `review-criteria.md` (AC-3) and `skills/.gitkeep` as
+  the other profiles have. `agents/scheduler.yaml`: `bounds.design_revisions`.
+- **Schemas.** `schemas/scheduler/` as a directory: `design-result.json`
+  (AC-2); `stage-input.json` gains the design fields of AC-1 (`spec_path`,
+  `design_problem`, `viewports`); `claim.json`, `paused.json` and
+  `question-log-entry.json` where their enumerations of stages and tracks
+  gain `design`; `escalation-ledger.json` for the design-revision counter
+  beside the rescue counters.
+- **The scheduler, under `tools/scheduler/src/`.** `types.ts` (the `design`
+  stage name and `DesignResult`); `chain/types.ts` (stage `design`, track
+  `design`, the design problem and the design-revision counter in the chain
+  state); `chain/machine.ts` (the claim and post-merge paths of AC-1, the
+  design PR's scope, review, fix and merge of AC-2 to AC-4);
+  `chain/driver.ts` (the stage input of AC-1 and the design result's
+  validation); `shortlist/select.ts` (a UI-design failure makes the issue
+  eligible with its reason, as a spec-present failure does); `gates/ui-design.ts`
+  (AC-7); `gates/spec-scope.ts` (`designScopeGate`, AC-2) and
+  `gates/index.ts` (its export, the label constant's removal);
+  `schema/validate.ts` (the `design-result` schema name);
+  `stages/definition.ts` (the `design` stage in the stage set);
+  `stages/prompt.ts` (`StageInput` and `renderPrompt` gain the placeholders
+  `spec_path`, `design_problem` and `viewports` that `design.md` uses);
+  `config.ts` (`bounds.design_revisions`, default 2); `service/loop.ts`
+  (the re-evaluation of AC-8); `state/paths.ts` (`design/relabelled.json`,
+  AC-8).
+- **The design package.** `tools/design-stage/` as a directory:
+  `package.json` (`@panelator/design-stage`, scripts `storybook`, `render`,
+  `test`, dependencies by `catalog:`), `tsconfig.json`, `biome.json`,
+  `knip.json`, `.gitignore` (`storybook-static/`), `.storybook/main.ts` and
+  `preview.ts` (the glob `../../specs/*/design/*.stories.tsx` plus the test
+  fixture, Tailwind and `tokens.css`), `src/viewports.ts`, `src/tokens.css`,
+  `src/render.ts` and `src/cli.ts` (AC-5), `src/png-text.ts` (the `tEXt`
+  chunk, written and read without a dependency), `test/render.test.ts` and
+  `test/fixtures/specs/900-fixture/` (a `spec.md` with a `Screens:` line
+  and one state, `design/sample.stories.tsx`; no committed renders, AC-6).
+- **Workspace wiring.** `pnpm-workspace.yaml`: the `catalog:` section and
+  the `allowBuilds` entry of AC-6; `pnpm-lock.yaml` follows. Root
+  `package.json` is not changed: `tools/*` already includes the package,
+  and the root's own `vitest` range stays as it is.
+- **Documents.** `specs/README.md`: the three renders per screen (AC-7).
+  `tools/README.md`: the design package and the stage, and the sentence
+  listing the profiles. `dev-logs/` as a directory for the implementation's
+  log.
+- **Tests, under `tools/scheduler/test/`.** `gates.test.ts` (AC-7 and
+  `designScopeGate`), `chain.test.ts` (AC-1, AC-3, AC-4),
+  `driver.test.ts` (the stage input and result validation),
+  `shortlist.test.ts` (the eligible UI-design failure), `loop.test.ts`
+  (AC-8), `config.test.ts`, `schema.test.ts`, `stages.test.ts`,
+  `profiles.test.ts`, `state.test.ts` (the new paths), `workspace-config.test.ts`
+  (the two build approvals of AC-6), the recorded runs of section 6 in
+  `e2e.test.ts` with `helpers/e2e-routes.ts`, `helpers/repo-pair.ts` and a
+  UI fixture spec under `fixtures/specs/`.
 
 No file outside `tools/`, `agents/`, `schemas/scheduler/`, `specs/README.md`,
-`package.json`, `pnpm-workspace.yaml` and `dev-logs/` is changed by the
-implementation. `tools/scheduler/`, `agents/`, `package.json` and
-`pnpm-workspace.yaml` are sensitive paths, so the security review runs on the
-PR as spec 006 AC-9 says.
+`pnpm-workspace.yaml`, `pnpm-lock.yaml` and `dev-logs/` is changed by the
+implementation. `tools/scheduler/`, `agents/` and `pnpm-workspace.yaml` are
+sensitive paths, so the security review runs on the PR as spec 006 AC-9
+says.
 
 ## 6. Verification
 
