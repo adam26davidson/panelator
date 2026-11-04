@@ -2,7 +2,15 @@
 
 Status: written 2026-11-01 from the delivery-system design (spec F2) for
 issue #39; specs derived from that design need no maintainer approval (design
-section 11).
+section 11). Revised 2026-11-04 in answer to the plan stage: the spec was
+written as if specs 022 (issue #37, labelled `blocked`) and 026 (issue #93)
+were on `main`; neither has an implementation branch. This spec now builds
+only on what `main` has (specs 001 to 021, 023 to 025, 029) and needs
+nothing else on `main`. Its AWS half and its event recording are set out
+in section 2 and section 4 ("Why this spec is split") for the follow-up
+spec (row F2, second part) that derives from specs 022 and 026 once they
+are built; no acceptance criterion kept here changes its meaning. *(agent's
+call)*
 Class: tooling. Domain: backend.
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
@@ -22,11 +30,14 @@ answer); [007-telegram-channel](../007-telegram-channel/spec.md) (the channel;
 its section 2 leaves the `Notifier`, the store and the requests to this spec);
 [008-agent-registry](../008-agent-registry/spec.md) AC-1 to AC-9, AC-11, AC-12
 (standing agents, actions, the reserved events, `first_contact_needs_approval`);
+[015-chain-keeps-its-work](../015-chain-keeps-its-work/spec.md) AC-8 (the
+`infra_alarm` producer that exists today);
 [022-delivery-aws-account](../022-delivery-aws-account/spec.md) AC-6, AC-7 and
 AC-9 (the ledger, the funds refusal, the forecast alarm) and its section 8
-(the SSO session this spec's credential check watches);
-[026-event-store](../026-event-store/spec.md) AC-2 (`maintainer.contact` kinds
-`funds`, `credential`, `first_contact`).
+(the SSO session), and [026-event-store](../026-event-store/spec.md) AC-2
+(`maintainer.contact` kinds `funds`, `credential`, `first_contact`): both
+named only so that what this spec leaves to the follow-up spec (section 2)
+fits them; nothing here needs either on `main`.
 
 What the maintainer decided (design section 8 and the issue), kept as it is
 here: credentials live in an encrypted store on the laptop and agents use them
@@ -59,8 +70,9 @@ handling a secret, spending unasked, or speaking to a stranger unasked:
   names; the question check rejects one that does not. The scheduler acts on
   the answer: a first-contact approval registers the party; a credential
   "done" is verified by the credential's own check. Every `Notifier` alert
-  (funds refusals, AWS thresholds, security advisories, agent failures) is
-  sent to the Telegram chat as well as the service log.
+  (outages, chain errors, security advisories, agent failures, and the AWS
+  alerts once spec 022 produces them) is sent to the Telegram chat as well
+  as the service log.
 - **A first-contact gate in code.** The one outbound channel that exists, the
   `gh` wrapper, refuses to create anything in a repository outside
   `adam26davidson/panelator` whose owner is not an approved party, and tells
@@ -72,9 +84,10 @@ handling a secret, spending unasked, or speaking to a stranger unasked:
   where the catalogue has a renewal command, and files findings for secrets
   outside the store or access wider than the catalogue says. **Infra health**
   wakes on `infra_alarm` and `ci_failure_main` and sweeps every six hours: it
-  re-runs failed workflows, scales down what the ledger lets it scale when
-  the forecast is over the cap, pauses an agent that keeps failing, and files
-  a finding for everything it may not do itself.
+  re-runs failed workflows, pauses an agent that keeps failing, notices a
+  service that keeps restarting, and files a finding for everything it may
+  not do itself. Its AWS half (scaling what the ledger lets it scale when the
+  forecast is over the cap) is the follow-up spec's, once spec 022 exists.
 
 ## 2. Out of scope
 
@@ -84,14 +97,61 @@ handling a secret, spending unasked, or speaking to a stranger unasked:
 - Standing agents asking the maintainer directly. A standing agent that needs
   a credential, funds or a first contact files a finding (spec 008 AC-5); the
   filer files an issue and the chain's stage raises the question (AC-6). The
-  scheduler's own funds request stays spec 022 AC-7, now delivered over
-  Telegram (AC-9).
+  scheduler's own funds request stays spec 022 AC-7; the follow-up spec lays
+  it out over Telegram.
 - A button that raises the AWS cap from Telegram. The cap is set by the
   maintainer's command (spec 008 AC-17) and the console (spec E); the funds
   message says which.
-- Launching anything in AWS, and the console's hosting (spec E). Infra
-  health scales only what a launcher has described in its reservation
-  (AC-16); nothing is described until E lands.
+- Launching anything in AWS, and the console's hosting (spec E).
+- **Everything that needs spec 022 or spec 026 on `main`** *(agent's call;
+  section 4, "Why this spec is split")*. These are the follow-up spec's, row
+  F2's second part, derived from this spec, spec 022 and spec 026, and built
+  once both are on `main`:
+  - the `aws-sso` catalogue entry (the SSO session of spec 022 section 8:
+    wrapper `{ command: aws, env: AWS_PROFILE }` with the profile name as
+    the "secret", expiry `{ probe }` reading `expiresAt` from the matching
+    file under `~/.aws/sso/cache/`, check `aws sts get-caller-identity`,
+    renew `manual`, setup the profile stanza and login of spec 022 section
+    8), with every `aws` spawn of a `provider: aws` entry going through
+    `src/aws/cli.ts` (AC-2 here fixes that rule), and the `aws-sso` expiry
+    run of the credential check (one `credential-expiry` notification with
+    the login steps three days before the session ends);
+  - the `maintainer.contact` events of spec 026 AC-2 for a request's send
+    and answer (`kind` equal to the request type, `payload.request`,
+    `payload.outcome` `approved`, `denied`, `declined`, `verified`,
+    `check_failed` or `text`) and for a notification (`channel: telegram`,
+    or `log` when Telegram is off or the send failed), in
+    `tools/scheduler/src/events/kinds.ts` and `schemas/scheduler/event.json`,
+    with spec 026's recording wrapper placed between the rate limiter and
+    the `TelegramNotifier` of AC-9 so a suppressed notification is not a
+    contact;
+  - the `funds` notification of spec 022 AC-7 laid out with the request
+    fields of AC-6 as AC-7 renders them, without buttons, its event keeping
+    `kind: funds`; the AWS labels (`aws-funds`, `aws-cap-80`, `aws-cap-hit`,
+    `aws-forecast`) need nothing: AC-9 forwards every label;
+  - infra health's AWS half: credentials `aws-sso`; the action `aws_scale {
+    reservation_id, direction }` (level 1, `tools/scheduler/src/actions/aws-scale.ts`,
+    kinds `lambda-concurrency`, `cloudfront-distribution`,
+    `dynamodb-throughput`, the kinds ADR 0005's console will launch; its
+    `aws` call through `src/aws/cli.ts`; the undo the opposite direction;
+    refused for a reservation without a descriptor, a released one, or a
+    direction it is already in); the optional `scale` descriptor `{ kind,
+    id, down, up }` on a reservation of spec 022 AC-6, written by the
+    launcher, with `expected_monthly_usd` lowered to `down` while down;
+    `aws/cost.json` and the open reservations in the agent's input; the
+    `aws_forecast_over_cap` payload of spec 022 AC-9 among the alarms it
+    handles; the limits "scale down a reservation when the forecast is over
+    the cap and scale it back when under" and the findings for a resource
+    it cannot scale or a cost it cannot explain against the ledger.
+
+  The follow-up is its own issue (section 4 says how it is filed). Nothing
+  in this spec is written so that it has to change when the follow-up lands:
+  the request object, the notifier, the catalogue rule for `provider: aws`
+  and the infra health prompt's shape are fixed here.
+- The disk-space sweep of issue #124 (inodes and free space on the temp and
+  state volumes, checked inside the scheduler's own process). That issue
+  asks for its own spec; the infra health agent of AC-15 is the agent it
+  would extend, and this spec neither builds that sweep nor rules it out.
 - Intake and grilling over Telegram, group chats, a second maintainer (spec
   007 section 2, unchanged).
 - Changing the sensitive-path list, the security review criteria, or what
@@ -102,11 +162,12 @@ handling a secret, spending unasked, or speaking to a stranger unasked:
 
 ## 3. Acceptance criteria
 
-"Given" states use the fake harness, a mocked GitHub API, the fake Telegram
-server of spec 007 and the fake `aws` command of spec 022, plus a fake
-`systemd-creds` on `PATH` (section 6) whose encrypt and decrypt are
-reversible and whose output is written to a fixture directory. "Telegram
-on" is spec 007's. *Store directory*: the `credentials.dir` of AC-1.
+"Given" states use the fake harness, a mocked GitHub API and the fake
+Telegram server of spec 007, plus a fake `systemd-creds` on `PATH` (section
+6) whose encrypt and decrypt are reversible and whose output is written to a
+fixture directory. No `aws` command, real or fake, is needed by anything in
+this spec. "Telegram on" is spec 007's. *Store directory*: the
+`credentials.dir` of AC-1.
 
 **The store and the catalogue** (design section 8, "Credentials")
 
@@ -149,14 +210,18 @@ on" is spec 007's. *Store directory*: the `credentials.dir` of AC-1.
   - `telegram-bot`: the bot token and chat id of spec 007 AC-1, stored as one
     JSON secret; wrapper `none`; expiry `none`; check `getMe`; renew `manual`;
     setup spec 007 section 8;
-  - `aws-sso`: not a secret in the store but a catalogue entry for the SSO
-    session of spec 022 section 8 (the AWS CLI owns it): wrapper `{ command:
-    aws, env: AWS_PROFILE }` with the profile name as the "secret" (so the
-    shim pins the profile and `--region` as spec 022 AC-1 requires); expiry
-    `{ probe }` reading `expiresAt` from the matching file under
-    `~/.aws/sso/cache/`; check `aws sts get-caller-identity`; renew `manual`
-    (`aws sso login` needs a browser); setup the profile stanza and login of
-    spec 022 section 8.
+  - no `aws` entry yet *(agent's call)*: the `aws-sso` entry for the SSO
+    session of spec 022 section 8 is the follow-up spec's (section 2), since
+    the session, the profile, the fake `aws` and `src/aws/cli.ts` are all
+    spec 022's and none exists on `main`. The rule it will follow is fixed
+    here so the two specs' tests cannot contradict each other: for an entry
+    with `provider: aws`, the `check`, the `expiry.probe` and the shim's
+    `cred exec` are all run through `src/aws/cli.ts`, the one place spec 022
+    AC-1 spawns `aws` (with `--profile`, `--region`, `--output json` and a
+    timeout), not by `cred exec`'s own spawn; so spec 022 AC-6's grep for
+    `aws` invocations outside `src/aws/` keeps passing, and a wrapper exec is
+    not exempt from it. `cred exec` spawns the catalogue command itself only
+    for other providers.
 
   Given an entry with an unknown key, a missing required key, a `wrapper`
   command already wrapped by another entry, or a `used_by` naming a profile
@@ -236,9 +301,11 @@ on" is spec 007's. *Store directory*: the `credentials.dir` of AC-1.
   full), and the keyboard is: for `credential`, "Done" and "Can't do this";
   for `funds`, "Approved" and "Declined"; for `first_contact`, "Approve" and
   "Deny". The stage's own options are kept in the comment as the record but
-  are not buttons. The `maintainer.contact` event recorded for the send
-  (spec 026 AC-2) has `kind` equal to the request type instead of
-  `question`, with the request in `payload.request`.
+  are not buttons. The question log entry of spec 006 AC-18 carries the
+  request as `request`, so the record has it before spec 026's events exist;
+  the `maintainer.contact` event for the send (`kind` equal to the request
+  type, `payload.request`) is the follow-up spec's (section 2). *(agent's
+  call)*
 - AC-8. **The scheduler acts on the answer, then the stage resumes.** Given
   an answer (button or text) to a question with a request, then before the
   asking session resumes (spec 007 AC-13):
@@ -248,23 +315,23 @@ on" is spec 007's. *Store directory*: the `credentials.dir` of AC-1.
     (`party`, `channel`, `approved_at`, `question_comment_id`, `issue`) and
     the gate of AC-11 lets it through from then on; any other answer leaves
     the party unapproved, and the resumed stage may follow up (spec 006
-    AC-15) or proceed without the contact. A `maintainer.contact` event
-    `kind: first_contact` with `payload.outcome` `approved` or `denied` is
-    recorded.
+    AC-15) or proceed without the contact.
   - `credential`: given "Done" or a text starting `done`, then the scheduler
     runs the catalogue entry's `check` (and `cred check <name>`'s index
     update); given it passes, the answer the stage receives is `done
     (verified)`; given it fails, the answer is `done (check failed:
     <reason>)`, so the stage asks a follow-up with the failing step rather
-    than building on a broken credential. A `maintainer.contact` event
-    `kind: credential` with the outcome is recorded.
-  - `funds`: the answer is passed through; a `maintainer.contact` event
-    `kind: funds` with `payload.outcome` (`approved`, `declined` or `text`)
-    is recorded. Spending the funds is the maintainer's action (for AWS, the
-    two steps of spec 022 section 8, step 3).
+    than building on a broken credential.
+  - `funds`: the answer is passed through. Spending the funds is the
+    maintainer's action (for AWS, the two steps of spec 022 section 8, step
+    3).
 
-  The answer is still posted to the issue and logged as spec 007 AC-9 says;
-  nothing else in the pause, resume or record path changes.
+  The outcome (`approved`, `denied`, `verified`, `check_failed`, `declined`
+  or `text`) is written into the question log entry's `answer` record of
+  spec 007 AC-9 as `outcome`, and the answer is still posted to the issue and
+  logged as that AC says; nothing else in the pause, resume or record path
+  changes. The `maintainer.contact` events for these outcomes are the
+  follow-up spec's (section 2). *(agent's call)*
 
 **Alerts over Telegram** (design section 8, "Telegram carries ... alerts")
 
@@ -272,18 +339,24 @@ on" is spec 007's. *Store directory*: the `credentials.dir` of AC-1.
   service's `Notifier` is a `TelegramNotifier` wrapping the `LogNotifier`
   and the rate limiter of spec 001: every notification is written to the
   service log as today and then sent to the chat as one message headed by
-  its gate and label (`aws-funds`, `aws-cap-hit`, `aws-forecast`,
-  `aws-access`, `infra`, `chain_error`, a standing agent's failure, a
-  security advisory of spec 008 AC-22, and every later label), with the
-  issue number when there is one, no buttons, and no agent text beyond the
-  notification's own. The `maintainer.contact` event for it has `channel:
-  telegram` (`log` when Telegram is off or the send failed). Given the send
-  fails, then the log line stands, the failure is logged once per outage,
-  and nothing is retried: alerts are not questions. The rate limit of spec
-  001 applies before the send, so the chat gets no more than the log does
-  today. A `funds` notification (spec 022 AC-7) is sent with the request
-  fields of AC-6 laid out as in AC-7, without buttons, and its event keeps
-  `kind: funds`.
+  its gate and label (every gate and label the code sends today: `infra`,
+  `chain_error`, `abandoned`, `standing` for a standing agent's failure, a
+  security advisory of spec 008 AC-22, the `credential-expiry` label of
+  AC-13, and every later label, so spec 022's `aws-*` labels need nothing
+  here), with the issue number when there is one, no buttons, and no agent
+  text beyond the notification's own. The notifier takes no part in what the
+  text says: the layout of a `funds` notification is the follow-up spec's
+  (section 2), as is the `maintainer.contact` event with `channel:
+  telegram`. The wiring order is fixed here so that spec 026's recording
+  wrapper has a place: `rateLimited(TelegramNotifier(LogNotifier))`, the
+  recorder going between the rate limiter and the `TelegramNotifier` when
+  spec 026 lands. Given the send fails, then the log line stands, the
+  failure is logged once per outage, and nothing is retried: alerts are not
+  questions. The rate limit of spec 001 applies before the send, so the chat
+  gets no more than the log does today. The service log line for a sent
+  notification gains `channel: telegram` (`log` when Telegram is off or the
+  send failed), so the first real alert of section 6 can be shown.
+  *(agent's call)*
 - AC-10. **A reply to an alert is not an answer.** Given a Telegram message
   that replies to an alert message, then it is not matched to any question
   (spec 007 AC-7 matches only question threads); the bot replies once that
@@ -324,7 +397,15 @@ on" is spec 007's. *Store directory*: the `credentials.dir` of AC-1.
 - AC-13. **The credential check is a standing agent.**
   `agents/standing/credential-check.md`: standard tier, Claude, `worktree:
   none`, schedule `1d`, events `credential_expiry`, credentials none,
-  actions `renew_credential`, output `standing-result`. Its input is the
+  actions `renew_credential`, output `credential-check-result`. That schema,
+  `schemas/scheduler/credential-check-result.json`, extends
+  `standing-result.json` through `allOf` and adds the optional `warnings`
+  field below, the way `filer-result.json` extends it; the registry accepts
+  no other shape for a custom output, and the scheduler validates the result
+  against the schema the frontmatter names, so `output: standing-result`
+  would reject `warnings` *(agent's call, answering the plan stage)*. The
+  scheduler applies `warnings` in `src/standing/run.ts` after the result is
+  validated, as it applies a `filer-result`. Its input is the
   catalogue joined with the index (set or missing, expiry, days left, last
   check, renew kind), the result of `cred check` run by the scheduler just
   before (the agent does not hold the secrets), the plain configuration
@@ -360,38 +441,32 @@ on" is spec 007's. *Store directory*: the `credentials.dir` of AC-1.
 
 - AC-15. **Infra health is a standing agent.** `agents/standing/infra-health.md`:
   standard tier, Claude, `worktree: none`, schedule `6h`, events
-  `infra_alarm` and `ci_failure_main`, credentials `aws-sso`, actions
-  `rerun_workflow`, `run_agent`, `pause_agent`, `aws_scale`, output
-  `standing-result`. Its input is the pending events with their payloads
-  (spec 022 AC-9's forecast alarm, spec 015's outage alarm, the `main`
-  check failure), `aws/cost.json`, the open reservations of the ledger with
-  their `scale` descriptors (AC-16), the standing agents' state files
-  (consecutive failures, paused), the last 24 hours of the service log's
-  tick summaries, and the action log of the last 7 days. The sweep reads
-  only; the agent itself has no `aws` write action beyond `aws_scale`. Its
-  prompt sets the limits: it may re-run a failed `main` workflow once per
-  run id (the kind's own bound), scale down a reservation when the forecast
-  is over the cap and scale it back when under, pause a standing agent with
-  three consecutive failures, and must file a finding (not act) for a
-  resource it cannot scale, a cost it cannot explain against the ledger, an
-  outage past the `infra` alarm, or anything needing a reviewed PR, funds, a
+  `infra_alarm` and `ci_failure_main`, credentials none, actions
+  `rerun_workflow`, `run_agent`, `pause_agent`, output `standing-result`.
+  It ships now with what `main` produces *(agent's call, answering the plan
+  stage; section 4)*: its input is the pending events with their payloads
+  (spec 015 AC-8's outage alarm, whose payload has no `kind`, and the
+  `ci_failure_main` of spec 008 AC-4; a payload with a `kind` it does not
+  know, such as spec 022 AC-9's `aws_forecast_over_cap` once that exists, is
+  reported in the summary and filed as one finding, not acted on), the
+  standing agents' state files (consecutive failures, paused, by the
+  maintainer or not), the last 24 hours of the service log's tick summaries,
+  and the action log of the last 7 days. The sweep reads only. Its prompt
+  sets the limits: it may re-run a failed `main` workflow once per run id
+  (the kind's own bound), pause a standing agent with three consecutive
+  failures that the maintainer has not paused or resumed since, mark an
+  agent due with `run_agent` when an alarm names it, and must file a finding
+  (not act) for an outage past the `infra` alarm, a `main` failure that a
+  re-run did not clear, or anything needing a reviewed PR, funds, a
   credential or a first contact. Given nothing is wrong, then the summary
-  says so and no action is requested.
-- AC-16. **Scaling is an action bounded by the ledger.** A reservation of
-  spec 022 AC-6 gains an optional `scale` descriptor, written by the
-  launcher: `{ kind, id, down, up }` with `kind` one of the kinds coded in
-  `tools/scheduler/src/actions/aws-scale.ts` (`lambda-concurrency`,
-  `cloudfront-distribution`, `dynamodb-throughput`; the kinds ADR 0005's
-  console will launch) and `down`/`up` the kind-specific values. `aws_scale
-  { reservation_id, direction }` is a level-1 kind: given an open
-  reservation with a descriptor, then the scheduler runs the kind's `aws`
-  call through `src/aws/cli.ts` (the one place `aws` is spawned, spec 022
-  AC-6's grep test still passes), records the direction in the reservation,
-  and lowers `expected_monthly_usd` to the descriptor's `down` cost while
-  down; the undo is the opposite direction. Given a reservation without a
-  descriptor, a released one, or a direction it is already in, then the
-  action is refused with the reason. The kinds' calls are tested against the
-  fake `aws`.
+  says so and no action is requested. The follow-up spec adds the AWS half
+  (section 2) by extending this definition and prompt, not replacing them.
+- AC-16. **No AWS action here.** The `aws_scale` kind, the `scale` descriptor
+  on a reservation and the ledger input are the follow-up spec's (section 2)
+  *(agent's call)*; this spec adds no `aws` action, spawns no `aws`, and
+  leaves `agents/actions.yaml` with `renew_credential` as its one new kind.
+  The number is kept so that the follow-up's criterion and the plan stage's
+  references to it do not move.
 - AC-17. **The scheduler's own service is a resource too.** `restart_service`
   is not an action kind: the scheduler is the only service and restarts
   itself after merges (spec 008 AC-2). Infra health files a finding when the
@@ -443,8 +518,38 @@ on" is spec 007's. *Store directory*: the `credentials.dir` of AC-1.
   "within limits that already exist" and spec 022's ledger meet in the
   `scale` descriptor: the launcher that stated a cost also states how to
   make it smaller, and the agent can only ever move between the two states
-  the launcher wrote down. With no launcher yet, the kinds coded are ADR
-  0005's, so spec E's implementation has them ready.
+  the launcher wrote down. That is the follow-up spec's to build (section
+  2); the limit is stated here so the agent's prompt is written against it
+  from the start.
+- **Why this spec is split, and why infra health ships now** *(agent's
+  call, 2026-11-04, answering the plan stage)*. The spec was written against
+  specs 022 and 026 as if they were code. On `main` there is no
+  `tools/scheduler/src/aws/`, no `src/events/`, no `maintainer.contact`
+  event and no fake `aws`; spec 026's issue (#93) is unclaimed and spec
+  022's (#37) is labelled `blocked` on it, so the wait would be two
+  implementation chains long. The design's table order (section 11, F1
+  before F2) is the author's call, and the dependency runs one way only: the
+  credential store, the wrappers, the request object, the first-contact
+  gate, the Telegram notifier and the credential check need nothing from
+  AWS or the event store, while the AWS half and the events need both.
+  Waiting was the other option; it was ruled out because the plan stage can
+  return only `ready` or `spec_gap`, the spec stage cannot label an issue,
+  and a status line does not stop the shortlist (which skips only labels),
+  so "wait" would have meant another spec-gap round each time #39 was
+  claimed. The cut follows spec 029's row E split: the second part is its
+  own spec and issue, derived from this spec, spec 022 and spec 026, with
+  this spec's section 2 as the map of what it carries (as ADR 0004 mapped
+  spec 012's criteria). The spec stage may not file issues, so the result
+  of this revision carries a finding asking the findings filer to file the
+  follow-up issue, depending on #37 and #93; issue #126 records that the
+  filer cannot yet label it `blocked`, so the filer decides when to file it.
+  Infra health ships now rather than whole in the follow-up because its
+  GitHub-side half (the outage alarm of spec 015, `ci_failure_main`,
+  re-runs, pausing a failing agent, the restart finding of AC-17) is
+  buildable and useful today, is the "watcher of the host" that issue #124
+  asks to have sooner, and loses nothing by gaining its AWS half later: a
+  standing agent's definition and prompt are extended in place, and an alarm
+  payload it does not know is filed, not acted on (AC-15).
 
 ## 5. Interfaces and files
 
@@ -466,23 +571,25 @@ on" is spec 007's. *Store directory*: the `credentials.dir` of AC-1.
   `src/decide/` (the question check's input and the `decide_yourself`
   reason of AC-6).
 - `tools/scheduler/src/actions/`: `renew-credential.ts` (AC-14),
-  `aws-scale.ts` (AC-16), `contact-refused` log entries (AC-11);
-  `agents/actions.yaml` gains `renew_credential` and `aws_scale`.
-- `tools/scheduler/src/aws/ledger.ts`: the `scale` descriptor, the lowered
-  cost while down (AC-16); `src/aws/cli.ts` unchanged as the one spawn.
+  `contact-refused` log entries (AC-11); `agents/actions.yaml` gains
+  `renew_credential` (AC-16: nothing for AWS).
 - `tools/scheduler/src/runner/credentials.ts` and `src/runner/run.ts`: the
   shim directory first on `PATH`, the App key from the store (AC-3);
-  `src/standing/run.ts`: credentials for standing agents.
+  `src/standing/run.ts`: credentials for standing agents, the `warnings` of
+  a `credential-check-result` applied as notifications (AC-13), and the
+  `cred check` run before the credential check's input is built.
 - `tools/scheduler/src/profiles/resolve.ts`, `src/stages/definition.ts`,
   `src/types.ts`: `credentials` replaces `credential_hook` (AC-2).
-- `tools/scheduler/src/service/loop.ts`: the hourly expiry step, the
-  `TelegramNotifier` wiring, the `funds` notification layout (AC-5, AC-9).
+- `tools/scheduler/src/service/loop.ts` and `bin/scheduler.ts`: the hourly
+  expiry step, the `TelegramNotifier` wiring in the order AC-9 fixes, the
+  `channel` on the notification's log line (AC-5, AC-9).
 - `tools/scheduler/src/config.ts` and `agents/scheduler.yaml`: the
   `credentials` block (AC-1).
 - `tools/scheduler/src/state/paths.ts`: `contacts/parties.json`.
-- `tools/scheduler/src/events/kinds.ts` and `schemas/scheduler/event.json`:
-  `payload.request` and `payload.outcome` on `maintainer.contact`;
-  `channel: telegram` for notifications (AC-7 to AC-9).
+- `tools/scheduler/src/state/questions.ts` and
+  `schemas/scheduler/question-log-entry.json`: `request` on the entry and
+  `outcome` on its answer record (AC-7, AC-8). No event store file: spec
+  026's `maintainer.contact` additions are the follow-up spec's.
 - `tools/scheduler/bin/gh`: the gate (AC-11); `bin/scheduler.ts`: the
   `cred` and `contacts` commands.
 - `agents/credentials.yaml` (AC-2); `agents/profiles/*/profile.yaml`:
@@ -495,14 +602,14 @@ on" is spec 007's. *Store directory*: the `credentials.dir` of AC-1.
 - `schemas/scheduler/`: `credential-catalogue.json`, `credential-index.json`,
   `contacts.json`, `credential-check-result.json`, `question.json` (the
   `request` object, shared by every stage's result schema and the paused
-  record), `aws-ledger.json` (`scale`), `standing-definition.json` and
-  `profile.json` (`credentials`), `action.json` (the two kinds).
+  record), `standing-definition.json` and `profile.json` (`credentials`),
+  `action.json` (`renew_credential`).
 - `tools/scheduler/test/`: `credentials.test.ts` (store, catalogue checks,
   shims, commands, expiry producer, secrets never logged, AC-1 to AC-5),
   `contacts.test.ts` (gate, the `gh` shim refusals, approval, commands,
   AC-8, AC-11, AC-12), `notify.test.ts` (the Telegram notifier, alert
   replies, AC-9, AC-10), `question-check.test.ts` and `driver.test.ts`
-  (AC-6 to AC-8), `actions.test.ts` (the two kinds, AC-14, AC-16), the
+  (AC-6 to AC-8), `actions.test.ts` (`renew_credential`, AC-14), the
   registry test over the two new agents, and the recorded runs of section 6
   in `e2e.test.ts`; the fake `systemd-creds` under `test/helpers/`.
 - `tools/README.md`: the `cred` and `contacts` commands, the `credentials`
@@ -524,7 +631,7 @@ review.
   - the secrets-never-logged assertions after a wrapped call, a check and a
     renewal (AC-1, AC-3, AC-14);
   - recorded end-to-end runs (fake adapter, mocked GitHub, fake Telegram,
-    fake `aws`, fake `systemd-creds`) for: a credential question with a
+    fake `systemd-creds`; no `aws`) for: a credential question with a
     complete request sent with "Done"/"Can't" buttons, "Done" pressed, the
     check passing, the stage resumed with `done (verified)`, merged; the
     same with the check failing and a follow-up; a credential question
@@ -532,28 +639,30 @@ review.
     first-contact question approved by button, the party registered, a `gh
     issue create -R other/repo` from the resumed stage going through, and
     the same call refused before approval with one `contact_refused` log
-    entry; a funds refusal from spec 022 delivered to the chat with the
-    request layout and recorded `channel: telegram`; a reply to an alert
-    answered "alerts take no reply"; the credential check woken by
-    `credential_expiry` for `aws-sso` three days from expiry, one
-    `credential-expiry` notification with the login steps, nothing twice
-    that day; infra health woken by `aws_forecast_over_cap`, scaling down a
-    reservation with a descriptor, the forecast falling under, scaling it
-    back; infra health re-running a failed `main` workflow and filing a
-    finding for a reservation without a descriptor; every earlier recorded
-    chain (specs 006, 007, 008, 013, 022, 026) unchanged with no
-    `credentials` block and Telegram off.
+    entry; an `infra` notification (spec 015 AC-8's outage) delivered to the
+    chat headed by its gate and label and logged with `channel: telegram`,
+    and the same with the fake Telegram refusing, logged once with `channel:
+    log`; a reply to an alert answered "alerts take no reply"; the
+    credential check woken by `credential_expiry` for a test catalogue entry
+    with `expiry: index` three days from expiry, one `credential-expiry`
+    notification with its setup steps, nothing twice that day; infra health
+    woken by `ci_failure_main`, re-running the failed `main` workflow once;
+    infra health pausing a standing agent with three consecutive failures
+    and filing a finding for an `infra_alarm` payload whose `kind` it does
+    not know; every earlier recorded chain (specs 006, 007, 008, 011, 013,
+    015, 020, 025, 029) unchanged with no `credentials` block and Telegram
+    off.
 - On the laptop, after `cred import` and `cred set` for the two existing
-  secrets, `panelator-scheduler cred check` exits 0 for all three catalogue
-  entries and `telegram-check` and `aws-check` still pass; the implement
-  stage runs them and quotes the output in the PR. Importing is the
-  maintainer's step (the files are theirs); the implement stage raises it as
-  a capability question with the `cred import` command and the two files to
-  delete when it reaches this step and the index is empty.
+  secrets, `panelator-scheduler cred check` exits 0 for both catalogue
+  entries and `telegram-check` still passes; the implement stage runs them
+  and quotes the output in the PR. Importing is the maintainer's step (the
+  files are theirs); the implement stage raises it as a capability question
+  with the `cred import` command and the two files to delete when it reaches
+  this step and the index is empty.
 - After the service is restarted on the merged code, the first real
   Telegram alert, the first credential check run and the first infra health
-  run are written up in `dev-logs/` with their run records and the
-  `maintainer.contact` events.
+  run are written up in `dev-logs/` with their run records and the service
+  log lines that carry `channel`.
 
 ## 7. Open decisions
 
