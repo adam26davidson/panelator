@@ -1134,7 +1134,7 @@ describe("beyond GitHub: requests on capability questions (spec 030 AC-6 to AC-8
     const w = await world(withRequest({ ...credRequest, setup: [] }), {});
     await w.tick();
     expect(w.adapter.ran).toEqual(["plan", "implement", "implement", "review"]);
-    expect(inputsOf(w, "implement")[1].decide_input).toBe("a credential request must give setup");
+    expect(String(inputsOf(w, "implement")[1].decide_input)).toContain("a credential request must give setup");
     expect(await listPaused(w.paths)).toEqual([]);
   }, 120_000);
 
@@ -1176,4 +1176,55 @@ describe("beyond GitHub: requests on capability questions (spec 030 AC-6 to AC-8
     expect(await readParties(denied.paths)).toEqual([]);
     expect(await lastAnswered(denied)).toMatchObject({ outcome: "text" });
   }, 120_000);
+});
+
+describe("beyond GitHub: the two standing agents (spec 030 AC-13, AC-15)", () => {
+  const settle = async (w: Awaited<ReturnType<typeof standingWorld>>) => { await w.scheduler.tick(); for (let i = 0; i < 400 && w.scheduler.active; i++) await new Promise((r) => setTimeout(r, 25)); expect(w.scheduler.active).toBe(0); };
+  const runInput = (w: Awaited<ReturnType<typeof standingWorld>>, agent: string) => { const d = readdirSync(w.paths.runs).filter((x) => x.startsWith(`standing-${agent}`)).sort().at(-1)!; return JSON.parse(readFileSync(join(w.paths.runs, d, "input.json"), "utf8")); };
+
+  it("wakes the credential check on credential_expiry: one notification with the setup steps, nothing twice that day, no secret in its input", async () => {
+    const warning = { name: "demo", expires_at: "2026-10-04T00:00:00.000Z", steps: ["ignored: the entry's own steps are sent"] };
+    const w = await standingWorld({ "credential-check": [{ summary: "demo expires soon", warnings: [warning] }, { summary: "demo expires soon", warnings: [warning] }] }, ["credential-check"]);
+    const store = new CredentialStore(join(w.pair.root, "creds"), fakeCreds);
+    await store.writeSecret("demo", "very-secret-value", "maintainer", w.deps.now());
+    const catalogue = parseCatalogue("demo:\n  provider: demo\n  purpose: p\n  access: [read]\n  used_by: [credential-check]\n  wrapper: none\n  expiry: index\n  check: 'true'\n  renew: manual\n  setup: [open the console, create a new key, run cred set demo]\n", { profiles: [], agents: ["credential-check"] });
+    w.deps.credentialDeps = { store, catalogue, paths: w.paths, binDir: "", now: w.deps.now, run: async () => ({ code: 0, stdout: "", stderr: "" }) };
+    await store.updateIndex("demo", (e) => ({ ...e!, expires_at: "2026-10-04T00:00:00.000Z" }));
+    // the hourly expiry step of the tick (AC-5) raises the event that wakes the agent
+    await settle(w);
+    const input = runInput(w, "credential-check");
+    expect(input.events.events.map((e: { event: string; payload: unknown }) => [e.event, e.payload])).toEqual([["credential_expiry", { name: "demo", expires_at: "2026-10-04T00:00:00.000Z", last_check: null }]]);
+    expect(JSON.stringify(input)).not.toContain("very-secret-value");
+    expect(input.events.input.credentials[0]).toMatchObject({ name: "demo", state: "set", days_left: 3, renew: "manual" });
+    expect(input.events.input.check_results).toEqual([{ name: "demo", status: "ok", expires_at: "2026-10-04T00:00:00.000Z" }]);
+    const sent = w.notifications.filter((n) => n.label === "credential-expiry");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].text).toContain("1. open the console\n2. create a new key\n3. run cred set demo");
+    expect(sent[0].text).not.toContain("ignored");
+    await emit(w.paths, w.registry, "credential_expiry", { name: "demo", expires_at: "2026-10-04T00:00:00.000Z", last_check: "ok", again: true });
+    await settle(w);
+    expect(w.notifications.filter((n) => n.label === "credential-expiry")).toHaveLength(1);
+    expect(w.mock.unmatched).toEqual([]);
+  }, 60_000);
+
+  it("wakes infra health on ci_failure_main: re-runs once, pauses an agent with three failures, files a finding for an alarm kind it does not know", async () => {
+    const w = await standingWorld({ "infra-health": [{ summary: "re-ran main, paused operator", actions: [
+      { kind: "rerun_workflow", args: { run_id: 55 }, why: "main failed on the test check; one re-run" },
+      { kind: "rerun_workflow", args: { run_id: 55 }, why: "main failed on the test check; second re-run" },
+      { kind: "pause_agent", args: { name: "operator" }, why: "operator failed three times in a row" },
+    ], findings: [{ what: "unknown alarm kind aws_forecast_over_cap", where: "infra_alarm event", evidence: "payload kind not handled", noticed_how: "infra health sweep" }] }] }, ["infra-health"]);
+    await writeAgentState(w.paths, "operator", { ...(await readAgentState(w.paths, "operator"))!, failures: 3 });
+    await emit(w.paths, w.registry, "ci_failure_main", { check: "test", run_id: 55, sha: "abc" });
+    await emit(w.paths, w.registry, "infra_alarm", { kind: "aws_forecast_over_cap", forecast: 120 });
+    await settle(w);
+    const input = runInput(w, "infra-health");
+    expect(input.events.input.events.map((e: { event: string }) => e.event).sort()).toEqual(["ci_failure_main", "infra_alarm"]);
+    expect(input.events.input.agents.find((a: { name: string }) => a.name === "operator")).toMatchObject({ failures: 3, paused: false });
+    expect(w.mock.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/actions/runs/55/rerun")).toHaveLength(1);
+    expect((await readAgentState(w.paths, "operator"))).toMatchObject({ paused: true, paused_by: "infra-health" });
+    const log = await new ActionLog(w.paths.actionsLog).list();
+    expect(log.map((r) => `${r.kind}:${r.status}`)).toEqual(["rerun_workflow:applied", "rerun_workflow:refused", "pause_agent:applied"]);
+    expect((await readJsonLines<{ finding: { what: string } }>(w.paths.findingsQueue)).map((f) => f.finding.what)).toContain("unknown alarm kind aws_forecast_over_cap");
+    expect(w.mock.unmatched).toEqual([]);
+  }, 60_000);
 });

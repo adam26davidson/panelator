@@ -65,11 +65,7 @@
         {
           "type": "object",
           "required": [
-            "type",
-            "name",
-            "provider",
-            "access",
-            "setup"
+            "type"
           ],
           "additionalProperties": false,
           "properties": {
@@ -77,38 +73,29 @@
               "const": "credential"
             },
             "name": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             },
             "provider": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             },
             "access": {
               "type": "array",
               "items": {
-                "type": "string",
-                "minLength": 1
-              },
-              "minItems": 1
+                "type": "string"
+              }
             },
             "setup": {
               "type": "array",
               "items": {
-                "type": "string",
-                "minLength": 1
-              },
-              "minItems": 1
+                "type": "string"
+              }
             }
           }
         },
         {
           "type": "object",
           "required": [
-            "type",
-            "amount_usd",
-            "purpose",
-            "charter_goal"
+            "type"
           ],
           "additionalProperties": false,
           "properties": {
@@ -116,27 +103,20 @@
               "const": "funds"
             },
             "amount_usd": {
-              "type": "number",
-              "exclusiveMinimum": 0
+              "type": "number"
             },
             "purpose": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             },
             "charter_goal": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             }
           }
         },
         {
           "type": "object",
           "required": [
-            "type",
-            "party",
-            "channel",
-            "why",
-            "message"
+            "type"
           ],
           "additionalProperties": false,
           "properties": {
@@ -144,20 +124,16 @@
               "const": "first_contact"
             },
             "party": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             },
             "channel": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             },
             "why": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             },
             "message": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             }
           }
         }

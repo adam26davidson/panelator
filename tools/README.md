@@ -55,3 +55,31 @@ Security findings are routed to draft repository advisories, never public issues
 Wiping the state directory forgets every claim but leaves their `in-progress` labels on GitHub; remove those by hand, or the issues are never picked up again.
 
 The shipped profiles are `backend`, `design`, `security` and `spec`. A plan whose domain names any other profile fails, and the firmware HIL check of spec section 8 has no owner until the firmware profile spec.
+
+## Credentials, first contact and alerts (spec 030)
+
+Secrets live encrypted on the laptop in `credentials.dir` of `agents/scheduler.yaml` (default
+`~/.config/panelator/credentials`): one `<name>.cred` blob per credential, sealed by
+`systemd-creds --user`, and an `index.json` (expiry, last check) that holds no secret.
+`agents/credentials.yaml` is the catalogue: what each credential is for, its exact `access`, how its
+expiry is known, how it is checked and renewed, and the `setup` steps of a request. Agents reach a
+credential only through a wrapper command on their `PATH` (generated from the catalogue per run) and
+never see the secret. Profiles and standing agents list the credentials they use as `credentials:`.
+
+```
+panelator-scheduler cred set <name>      # secret on stdin, never an argument; runs the entry's check
+panelator-scheduler cred list            # catalogue joined with the index; never the secret
+panelator-scheduler cred check [<name>]  # checks and expiry probes; exits 1 if any fails
+panelator-scheduler cred import          # store app.private_key_path and telegram.credentials_path; prints the files to delete
+panelator-scheduler cred remove <name>
+panelator-scheduler contacts list        # parties approved for first contact
+panelator-scheduler contacts remove <party>
+```
+
+A capability question about a credential, funds or an outside party must carry a `request` object
+(spec 030 AC-6); it goes to Telegram with fixed buttons, a first-contact "Approve" registers the party
+in `contacts/parties.json`, and a credential "Done" is verified by the entry's check before the stage
+resumes. The `gh` shim refuses to create or edit anything in another repository until its owner is an
+approved party (`first_contact_needs_approval` stays locked on). With Telegram on, every notification is
+also sent to the chat and the service log line carries `channel: telegram` (or `log`). The `credential-check`
+and `infra-health` standing agents are in `agents/standing/`.
