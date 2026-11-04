@@ -66,6 +66,119 @@
     },
     "telegram_message_id": {
       "type": "integer"
+    },
+    "request": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "name",
+            "provider",
+            "access",
+            "setup"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "credential"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "provider": {
+              "type": "string",
+              "minLength": 1
+            },
+            "access": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            },
+            "setup": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "amount_usd",
+            "purpose",
+            "charter_goal"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "funds"
+            },
+            "amount_usd": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "purpose": {
+              "type": "string",
+              "minLength": 1
+            },
+            "charter_goal": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "party",
+            "channel",
+            "why",
+            "message"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "first_contact"
+            },
+            "party": {
+              "type": "string",
+              "minLength": 1
+            },
+            "channel": {
+              "type": "string",
+              "minLength": 1
+            },
+            "why": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "outcome": {
+      "enum": [
+        "approved",
+        "denied",
+        "declined",
+        "verified",
+        "check_failed",
+        "text"
+      ]
     }
   }
 }

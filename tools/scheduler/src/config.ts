@@ -27,6 +27,8 @@ export interface Config {
   };
   systemd: { scope: boolean; inhibit: boolean };
   decide: { base_url: string; key_env: string };
+  /** Spec 030 AC-1: the encrypted credential store. */
+  credentials: { dir: string; warn_days: number };
 }
 
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -60,6 +62,13 @@ export function loadConfig(path: string): Config {
   if(tg.credentials_path!==undefined&&(typeof tg.credentials_path!=='string'||!tg.credentials_path))throw new Error('config telegram credentials_path must be a string');
   const timeout=tg.long_poll_timeout_s??50;
   if(typeof timeout!=='number'||!Number.isFinite(timeout)||timeout<1)throw new Error('config telegram long_poll_timeout_s must be >= 1');
+  const cr = raw.credentials ?? {};
+  if (typeof cr !== "object" || cr === null || Array.isArray(cr)) throw new Error("config credentials must be an object");
+  const crr = cr as Record<string, unknown>;
+  if (Object.keys(crr).some((k) => !["dir", "warn_days"].includes(k))) throw new Error("config credentials unknown key");
+  const warnDays = crr.warn_days ?? 7;
+  if (typeof warnDays !== "number" || !Number.isInteger(warnDays) || warnDays < 1) throw new Error("config credentials.warn_days must be an integer >= 1");
+  if (crr.dir !== undefined && (typeof crr.dir !== "string" || !crr.dir)) throw new Error("config credentials.dir must be a string");
   const bounds = raw.bounds ?? {};
   if (typeof bounds !== "object" || bounds === null || Array.isArray(bounds)) throw new Error("config bounds must be an object");
   const designRevisions = (bounds as Record<string, unknown>).design_revisions ?? 2;
@@ -92,6 +101,7 @@ export function loadConfig(path: string): Config {
     },
     systemd: { scope: systemd.scope !== false, inhibit: systemd.inhibit !== false },
     decide: { base_url: String(decide.base_url ?? ""), key_env: String(decide.key_env ?? "PANELATOR_DECIDE_KEY") },
+    credentials: { dir: expandHome(String(crr.dir ?? "~/.config/panelator/credentials")), warn_days: warnDays },
   };
   if (cfg.slots < 1) throw new Error("config slots must be >= 1");
   if (cfg.poll_interval_s < 5) throw new Error("config poll_interval_s must be >= 5");

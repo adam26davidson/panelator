@@ -1,6 +1,6 @@
 import { appendFile, readFile } from "node:fs/promises";
 import { validate } from "../schema/validate.ts";
-import type { AskingStage, Question } from "../types.ts";
+import type { AskingStage, Question, Request } from "../types.ts";
 import type { StatePaths } from "./paths.ts";
 
 export interface QuestionLogEntry {
@@ -16,6 +16,8 @@ export interface QuestionLogEntry {
   reasoning?: string;
   reply_comment_id?: number;
   answer?: string;
+  request?: Request;
+  outcome?: "approved" | "denied" | "declined" | "verified" | "check_failed" | "text";
 }
 
 export async function appendQuestionLog(p: StatePaths, entry: QuestionLogEntry): Promise<void> {

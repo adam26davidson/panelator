@@ -16,7 +16,7 @@ import { listProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/re
 import { afterFallback, harnessForModel, retryDecision } from "../runner/retry.ts";
 import type { ParameterStore } from "../parameters/store.ts";
 import { modelLimitFallback, planLaunch, quotaParams, readBook, waitAfterLimit } from "../quota/book.ts";
-import { runStage, type StageOutcome } from "../runner/run.ts";
+import { runStage, type RunnerContext, type StageOutcome } from "../runner/run.ts";
 import {
   checkoutBranch, commitsPatch, deleteLocalBranch, diffFilesAgainstBase, discardUncommitted, onlyRebased, rebaseOntoMain, removeWorktree, syncToRemote, uncommittedPatch,
 } from "../runner/worktree.ts";
@@ -57,6 +57,8 @@ export interface DriverDeps {
   agentsDir: string;
   repoDir: string;
   binDir: string;
+  /** Spec 030 AC-3: set when the service has a credential catalogue; stages then get shims and the contact gate. */
+  credentials?: RunnerContext["credentials"];
   adapterFor: (harness: Harness) => Adapter;
   systemdScope: boolean;
   /** Test seam: a stand-in for systemd-run; production leaves it unset. */
@@ -664,7 +666,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
     try {
       const out = await runStage(
         {
-          paths: deps.paths, adapter: deps.adapterFor(h), systemdScope: deps.systemdScope, systemdRunBin: deps.systemdRunBin, binDir: deps.binDir, now: deps.now,
+          paths: deps.paths, adapter: deps.adapterFor(h), systemdScope: deps.systemdScope, systemdRunBin: deps.systemdRunBin, binDir: deps.binDir, credentials: deps.credentials, now: deps.now,
           gitIdentity: botIdentity(deps), sessionWindowMs: quota.sessionWindowMs,
         },
         { def, input, issue: claim.issue, attempt, worktree: claim.worktree, profile, model, harness, runId,

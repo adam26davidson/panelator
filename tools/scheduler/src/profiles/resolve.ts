@@ -15,6 +15,9 @@ export function resolveProfile(agentsDir: string, name: string): Profile {
   if (!/^[a-z][a-z0-9-]*$/.test(name) || !existsSync(join(dir, "profile.yaml"))) throw new Error(`unknown profile: ${name}`);
   const y = parse(readFileSync(join(dir, "profile.yaml"), "utf8")) as Record<string, unknown>;
   const tools = Array.isArray(y.tools) ? (y.tools as string[]) : [];
+  if ("credential_hook" in y) throw new Error(`profile ${name}: credential_hook is replaced by credentials`);
+  const credentials = y.credentials ?? [];
+  if (!Array.isArray(credentials) || credentials.some((c) => typeof c !== "string" || !c)) throw new Error(`profile ${name}: credentials must be a list of names`);
   const criteriaFile = typeof y.review_criteria === "string" ? y.review_criteria : null;
   return {
     name,
@@ -22,7 +25,7 @@ export function resolveProfile(agentsDir: string, name: string): Profile {
     skillsDir: join(dir, "skills"),
     instructions: existsSync(join(dir, "instructions.md")) ? readFileSync(join(dir, "instructions.md"), "utf8") : "",
     tools,
-    credentialHook: typeof y.credential_hook === "string" ? y.credential_hook : undefined,
+    credentials,
     reviewCriteria: criteriaFile ? readFileSync(join(dir, criteriaFile), "utf8") : undefined,
   };
 }

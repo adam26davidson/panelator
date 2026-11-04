@@ -1,9 +1,9 @@
 import { join } from "node:path";
 
 /** Environment every stage gets so gh and git authenticate as the App without seeing the token (spec section 12). */
-export function stageEnv(binDir: string, stateDir: string, identity?: { name: string; email: string }): Record<string, string> {
+export function stageEnv(binDir: string, stateDir: string, identity?: { name: string; email: string }, extra?: { shimDir?: string; launcher?: string }): Record<string, string> {
   const env: Record<string, string> = {
-    PATH: `${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+    PATH: `${extra?.shimDir ? extra.shimDir + ":" : ""}${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
     PANELATOR_STATE_DIR: stateDir,
     // an empty credential.helper first clears every helper collected from system/global
     // config (URL-scoped ones included), so the App helper is the only one git asks
@@ -19,6 +19,7 @@ export function stageEnv(binDir: string, stateDir: string, identity?: { name: st
     GH_TOKEN: "",
     GITHUB_TOKEN: "",
   };
+  if (extra?.launcher) env.PANELATOR_SCHEDULER = extra.launcher;
   if (identity) {
     env.GIT_AUTHOR_NAME = identity.name;
     env.GIT_AUTHOR_EMAIL = identity.email;

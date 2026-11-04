@@ -22,10 +22,12 @@ export type SchemaName =
   | "escalation-ledger"
   | "question-log-entry"
   | "standing-definition" | "standing-result" | "action" | "action-log-entry"
-  | "parameter-definition" | "parameters" | "filer-result" | "triage-entry" | "agent-state" | "filer-input" | "audit-input";
+  | "parameter-definition" | "parameters" | "filer-result" | "triage-entry" | "agent-state" | "filer-input" | "audit-input"
+  | "credential-catalogue" | "credential-index" | "contacts" | "credential-check-result" | "credential-check-input" | "infra-health-input";
 
 const NAMES: SchemaName[] = [
   "standing-definition", "standing-result", "action", "action-log-entry", "parameter-definition", "parameters", "filer-result", "triage-entry", "agent-state", "filer-input", "audit-input",
+  "credential-catalogue", "credential-index", "contacts", "credential-check-result", "credential-check-input", "infra-health-input",
   "finding",
   "plan-result",
   "implement-result",

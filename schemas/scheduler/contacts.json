@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contacts.json",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "party",
+      "channel",
+      "approved_at",
+      "question_comment_id",
+      "issue"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "party": {
+        "type": "string",
+        "minLength": 1
+      },
+      "channel": {
+        "type": "string",
+        "minLength": 1
+      },
+      "approved_at": {
+        "type": "string",
+        "minLength": 1
+      },
+      "question_comment_id": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "issue": {
+        "type": "integer"
+      }
+    }
+  }
+}

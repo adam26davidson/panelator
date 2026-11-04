@@ -58,9 +58,9 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   if(!inputCheck.ok)throw new Error(`standing input: ${inputCheck.errors.join('; ')}`);
   const profile=def.profile==='none'?null:resolveProfile(d.agentsDir,def.profile);
   // Standing agents have no write or GitHub tool, even when a profile normally supplies one.
-  const safeProfile=profile?{...profile,tools:['Read','Glob','Grep'],credentialHook:undefined}:null;
+  const safeProfile=profile?{...profile,tools:['Read','Glob','Grep'],credentials:def.credentials??[]}:null;
   const req={def,input:{} as StageInput,standingInput:{agent:def.name,events:input?{events:received,input}:received,since:state.last_run?.at??null,parameters},issue:0,attempt,worktree,profile:safeProfile,runId};
-  const context={paths:d.paths,adapter:d.adapterFor(def.harness),systemdScope:d.systemdScope,systemdRunBin:d.systemdRunBin,now:d.now,binDir:d.binDir,sessionWindowMs:quota.sessionWindowMs};
+  const context={paths:d.paths,adapter:d.adapterFor(def.harness),systemdScope:d.systemdScope,systemdRunBin:d.systemdRunBin,now:d.now,binDir:d.binDir,credentials:d.credentials,sessionWindowMs:quota.sessionWindowMs};
   const logLimit=(r:StageOutcome)=>{if(r.limit)d.log({kind:'quota-limit',agent:def.name,run_id:r.runId,key:r.limit.key,scope:r.limit.scope,resets_at:r.limit.resets_at,source:r.limit.source});};
   let ran={harness:moved?.harness??def.harness,model:moved?.model??def.model};
   let result=moved?await runStage({...context,adapter:d.adapterFor(moved.harness)},{...req,model:moved.model,harness:moved.harness,runId:runId+'-fallback'}):await runStage(context,req);

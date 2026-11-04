@@ -44,6 +44,7 @@ export interface StandingDefinition extends Omit<StageDefinition, "name" | "kind
   trigger: { schedule?: string; events?: string[] };
   worktree: "fresh" | "none";
   actions: string[];
+  credentials?: string[];
 }
 export type AgentDefinition = StageDefinition | StandingDefinition;
 
@@ -68,7 +69,14 @@ export interface IssueData {
 export type SpecMode = "write" | "answer" | "revise" | "decide" | "record";
 export type AskingStage = "plan" | "implement" | "review" | "fix" | "spec" | "design" | "verify";
 
+/** Spec 030 AC-6: what a credential, funds or first-contact question must carry. */
+export type Request =
+  | { type: "credential"; name: string; provider: string; access: string[]; setup: string[] }
+  | { type: "funds"; amount_usd: number; purpose: string; charter_goal: string }
+  | { type: "first_contact"; party: string; channel: string; why: string; message: string };
+
 export interface Question {
+  request?: Request;
   kind: "product" | "technical" | "capability" | "other";
   question: string;
   options: { label: string; cost: string }[];
@@ -198,6 +206,7 @@ export interface Profile {
   skillsDir: string;
   instructions: string;
   tools: string[];
-  credentialHook?: string;
+  /** Spec 030 AC-2: catalogue names whose wrappers the stage's PATH carries. */
+  credentials?: string[];
   reviewCriteria?: string;
 }

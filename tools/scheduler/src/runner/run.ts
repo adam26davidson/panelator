@@ -14,6 +14,8 @@ import { newRunId, runDir, writeUsageRecord, type UsageRecord } from "../state/r
 import type { Harness, Profile, AgentDefinition, AgentStageName } from "../types.ts";
 import { renderStandingPrompt } from '../standing/registry.ts';
 import { stageEnv } from "./credentials.ts";
+import type { Catalogue } from "../credentials/catalogue.ts";
+import { writeShims, type SchedulerCmd } from "../credentials/shims.ts";
 import { spawnBounded, type SpawnResult } from "./process.ts";
 import { linkProfileSkills } from "./skills.ts";
 import { observeRun, type Limit } from "../quota/book.ts";
@@ -30,6 +32,8 @@ export interface RunnerContext {
   gitIdentity?: { name: string; email: string };
   /** Spec 013 AC-8: `quota.session_window`; the default when unset. */
   sessionWindowMs?: number;
+  /** Spec 030 AC-3: the catalogue and the command that runs the scheduler, for the per-run shim directory. */
+  credentials?: { catalogue: Catalogue; cmd: SchedulerCmd };
 }
 
 export interface StageRequest {
@@ -139,9 +143,11 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   let malformed: string[] = [];
   try {
     try {
+      const wanted = [...new Set([...(req.profile?.credentials ?? []), ...((req.def as { credentials?: string[] }).credentials ?? [])])];
+      const shims = ctx.credentials ? await writeShims(join(dir, "shims"), wanted, ctx.credentials.catalogue, ctx.credentials.cmd, req.def.name) : null;
       spawned = await spawnBounded({
         argv: cmd.argv,
-        env: { ...cmd.env, ...stageEnv(ctx.binDir, ctx.paths.root, ctx.gitIdentity) },
+        env: { ...cmd.env, ...stageEnv(ctx.binDir, ctx.paths.root, ctx.gitIdentity, shims ? { shimDir: wanted.length ? shims.dir : undefined, launcher: shims.launcher } : undefined) },
         cwd: req.worktree,
         timeoutMs: req.def.bounds.timeout_min * 60_000,
         scope: { enabled: ctx.systemdScope, unitName: `panelator-stage-${runId}`, systemdRunBin: ctx.systemdRunBin, runtimeMaxSec: req.def.bounds.timeout_min * 60 + 600 },

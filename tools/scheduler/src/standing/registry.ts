@@ -13,7 +13,7 @@ export function parseDuration(value: string): number {
 export function parseStandingDefinition(markdown: string, events: readonly string[], actions: readonly string[]): StandingDefinition {
   const {frontmatter, body} = splitFrontmatter(markdown);
   const fm = parse(frontmatter) as Record<string, unknown>;
-  const keys = ['name','kind','trigger','harness','model','fallback','independent','tier','effort','bounds','permission','worktree','profile','input','output','actions'];
+  const keys = ['name','kind','trigger','harness','model','fallback','independent','tier','effort','bounds','permission','worktree','profile','input','output','actions','credentials'];
   for (const k of Object.keys(fm)) if (!keys.includes(k)) throw new Error(`unknown key ${k}`);
   for (const k of ['name','kind','harness','model','tier','permission','worktree','profile','input','output']) if (typeof fm[k] !== 'string' || !fm[k]) throw new Error(`${k} is required`);
   if (!/^[a-z][a-z0-9-]*$/.test(String(fm.name))) throw new Error('name must be a safe file name');
@@ -26,6 +26,7 @@ export function parseStandingDefinition(markdown: string, events: readonly strin
   if (t.events !== undefined && (!Array.isArray(t.events) || !t.events.length || t.events.some(e => !events.includes(e)))) throw new Error('trigger.events unknown or empty');
   const allowed = fm.actions ?? [];
   if (!Array.isArray(allowed) || allowed.some(k => typeof k !== 'string' || !actions.includes(k))) throw new Error('actions contains unknown kind');
+  if(fm.credentials!==undefined&&(!Array.isArray(fm.credentials)||fm.credentials.some(c=>typeof c!=='string'||!c)))throw new Error('credentials must be a list of names');
   if(fm.effort!==undefined && typeof fm.effort!=='string')throw new Error('effort must be a string');
   if(!/^[a-z][a-z0-9-]*$/.test(String(fm.profile)) || fm.profile==='from-issue')throw new Error('profile must be none or a profile name');
   if(!/^[a-z][a-z0-9-]*$/.test(String(fm.input)))throw new Error('input must be a schema name');
