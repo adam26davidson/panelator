@@ -419,8 +419,8 @@ treated as stale.
 
 ## 12. GitHub App
 
-Permissions: issues (write), pull requests (write), contents (write), checks
-and actions (read), metadata (read), repository security advisories (write)
+Permissions: issues (write), pull requests (write), contents (write), workflows
+(write), checks and actions (read), metadata (read), repository security advisories (write)
 for spec 004. Installation tokens expire after an hour, so the scheduler
 refreshes `token.json` every 50 minutes, and stages get a `gh` wrapper on
 `PATH` plus a git credential helper that read it; agents never handle
