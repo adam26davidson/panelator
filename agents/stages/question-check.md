@@ -153,3 +153,9 @@ Every entry is an object, never a string, with exactly these fields:
 where `suspected_cause` and `security` are optional and the other four are required. Leave it `[]`
 when there is nothing to record. The result must contain only the fields shown above; any other
 property makes it invalid and fails the stage.
+
+**Requests (spec 030).** A `capability` question about a credential, funds or first contact must carry a
+`request` object: credential `{type, name, provider, access[], setup[]}`, funds `{type, amount_usd, purpose,
+charter_goal}`, first contact `{type, party, channel, why, message}`, every field non-empty. The scheduler
+rejects an incomplete one before you run ("a <type> request must give <fields>"), so judge a complete request
+for its kind as usual; check also that `access` is the least privilege the purpose needs.

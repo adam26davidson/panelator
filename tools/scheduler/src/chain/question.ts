@@ -1,4 +1,17 @@
-import type { Question } from "../types.ts";
+import type { Question, Request } from "../types.ts";
+
+/** Spec 030 AC-7: the request's fields as a labelled list; setup steps numbered, the message quoted in full. */
+export function renderRequest(r: Request): string[] {
+  const quote = (t: string) => t.split("\n").map((l) => `> ${l}`);
+  switch (r.type) {
+    case "credential":
+      return ["Credential request", `Name: ${r.name}`, `Provider: ${r.provider}`, `Access: ${r.access.join("; ")}`, "Setup:", ...r.setup.map((s, i) => `${i + 1}. ${s}`)];
+    case "funds":
+      return ["Funds request", `Amount: $${r.amount_usd}`, `Purpose: ${r.purpose}`, `Charter goal: ${r.charter_goal}`];
+    case "first_contact":
+      return ["First-contact request", `Party: ${r.party}`, `Channel: ${r.channel}`, `Why: ${r.why}`, "Message that would be sent:", ...quote(r.message)];
+  }
+}
 
 /** C9: a leaf module, so the paused-record code and the driver share the comment format without importing the machine. */
 
@@ -15,6 +28,7 @@ export function questionBody(q: Question, maintainer: string): string {
     "",
     q.question,
     "",
+    ...(q.request ? [...renderRequest(q.request), ""] : []),
     ...q.options.map((o, i) => `${i + 1}. ${o.label} — ${o.cost}`),
     "",
     `Recommendation: ${q.recommendation}`,

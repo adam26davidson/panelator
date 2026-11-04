@@ -32,6 +32,10 @@ import {emit} from '../src/standing/events.ts';
 import {runStandingAgent} from '../src/standing/run.ts';
 import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
 import { chainWorld, standingWorld, scripted, RATE_LIMITED, type ChainWorld } from "./helpers/e2e-routes.ts";
+import { CredentialStore } from "../src/credentials/store.ts";
+import { parseCatalogue } from "../src/credentials/catalogue.ts";
+import { readParties } from "../src/contacts/gate.ts";
+import { fakeCreds } from "./helpers/fake-creds.ts";
 import { git, repoPair, withDesign, withTopDesign } from "./helpers/repo-pair.ts";
 
 const spec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
@@ -188,6 +192,8 @@ const APPROVE = { verdict: "approve", findings_on_pr: [], declined_to_judge: [] 
 const CHANGES = { verdict: "changes_requested", findings_on_pr: [{ criterion: "AC-1", file: "a.txt", line: 1, scenario: "z is not produced" }], declined_to_judge: [] };
 const ask = (kind: Question["kind"], question: string): Question => ({
   kind, question, options: [{ label: "option 1", cost: "16 KB of RAM" }, { label: "option 2", cost: "a second flash partition" }], recommendation: "option 1",
+  // Spec 030 AC-6: a capability question about a credential carries its request.
+  ...(kind === "capability" ? { request: { type: "credential" as const, name: "flash-token", provider: "flashing-service", access: ["flash the test board"], setup: ["create a token in the flashing console", "run cred set flash-token"] } } : {}),
 });
 const ESCALATE = (q: Question) => ({ verdict: "escalate", findings_on_pr: [], declined_to_judge: [], escalation: q });
 const SEND = { verdict: "send", reasoning: "a trade-off only the maintainer can weigh" };
@@ -1105,5 +1111,69 @@ describe("end to end: the design stage (spec 029)", () => {
     expect(w.labelLog).toEqual([]);
     expect(w.comments).toHaveLength(1);
     expect(w.adapter.ran).toEqual([]);
+  }, 120_000);
+});
+
+describe("beyond GitHub: requests on capability questions (spec 030 AC-6 to AC-8)", () => {
+  const credRequest = { type: "credential" as const, name: "demo", provider: "demo", access: ["read the demo"], setup: ["create it", "run cred set demo"] };
+  const contactRequest = { type: "first_contact" as const, party: "github:other", channel: "github", why: "report a bug", message: "Hello, a bug." };
+  const withRequest = (request: Question["request"], text = "We need the demo credential. Can you set it up?"): Question => ({ ...ask("technical", text), kind: "capability", request });
+  async function world(question: Question, results: Record<string, unknown[]>, run: (c: string) => Promise<{ code: number; stdout: string; stderr: string }> = async () => ({ code: 0, stdout: "", stderr: "" })) {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: [{ escalation: question }, a.implement(9)], review: [APPROVE], "question-check": [SEND], ...results } as never });
+    const store = new CredentialStore(join(w.pair.root, "creds"), fakeCreds);
+    await store.writeSecret("demo", "secret-value", "maintainer");
+    const catalogue = parseCatalogue("demo:\n  provider: demo\n  purpose: p\n  access: [a]\n  used_by: [scheduler]\n  wrapper: none\n  expiry: none\n  check: 'true'\n  renew: manual\n  setup: [s]\n", { profiles: [], agents: [] });
+    w.deps.credentialDeps = { store, catalogue, paths: w.paths, binDir: "", now: () => new Date(), run };
+    return w;
+  }
+  const lastAnswered = async (w: ChainWorld) => (await readJsonLines<{ event: string; answer: string; outcome?: string; request?: unknown }>(w.paths.questionsLog)).filter((e) => e.event === "answered").at(-1)!;
+
+  it("sends a credential question without its setup steps back to the asking stage to decide, with no question check", async () => {
+    const w = await world(withRequest({ ...credRequest, setup: [] }), {});
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["plan", "implement", "implement", "review"]);
+    expect(inputsOf(w, "implement")[1].decide_input).toBe("a credential request must give setup");
+    expect(await listPaused(w.paths)).toEqual([]);
+  }, 120_000);
+
+  it("pauses with the request in the comment, runs the entry's check on Done and resumes with `done (verified)`", async () => {
+    const w = await world(withRequest(credRequest), {});
+    await w.tick();
+    expect(pausedRecord(w)).toMatchObject({ phase: "paused", question: { request: credRequest } });
+    expect(w.comments.at(-1)!.body).toContain("1. create it\n2. run cred set demo");
+    w.reply("Done");
+    await w.tick();
+    await expectSettled(w);
+    const [question] = w.questions();
+    expect(inputsOf(w, "implement")[1].answer).toBe(`Question #${question.id}: done (verified)`);
+    expect(await lastAnswered(w)).toMatchObject({ answer: "done (verified)", outcome: "verified", request: credRequest });
+    expect(await readdirSync(w.paths.root)).not.toContain("secret-value");
+  }, 120_000);
+
+  it("resumes with the failing check when Done is answered but the credential does not work", async () => {
+    const w = await world(withRequest(credRequest), {}, async () => ({ code: 1, stdout: "", stderr: "401 unauthorized\n" }));
+    await w.tick();
+    w.reply("done");
+    await w.tick();
+    expect(inputsOf(w, "implement")[1].answer).toContain("done (check failed: exit 1: 401 unauthorized)");
+    expect(await lastAnswered(w)).toMatchObject({ outcome: "check_failed" });
+  }, 120_000);
+
+  it("registers the party on approval and leaves it unapproved on any other answer", async () => {
+    const approved = await world(withRequest(contactRequest, "May we report a bug to the vendor's repository?"), {});
+    await approved.tick();
+    approved.reply("Ok, send it");
+    await approved.tick();
+    await expectSettled(approved);
+    expect(await readParties(approved.paths)).toMatchObject([{ party: "github:other", channel: "github", issue: 7 }]);
+    expect(await lastAnswered(approved)).toMatchObject({ outcome: "approved" });
+    const denied = await world(withRequest(contactRequest, "May we report a bug to the vendor's repository?"), {});
+    await denied.tick();
+    denied.reply("Not now");
+    await denied.tick();
+    expect(await readParties(denied.paths)).toEqual([]);
+    expect(await lastAnswered(denied)).toMatchObject({ outcome: "text" });
   }, 120_000);
 });

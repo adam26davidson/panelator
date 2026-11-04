@@ -20,7 +20,11 @@ import {applyFilerResult,type FilerResult} from '../filer/apply.ts';
 import {buildAuditInput} from './audit-input.ts';
 import {updateAgentState,type AgentState} from './state.ts';
 import {parseDuration} from './registry.ts';
+import {buildCredentialCheckInput} from './credential-check-input.ts';
+import {buildInfraHealthInput} from './infra-health-input.ts';
+import {claimOnce} from '../credentials/check.ts';
 const exec=promisify(execFile);
+const need=<T>(v:T|undefined):T=>{if(v===undefined)throw new Error('credential store is not configured');return v;};
 export interface StandingDeps extends DriverDeps {parameters:ParameterStore;botLogin:string}
 /** A repair turn only rewrites JSON it already has; the cap also keeps a session-lost fresh run from a full investigation. */
 const REPAIR_MAX_TURNS=5,REPAIR_MAX_ERRORS=40;
@@ -52,7 +56,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
    await mkdir(d.paths.worktrees,{recursive:true});
    await exec('git',['worktree','add','--detach',worktree,'origin/main'],{cwd:d.repoDir});created=true;
   }
-  const input=def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):null;
+  const input=def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):def.input==='credential-check-input'?await buildCredentialCheckInput(need(d.credentialDeps),d.cfg,received):def.input==='infra-health-input'?await buildInfraHealthInput(d.paths,received,now):null;
   const parameters=await d.parameters.all();
   const inputCheck=validate(def.input as SchemaName,input??{events:received,since:state.last_run?.at??null,parameters});
   if(!inputCheck.ok)throw new Error(`standing input: ${inputCheck.errors.join('; ')}`);
@@ -94,8 +98,14 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   const body=result.result as {summary:string;actions?:{kind:string;args:Record<string,unknown>;why:string}[];findings?:unknown[]};
   if(def.output==='filer-result')await applyFilerResult(filer,runId,input as Awaited<ReturnType<typeof buildFilerInput>>,body as FilerResult);
   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},body.findings??[]);
-  const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now};
+  const notifyCredential=(label:string,text:string,key:string)=>d.notifier.notify({issue:0,gate:`credential:${key}`,label,text});
+  const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now,credentials:d.credentialDeps,notify:notifyCredential};
   for(const action of body.actions??[])await applyAction(ctx,{...action,agent:def.name,run_id:runId},def.actions);
+  // Spec 030 AC-13: one credential-expiry notification per warning, with the entry's own setup steps, once per credential per day.
+  if(def.output==='credential-check-result')for(const w of (body as {warnings?:{name:string;expires_at:string|null;steps:string[]}[]}).warnings??[]) {
+   const entry=d.credentialDeps?.catalogue[w.name];if(!entry||!await claimOnce(d.paths,`warn:${w.name}`,d.now()))continue;
+   await notifyCredential('credential-expiry',`Credential ${w.name} ${w.expires_at?`expires ${w.expires_at}`:'needs attention'}. Steps:\n${entry.setup.map((s,i)=>`${i+1}. ${s}`).join('\n')}`,w.name);
+  }
   summary=body.summary;outcome='ok';
   await writeFile(join(d.paths.runs,result.runId,'summary.json'),JSON.stringify({summary}));
  }catch(e){error=(e as Error).message;d.log({kind:postponedUntil===null?'standing-error':'standing-postponed',agent:def.name,error});}

@@ -10,6 +10,6 @@ export class LogNotifier implements Notifier {
   }
   async notify(n: Notification): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
-    await appendFile(this.path, JSON.stringify({ kind: "notify", at: new Date().toISOString(), ...n }) + "\n");
+    await appendFile(this.path, JSON.stringify({ kind: "notify", at: new Date().toISOString(), ...n, channel: n.channel ?? "log" }) + "\n");
   }
 }

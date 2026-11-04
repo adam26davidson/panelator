@@ -67,9 +67,11 @@ export function scripted(results: Record<string, Scripted[]>): Adapter & { ran: 
   };
 }
 
-export async function standingWorld(results:Record<string,Scripted[]>) {
+export async function standingWorld(results:Record<string,Scripted[]>,keep:string[]=[]) {
   const pair=repoPair({'README.md':'standing fixture'}),paths=statePaths(join(pair.root,'state'));await ensureStateDirs(paths);
   const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,registryActionsCheck(join(agentsDir,'actions.yaml')));
+  // Spec 030: the recorded runs of earlier specs run without the two agents it added, unless a test asks for them.
+  for(const n of ['credential-check','infra-health'])if(!keep.includes(n))delete registry[n];
   registry.operator={...registry['action-audit'],name:'operator',trigger:{schedule:'1h'},actions:['set_parameter','rerun_workflow'],input:'audit-input'};
   const cfg={...loadConfig(defaultConfigPath),repo:'o/r',required_checks:['test'],slots:1};
   const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),cfg,registry));
@@ -103,7 +105,7 @@ export interface MockComment { id: number; author: string; body: string; at: str
  * One issue (#7) on a mocked GitHub backed by a real bare origin: stages commit and push in their worktree and open
  * PRs here; a merge squashes the PR's branch into origin's main, a branch DELETE removes it from origin.
  */
-export async function chainWorld(opts: { files: Record<string, string>; issueBody?: string; labels?: string[]; results: Record<string, Scripted[]> }) {
+export async function chainWorld(opts: { files: Record<string, string>; issueBody?: string; labels?: string[]; results: Record<string, Scripted[]>; deps?: Partial<SchedulerDeps> }) {
   const pair = repoPair(opts.files);
   const paths: StatePaths = statePaths(join(pair.root, "state"));
   await ensureStateDirs(paths);
@@ -239,6 +241,7 @@ export async function chainWorld(opts: { files: Record<string, string>; issueBod
     botLogin: BOT, serviceLog: new ServiceLog(paths.serviceLog), inhibitor: new SleepInhibitor({ enabled: false }),
     fastForward: async () => ({ moved: false, changedPaths: [] }), sleep: async () => {}, monotonic: () => 0, requestRestart: () => {},
   };
+  Object.assign(deps, opts.deps);
   const scheduler = new Scheduler(deps);
 
   return {

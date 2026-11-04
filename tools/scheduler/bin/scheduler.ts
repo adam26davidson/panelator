@@ -32,6 +32,7 @@ import {loadCatalogue,checkCredentialNames} from '../src/credentials/catalogue.t
 import {CredentialStore} from '../src/credentials/store.ts';
 import {credSet,credList,credCheck,credImport,credRemove,credExec} from '../src/credentials/commands.ts';
 import type {CredDeps} from '../src/credentials/check.ts';
+import {TelegramNotifier} from '../src/notify/telegram.ts';
 import {contactsList,contactsRemove} from '../src/contacts/commands.ts';
 import {checkContact,classifyGh,recordRefusal} from '../src/contacts/gate.ts';
 import {listProfiles,resolveProfile} from '../src/profiles/resolve.ts';
@@ -47,7 +48,7 @@ await ensureStateDirs(paths);
 const serviceLog = new ServiceLog(paths.serviceLog);
 const binDir = dirname(fileURLToPath(import.meta.url));
 if(args[0]==='telegram-check'){
- try{console.log(await telegramCheck(cfg));process.exit(0);}catch(e){console.error((e as Error).message);process.exit(1);}
+ try{console.log(await telegramCheck(cfg,undefined,new CredentialStore(cfg.credentials.dir)));process.exit(0);}catch(e){console.error((e as Error).message);process.exit(1);}
 }
 
 /** I7: a configuration error the service cannot recover from by restarting; the unit's RestartPreventExitStatus=78 stops the loop. */
@@ -170,12 +171,12 @@ if (has("--check-auth")) {
 const stopRefresh = app.startTokenRefresh(paths);
 const gh = new GitHubClient(app.octokit, cfg.repo);
 
-const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec));
+const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec),undefined,credStore);
 let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
-  credentials:{catalogue,cmd:credentialsCmd},
-  cfg, paths, gh, telegram,registry, parameters, emitEvent, notifier: rateLimited(new LogNotifier(paths.serviceLog), cfg.notify_rate_limit_hours),
+  credentials:{catalogue,cmd:credentialsCmd},credentialDeps:credDeps,
+  cfg, paths, gh, telegram,registry, parameters, emitEvent, notifier: rateLimited(telegram?new TelegramNotifier(new LogNotifier(paths.serviceLog),text=>telegram.sendReply(text),paths.telegramAlerts,rec=>serviceLog.write(rec)):new LogNotifier(paths.serviceLog), cfg.notify_rate_limit_hours),
   stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: repoRoot, binDir,
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),

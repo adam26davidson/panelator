@@ -1,3 +1,4 @@
+import type { CredDeps } from "../credentials/check.ts";
 import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -59,6 +60,8 @@ export interface DriverDeps {
   binDir: string;
   /** Spec 030 AC-3: set when the service has a credential catalogue; stages then get shims and the contact gate. */
   credentials?: RunnerContext["credentials"];
+  /** Spec 030: the credential store and catalogue (hourly expiry step, renewals, credential answers); unset when none is configured. */
+  credentialDeps?: CredDeps;
   adapterFor: (harness: Harness) => Adapter;
   systemdScope: boolean;
   /** Test seam: a stand-in for systemd-run; production leaves it unset. */

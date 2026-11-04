@@ -94,3 +94,13 @@ Every entry is an object, never a string, with exactly these fields:
 where `suspected_cause` and `security` are optional and the other four are required. Leave it `[]`
 when there is nothing to record. The result must contain only the fields shown above; any other
 property makes it invalid and fails the stage.
+
+**Credential, funds and first-contact requests (spec 030).** An escalation of kind `capability` that
+asks for a credential, funds or first contact with an outside party must carry a `request` object, or the
+question check sends it back to you to decide. Credential: `{"type":"credential","name","provider","access":[exact scopes],"setup":[numbered steps]}`
+(least privilege; `name` is an entry of `agents/credentials.yaml` or a new one your PR adds). Funds:
+`{"type":"funds","amount_usd","purpose","charter_goal"}` naming the charter clause served. First contact:
+`{"type":"first_contact","party":"github:<owner>"|"email:<address>"|"aws-support","channel","why","message":<the full text>}`.
+Every field is required. You never see a secret: use a credential only through its wrapper command on your
+`PATH`. If a `gh` call is refused with "first contact ... needs the maintainer's approval", that means ask
+first: raise the first-contact question, then retry after it is answered; do not look for another way.

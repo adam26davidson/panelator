@@ -7,12 +7,15 @@ import {
   ackText,
   alreadyAnswered,
   chosenLine,
+  buttonLabel,
   matchUpdate,
   openQuestionsList,
   NO_OPEN_QUESTION,
   type PendingSelection,
 } from "./questions.ts";
 import { saveJson } from "./poller.ts";
+import { readAlertIds } from "../notify/telegram.ts";
+import { applyRequestAnswer, outcomeOf } from "../contacts/approve.ts";
 interface Journal {
   ignored_issue_comments?: number[];
   selection: PendingSelection | null;
@@ -112,6 +115,16 @@ export class TelegramAnswers {
     // letting the completing pause overwrite an answer or replying 'No open question'.
     if (records.some((r) => r.phase === "pausing"))
       throw new Error("question send still completing");
+    // Spec 030 AC-10: a reply to an alert is not an answer; say so once and list the open questions.
+    const replyTo = u.message?.reply_to_message?.message_id;
+    if (replyTo !== undefined && (await readAlertIds(d.paths.telegramAlerts)).includes(replyTo)) {
+      const list = openQuestionsList(records.filter((r) => r.phase === "paused" && r.telegram?.message_id));
+      await channel.sendReply(`Alerts take no reply.\n\n${list.text}`, u.message?.message_id, list.reply_markup);
+      journal.handled.push(u.update_id);
+      journal.handled = journal.handled.slice(-1000);
+      await saveJson(d.paths.telegramPending, journal);
+      return;
+    }
     const match = matchUpdate(
       u,
       [
@@ -147,6 +160,7 @@ export class TelegramAnswers {
           const existing = comments.find(
             (c) => c.author === d.cfg.app.bot_login && c.body.includes(marker),
           );
+          const settled = await applyRequestAnswer(d, r, match.text);
           const posted =
             existing ??
             (await d.gh.comment(
@@ -159,7 +173,7 @@ export class TelegramAnswers {
           r = {
             ...r,
             phase: "resuming",
-            answer: match.text,
+            answer: settled,
             reply_comment_id: posted.id,
             telegram: {
               ...r.telegram,
@@ -186,6 +200,7 @@ export class TelegramAnswers {
             reply_comment_id: r.reply_comment_id!,
             answer: r.answer!,
             question: r.question,
+            ...(r.question.request ? { request: r.question.request, outcome: outcomeOf(r.question, r.answer!) } : {}),
             channel: "telegram",
             telegram_message_id:
               u.message?.message_id ?? u.callback_query?.message?.message_id,
@@ -239,7 +254,7 @@ export class TelegramAnswers {
                   {
                     text: chosenLine(
                       n,
-                      r.question.options[n - 1]?.label ?? "",
+                      buttonLabel(r.question, n) ?? "",
                     ).slice(0, 64),
                     callback_data: "answered",
                   },

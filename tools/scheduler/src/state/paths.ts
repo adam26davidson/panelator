@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 export interface StatePaths {
   telegramOffset: string;
   telegramPending: string;
+  /** Spec 030 AC-10: ids of the alert messages sent, so a reply to one is not taken for an answer. */
+  telegramAlerts: string;
   root: string;
   claims: string;
   runs: string;
@@ -40,6 +42,7 @@ export function statePaths(root: string): StatePaths {
     root,
     telegramOffset:join(root,'telegram','offset.json'),
     telegramPending:join(root,'telegram','pending.json'),
+    telegramAlerts:join(root,'telegram','alerts.json'),
     parameters: join(root, 'parameters.json'),
     parametersHistory: join(root, 'parameters', 'history.jsonl'),
     actionsLog: join(root, 'actions', 'log.jsonl'),

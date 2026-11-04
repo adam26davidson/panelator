@@ -6,10 +6,12 @@ export interface TelegramCredentials {
 /** Never return parser/OS errors: those may contain credential data. */
 export async function readTelegramCredentials(
   path: string,
+  store?: { has(name: string): Promise<boolean>; readSecret(name: string): Promise<string> },
 ): Promise<TelegramCredentials | { off: string }> {
   let raw: unknown;
   try {
-    raw = JSON.parse(await readFile(path, "utf8"));
+    // Spec 030: the encrypted store first, the plain file while it still exists.
+    raw = JSON.parse(store && (await store.has("telegram-bot")) ? await store.readSecret("telegram-bot") : await readFile(path, "utf8"));
   } catch {
     return { off: "credentials missing, unreadable or invalid JSON" };
   }

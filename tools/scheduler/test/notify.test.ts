@@ -49,3 +49,36 @@ describe("rateLimited (AC-27)", () => {
     expect(inner.calls).toHaveLength(3);
   });
 });
+
+describe("TelegramNotifier (spec 030 AC-9, AC-10)", () => {
+  it("sends one message headed by gate and label, then logs channel telegram; a failure logs channel log, warns once per outage and does not retry", async () => {
+    const { TelegramNotifier, alertText, readAlertIds } = await import("../src/notify/telegram.ts");
+    const dir = mkdtempSync(join(tmpdir(), "notify-tg-"));
+    const log = join(dir, "service.log");
+    const alerts = join(dir, "alerts.json");
+    const sent: string[] = [];
+    const warns: unknown[] = [];
+    let fail = false;
+    const t = new TelegramNotifier(new LogNotifier(log), async (text) => {
+      if (fail) throw new Error("down");
+      sent.push(text);
+      return 100 + sent.length;
+    }, alerts, (r) => warns.push(r));
+    await t.notify({ issue: 4, gate: "infra", label: "outage", text: "GitHub unreachable" });
+    expect(sent).toEqual(["infra / outage (#4)\n\nGitHub unreachable"]);
+    expect(alertText({ issue: 0, gate: "standing", label: "x", text: "y" })).toBe("standing / x\n\ny");
+    expect(await readAlertIds(alerts)).toEqual([101]);
+    fail = true;
+    await t.notify({ ...n, issue: 5 });
+    await t.notify({ ...n, issue: 6 });
+    expect(sent).toHaveLength(1);
+    expect(warns).toHaveLength(1);
+    const lines = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(lines.map((l) => l.channel)).toEqual(["telegram", "log", "log"]);
+  });
+  it("LogNotifier writes channel log by default", async () => {
+    const p = join(mkdtempSync(join(tmpdir(), "notify-")), "s.log");
+    await new LogNotifier(p).notify(n);
+    expect(JSON.parse(readFileSync(p, "utf8")).channel).toBe("log");
+  });
+});

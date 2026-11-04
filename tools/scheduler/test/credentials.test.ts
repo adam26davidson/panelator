@@ -18,7 +18,7 @@ import { EVENT_NAMES } from "../src/standing/events.ts";
 import { registryActionsCheck } from "../src/actions/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-export const fakeCreds = join(here, "helpers", "fake-systemd-creds");
+import { fakeCreds } from "./helpers/fake-creds.ts";
 const SECRET = "s3cr3t-value-0123456789";
 const known = { profiles: ["backend"], agents: ["credential-check"] };
 const ENTRY = (extra = "") => `

@@ -44,3 +44,31 @@ it('enforces maintainer pauses, run marks, levels, rerun limits and inverse poli
  expect((await request('unknown',{})).status).toBe('refused');
  expect((await request('run_agent',{name:'audit',previous:'forged'})).status).toBe('refused');
 });
+
+it('renew_credential runs the entry command, re-checks, rewrites the index, and fails with the setup steps otherwise (spec 030 AC-14)',async()=>{
+ const {parseCatalogue}=await import('../src/credentials/catalogue.ts');
+ const {CredentialStore}=await import('../src/credentials/store.ts');
+ const {mkdtempSync,readFileSync,readdirSync}=await import('node:fs');
+ const root=mkdtempSync(join(tmpdir(),'renew-'));
+ const paths=statePaths(join(root,'s'));await ensureStateDirs(paths);
+ const fake=join(import.meta.dirname,'helpers','fake-systemd-creds');
+ const entry=(renew:string)=>`demo:\n  provider: demo\n  purpose: p\n  access: [a]\n  used_by: [scheduler]\n  wrapper: { command: democmd, env: DEMO }\n  expiry: { probe: 'echo 2027-01-01T00:00:00Z' }\n  check: 'true'\n  renew: ${renew}\n  setup: [open the console, press renew]\n`;
+ const run=async(renew:string,code:number)=>{
+  const store=new CredentialStore(join(root,'c'+Math.random()),fake);await store.writeSecret('demo','TOPSECRET-1','maintainer');
+  const notes:string[]=[];
+  const credentials={store,catalogue:parseCatalogue(entry(renew),{profiles:[],agents:[]}),paths,binDir:'',now:()=>new Date('2026-11-04T00:00:00Z'),run:async(c:string)=>c==='renewme'?{code,stdout:'',stderr:''}:{code:0,stdout:c.startsWith('echo')?'2027-01-01T00:00:00Z\n':'',stderr:''}};
+  const params=new ParameterStore(paths,loadParameterDefinitions('agents/parameters.yaml',{slots:1},{}));
+  const ctx:ActionContext={paths,parameters:params,log:new ActionLog(paths.actionsLog),levels:{renew_credential:1},gh:{} as never,now:()=>new Date('2026-11-04T00:00:00Z'),credentials,notify:async(l,t)=>{notes.push(`${l}: ${t}`);}};
+  const row=await applyAction(ctx,{agent:'credential-check',run_id:'r',kind:'renew_credential',args:{name:'demo'},why:'expires in three days, renew it'},['renew_credential']);
+  return {row,notes,store};
+ };
+ const ok=await run('{ command: renewme }',0);
+ expect(ok.row.status).toBe('applied');expect(ok.row.undo).toBeNull();
+ expect((await ok.store.readIndex()).demo).toMatchObject({expires_at:'2027-01-01T00:00:00.000Z',last_check:'ok'});
+ for(const [renew,code,reason] of [['manual',0,'renew is manual'],['none',0,'renew is none'],['{ command: renewme }',2,'renew command exit 2']] as const){
+  const bad=await run(renew,code);
+  expect(bad.row.status).toBe('failed');expect(bad.row.reason).toBe(reason);
+  expect(bad.notes[0]).toMatch(/^credential-expiry: Credential demo could not be renewed.*1\. open the console\n2\. press renew/s);
+ }
+ void readFileSync;void readdirSync;
+});

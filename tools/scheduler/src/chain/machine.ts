@@ -1,3 +1,4 @@
+import { requestProblem } from "../decide/request.ts";
 import { fixLoopGate, readyGate, type ScopeResult } from "../gates/index.ts";
 import type { AgentStageName, AskingStage, ImplementResult, PendingAnswer, PlanResult, Question, SpecMode } from "../types.ts";
 import type { Action, ChainEvent, ChainStage, ChainState } from "./types.ts";
@@ -330,6 +331,9 @@ function isFollowUp(state: ChainState, q: Question): boolean {
  * Otherwise a follow-up pauses at once, and any other question goes to the check.
  */
 function ask(state: ChainState, stage: Stuck, question: Question, head?: string): Step {
+  // Spec 030 AC-6: a credential, funds or first-contact need without its full request is sent back before any check runs.
+  const problem = requestProblem(question);
+  if (problem !== null) return decideYourself({ ...state, rescueRun: false, ...heldPatch(state, stage, head) }, stage, problem, question);
   if (state.decideInput !== null) {
     if (question.new_blocker !== true) return failedInDecideMode(state, stage);
     return run({ ...state, rescueRun: false }, "question-check", {}, { question, askingStage: stage, ...heldPatch(state, stage, head) });

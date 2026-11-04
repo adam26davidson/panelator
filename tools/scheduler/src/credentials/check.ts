@@ -33,7 +33,7 @@ export type CheckOutcome = { name: string; status: "ok" | "missing" | `failed: $
 const scrub = (text: string, secret: string) => (secret ? text.split(secret).join("***") : text);
 
 /** The environment a check or probe runs in: the `gh` shim first on PATH, the secret in the wrapper's variable only. */
-function envFor(d: CredDeps, e: CatalogueEntry, secret: string): Record<string, string> {
+export function envFor(d: CredDeps, e: CatalogueEntry, secret: string): Record<string, string> {
   const env: Record<string, string> = { PATH: `${d.binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`, PANELATOR_STATE_DIR: d.paths.root, HOME: process.env.HOME ?? "" };
   if (e.wrapper !== "none") env[e.wrapper.env] = secret;
   return env;
@@ -128,4 +128,21 @@ export async function dueExpiryEvents(d: CredDeps, warnDays: number, emit: (name
     await writeFile(d.paths.credentialExpiryEmitted, JSON.stringify(emitted));
   }
   return names;
+}
+
+/** True the first time a key is claimed on a UTC day; a restart does not repeat it. */
+export async function claimOnce(paths: StatePaths, key: string, now: Date): Promise<boolean> {
+  const file = paths.credentialExpiryEmitted + ".once";
+  const day = now.toISOString().slice(0, 10);
+  let seen: Record<string, string> = {};
+  try {
+    seen = JSON.parse(await readFile(file, "utf8"));
+  } catch {
+    /* none yet */
+  }
+  if (seen[key] === day) return false;
+  seen[key] = day;
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, JSON.stringify(seen));
+  return true;
 }
