@@ -1,7 +1,11 @@
-# 030. A merged design files issues for its children
+# 031. A merged design files issues for its children
 
 Status: written 2026-11-01 for issue #41; specs derived from the
 delivery-system design need no maintainer approval (design section 11).
+Revised 2026-11-05 in review: renumbered from 030 (spec 030 is
+`specs/030-beyond-github/spec.md`, merged first from issue #39), and AC-10
+rewritten for that spec's split of row F2 into a merged first part and a
+follow-up (issue #130). *(agent's call)*
 Needs spec 006 on `main` (it is). Amends spec 006 AC-24 (the design-tree
 check learns planned children) and spec 028 AC-5 (the `design_tree` input
 gains planned children, AC-9 below).
@@ -193,7 +197,11 @@ directory's name after its number (`specs/029-design-stage/spec.md` has slug
   issues carry), read through a client method that lists issues in every
   state with full pagination (process-spec 6.4), lowest number first; or
   none. A child is **done** when its issue is resolved and closed. A child
-  with no resolvable issue is not done. An issue the maintainer closes by
+  with no resolvable issue is not done, except a sub-design path entry
+  (`docs/designs/<slug>.md`), which is done when every child of that
+  sub-design is done, by the same rule *(agent's call: a sub-design has no
+  issue of its own once it is split; its children's closure is what the
+  siblings that wait on it need)*. An issue the maintainer closes by
   hand therefore counts as done *(agent's call: the maintainer closing an
   issue is a decision that its dependants need not wait, whether the work
   merged or was dropped; the alternative, reading the merge record, misses
@@ -254,25 +262,44 @@ directory's name after its number (`specs/029-design-stage/spec.md` has slug
   no issue asserts the field.
 - AC-10. **Section 11 is migrated.** `docs/delivery-system-design.md`
   section 11's table is replaced by a short paragraph pointing at
-  `## Children` (the order, the "B first by hand" history and the F split
-  stay as prose), and `## Children` lists, for every row, its children:
+  `## Children` (the order, the "B first by hand" history, the F split and
+  spec 030's split of F2 stay as prose), and `## Children` lists, for every
+  row, its children:
   - path entries for what exists: B is spec 006, A is spec 007, C is spec
     008, D is `docs/designs/metrics-reflection.md`, F1 is spec 022, E's
-    design stage is spec 029 (all listed today);
-  - planned entries for the rest of E (the console, `after: design-stage`
-    and the slug of spec 022), F2 (reach beyond GitHub) and G (test board
-    and stable promotion), each with the brief distilled from the row and
-    the sections it cites, and an `issue:` field naming the issue filed by
-    hand for it: the implementation reads the open issues #39 and #40 and
-    the console issue spec 029 names ("filed as its own issue, blocked"),
-    matches each by title, and records the numbers. Given no issue exists
-    for a row, then the entry has no `issue:` field and the sweep files it.
+    design stage is spec 029, F2's first part is
+    `specs/030-beyond-github/spec.md` (all listed today);
+  - planned entries for the rest, each with the brief distilled from the
+    row, the sections it cites and the spec that split it, and an `issue:`
+    field naming the issue that already exists for it, so the sweep files
+    nothing for them:
+    - E's second part, the console (spec 029 section 2: "filed as its own
+      issue with `blocked`"): `after: design-stage, delivery-aws-account`,
+      `issue: #101`;
+    - F2's second part, the AWS and event half of spec 030 (its sections 2
+      and 4, "Why this spec is split": `aws-sso`, the `maintainer.contact`
+      events, the funds layout, infra health's AWS half):
+      `after: delivery-aws-account, metrics-reflection` (it derives from
+      specs 022 and 026; 026 is a child of the metrics-reflection
+      sub-design, and `after:` names siblings only), `issue: #130`;
+    - G, test board and stable promotion: `issue: #132` (issue #40 was
+      abandoned and refiled by the findings filer as #132).
+
+    The implementation checks each number against GitHub (open or closed,
+    the title names the row) before recording it. Given an issue for a row
+    no longer exists or a new row has none, then the entry has no `issue:`
+    field and the sweep files it.
   The paragraph in section 10 that lists "specs A to G below" is left as
   it is (it is not marked *(author's call)*). The section 11 table and the
   `## Children` section are editorial and tracking parts that an ordinary
   reviewed PR changes (design section 5, spec 006 AC-10), and this
   migration changes no statement design section 5 protects. After the
-  migration the sweep's `--dry-run` on `main` reports nothing to file.
+  migration the sweep's `--dry-run` on `main` reports nothing to file:
+  every planned entry carries `issue:`, and #101, #130 and #132 carry no
+  `blocked` label (issue #126: the filer cannot set it), so there is no
+  label to remove either. Given the slug of a planned entry here later
+  equals a spec directory's (its spec PR merged), then that PR replaced the
+  entry with the path (AC-6), so AC-2 holds on `main`.
 - AC-11. **Everything else is unchanged.** Given a repository whose designs
   have only path entries (every recorded chain of specs 006, 007, 008,
   011, 013, 015, 025 and 029), then the sweep files nothing and those
