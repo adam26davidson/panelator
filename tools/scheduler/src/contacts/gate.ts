@@ -86,13 +86,20 @@ export function classifyGh(argv: readonly string[], repo: string): { party: stri
     } else if (words.length < 3) words.push(a);
   }
   const [group, verb] = words;
-  const other = (r: string) => r.replace(/^https?:\/\/[^/]+\//, "").split("/").slice(-2).join("/").toLowerCase() !== repo.toLowerCase();
+  const [cfgOwner = "", cfgRepo = ""] = repo.split("/");
+  // gh resolves {owner}/{repo} and :owner/:repo to the current (configured) repository.
+  const resolveOwner = (o: string) => (/^(\{owner\}|:owner)$/.test(o) ? cfgOwner : o);
+  const resolveRepo = (r: string) => (/^(\{repo\}|:repo)$/.test(r) ? cfgRepo : r);
+  const other = (r: string) => {
+    const [o = "", n = ""] = r.replace(/^https?:\/\/(api\.)?github\.com\//, "").replace(/^\//, "").split("/").slice(-2);
+    return `${resolveOwner(o)}/${resolveRepo(n)}`.toLowerCase() !== repo.toLowerCase();
+  };
   if (group === "api") {
-    const path = words[1]?.replace(/^\//, "");
+    const path = words[1]?.replace(/^https?:\/\/(api\.)?github\.com\//, "").replace(/^\//, "");
     const m = /^repos\/([^/]+)\/([^/?]+)/.exec(path ?? "");
     const write = (method ?? (hasBody ? "POST" : "GET")) !== "GET";
     if (!m || !write || !other(`${m[1]}/${m[2]}`)) return null;
-    return { party: `github:${m[1]}`, command: `gh api ${method ?? "POST"} /repos/${m[1]}/${m[2]}` };
+    return { party: `github:${resolveOwner(m[1])}`, command: `gh api ${method ?? "POST"} /repos/${m[1]}/${m[2]}` };
   }
   if (group === "repo" && verb === "fork") {
     const t = target ?? words[2];

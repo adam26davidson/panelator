@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { adapterFor as defaultAdapterFor } from "../adapters/index.ts";
 import type { Adapter } from "../adapters/types.ts";
 import type { Config } from "../config.ts";
-import { requestProblem } from "../decide/client.ts";
+import { requestProblem } from "../decide/request.ts";
 import { ROOT } from "../gates/design-tree.ts";
 import { designScopeGate, isSensitive, scopeGate, specPresentGate, specScopeGate, uiDesignGate, type ScopeResult } from "../gates/index.ts";
 import type { GitHubClient } from "../github/client.ts";
@@ -573,7 +573,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   // Spec 030 AC-6: the question check's deterministic part. A credential, funds or first-contact need without its full
   // request is sent back as decide_yourself with the fields it lacks; no model runs for it.
   if (stage === "question-check" && state.question) {
-    const problem = requestProblem(state.question);
+    const problem = requestProblem(state.question, deps.cfg.repo);
     if (problem !== null) {
       deps.log({ kind: "question-request", issue: claim.issue, stage: state.askingStage, reason: problem });
       return { type: "stage_ok", stage: "question-check", result: { verdict: "decide_yourself", reasoning: problem } };

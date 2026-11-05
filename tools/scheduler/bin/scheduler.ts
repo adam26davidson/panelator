@@ -83,12 +83,12 @@ if(pos[0]==='cred'||pos[0]==='contacts') {
     const [command,verb,name]=pos;
     const readStdin=async()=>{let t='';for await(const c of process.stdin)t+=c;return t;};
     if(command==='cred'&&verb==='set'&&name)console.log(await credSet(credDeps,actionLog,name,await readStdin()));
-    else if(command==='cred'&&verb==='list')console.log(await credList(credDeps));
+    else if(command==='cred'&&verb==='list')console.log(await credList(credDeps,actionLog));
     else if(command==='cred'&&verb==='check'){const r=await credCheck(credDeps,actionLog,name?name:undefined);console.log(r.text);process.exit(r.ok?0:1);}
-    else if(command==='cred'&&verb==='import')console.log(await credImport(credDeps,actionLog,{app_key:cfg.app.private_key_path,telegram:cfg.telegram!.credentials_path}));
+    else if(command==='cred'&&verb==='import')console.log(await credImport(credDeps,actionLog,{app_key:cfg.app.private_key_path,telegram:cfg.telegram?.credentials_path}));
     else if(command==='cred'&&verb==='remove'&&name)console.log(await credRemove(credDeps,actionLog,name));
     else if(command==='cred'&&verb==='exec'&&name)process.exit(await credExec(credDeps,name,gha));
-    else if(command==='contacts'&&verb==='list')console.log(await contactsList(paths));
+    else if(command==='contacts'&&verb==='list')console.log(await contactsList(paths,actionLog));
     else if(command==='contacts'&&verb==='remove'&&name)console.log(await contactsRemove(paths,actionLog,name));
     else if(command==='contacts'&&verb==='gate') {
       const hit=classifyGh(gha,cfg.repo);

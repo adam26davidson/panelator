@@ -1,7 +1,9 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentsDir } from "../src/config.ts";
+import { checkCredentialNames, loadCatalogue } from "../src/credentials/catalogue.ts";
 import { isSensitive } from "../src/gates/index.ts";
 import { listProfiles, readSensitiveGlobs, resolveProfile } from "../src/profiles/resolve.ts";
 
@@ -46,6 +48,18 @@ describe("profiles", () => {
         if (sentence.includes("pnpm test")) expect(sentence, name).toContain("shell");
       }
     }
+  });
+  it("rejects credential_hook as an unknown key and fails an unknown credential name (spec 030 AC-2)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "profiles-"));
+    mkdirSync(join(dir, "profiles", "p"), { recursive: true });
+    writeFileSync(join(dir, "profiles", "p", "profile.yaml"), "tools: []\ncredential_hook: null\n");
+    expect(() => resolveProfile(dir, "p")).toThrow(/unknown key credential_hook/);
+    writeFileSync(join(dir, "profiles", "p", "profile.yaml"), "tools: []\ncredentials: [ghost]\n");
+    const p = resolveProfile(dir, "p");
+    expect(p.credentials).toEqual(["ghost"]);
+    const catalogue = loadCatalogue(join(agentsDir, "credentials.yaml"), { profiles: listProfiles(agentsDir), agents: [] });
+    expect(() => checkCredentialNames(catalogue, p.credentials ?? [], "p")).toThrow(/not in the catalogue/);
+    for (const name of listProfiles(agentsDir)) expect(resolveProfile(agentsDir, name).credentials).toEqual([]);
   });
   it("throws on an unknown profile", () => {
     expect(() => resolveProfile(agentsDir, "nope")).toThrow(/unknown profile/);

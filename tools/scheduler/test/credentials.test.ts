@@ -103,9 +103,11 @@ describe("commands, checks and wrappers (spec 030 AC-3 to AC-5)", () => {
     const f = fixture();
     expect(await credSet(f.d, f.log, "demo", SECRET + "\n")).toBe("demo: stored, check ok");
     await expect(credSet(f.d, f.log, "unknown", "x")).rejects.toThrow(/not in agents\/credentials.yaml/);
-    expect(await credList(f.d)).toMatch(/^demo\tset\texpires never\tcheck ok$/);
+    expect(await credList(f.d, f.log)).toMatch(/^demo\tset\texpires never\tcheck ok$/);
     const rows = await f.log.list();
-    expect(rows.every((r) => r.agent === "maintainer" && JSON.stringify(r.args) === '{"name":"demo"}')).toBe(true);
+    expect(rows.every((r) => r.agent === "maintainer" && JSON.stringify(r.args) === (r.kind === "cred_list" ? "{}" : '{"name":"demo"}'))).toBe(true);
+    expect(rows.filter((r) => r.kind === "cred_list")).toHaveLength(1);
+    expect(JSON.stringify(rows)).not.toContain(SECRET);
     // a failing check is recorded as failed without the secret
     const bad: Runner = async () => ({ code: 1, stdout: "", stderr: `bad ${SECRET}\n` });
     const r = await checkCredential({ ...f.d, run: bad }, "demo");
@@ -125,6 +127,16 @@ describe("commands, checks and wrappers (spec 030 AC-3 to AC-5)", () => {
     expect(out).toContain("t.json not found");
     expect(out).toContain("Delete these by hand");
     expect((await f.store.readIndex())["github-app-key"].set_by).toBe("import");
+  });
+  it("imports the App key alone when the configuration has no telegram block", async () => {
+    const f = fixture(`${ENTRY().replace("demo:", "github-app-key:").replace("wrapper: { command: democmd, env: DEMO_SECRET }", "wrapper: none")}`);
+    f.catalogue["github-app-key"].check = "true";
+    const a = join(f.root, "a.pem");
+    writeFileSync(a, "PEM");
+    const out = await credImport(f.d, f.log, { app_key: a });
+    expect(out).toContain("github-app-key: imported");
+    expect(out).toContain("telegram-bot: no telegram block");
+    expect(out).not.toContain("undefined");
   });
   it("gives the wrapped child the variable and the stage environment nothing", async () => {
     const f = fixture();

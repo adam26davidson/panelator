@@ -17,6 +17,13 @@ describe("result schemas", () => {
       expect(validate(name,{conversation:'settled',decision:'yes',extra:true}).ok).toBe(false);
     }
   });
+  it("loads the spec 030 schemas through validate, credential-check-result extending standing-result (AC-2, AC-13)", () => {
+    for (const name of ["credential-catalogue", "credential-index", "contacts", "credential-check-input", "infra-health-input"] as const) expect(() => validate(name, {})).not.toThrow();
+    const base = { summary: "all credentials checked", findings: [], actions: [] };
+    expect(validate("credential-check-result", base).ok).toBe(true);
+    expect(validate("credential-check-result", { ...base, warnings: [{ name: "a", expires_at: null, steps: ["s"] }] }).ok).toBe(true);
+    expect(validate("credential-check-result", { ...base, warnings: [{ name: "a" }] }).ok).toBe(false);
+  });
   it("accepts a ready plan result", () => {
     const r = validate("plan-result", {
       verdict: "ready",

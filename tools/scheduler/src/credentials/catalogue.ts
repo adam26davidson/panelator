@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
-import { validateSchema } from "../standing/registry.ts";
+import { validate } from "../schema/validate.ts";
 
 export interface CatalogueEntry {
   name: string;
@@ -23,7 +23,7 @@ export type Catalogue = Record<string, CatalogueEntry>;
  */
 export function parseCatalogue(text: string, known: { profiles: readonly string[]; agents: readonly string[] }): Catalogue {
   const raw = (parse(text) ?? {}) as Record<string, unknown>;
-  const v = validateSchema("credential-catalogue", raw);
+  const v = validate("credential-catalogue", raw);
   if (!v.ok) throw new Error(`credential catalogue: ${v.errors.join("; ")}`);
   const out: Catalogue = {};
   const wrapped = new Map<string, string>();

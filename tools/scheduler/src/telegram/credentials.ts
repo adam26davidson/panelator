@@ -1,15 +1,20 @@
 import { readFile } from "node:fs/promises";
+import type { CredentialStore } from "../credentials/store.ts";
 export interface TelegramCredentials {
   bot_token: string;
   chat_id: number;
 }
-/** Never return parser/OS errors: those may contain credential data. */
+/**
+ * Spec 030 AC-2: the `telegram-bot` secret from the encrypted store first, the plain file while it still exists.
+ * Never return parser/OS errors: those may contain credential data.
+ */
 export async function readTelegramCredentials(
   path: string,
+  store?: CredentialStore,
 ): Promise<TelegramCredentials | { off: string }> {
   let raw: unknown;
   try {
-    raw = JSON.parse(await readFile(path, "utf8"));
+    raw = JSON.parse(store && (await store.has("telegram-bot")) ? await store.readSecret("telegram-bot") : await readFile(path, "utf8"));
   } catch {
     return { off: "credentials missing, unreadable or invalid JSON" };
   }

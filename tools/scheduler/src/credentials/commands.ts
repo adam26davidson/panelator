@@ -33,7 +33,11 @@ export async function credSet(d: CredDeps, log: ActionLog, name: string, secret:
   });
 }
 
-export async function credList(d: CredDeps): Promise<string> {
+export async function credList(d: CredDeps, log: ActionLog): Promise<string> {
+  return logged(log, "cred_list", undefined, () => listText(d));
+}
+
+async function listText(d: CredDeps): Promise<string> {
   const index = await d.store.readIndex();
   return Object.values(d.catalogue)
     .map((e) => {
@@ -51,9 +55,12 @@ export async function credCheck(d: CredDeps, log: ActionLog, name?: string): Pro
   return { text: results.map((r) => `${r.name}: ${r.status}`).join("\n"), ok: results.every((r) => r.status === "ok") };
 }
 
-export async function credImport(d: CredDeps, log: ActionLog, files: { app_key: string; telegram: string }): Promise<string> {
+export async function credImport(d: CredDeps, log: ActionLog, files: { app_key: string; telegram?: string }): Promise<string> {
   const lines: string[] = [];
-  for (const [name, path] of [["github-app-key", files.app_key], ["telegram-bot", files.telegram]] as const) {
+  const wanted = [["github-app-key", files.app_key]] as [string, string][];
+  if (files.telegram) wanted.push(["telegram-bot", files.telegram]);
+  else lines.push("telegram-bot: no telegram block in the configuration, skipped");
+  for (const [name, path] of wanted) {
     if (!existsSync(path)) {
       lines.push(`${name}: ${path} not found, skipped`);
       continue;
@@ -64,7 +71,7 @@ export async function credImport(d: CredDeps, log: ActionLog, files: { app_key: 
       return `${name}: imported, check ${r.status}`;
     }));
   }
-  lines.push(`Delete these by hand once the checks pass: ${files.app_key} ${files.telegram}`);
+  lines.push(`Delete these by hand once the checks pass: ${wanted.map(([, p]) => p).join(" ")}`);
   return lines.join("\n");
 }
 

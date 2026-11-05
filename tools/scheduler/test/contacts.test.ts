@@ -33,6 +33,17 @@ describe("classifyGh (spec 030 AC-11)", () => {
     expect(classifyGh(["api", "/repos/acme/x/issues"], REPO)).toBeNull();
     expect(classifyGh(["api", "-X", "POST", `/repos/${REPO}/issues`], REPO)).toBeNull();
     expect(classifyGh(["issue", "view", "3", "-R", "acme/x"], REPO)).toBeNull();
+    // placeholders resolve to the configured repository (review item 0)
+    expect(classifyGh(["api", "-X", "POST", "repos/{owner}/{repo}/issues/39/comments", "-f", "body=hi"], REPO)).toBeNull();
+    expect(classifyGh(["api", "repos/:owner/:repo/pulls", "-f", "title=t"], REPO)).toBeNull();
+    expect(classifyGh(["api", "-X", "POST", "/repos/{owner}/{repo}/issues"], REPO)).toBeNull();
+    expect(classifyGh(["issue", "create", "-R", "{owner}/{repo}", "--title", "t"], REPO)).toBeNull();
+    expect(classifyGh(["api", "-X", "POST", `https://api.github.com/repos/${REPO.toUpperCase()}/issues`], REPO)).toBeNull();
+    expect(classifyGh(["api", "-X", "POST", "https://api.github.com/repos/other/repo/issues"], REPO)?.party).toBe("github:other");
+    expect(classifyGh(["api", "-X", "POST", "repos/other/repo/issues"], REPO)?.party).toBe("github:other");
+    expect(classifyGh(["api", "-X", "POST", "repos/{owner}/other/issues"], REPO)?.party).toBe(`github:${REPO.split("/")[0]}`);
+    expect(classifyGh(["api", "/app"], REPO)).toBeNull();
+    expect(classifyGh(["api", "graphql", "-f", "query=x"], REPO)).toBeNull();
     expect(classifyGh(["issue", "create", "-R", REPO, "--title", "t"], REPO)).toBeNull();
     expect(classifyGh(["issue", "create", "--title", "t"], REPO)).toBeNull();
     expect(classifyGh(["pr", "list"], REPO)).toBeNull();
@@ -59,10 +70,12 @@ describe("gate, parties and commands (spec 030 AC-11, AC-12)", () => {
     expect(await checkContact(s, "github:other")).toEqual({ allowed: true });
     expect(await checkContact(s, "github:else")).toMatchObject({ allowed: false });
     await expect(s.parameters.setParameter("first_contact_needs_approval", false, "credential-check")).rejects.toThrow(/locked/);
-    expect(await contactsList(s.paths)).toContain("github:other\tgithub\tapproved 2026-11-04T00:00:00Z\tissue #39\tquestion 7");
+    expect(await contactsList(s.paths, s.log)).toContain("github:other\tgithub\tapproved 2026-11-04T00:00:00Z\tissue #39\tquestion 7");
     expect(await contactsRemove(s.paths, s.log, "github:other")).toBe("removed github:other");
     expect(await readParties(s.paths)).toEqual([]);
     await expect(contactsRemove(s.paths, s.log, "github:other")).rejects.toThrow(/no approved party/);
+    const rows = await s.log.list();
+    expect(rows.filter((e) => e.kind === "contacts_list")).toMatchObject([{ agent: "maintainer", args: {}, status: "applied" }]);
     expect((await s.log.list()).filter((e) => e.kind === "contacts_remove").map((e) => e.agent)).toEqual(["maintainer", "maintainer"]);
   });
   it("no action kind writes contacts/parties.json", () => {

@@ -3,8 +3,10 @@ import { readParties, removeParty } from "./gate.ts";
 import type { StatePaths } from "../state/paths.ts";
 
 /** Spec 030 AC-12: the parties list and its removal, the latter logged as the maintainer. */
-export async function contactsList(paths: StatePaths): Promise<string> {
+export async function contactsList(paths: StatePaths, log: ActionLog): Promise<string> {
+  const row = await log.writePending({ agent: "maintainer", run_id: "command", kind: "contacts_list", args: {}, why: "Maintainer command line contacts list", undo: null });
   const parties = await readParties(paths);
+  await log.settle(row.id, "applied");
   if (!parties.length) return "no approved parties";
   return parties.map((p) => `${p.party}\t${p.channel}\tapproved ${p.approved_at}\tissue #${p.issue}\tquestion ${p.question_comment_id ?? "-"}`).join("\n");
 }

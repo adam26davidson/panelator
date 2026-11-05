@@ -3,10 +3,7 @@ import { join } from 'node:path';
 import { parse } from 'yaml';
 import { splitFrontmatter, sharedDefinitionChecks, parseAgentDefinition } from '../stages/definition.ts';
 import type { StandingDefinition } from '../types.ts';
-import { schemaDir, validate, type SchemaName, type Validation } from '../schema/validate.ts';
-import { Ajv2020 } from 'ajv/dist/2020.js';
-import addFormatsModule from 'ajv-formats';
-const addFormats = addFormatsModule.default;
+import { schemaDir } from '../schema/validate.ts';
 
 export function parseDuration(value: string): number {
   const m = /^(\d+(?:\.\d+)?)(m|h|d)$/.exec(value);
@@ -61,24 +58,4 @@ export function renderStandingPrompt(template: string, values: Record<string, un
     if (!Object.hasOwn(values,key)) throw new Error(`unknown placeholder: ${key}`);
     return typeof values[key] === 'string' ? values[key] as string : JSON.stringify(values[key]);
   });
-}
-
-/** Spec 030: the schemas this spec adds, validated beside the registry of src/schema/validate.ts (which is outside this spec's files). */
-export const SPEC_030_SCHEMAS = ['credential-catalogue', 'credential-index', 'contacts', 'credential-check-result', 'credential-check-input', 'infra-health-input'] as const;
-export type Spec030SchemaName = (typeof SPEC_030_SCHEMAS)[number];
-let extra: Ajv2020 | null = null;
-function extraAjv(): Ajv2020 {
-  if (extra) return extra;
-  extra = new Ajv2020({ allErrors: true, strict: true });
-  addFormats(extra);
-  // credential-check-result extends standing-result through allOf, so the base schema and the two it refers to are added under the names their $refs use.
-  for (const name of ['action', 'finding', 'standing-result', ...SPEC_030_SCHEMAS]) extra.addSchema(JSON.parse(readFileSync(join(schemaDir, `${name}.json`), 'utf8')), `${name}.json`);
-  return extra;
-}
-/** Validates against any schema under schemas/scheduler: the core registry's names, or one of spec 030's. */
-export function validateSchema(name: SchemaName | Spec030SchemaName, data: unknown): Validation {
-  if (!(SPEC_030_SCHEMAS as readonly string[]).includes(name)) return validate(name as SchemaName, data);
-  const fn = extraAjv().getSchema(`${name}.json`)!;
-  if (fn(data)) return { ok: true };
-  return { ok: false, errors: (fn.errors ?? []).map((e) => `${e.instancePath || '/'} ${e.message ?? ''}${Object.keys(e.params ?? {}).length ? ' ' + JSON.stringify(e.params) : ''}`.trim()) };
 }
