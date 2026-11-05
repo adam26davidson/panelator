@@ -36,3 +36,16 @@ where they are), and states its parent and lists its children. A design needs
 at least two children; one child makes it a spec. Small work (bug, debt,
 dependency and tooling specs) may name a top design as its parent directly.
 A spec that would contradict its parent is a change to the parent first.
+
+A design's `## Children` section holds two kinds of bullet (spec 031). A file
+child is `` - `specs/NNN-<slug>/spec.md` `` or `` - `docs/designs/<slug>.md` ``,
+optionally followed by free text such as `(issue #<n>)`. A planned child, whose
+spec does not exist yet, is `- planned: <slug>` (the slug matches
+`[a-z0-9][a-z0-9-]*`) followed by indented key lines: `title:` and `brief:`
+(required; the brief is a paragraph), and optionally `after:` (sibling slugs or
+file children's paths), `class:` (a class label) and `issue:` (`#<n>`, an issue
+that already carries the child). Planned children count toward the two-children
+rule and the design-tree check validates them. When the design merges, the
+scheduler files one App-authored `validated` issue per planned child with no
+issue; the spec PR written for that issue replaces the planned bullet with the
+file bullet, keeping `(issue #<n>)`.
