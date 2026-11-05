@@ -41,6 +41,13 @@ describe("classifyGh (spec 030 AC-11)", () => {
     expect(classifyGh(["api", "-X", "POST", `https://api.github.com/repos/${REPO.toUpperCase()}/issues`], REPO)).toBeNull();
     expect(classifyGh(["api", "-X", "POST", "https://api.github.com/repos/other/repo/issues"], REPO)?.party).toBe("github:other");
     expect(classifyGh(["api", "-X", "POST", "repos/other/repo/issues"], REPO)?.party).toBe("github:other");
+    expect(classifyGh(["api", "-XPOST", "repos/other/repo/issues"], REPO)?.party).toBe("github:other");
+    expect(classifyGh(["issue", "create", "-Rother/repo", "-t", "x", "-b", "y"], REPO)?.party).toBe("github:other");
+    expect(classifyGh(["pr", "comment", "https://github.com/other/repo/pull/5", "--body", "b"], REPO)?.party).toBe("github:other");
+    expect(classifyGh(["issue", "comment", "https://github.com/other/repo/issues/1", "--body", "b"], REPO)?.party).toBe("github:other");
+    expect(classifyGh(["pr", "review", "https://github.com/other/repo/pull/5", "--approve"], REPO)?.party).toBe("github:other");
+    expect(classifyGh(["pr", "view", "https://github.com/other/repo/pull/5"], REPO)).toBeNull();
+    expect(classifyGh(["pr", "comment", `https://github.com/${REPO}/pull/5`, "--body", "b"], REPO)).toBeNull();
     expect(classifyGh(["api", "-X", "POST", "repos/{owner}/other/issues"], REPO)?.party).toBe(`github:${REPO.split("/")[0]}`);
     expect(classifyGh(["api", "/app"], REPO)).toBeNull();
     expect(classifyGh(["api", "graphql", "-f", "query=x"], REPO)).toBeNull();

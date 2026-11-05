@@ -72,11 +72,15 @@ export function classifyGh(argv: readonly string[], repo: string): { party: stri
   let target: string | null = null;
   let method: string | null = null;
   let hasBody = false;
+  let url: string | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const val = (flag: string): string | null => (a === flag ? (argv[++i] ?? null) : a.startsWith(flag + "=") ? a.slice(flag.length + 1) : null);
     let v: string | null;
-    if ((v = val("-R")) !== null || (v = val("--repo")) !== null) target = v;
+    // gh's attached shorthand: -Rowner/repo, -XPOST
+    if (/^-R[^=-]/.test(a)) target = a.slice(2);
+    else if (/^-X[^=-]/.test(a)) method = a.slice(2).toUpperCase();
+    else if ((v = val("-R")) !== null || (v = val("--repo")) !== null) target = v;
     else if ((v = val("-X")) !== null || (v = val("--method")) !== null) method = v.toUpperCase();
     else if (/^(-f|-F|--field|--raw-field|--input)(=|$)/.test(a)) {
       hasBody = true;
@@ -84,6 +88,7 @@ export function classifyGh(argv: readonly string[], repo: string): { party: stri
     } else if (/^-[a-zA-Z]$|^--/.test(a)) {
       /* other flags: their values are never repository names, and are skipped when a separate token */
     } else if (words.length < 3) words.push(a);
+    else if (!url && /^https?:\/\/github\.com\//i.test(a)) url = a;
   }
   const [group, verb] = words;
   const [cfgOwner = "", cfgRepo = ""] = repo.split("/");
@@ -104,6 +109,14 @@ export function classifyGh(argv: readonly string[], repo: string): { party: stri
   if (group === "repo" && verb === "fork") {
     const t = target ?? words[2];
     return t ? { party: `github:${ownerOf(t)}`, command: `gh repo fork ${t}` } : null;
+  }
+  // an issue or pull request selected by URL names its repository there
+  if ((group === "issue" || group === "pr") && verb && !READ_VERBS.has(verb)) {
+    const sel = [words[2], url].find((w) => w && /^https?:\/\/github\.com\/[^/]+\/[^/]+\/(issues|pull)\//i.test(w));
+    if (sel) {
+      const [o = "", n = ""] = sel.replace(/^https?:\/\/github\.com\//i, "").split("/");
+      if (other(`${o}/${n}`)) return { party: `github:${o}`, command: `gh ${group} ${verb} ${o}/${n}` };
+    }
   }
   if (target !== null && other(target) && !(verb && READ_VERBS.has(verb))) return { party: `github:${ownerOf(target)}`, command: `gh ${group ?? ""} ${verb ?? ""} -R ${target}`.replace(/ +/g, " ") };
   return null;

@@ -19,7 +19,7 @@ export GH_TOKEN
 # Only the shapes that can name another repository reach the scheduler, so ordinary calls stay fast.
 if [ -n "${PANELATOR_SCHEDULER:-}" ]; then
   case " $* " in
-    *" -R"*|*" --repo"*|*" api "*|*" fork "*) "$PANELATOR_SCHEDULER" contacts gate -- "$@" || exit 1 ;;
+    *" -R"*|*" --repo"*|*" api "*|*" fork "*|*github.com/*) "$PANELATOR_SCHEDULER" contacts gate -- "$@" || exit 1 ;;
   esac
 fi
 unset GITHUB_TOKEN
