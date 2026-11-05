@@ -173,7 +173,9 @@ is re-triaged by the filer into a new issue, so it is not finished work)*.
   every design, in file order then bullet order, the scan resolves the
   child's issue: the entry's `issue:` when present, else the issue whose body
   carries the marker `<!-- panelator-child:<design path>:<slug> -->`
-  (open or closed). Given none, then it files one issue with the App's
+  (open or closed) and is authored by the App bot login (an issue by any
+  other account never counts as the child's record, as in spec 014 AC-6).
+  Given none, then it files one issue with the App's
   credentials: title the entry's `title:`; body the `brief:`, a blank line,
   `Parent design: \`<design path>\` (planned child \`<slug>\`).`, one
   sentence saying that the spec for this work names that design on its
@@ -206,7 +208,8 @@ is re-triaged by the filer into a new issue, so it is not finished work)*.
   a file sibling's `issue #<n>`), then the issue is filed with `blocked` as a
   third label, and the scan posts one comment `Blocked until <#a, #b> are
   done (after: <refs> in <design path>).` ending with the marker
-  `<!-- panelator-child-blocked:<design path>:<slug> -->`. Given every
+  `<!-- panelator-child-blocked:<design path>:<slug> -->`. Only a marker
+  comment posted by the App bot login counts, here and in AC-6. Given every
   `after:` sibling is done, or the entry has no `after:`, then no `blocked`
   and no comment. Given an `after:` reference to a file sibling with no
   `issue #<n>` in its bullet, then the sibling cannot be judged: the scan
@@ -218,7 +221,9 @@ is re-triaged by the filer into a new issue, so it is not finished work)*.
 - AC-6. **Unblocking is the scan's too.** On every scan, for every planned
   child whose issue is open, carries `blocked`, has the blocked marker
   comment of AC-5 and no comment with
-  `<!-- panelator-child-unblocked:<design path>:<slug> -->`: given every
+  `<!-- panelator-child-unblocked:<design path>:<slug> -->`, both posted by
+  the App bot login (a marker comment by any other account is ignored, so a
+  hand-set `blocked` is never removed whatever anyone comments): given every
   `after:` sibling is now done, then the scan removes `blocked`, posts one
   comment `Unblocked: <#a, #b> are done.` ending with the unblocked marker,
   and logs `{ kind: "child-unblocked", design, slug, issue }`. Given a
@@ -231,7 +236,7 @@ is re-triaged by the filer into a new issue, so it is not finished work)*.
   never touches the label again, however it was set since.
 - AC-7. **Issue numbers recorded by hand are the record.** Given a planned
   child with `issue: #<n>`, then the scan files nothing for it and judges
-  it done by that issue, whether or not the issue's body carries the marker.
+  it done by that issue, whether or not the issue's body carries the marker. Where the done test goes by the marker instead (AC-4), only an issue authored by the App bot login counts.
   Given `#<n>` is closed with `abandoned` or does not exist, then the child
   is neither filed nor done, and the scan logs
   `{ kind: "child-issue-dead", design, slug, issue }` once per scan; a
