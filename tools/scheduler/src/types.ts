@@ -63,6 +63,7 @@ export interface IssueData {
   labels: string[];
   labelEvents: LabelEvent[];
   createdAt: string;
+  state: "open" | "closed";
 }
 
 export type SpecMode = "write" | "answer" | "revise" | "decide" | "record";
