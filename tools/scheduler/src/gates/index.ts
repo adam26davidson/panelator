@@ -9,3 +9,4 @@ export { specScopeGate, designScopeGate } from "./spec-scope.ts";
 export { isSensitive } from "./sensitive.ts";
 export { fixLoopGate, MAX_FIXES } from "./fix-loop.ts";
 export { livenessGate } from "./liveness.ts";
+export { checkDesignTree, designTreeReport, loadDesignTree, childClass, topAncestor, type ReportEntry } from "./design-tree.ts";

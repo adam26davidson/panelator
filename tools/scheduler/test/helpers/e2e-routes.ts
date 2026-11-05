@@ -103,7 +103,14 @@ export interface MockComment { id: number; author: string; body: string; at: str
  * One issue (#7) on a mocked GitHub backed by a real bare origin: stages commit and push in their worktree and open
  * PRs here; a merge squashes the PR's branch into origin's main, a branch DELETE removes it from origin.
  */
-export async function chainWorld(opts: { files: Record<string, string>; issueBody?: string; labels?: string[]; results: Record<string, Scripted[]> }) {
+export async function chainWorld(opts: {
+  files: Record<string, string>;
+  issueBody?: string;
+  labels?: string[];
+  results: Record<string, Scripted[]>;
+  /** Spec 031: issue #7 does not exist until the children scan files it (the first created issue becomes #7). */
+  issueFromScan?: boolean;
+}) {
   const pair = repoPair(opts.files);
   const paths: StatePaths = statePaths(join(pair.root, "state"));
   await ensureStateDirs(paths);
@@ -119,9 +126,20 @@ export async function chainWorld(opts: { files: Record<string, string>; issueBod
   const prComments: { pr: number; body: string }[] = [];
   const prs = new Map<number, MockPr>();
   const mergeRequests: number[] = [];
+  let issueTitle = "Thing";
   let issueBody = opts.issueBody ?? "Spec: specs/010-thing/spec.md";
   let issueOpen = true;
   let nextId = 100;
+  // Spec 031: issues the children scan created, in order; the first becomes #7 when `issueFromScan`, the rest are #8 and up.
+  let issue7Exists = !opts.issueFromScan;
+  let nextCreated = opts.issueFromScan ? 7 : 8;
+  const filed: { number: number; title: string; body: string; labels: string[]; author: string }[] = [];
+  const otherIssues = () => filed.filter((f) => f.number !== 7);
+  const listing = (state: string) => {
+    const seven = issue7Exists && (state === "all" || (state === "open") === issueOpen) ? [issue()] : [];
+    const others = state === "closed" ? [] : otherIssues().map((f) => ({ number: f.number, title: f.title, body: f.body, user: { login: f.author, type: "Bot" }, labels: f.labels.map((name) => ({ name })), created_at: "2026-10-01T00:00:00Z", state: "open" }));
+    return [...seven, ...others];
+  };
 
   const originRef = (branch: string): string | null => {
     try {
@@ -133,18 +151,27 @@ export async function chainWorld(opts: { files: Record<string, string>; issueBod
   /** An open PR's head follows its branch on origin, as on GitHub. */
   const headOf = (pr: MockPr) => (pr.state === "open" ? originRef(pr.head) ?? pr.sha : pr.sha);
   const issue = () => ({
-    number: 7, title: "Thing", body: issueBody, user: { login: BOT, type: "Bot" }, labels: [...labels].map((name) => ({ name })),
+    number: 7, title: issueTitle, body: issueBody, user: { login: BOT, type: "Bot" }, labels: [...labels].map((name) => ({ name })), state: issueOpen ? "open" : "closed",
     created_at: "2026-10-01T00:00:00Z", updated_at: new Date().toISOString(),
   });
   const logLabel = (n: number, entry: string) => labelLog.push(n === 7 ? entry : `#${n} ${entry}`);
   const commentJson = (c: MockComment) => ({ id: c.id, user: { login: c.author }, body: c.body, created_at: c.at });
 
   const routes: Route[] = [
-    { method: "GET", path: /^\/repos\/o\/r\/issues$/, reply: (_m, _b, url) => ({ body: issueOpen ? [issue()] : [], headers: pageLink(url, 1, 1) }) },
-    { method: "POST", path: /^\/graphql$/, reply: () => ({ body: { data: { repository: { issues: { totalCount: issueOpen ? 1 : 0 } } } } }) },
-    { method: "GET", path: /^\/repos\/o\/r\/issues\/7\/timeline$/, reply: () => ({ body: [] }) },
+    { method: "GET", path: /^\/repos\/o\/r\/issues$/, reply: (_m, _b, url) => ({ body: listing(url.searchParams.get("state") ?? "open"), headers: pageLink(url, 1, 1) }) },
+    { method: "POST", path: /^\/graphql$/, reply: (_m, b) => ({ body: { data: { repository: { issues: { totalCount: listing(/CLOSED/.test(String((b as { query?: string }).query)) ? "all" : "open").length } } } } }) },
+    {
+      method: "POST", path: /^\/repos\/o\/r\/issues$/, reply: (_m, b) => {
+        const i = b as { title: string; body: string; labels: string[] };
+        const number = nextCreated++;
+        filed.push({ number, title: i.title, body: i.body, labels: i.labels, author: BOT });
+        if (number === 7) { issue7Exists = true; issueTitle = i.title; issueBody = i.body; labels.clear(); for (const l of i.labels) labels.add(l); }
+        return { status: 201, body: { number } };
+      },
+    },
+    { method: "GET", path: /^\/repos\/o\/r\/issues\/\d+\/timeline$/, reply: () => ({ body: [] }) },
     { method: "GET", path: /^\/repos\/o\/r\/issues\/7$/, reply: () => ({ body: issue() }) },
-    { method: "PATCH", path: /^\/repos\/o\/r\/issues\/7$/, reply: (_m, b) => { issueBody = (b as { body: string }).body; return { body: issue() }; } },
+    { method: "PATCH", path: /^\/repos\/o\/r\/issues\/7$/, reply: (_m, b) => { const u = b as { body?: string; state?: string }; if (u.body !== undefined) issueBody = u.body; if (u.state === "closed") issueOpen = false; return { body: issue() }; } },
     {
       method: "POST", path: /^\/repos\/o\/r\/issues\/(\d+)\/labels$/, reply: (m, b) => {
         for (const l of (b as { labels: string[] }).labels) {
@@ -242,7 +269,7 @@ export async function chainWorld(opts: { files: Record<string, string>; issueBod
   const scheduler = new Scheduler(deps);
 
   return {
-    deps,scheduler,pair, paths, cfg, gh, adapter, notifications, logs, labels, labelLog, comments, prComments, prs, mergeRequests,
+    deps,scheduler,pair, paths, cfg, gh, filed, adapter, notifications, logs, labels, labelLog, comments, prComments, prs, mergeRequests,
     get issueOpen() { return issueOpen; },
     get issueBody() { return issueBody; },
     /** One tick, then wait for the chains it started to stop (ended, paused or waiting). */

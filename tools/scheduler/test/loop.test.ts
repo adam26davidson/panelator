@@ -66,6 +66,7 @@ async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
     fetchOrigin: async () => { git(pair.repo, "fetch", "-q", "origin"); },
     unitActive: async () => false, stopUnit: async () => {},
     botLogin: "panelator-pipeline[bot]", serviceLog: new ServiceLog(paths.serviceLog), inhibitor: new SleepInhibitor({ enabled: false }),
+    scanChildren: async () => {},
     fastForward: async () => ({ moved: false, changedPaths: [] }), sleep: async () => {}, monotonic: () => mono, requestRestart: () => { started.push(-1); },
   };
   const s = new Scheduler(deps, { driveChain: drive ?? (async (_d, claim) => { started.push(claim.issue); return { ...claim, state: { ...claim.state, stage: "verify" } }; }) });
@@ -304,6 +305,37 @@ describe("Scheduler.tick", () => {
     await new Scheduler(deps, { driveChain: async () => { throw new Error("x".repeat(HISTORY_ENTRY_MAX + 50)); } }).tick();
     await new Promise((r) => setTimeout(r, 100));
     expect((await listClaims(paths))[0].state.chainFailures?.last).toHaveLength(HISTORY_ENTRY_MAX);
+  }, 30_000);
+
+  it("scans for children on the first tick, on a move of main, and only then (spec 031 AC-3)", async () => {
+    const { s, deps } = await setup(routes([]));
+    let scans = 0;
+    deps.scanChildren = async () => { scans++; };
+    await s.tick();
+    expect(scans).toBe(1); // first tick, main did not move
+    await s.tick();
+    expect(scans).toBe(1); // not moved, not first
+    deps.fastForward = async () => ({ moved: true, changedPaths: ["docs/designs/x.md"] });
+    await s.tick();
+    expect(scans).toBe(2);
+  }, 30_000);
+
+  it("records a failed children scan and still completes the tick (spec 031 AC-3)", async () => {
+    const { s, deps, paths } = await setup(routes([issue(1)]));
+    deps.scanChildren = async () => { throw new Error("github down"); };
+    const t = await s.tick();
+    expect(t.errors).toContain("children scan: github down");
+    expect(t.claimed).toEqual([1]);
+    expect(readFileSync(paths.serviceLog, "utf8")).toContain('"kind":"children-scan-failed"');
+  }, 30_000);
+
+  it("does not scan when the fast-forward failed (spec 031 AC-3)", async () => {
+    const { s, deps } = await setup(routes([]));
+    let scans = 0;
+    deps.scanChildren = async () => { scans++; };
+    deps.fastForward = async () => { throw new Error("not a fast-forward"); };
+    await s.tick();
+    expect(scans).toBe(0);
   }, 30_000);
 
   it("records a freshness error and still lists and claims when fast-forward fails (ruling 7c)", async () => {

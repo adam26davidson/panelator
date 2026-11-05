@@ -79,6 +79,37 @@ describe("listOpenIssues (process-spec 6.4)", () => {
   });
 });
 
+describe("listIssues (spec 031 AC-3)", () => {
+  const issuesRoute = (pages: unknown[][]): Route => ({
+    method: "GET", path: /^\/repos\/o\/r\/issues$/,
+    reply: (_m, _b, url) => { const page = Number(url.searchParams.get("page") ?? "1"); return { body: pages[page - 1] ?? [], headers: pageLink(url, page, pages.length) }; },
+  });
+  const total = (n: number): Route => ({ method: "POST", path: /^\/graphql$/, reply: () => ({ body: { data: { repository: { issues: { totalCount: n } } } } }) });
+  it("lists every state over two pages, drops pull requests and reports state", async () => {
+    const { c, gh } = client([issuesRoute([[issue(1), { ...issue(2), pull_request: { url: "x" } }], [{ ...issue(3), state: "closed" }]]), total(2), timeline(1), timeline(3)]);
+    const list = await c.listIssues({ state: "all" });
+    expect(list.map((i) => [i.number, i.state])).toEqual([[1, "open"], [3, "closed"]]);
+    const listing = gh.calls.filter((x) => x.url.startsWith("/repos/o/r/issues?"));
+    expect(listing).toHaveLength(2);
+    expect(listing[0]!.url).toContain("state=all");
+    expect(JSON.stringify(gh.calls.find((x) => x.url === "/graphql")?.body)).toContain("OPEN,CLOSED");
+  });
+  it("skips the timeline calls with labelEvents: false", async () => {
+    const { c, gh } = client([issuesRoute([[issue(1)]]), total(1)]);
+    const list = await c.listIssues({ state: "all", labelEvents: false });
+    expect(list[0]!.labelEvents).toEqual([]);
+    expect(gh.calls.some((x) => x.url.includes("/timeline"))).toBe(false);
+  });
+  it("re-lists after a count mismatch", async () => {
+    let listings = 0;
+    const lagging: Route = { method: "GET", path: /^\/repos\/o\/r\/issues$/, reply: (_m, _b, url) => ({ body: listings++ === 0 ? [issue(1)] : [issue(1), { ...issue(2), state: "closed" }], headers: pageLink(url, 1, 1) }) };
+    const gh = mockGitHub([lagging, total(2), timeline(1), timeline(2)]);
+    const c = new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r", { settleDelaysMs: [0, 0, 0] });
+    expect((await c.listIssues({ state: "all" })).map((i) => i.number)).toEqual([1, 2]);
+    expect(listings).toBe(2);
+  });
+});
+
 describe("labels, comments, activity", () => {
   it("adds and removes labels, tolerating a 404 on remove, and comments", async () => {
     const { c, gh } = client([

@@ -433,16 +433,11 @@ and the rest in table order (each depends on the ones before). F is split so
 that the AWS account and cap enforcement exist before E hosts the console in
 that account. *(author's call: the split)*
 
-| Spec | Name | Covers |
-|---|---|---|
-| B | Chain without human stops | section 4, section 5, the spec agent, the section 3 classification check (question check), the design hierarchy of section 10 and its gate checks, process-spec, spec 001 and `specs/README.md` amendments, `docs/charter.md` on the sensitive list |
-| A | Telegram channel | long-poll service, questions with options, resume-on-reply, reminders |
-| C | Agent registry and direct actions | section 6: definition format, triggers, scheduler support, action log, locks enforced in code, action audit; the parameter store (auto and locked, enforced in code) and applying the system-vs-product work ratio in the shortlist (replacing the fixed 2:1); re-triaging abandoned issues, the recovery path for abandonment (until C, they stay open labelled `abandoned`; the maintainer is informed, not asked to act) |
-| D | Event store, metrics and reflection | section 7, the three reflection agents, plans as issues: issues filed from a plan are authored by the App and labelled `validated`, so the shortlist works them. Split into the sub-design `docs/designs/metrics-reflection.md`, specs 026, 027 and 028 in that order (ADR 0004) |
-| F1 | Delivery-system AWS account and cap | section 8: the delivery-system AWS account, AWS Budgets enforcement, the scheduler's running estimate, daily forecasting |
-| E | Design stage and console | the design stage (design tools, visual review, three screen sizes), then the console of section 9, hosted in F1's account; re-evaluating the issues spec 006 parked with `needs-design-stage` and removing the label |
-| F2 | Reach beyond GitHub | section 8: credential store and wrappers, funds and first-contact requests, infra health and credential check agents |
-| G | Test board and automatic stable promotion | section 5 firmware: HIL tests on the real board, promotion criteria, the bricked-board pause |
+The breakdown into specs is the `## Children` section at the end of this
+document, where each child's row letter and issue are recorded. Children that
+do not exist as files yet are listed there as planned children, and the
+scheduler files one issue for each when this document changes on `main`
+(spec 031). *(author's call: the table became the children list)*
 
 The findings filer (spec 001's out-of-scope list calls it "spec 004"; that
 number has since been used) belongs with C. *(author's call)* Spec numbers in
@@ -484,13 +479,13 @@ are stale and are corrected as part of B.
 - `specs/003-stage-scope-runtime-max/spec.md`
 - `specs/004-pi-tool-names/spec.md`
 - `specs/005-keep-unpushed-commits/spec.md`
-- `specs/006-no-human-stops/spec.md`
-- `specs/007-telegram-channel/spec.md`
-- `specs/008-agent-registry/spec.md`
+- `specs/006-no-human-stops/spec.md` (row B, built by hand)
+- `specs/007-telegram-channel/spec.md` (row A, issue #9)
+- `specs/008-agent-registry/spec.md` (row C, issue #10)
 - `specs/009-postponed-chain-holds-slot/spec.md`
 - `specs/010-approve-esbuild-build/spec.md`
 - `specs/011-asking-stage-keeps-its-work/spec.md`
-- `docs/designs/metrics-reflection.md`
+- `docs/designs/metrics-reflection.md` (row D, issue #15, abandoned; its children's issues are #93, #94 and #95)
 - `specs/013-quota-planning/spec.md`
 - `specs/014-filer-batch-integrity/spec.md`
 - `specs/015-chain-keeps-its-work/spec.md`
@@ -500,10 +495,31 @@ are stale and are corrected as part of B.
 - `specs/019-filer-collapses-identical-records/spec.md`
 - `specs/020-failure-finding-does-not-wake-its-agent/spec.md`
 - `specs/021-stale-spec-text-after-008/spec.md`
-- `specs/022-delivery-aws-account/spec.md`
+- `specs/022-delivery-aws-account/spec.md` (row F1, issue #37)
 - `specs/023-waiting-claim-is-not-stalled/spec.md`
 - `specs/024-rebase-respects-merged-main/spec.md`
 - `specs/025-filer-results-and-wakes/spec.md`
-- `specs/029-design-stage/spec.md`
-- `specs/030-beyond-github/spec.md`
+- `specs/029-design-stage/spec.md` (row E, issue #38)
+- `specs/030-beyond-github/spec.md` (row F2, issue #39)
 - `specs/031-design-files-children/spec.md`
+- planned: console
+  title: Specify and build the maintainer console (row E, second part)
+  brief: The maintainer console of section 9, built on the design stage of spec 029 and
+    hosted in the delivery account of spec 022 as ADR 0005 decides (a static React app on S3
+    behind CloudFront, a small serverless API and one DynamoDB table in one CloudFormation
+    stack, GitHub sign-in for the maintainer's login only). It covers the Home screen of
+    direction A, the Questions, History, Actions, Agents and Parameters screens at mobile,
+    tablet and desktop sizes, the scheduler pushing state snapshots and pulling changes over
+    a held-open connection, and the package separate from `web/`. It leaves the design stage
+    itself and the AWS account and cap to its siblings.
+  after: specs/029-design-stage/spec.md, specs/022-delivery-aws-account/spec.md
+  issue: #101
+- planned: test-board
+  title: Test board and automatic stable firmware promotion (design spec G)
+  brief: Row G of section 11 and the firmware paragraphs of section 5. It covers running
+    the hardware-in-the-loop tests on the real test board attached to the laptop, the
+    criteria for promoting firmware from beta to stable automatically when the board's tests
+    pass (which tests, any soak time on beta), removing the human release action, and the
+    pause of firmware work when a test bricks the board until the maintainer confirms it is
+    back. It leaves every other part of the delivery system to its siblings.
+  issue: #132
