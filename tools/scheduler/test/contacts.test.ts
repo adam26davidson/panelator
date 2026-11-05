@@ -15,6 +15,10 @@ import { loadRegistry } from "../src/standing/registry.ts";
 import { EVENT_NAMES } from "../src/standing/events.ts";
 import { registryActionsCheck } from "../src/actions/index.ts";
 import { statePaths, ensureStateDirs } from "../src/state/paths.ts";
+import { applyRequestAnswer, outcomeOf } from "../src/contacts/approve.ts";
+import { CredentialStore } from "../src/credentials/store.ts";
+import { parseCatalogue } from "../src/credentials/catalogue.ts";
+import type { Question, Request } from "../src/types.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO = "adam26davidson/panelator";
@@ -109,5 +113,46 @@ describe("the gh shim (spec 030 AC-11)", () => {
     expect(shimRun(["issue", "view", "3", "-R", "other/repo"], false).calls).toContain("issue view 3");
     expect(shimRun(["issue", "create", "-R", REPO, "--title", "t"], false).r.status).toBe(0);
     expect(shimRun(["pr", "list"], false).r.status).toBe(0);
+  });
+});
+
+describe("acting on a request's answer (spec 030 AC-8)", () => {
+  const q = (over: Partial<Question> = {}): Question => ({ kind: "capability", question: "Need a token for the vendor API", options: [{ label: "grant", cost: "5 min" }], recommendation: "grant", ...over });
+  const cred: Request = { type: "credential", name: "demo", provider: "demo", access: ["read"], setup: ["step one", "step two"] };
+  const contact: Request = { type: "first_contact", party: "github:other", channel: "github", why: "report a bug", message: "Hello,\nbug here" };
+  async function deps() {
+    const root = mkdtempSync(join(tmpdir(), "req-"));
+    const paths = statePaths(join(root, "s"));
+    await ensureStateDirs(paths);
+    const store = new CredentialStore(join(root, "creds"), join(here, "helpers", "fake-systemd-creds"));
+    const catalogue = parseCatalogue(`demo:\n  provider: demo\n  purpose: p\n  access: [a]\n  used_by: [scheduler]\n  wrapper: none\n  expiry: none\n  check: test -n "$X"\n  renew: manual\n  setup: [s]\n`, { profiles: [], agents: [] });
+    const credentialDeps = { store, catalogue, paths, binDir: "", now: () => new Date("2026-11-04T00:00:00Z") };
+    return { paths, store, credentialDeps, now: () => new Date("2026-11-04T00:00:00Z") };
+  }
+  const rec = (request: Request) => ({ question: q({ request }), issue: 39, question_comment_id: 77 });
+  it("registers a party on approval and only then", async () => {
+    const d = await deps();
+    for (const t of ["Deny", "maybe later", "No"]) expect(await applyRequestAnswer(d, rec(contact), t)).toBe(t);
+    expect(await readParties(d.paths)).toEqual([]);
+    expect(await applyRequestAnswer(d, rec(contact), "OK, go ahead")).toBe("OK, go ahead");
+    expect(await readParties(d.paths)).toEqual([{ party: "github:other", channel: "github", approved_at: "2026-11-04T00:00:00.000Z", question_comment_id: 77, issue: 39 }]);
+    expect(outcomeOf(q({ request: contact }), "Approve")).toBe("approved");
+    expect(outcomeOf(q({ request: contact }), "Deny")).toBe("denied");
+    expect(outcomeOf(q({ request: contact }), "hmm")).toBe("text");
+  });
+  it("verifies a credential on Done, reports a failed or missing check, and passes other answers through", async () => {
+    const d = await deps();
+    expect(await applyRequestAnswer(d, rec(cred), "Done")).toBe("done (check failed: credential is not set; run cred set)");
+    await d.store.writeSecret("demo", "v", "maintainer");
+    const failing = { ...d, credentialDeps: { ...d.credentialDeps, run: async () => ({ code: 1, stdout: "", stderr: "nope\n" }) } };
+    expect(await applyRequestAnswer(failing, rec(cred), "done, I set it")).toBe("done (check failed: exit 1: nope)");
+    const passing = { ...d, credentialDeps: { ...d.credentialDeps, run: async () => ({ code: 0, stdout: "", stderr: "" }) } };
+    expect(await applyRequestAnswer(passing, rec(cred), "Done")).toBe("done (verified)");
+    expect(await applyRequestAnswer(passing, rec(cred), "Can't do this")).toBe("Can't do this");
+    expect(outcomeOf(q({ request: cred }), "done (verified)")).toBe("verified");
+    expect(outcomeOf(q({ request: cred }), "done (check failed: x)")).toBe("check_failed");
+    expect(outcomeOf(q({ request: cred }), "Can't do this")).toBe("declined");
+    expect(outcomeOf(q({ request: { type: "funds", amount_usd: 1, purpose: "p", charter_goal: "c" } }), "Approved")).toBe("approved");
+    expect(outcomeOf(q(), "anything")).toBeUndefined();
   });
 });

@@ -35,12 +35,13 @@ import { chainWorld, standingWorld, scripted, RATE_LIMITED, type ChainWorld } fr
 import { CredentialStore } from "../src/credentials/store.ts";
 import { parseCatalogue } from "../src/credentials/catalogue.ts";
 import { readParties } from "../src/contacts/gate.ts";
-import { fakeCreds } from "./helpers/fake-creds.ts";
 import { git, repoPair, withDesign, withTopDesign } from "./helpers/repo-pair.ts";
 import { fileDesignChildren } from "../src/children/scan.ts";
 import { loadDesignTree } from "../src/gates/design-tree.ts";
 
 const spec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
+/** The fake `systemd-creds` of spec 030 section 3: reversible, not plaintext. */
+const fakeCreds = join(import.meta.dirname, "helpers", "fake-systemd-creds");
 const BOT = { login: "panelator-pipeline[bot]", type: "Bot" };
 
 describe('Telegram recorded chains',()=>{

@@ -15,7 +15,8 @@ export function resolveProfile(agentsDir: string, name: string): Profile {
   if (!/^[a-z][a-z0-9-]*$/.test(name) || !existsSync(join(dir, "profile.yaml"))) throw new Error(`unknown profile: ${name}`);
   const y = parse(readFileSync(join(dir, "profile.yaml"), "utf8")) as Record<string, unknown>;
   const tools = Array.isArray(y.tools) ? (y.tools as string[]) : [];
-  if ("credential_hook" in y) throw new Error(`profile ${name}: credential_hook is replaced by credentials`);
+  // Spec 030 AC-2: `credentials` replaces `credential_hook`; the old key is accepted only as the null it always was.
+  if ("credential_hook" in y && y.credential_hook !== null) throw new Error(`profile ${name}: credential_hook is replaced by credentials`);
   const credentials = y.credentials ?? [];
   if (!Array.isArray(credentials) || credentials.some((c) => typeof c !== "string" || !c)) throw new Error(`profile ${name}: credentials must be a list of names`);
   const criteriaFile = typeof y.review_criteria === "string" ? y.review_criteria : null;

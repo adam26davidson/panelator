@@ -18,7 +18,8 @@ import { EVENT_NAMES } from "../src/standing/events.ts";
 import { registryActionsCheck } from "../src/actions/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-import { fakeCreds } from "./helpers/fake-creds.ts";
+/** The fake `systemd-creds` of spec 030 section 3: reversible, not plaintext. */
+const fakeCreds = join(here, "helpers", "fake-systemd-creds");
 const SECRET = "s3cr3t-value-0123456789";
 const known = { profiles: ["backend"], agents: ["credential-check"] };
 const ENTRY = (extra = "") => `

@@ -5,7 +5,8 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import type {DriverDeps} from '../chain/driver.ts';
 import type {StandingDefinition,StageDefinition} from '../types.ts';
 import type {ParameterStore} from '../parameters/store.ts';
-import {validate,type SchemaName} from '../schema/validate.ts';
+import type {SchemaName} from '../schema/validate.ts';
+import {validateSchema} from './registry.ts';
 import {runStage,type StageOutcome} from '../runner/run.ts';
 import {retryDecision,afterFallback} from '../runner/retry.ts';
 import {modelLimitFallback,planLaunch,quotaParams,readBook,waitAfterLimit} from '../quota/book.ts';
@@ -58,7 +59,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   }
   const input=def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):def.input==='credential-check-input'?await buildCredentialCheckInput(need(d.credentialDeps),d.cfg,received):def.input==='infra-health-input'?await buildInfraHealthInput(d.paths,received,now):null;
   const parameters=await d.parameters.all();
-  const inputCheck=validate(def.input as SchemaName,input??{events:received,since:state.last_run?.at??null,parameters});
+  const inputCheck=validateSchema(def.input as SchemaName,input??{events:received,since:state.last_run?.at??null,parameters});
   if(!inputCheck.ok)throw new Error(`standing input: ${inputCheck.errors.join('; ')}`);
   const profile=def.profile==='none'?null:resolveProfile(d.agentsDir,def.profile);
   // Standing agents have no write or GitHub tool, even when a profile normally supplies one.

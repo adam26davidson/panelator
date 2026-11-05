@@ -1,4 +1,4 @@
 name: backend
 tools: [Read, Edit, Write, Bash, Glob, Grep]
-credentials: []
+credential_hook: null
 review_criteria: null
