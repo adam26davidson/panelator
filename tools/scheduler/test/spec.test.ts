@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { specPathFromIssueBody } from "../src/spec/link.ts";
-import { parseChildren, parseSpec, stripChildren } from "../src/spec/parse.ts";
+import { childSlugOfPath, parseChildEntries, parseChildren, parseSpec, stripChildren } from "../src/spec/parse.ts";
 
 const fx = (n: string) => readFileSync(join(import.meta.dirname, "fixtures", "specs", n), "utf8");
 
@@ -78,5 +78,52 @@ describe("Parent and Children links", () => {
   it("stripChildren removes the Children section only", () => {
     const t = "## Goal\ng\n## Children\n- `a/b.md`\n## Verification\nv\n";
     expect(stripChildren(t)).toBe("## Goal\ng\n## Verification\nv\n");
+  });
+});
+
+describe("planned children (spec 031 AC-1)", () => {
+  const fixture = readFileSync(join(import.meta.dirname, "fixtures", "children", "planned-children.md"), "utf8");
+
+  it("parseChildren returns only the file children", () => {
+    expect(parseChildren(fixture)).toEqual(["specs/007-first/spec.md", "specs/008-second/spec.md"]);
+  });
+
+  it("parseChildEntries returns every entry with its kind and keys", () => {
+    const e = parseChildEntries(fixture)!;
+    expect(e.map((x) => x.kind)).toEqual(["file", "file", "planned", "planned", "planned", "planned"]);
+    expect(e[0]).toMatchObject({ path: "specs/007-first/spec.md", issue: 9 });
+    expect(e[1]!.issue).toBeUndefined();
+    expect(e[2]).toEqual({
+      kind: "planned",
+      slug: "console",
+      title: "Build the console",
+      brief: "The maintainer console, a static site and a small API; it leaves the firmware to its sibling.",
+      after: ["specs/007-first/spec.md", "test-board"],
+      class: "class:tooling",
+      issue: 101,
+      line: e[2]!.line,
+    });
+    expect(e[3]).toMatchObject({ slug: "test-board", after: [] });
+  });
+
+  it("names the missing key on a planned bullet", () => {
+    const e = parseChildEntries(fixture)!;
+    expect(e[4]!.error).toBe("missing title:");
+    expect(e[5]!.error).toBe("missing brief:");
+  });
+
+  it("records an issue: value that is not #<n>", () => {
+    const e = parseChildEntries("## Children\n- planned: a\n  title: t\n  brief: b\n  issue: 12\n")!;
+    expect(e[0]).toMatchObject({ issueRaw: "12" });
+    expect(e[0]!.issue).toBeUndefined();
+  });
+
+  it("returns null without the heading", () => {
+    expect(parseChildEntries("## Goal\n")).toBeNull();
+  });
+
+  it("childSlugOfPath reads the slug of a spec path", () => {
+    expect(childSlugOfPath("specs/031-design-files-children/spec.md")).toBe("design-files-children");
+    expect(childSlugOfPath("docs/designs/x.md")).toBeNull();
   });
 });
