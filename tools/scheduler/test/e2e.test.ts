@@ -33,6 +33,8 @@ import {runStandingAgent} from '../src/standing/run.ts';
 import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
 import { chainWorld, standingWorld, scripted, RATE_LIMITED, type ChainWorld } from "./helpers/e2e-routes.ts";
 import { git, repoPair, withDesign, withTopDesign } from "./helpers/repo-pair.ts";
+import { fileDesignChildren } from "../src/children/scan.ts";
+import { loadDesignTree } from "../src/gates/design-tree.ts";
 
 const spec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
 const BOT = { login: "panelator-pipeline[bot]", type: "Bot" };
@@ -701,6 +703,101 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     expect(w.mergeRequests).toEqual([]);
     expect(w.onMain("docs/charter.md")).toBe(CHARTER);
     expect(w.comments.map((c) => c.body.split("\n")[0])).toEqual(["### Issue abandoned by the scheduler"]);
+  }, 120_000);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Spec 031: a merged design files issues for its children.
+
+describe("end to end: a design's planned children (spec 031)", () => {
+  const KIDS = "docs/designs/kids.md";
+  const plannedA = "- planned: a\n  title: Build part a\n  brief: Part a of the design, and nothing of part b.\n";
+  const plannedB = "- planned: b\n  title: Build part b\n  brief: Part b of the design.\n  after: a\n";
+  const kids = (children: string) => `# Kids\n\nParent: ${PARENT}\n\n## Children\n\n${children}`;
+  const productSpec = (children: string) => `# Product spec\n\nParent: docs/charter.md\n\n## Children\n\n${children}`;
+
+  it("files two children when main has the design; the unblocked one runs the spec stage and the implementation, with no second issue (AC-3, AC-4, AC-8)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    const childSpec = specOf().replace(`Parent: ${PARENT}`, `Parent: ${KIDS}`);
+    w = await chainWorld({
+      files: { "a.txt": "a\n", "docs/charter.md": CHARTER, [PARENT]: productSpec(`- \`${KIDS}\`\n`), [KIDS]: kids(plannedA + plannedB) },
+      issueFromScan: true,
+      results: {
+        spec: [(run: StageRun) => {
+          const sha = w.push(run, { "specs/011-a/spec.md": childSpec, [KIDS]: kids("- `specs/011-a/spec.md` (issue #7)\n" + plannedB) }, "spec");
+          w.openPr(run, 12, sha, "Refs #7");
+          return { verdict: "revised", spec_path: "specs/011-a/spec.md", pr_number: 12, head_sha: sha };
+        }],
+        plan: [PLAN],
+        implement: [a.implement(13)],
+        review: [APPROVE, APPROVE],
+      },
+    });
+    await w.tick();
+    await expectSettled(w);
+
+    // AC-4, AC-5: two App-authored validated issues, the second blocked by after:.
+    expect(w.filed.map((f) => [f.number, f.title, f.author])).toEqual([[7, "Build part a", BOT.login], [8, "Build part b", BOT.login]]);
+    expect(w.filed[0].labels).toEqual(["class:product", "validated"]);
+    expect(w.filed[1].labels).toEqual(["class:product", "validated", "blocked"]);
+    expect(w.filed[0].body).toContain(`<!-- panelator-child:${KIDS}:a -->`);
+    expect(w.filed[1].body).toContain("After: #7");
+    expect(w.prComments.map((c) => c.body)).toEqual([expect.stringContaining("Blocked until #7 are done")]);
+    // AC-8: no Spec: line, so the spec stage runs in write mode and appends it; then the one chain carries the implementation.
+    expect(w.adapter.ran).toEqual(["spec", "review", "plan", "implement", "review"]);
+    expect(runsOf(w, "spec")[0].input.mode).toBe("write");
+    expect(w.issueBody).toContain("Spec: specs/011-a/spec.md");
+    expect(w.mergeRequests).toEqual([12, 13]);
+    expect(w.issueOpen).toBe(false);
+    expect(w.filed).toHaveLength(2); // no issue was filed for the implementation
+    expect(w.writes().filter((c) => c === "POST /repos/o/r/issues")).toHaveLength(2);
+  }, 120_000);
+
+  it("a spec stage that authors a sub-design with a README.md pointer: merged, the issue closed done, then the scan files the children (AC-3, AC-9)", async () => {
+    let w!: ChainWorld;
+    w = await chainWorld({
+      files: { "a.txt": "a\n", "docs/charter.md": CHARTER, [PARENT]: productSpec("") },
+      issueBody: "Spec: specs/011-split/spec.md",
+      results: {
+        spec: [(run: StageRun) => {
+          const sha = w.push(run, {
+            [KIDS]: kids(plannedA + plannedB),
+            "specs/011-split/README.md": "# 011. Split\n\nThis spec was split and has no `spec.md`; see docs/designs/kids.md.\n",
+            [PARENT]: productSpec(`- \`${KIDS}\`\n`),
+          }, "spec");
+          w.openPr(run, 12, sha, "Refs #7");
+          return { verdict: "revised", spec_path: "specs/011-split/spec.md", pr_number: 12, head_sha: sha };
+        }],
+        // the PR edits a top design, a sensitive path: the spec review, then the security review
+        review: [APPROVE, APPROVE],
+      },
+    });
+    await w.tick();
+    await expectSettled(w);
+
+    expect(w.adapter.ran).toEqual(["spec", "review", "review"]);
+    expect(w.mergeRequests).toEqual([12]);
+    expect(w.issueOpen).toBe(false);
+    expect(w.comments.map((c) => c.body).join("\n")).toMatch(/docs\/designs\/kids.md.*filed as issues by the scheduler/s);
+    expect(w.labelLog).toEqual(["+in-progress", "-in-progress"]);
+    expect(w.writes().indexOf("POST /repos/o/r/issues/7/comments")).toBeLessThan(w.writes().indexOf("PATCH /repos/o/r/issues/7"));
+    expect(readFileSync(join(w.paths.root, "merges.jsonl"), "utf8")).toMatch(/"issue":7.*"cls":"debt","work":"system"/);
+    expect(w.filed).toEqual([]);
+
+    // The scan that runs when main moves (the loop's call, over the fast-forwarded checkout) files both children.
+    git(w.pair.repo, "fetch", "-q", "origin");
+    git(w.pair.repo, "merge", "-q", "--ff-only", "origin/main");
+    const result = await fileDesignChildren({
+      gh: w.deps.gh, paths: w.paths, botLogin: BOT.login, now: () => new Date(), log: (r) => w.logs.push(r), designs: loadDesignTree(w.pair.repo),
+    });
+    expect(result.filed).toEqual([8, 9]);
+    expect(w.filed.map((f) => f.labels)).toEqual([["class:product", "validated"], ["class:product", "validated", "blocked"]]);
+    // And a second scan files nothing.
+    const again = await fileDesignChildren({
+      gh: w.deps.gh, paths: w.paths, botLogin: BOT.login, now: () => new Date(), log: (r) => w.logs.push(r), designs: loadDesignTree(w.pair.repo),
+    });
+    expect(again.filed).toEqual([]);
   }, 120_000);
 });
 

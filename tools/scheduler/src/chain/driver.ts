@@ -236,11 +236,22 @@ async function issueAnswers(deps: DriverDeps, issue: number): Promise<string> {
   return entries.map((e) => `#${e.question_comment_id}: Question: ${oneLine(e.question?.question ?? "(not logged)")} Answer: ${oneLine(e.answer ?? "")}`).join("\n");
 }
 
+/** The Parent: of the sub-design a split spec PR adds (a README.md beside the missing spec.md, a design under docs/designs/ with two children); null otherwise. */
+async function splitParent(worktree: string, specPath: string, diff: string[]): Promise<string | null> {
+  if (!existsSync(join(worktree, specPath.replace(/[^/]*$/, "README.md")))) return null;
+  for (const f of diff.filter((d) => d.startsWith("docs/designs/") && d.endsWith(".md"))) {
+    const text = await readFile(join(worktree, f), "utf8").catch(() => "");
+    if ((parseChildEntries(text) ?? []).length >= 2) return parseSpec(text).parent;
+  }
+  return null;
+}
+
 /** AC-21, AC-22: the spec PR's scope, judged with the spec's Parent: from the worktree and the parent before (origin/main) and after. */
 async function specTrackScope(deps: DriverDeps, claim: Claim, diff: string[], specPath: string | null): Promise<ScopeResult> {
   if (!specPath) return { ok: false, violations: ["the issue body has no Spec: line naming the spec this PR changes"] };
   const text = await readFile(join(claim.worktree, specPath), "utf8").catch(() => "");
-  const parent = parseSpec(text).parent;
+  // Spec 031 AC-9: a split has a README.md pointer and no spec.md; the parent is then the parent of the sub-design the PR adds.
+  const parent = text ? parseSpec(text).parent : await splitParent(claim.worktree, specPath, diff);
   const before = parent ? gitShow(deps.repoDir, `origin/main:${parent}`) ?? "" : "";
   const after = parent ? await readFile(join(claim.worktree, parent), "utf8").catch(() => "") : "";
   return specScopeGate(diff, specPath, parent, before, after, claim.state.answerKind === "product");
