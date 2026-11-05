@@ -10,6 +10,15 @@ nothing else on `main`. Its AWS half and its event recording are set out
 in section 2 and section 4 ("Why this spec is split") for the follow-up
 spec (row F2, second part) that derives from specs 022 and 026 once they
 are built; no acceptance criterion kept here changes its meaning. *(agent's
+call)* Revised 2026-11-05 after the implementation's fix loop ran out: three
+review rounds each found a `gh` form that AC-11's enumerated list and a
+positional parser let through or wrongly refused, one found that AC-6's "text
+names a credential" had become a word list that misread a physical-action
+question, and one read AC-4's "every command" as excluding `list`. AC-11 now
+states the gate as a token rule that fails closed, AC-6 leaves the judgement
+of a request-less question to the question check and gives the scheduler
+only a completeness check, AC-4 names `list`, and section 5 lists every file
+the implementation touched so the plan's file scope is complete. *(agent's
 call)*
 Class: tooling. Domain: backend.
 Parent: docs/delivery-system-design.md
@@ -259,9 +268,14 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   two files to delete by hand; the configuration paths keep working while
   the files exist, and the credential check files one finding per plain
   file still present (AC-13). `cred remove <name>` deletes the blob and the
-  entry. Every command runs as the user the service runs as and is logged
-  in the action log with `agent: maintainer` (spec 008 AC-9), with
-  `args.name` only.
+  entry. Every command runs as the user the service runs as, and every
+  maintainer command, `cred list` and `contacts list` included, is logged in
+  the action log with `agent: maintainer` (spec 008 AC-9), `kind:
+  cred_<command>` or `contacts_<command>`, and `args` holding `name` when
+  the command has one and nothing else: never the secret. `cred exec` is the
+  wrapper's path, not a maintainer command, and is not logged, as the `gh`
+  shim's token read is not. A test asserts one row each for a `cred list`,
+  `cred set`, `cred check` and `contacts list` run.
 - AC-5. **The expiry event has a producer.** Given a tick, at most once an
   hour, then for each credential whose `expires_at` (from the index, or the
   last probe) is within `warn_days`, or whose last check failed, the
@@ -287,13 +301,28 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
     `channel` how it would be reached, `message` the full text that would be
     sent.
 
-  Given a `question` result of kind `capability` whose text or request names
-  a credential, funds or an outside party and whose `request` is missing or
-  has an empty field, then the question check (spec 006 AC-12) returns
-  `decide_yourself` with the reason "a <type> request must give <fields>",
-  and the stage is in `decide` mode as today; `agents/stages/question-check.md`
-  says so. Given a complete request, then the check judges the kind as
-  before.
+  Two checks, and only these, enforce it *(agent's call, 2026-11-05)*:
+  - **In code, completeness of a request the stage set.** Given a `question`
+    result whose `request` is present and has a missing or empty field (an
+    empty string, an empty list or a list with an empty string, `amount_usd`
+    not above zero), then the scheduler returns `decide_yourself` to the
+    stage before any question check runs, with the reason "a <type> request
+    must give <missing fields>", and the stage is in `decide` mode as today.
+    The result schema accepts the empty fields so that this path, not an
+    `invalid` result, is what the stage sees. The scheduler classifies
+    nothing from the question's text: no word list, no pattern over the
+    question, the options or the recommendation decides whether a question
+    is a credential, funds or first-contact need. (A question such as "I
+    need physical access to the test board" is a capability question the
+    maintainer answers, and must reach them.)
+  - **By the question check, absence of a request.** Given a `question` of
+    kind `capability` with no `request` that is, in the check's judgement, a
+    credential, funds or first-contact need, then the question check (spec
+    006 AC-12) returns `decide_yourself` with the reason "a <type> request
+    must give <fields>" naming the type's fields; `agents/stages/question-check.md`
+    says so, with the three field lists. Given a complete request, then the
+    check judges the kind as before, and the check's input carries the
+    request so it can judge it.
 - AC-7. **The request is sent with its content and fixed buttons.** Given a
   sent question carrying a request (spec 007 AC-5), then the Telegram
   message and the issue comment render the request's fields as a labelled
@@ -371,21 +400,84 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   `party` is in `contacts/parties.json`; else `refused` with a text that
   names the party and says to raise a capability question with a
   `first_contact` request (AC-6). Every wrapper that can reach an outside
-  party calls it before the call; in this spec that is the `gh` shim: given
-  an invocation that would create or edit content in a repository other
-  than the configured `repo` (`gh issue create`, `gh pr create`, `gh issue
-  comment`, `gh pr comment`, `gh pr review`, `gh api` with a method other
-  than `GET` against `/repos/<other>/...`, `gh repo fork`, and any
-  `--repo`/`-R` naming another repository), then the shim calls
-  `checkContact` with `github:<owner>` and, when refused, exits 1 with the
-  text and makes no call; reads and every call against the configured
-  repository are unchanged. A refused call is recorded in the action log
-  (`agent: <stage or agent>`, `kind: contact_refused`, `status: refused`,
-  the party and the command without its body) so the action audit and the
-  console can see attempts. The parameter is read from the store at each
-  call; the system cannot change it (spec 008 AC-12). A test asserts a
-  `gh issue create -R other/repo` is refused and makes no API call, and the
-  same call after an approval of AC-8 goes through.
+  party calls it before the call; in this spec that is the `gh` shim. The
+  shim's rule is stated over tokens, not over a list of subcommands, and it
+  fails closed *(agent's call, 2026-11-05; section 4, "The gate reads
+  tokens")*:
+  - **Which calls reach the gate.** The runner sets `PANELATOR_SCHEDULER`
+    (the scheduler's entry point) in every stage's and standing agent's
+    environment. The shim runs `panelator-scheduler contacts gate -- "$@"`
+    for every invocation in which any argument contains a `/`: every way of
+    naming a repository (`owner/repo`, a URL, an API path) does, so no shell
+    pattern over subcommands is needed and none is written. Given
+    `PANELATOR_SCHEDULER` is unset and an argument contains a `/`, then the
+    shim exits 1 saying the gate is unavailable, as it exits today when
+    `token.json` has no token. An invocation with no `/` in any argument is
+    passed to `gh` unchanged.
+  - **How the gate finds repositories.** `classifyGh(argv, repo)` in
+    `gate.ts` scans every argument, in any position, for a repository
+    reference: the value of `-R` or `--repo` (as the next token, as
+    `--repo=<value>`, or attached as `-R<value>`); any token containing
+    `github.com/<owner>/<repo>` (with or without a scheme, `www.` or `api.`,
+    whatever follows: an issue, pull request, repository or API URL); any
+    token matching `repos/<owner>/<repo>` with or without a leading `/`
+    (an API path); and the `<owner>/<repo>` positional of `gh repo <verb>`.
+    `{owner}`, `{repo}`, `:owner` and `:repo` are gh's placeholders for the
+    current repository and resolve to the configured `repo`. The comparison
+    with the configured `repo` is case-insensitive. A call that references
+    no repository other than the configured one is **allowed** without a
+    further look, so reads and every call against the configured repository
+    are unchanged.
+  - **Which of those are reads.** A call that references another repository
+    is allowed only when it is a read: the subcommand's verb (the second
+    positional word, `gh <group> <verb>`) is one of `view`, `list`, `status`,
+    `diff`, `checks`, `download`, `clone`, `browse`, `search`; or the group
+    is `api` and no token sets a method other than `GET` (`-X` or
+    `--method` as the next token, with `=`, or attached as `-X<value>`) and
+    no token is a body flag (`-f`, `-F`, `--field`, `--raw-field`,
+    `--input`, as a token or attached as `-f<value>`). The group and the
+    verb are the first two tokens of `argv`; given either starts with `-`,
+    then the verb is unknown and the call is not a read. No token is
+    skipped as "a flag's value": every token is scanned for the shapes
+    above, so a header, a `--jq` program or a `--hostname` before an API
+    path never displaces the path, because the path is found by its shape,
+    not by its position.
+  - **Everything else naming another repository is a write.** The gate
+    calls `checkContact` with `github:<owner>` of the first other
+    repository referenced and, when refused, the shim exits 1 with the text
+    and makes no call. A form the gate cannot place as a read is a write:
+    the gate never allows a call to another repository because it did not
+    recognise it. A refused call is recorded in the action log (`agent:
+    <stage or agent>`, `kind: contact_refused`, `status: refused`, the party
+    and the command as its group, verb, method and repository, never a body
+    or a header value) so the action audit and the console can see
+    attempts. The parameter is read from the store at each call; the system
+    cannot change it (spec 008 AC-12).
+
+  The tests run the shim itself (`bin/gh` under `sh`, with a recording fake
+  `gh` after it on `PATH` and the scheduler's `contacts gate` behind
+  `PANELATOR_SCHEDULER`), not only `classifyGh`, and cover at least:
+  refused, with one `contact_refused` row and no call reaching the fake:
+  `gh issue create -R other/repo -t x -b y`, the same with `-Rother/repo`
+  and `--repo=other/repo`, `gh pr comment https://github.com/other/repo/pull/5 --body x`,
+  `gh issue comment https://github.com/other/repo/issues/1 --body x`,
+  `gh pr review https://github.com/other/repo/pull/5 --approve`,
+  `gh api -X POST repos/other/repo/issues -f title=x`, the same with
+  `-XPOST`, `gh api -H "Accept: application/vnd.github+json" -X POST repos/other/repo/issues -f title=x`,
+  `gh api --jq .number -X POST repos/other/repo/issues -f title=x`,
+  `gh api repos/other/repo/issues -f title=x` (a body and no method),
+  `gh api -ftitle=x repos/other/repo/issues`, `gh api https://api.github.com/repos/other/repo/issues -X POST`,
+  `gh repo fork other/repo`; allowed, reaching the fake unchanged, with no
+  row: `gh api -X POST repos/{owner}/{repo}/issues/39/comments -f body=x`,
+  the same with `:owner/:repo` and with the configured repository spelled
+  out in another case, `gh issue create -R <configured repo> -t x -b y`,
+  `gh pr comment https://github.com/<configured repo>/pull/5 --body x`,
+  `gh issue view -R other/repo 1`, `gh api repos/other/repo/issues`,
+  `gh api -H "Accept: application/vnd.github+json" repos/other/repo`,
+  `gh pr view https://github.com/other/repo/pull/5`, `gh repo clone other/repo`,
+  `gh api /app`, `gh pr list`, `gh auth status`; and `gh issue create -R
+  other/repo` going through after an approval of AC-8. A new form found
+  later is added to this list in the implementing PR, not argued over.
 - AC-12. **Approved parties are visible and only the maintainer removes
   them.** `panelator-scheduler contacts list` prints the parties with their
   approval time, issue and question id; `contacts remove <party>` deletes an
@@ -510,6 +602,32 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   a support case needs a credential that does not exist yet and will add its
   own door. Putting `checkContact` in the shim makes the anti-goal of design
   section 2 a refusal with an exit code rather than an instruction.
+- **The gate reads tokens and fails closed** *(agent's call, 2026-11-05)*.
+  The first version of AC-11 listed the `gh` forms to refuse, and the
+  implementation parsed them by position. Three review rounds each found a
+  form that slipped past (`{owner}/{repo}` placeholders refused; URL
+  selectors, `-Rother/repo` and `-XPOST` allowed; a header before the API
+  path displacing it), and each fix invited the next. The list was the
+  flaw: gh has more spellings than a spec can enumerate, and a positional
+  parser is wrong whenever gh accepts a flag the parser does not know. The
+  rule now is the inverse: find every repository reference by its shape in
+  any token, allow a call that names only the configured repository, allow
+  a known read of another repository, and treat every other call naming
+  another repository as a write. An unknown form is then refused rather
+  than allowed, which costs a stage one retry with a known spelling and
+  never costs an unapproved contact. The shell side keeps one test, "does
+  any argument contain a `/`", because every repository reference does; it
+  decides nothing else. The choice is not an ADR: the gate is one function
+  and the test list in AC-11 is where a new spelling goes.
+- **The request check judges nothing from the question's words** *(agent's
+  call, 2026-11-05)*. A word list in the scheduler for "this question is a
+  credential need" misread "physical access to the test board" as a
+  credential request and sent a question only the maintainer could answer
+  back to the stage. Whether a request-less capability question is one of
+  the three needs is a judgement, and the question check is the stage that
+  already makes judgements about questions; the scheduler keeps only the
+  check it can make exactly, that a request the stage did write is
+  complete.
 - **Alerts are one-way.** Spec 007 made questions a conversation; a `funds`
   refusal or a cap alert needs nothing back through the system (the
   maintainer acts with the command line or the console), so the
@@ -559,27 +677,37 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   `shims.ts` (the per-run shim directory, AC-3), `check.ts` (checks, probes,
   the `credential_expiry` producer, AC-4, AC-5), `commands.ts` (`cred set`,
   `list`, `check`, `import`, `remove`, `exec`, AC-3, AC-4).
-- `tools/scheduler/src/contacts/`: `gate.ts` (`checkContact`,
+- `tools/scheduler/src/contacts/`: `gate.ts` (`checkContact`, `classifyGh`,
   `contacts/parties.json`, AC-11), `commands.ts` (AC-12), `approve.ts` (the
   answer handling of AC-8).
 - `tools/scheduler/src/notify/telegram.ts`: `TelegramNotifier` (AC-9);
-  `src/telegram/questions.ts`: request rendering and the fixed keyboards
-  (AC-7), the alert-reply response (AC-10); `src/telegram/poller.ts`:
-  alert message ids kept so replies to them are recognised.
-- `tools/scheduler/src/chain/driver.ts` and `src/chain/question.ts`: the
-  request in the comment (AC-7), the pre-resume step of AC-8;
-  `src/decide/` (the question check's input and the `decide_yourself`
-  reason of AC-6).
-- `tools/scheduler/src/actions/`: `renew-credential.ts` (AC-14),
-  `contact-refused` log entries (AC-11); `agents/actions.yaml` gains
-  `renew_credential` (AC-16: nothing for AWS).
+  `src/notify/log.ts` and `src/notify/types.ts`: `channel` on the log line
+  (AC-9); `src/telegram/questions.ts`: request rendering and the fixed
+  keyboards (AC-7), the alert-reply response (AC-10); `src/telegram/answers.ts`:
+  the outcome of AC-8; `src/telegram/poller.ts`: alert message ids kept so
+  replies to them are recognised; `src/telegram/credentials.ts` and
+  `src/service/telegram-start.ts`: the bot token read from the store once
+  `telegram-bot` is set, else from `telegram.credentials_path` (AC-3, AC-4).
+- `tools/scheduler/src/chain/driver.ts`, `src/chain/question.ts` and
+  `src/chain/machine.ts`: the request in the comment (AC-7), the pre-resume
+  step of AC-8, the completeness check before the question check (AC-6);
+  `src/decide/request.ts` (the completeness check and its reason, AC-6)
+  and `src/decide/client.ts` (the request in the question check's input).
+- `tools/scheduler/src/actions/`: `renew-credential.ts` (AC-14), `index.ts`
+  (the kind registered), `contact-refused` log entries (AC-11);
+  `agents/actions.yaml` gains `renew_credential` (AC-16: nothing for AWS).
 - `tools/scheduler/src/runner/credentials.ts` and `src/runner/run.ts`: the
-  shim directory first on `PATH`, the App key from the store (AC-3);
-  `src/standing/run.ts`: credentials for standing agents, the `warnings` of
-  a `credential-check-result` applied as notifications (AC-13), and the
-  `cred check` run before the credential check's input is built.
+  shim directory first on `PATH`, `PANELATOR_SCHEDULER` in the environment,
+  the App key from the store (AC-3, AC-11); `src/standing/run.ts` and
+  `src/standing/registry.ts`: credentials for standing agents, the
+  `warnings` of a `credential-check-result` applied as notifications
+  (AC-13), the `cred check` run before the credential check's input is
+  built; `src/standing/credential-check-input.ts` and
+  `src/standing/infra-health-input.ts`: the two agents' inputs (AC-13,
+  AC-15), as `audit-input.ts` builds the audit's.
 - `tools/scheduler/src/profiles/resolve.ts`, `src/stages/definition.ts`,
-  `src/types.ts`: `credentials` replaces `credential_hook` (AC-2).
+  `src/types.ts`: `credentials` replaces `credential_hook` (AC-2); the
+  `Request` type and `request` on `Question` (AC-6).
 - `tools/scheduler/src/service/loop.ts` and `bin/scheduler.ts`: the hourly
   expiry step, the `TelegramNotifier` wiring in the order AC-9 fixes, the
   `channel` on the notification's log line (AC-5, AC-9).
@@ -590,9 +718,12 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   `schemas/scheduler/question-log-entry.json`: `request` on the entry and
   `outcome` on its answer record (AC-7, AC-8). No event store file: spec
   026's `maintainer.contact` additions are the follow-up spec's.
+- `tools/scheduler/src/schema/validate.ts`: the new schemas registered.
 - `tools/scheduler/bin/gh`: the gate (AC-11); `bin/scheduler.ts`: the
-  `cred` and `contacts` commands.
-- `agents/credentials.yaml` (AC-2); `agents/profiles/*/profile.yaml`:
+  `cred`, `contacts` and `contacts gate` commands.
+- `agents/credentials.yaml` (AC-2); the four profiles
+  `agents/profiles/backend/profile.yaml`, `agents/profiles/design/profile.yaml`,
+  `agents/profiles/security/profile.yaml` and `agents/profiles/spec/profile.yaml`:
   `credentials` in place of `credential_hook`; `agents/standing/credential-check.md`
   and `agents/standing/infra-health.md` (AC-13, AC-15);
   `agents/stages/question-check.md`: the request requirement (AC-6);
@@ -600,23 +731,34 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   one paragraph on the `request` object a credential, funds or first-contact
   question must carry, and that a refused `gh` call means "ask first".
 - `schemas/scheduler/`: `credential-catalogue.json`, `credential-index.json`,
-  `contacts.json`, `credential-check-result.json`, `question.json` (the
-  `request` object, shared by every stage's result schema and the paused
-  record), `standing-definition.json` and `profile.json` (`credentials`),
-  `action.json` (`renew_credential`).
+  `contacts.json`, `credential-check-result.json`,
+  `credential-check-input.json`, `infra-health-input.json`, `question.json`
+  (the `request` object, shared by every stage's result schema and the
+  paused record), `standing-definition.json` and `profile.json`
+  (`credentials`), `action.json` (`renew_credential`).
 - `tools/scheduler/test/`: `credentials.test.ts` (store, catalogue checks,
   shims, commands, expiry producer, secrets never logged, AC-1 to AC-5),
-  `contacts.test.ts` (gate, the `gh` shim refusals, approval, commands,
-  AC-8, AC-11, AC-12), `notify.test.ts` (the Telegram notifier, alert
-  replies, AC-9, AC-10), `question-check.test.ts` and `driver.test.ts`
-  (AC-6 to AC-8), `actions.test.ts` (`renew_credential`, AC-14), the
-  registry test over the two new agents, and the recorded runs of section 6
-  in `e2e.test.ts`; the fake `systemd-creds` under `test/helpers/`.
+  `contacts.test.ts` (the shim run under `sh` with the forms of AC-11,
+  `classifyGh`, approval, commands, AC-8, AC-11, AC-12), `notify.test.ts`
+  (the Telegram notifier, alert replies, AC-9, AC-10), `request.test.ts`,
+  `decide.test.ts` and `driver.test.ts` (AC-6 to AC-8), `actions.test.ts`
+  (`renew_credential`, AC-14), `telegram.test.ts` (rendering, keyboards,
+  the alert reply), `standing.test.ts` and the registry test over the two
+  new agents, `profiles.test.ts` and `schema.test.ts` (`credentials`, the
+  new schemas), `loop.test.ts` (the hourly step, the notifier wiring), and
+  the recorded runs of section 6 in `e2e.test.ts` with
+  `test/helpers/e2e-routes.ts`; the fake `systemd-creds` and the recording
+  fake `gh` under `test/helpers/`.
 - `tools/README.md`: the `cred` and `contacts` commands, the `credentials`
   block, the catalogue (documentation of the tool, in its own package).
 
-No file outside `tools/scheduler/`, `agents/`, `schemas/scheduler/` and
-`dev-logs/` is changed by the implementation except `tools/README.md`.
+This list is the implementation's file scope. The plan stage copies it, and
+may add a file under `tools/scheduler/`, `agents/` or `schemas/scheduler/`
+that the build turns out to need, naming it in the plan; the scope check of
+the implement stage compares the diff with the plan, so a file is added to
+the plan, not left for the diff to reveal. No file outside `tools/scheduler/`,
+`agents/`, `schemas/scheduler/` and `dev-logs/` is changed by the
+implementation except `tools/README.md`.
 `tools/scheduler/` and `agents/` are sensitive paths, so the security review
 runs on the PR as spec 006 AC-9 says. Nothing here changes the sensitive-path
 list, the security criteria, or what routes a sensitive diff to the security
@@ -639,7 +781,11 @@ review.
     first-contact question approved by button, the party registered, a `gh
     issue create -R other/repo` from the resumed stage going through, and
     the same call refused before approval with one `contact_refused` log
-    entry; an `infra` notification (spec 015 AC-8's outage) delivered to the
+    entry; the shim-level table of AC-11 (every refused form with one log
+    row and no call, every allowed form reaching the fake `gh` unchanged),
+    run through `bin/gh` itself; a capability question with no `request`
+    about physical access to the test board reaching the question check
+    untouched by the scheduler (AC-6); an `infra` notification (spec 015 AC-8's outage) delivered to the
     chat headed by its gate and label and logged with `channel: telegram`,
     and the same with the fake Telegram refusing, logged once with `channel:
     log`; a reply to an alert answered "alerts take no reply"; the
