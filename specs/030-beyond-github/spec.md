@@ -412,10 +412,13 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
     `cred set`, `cred check`, the credential check's input and the "Done"
     answer of AC-8, none of them a stage), so the shim never finds it unset
     in a spawn the system makes itself. The shim runs `panelator-scheduler contacts gate -- "$@"`
-    for every invocation in which any argument contains a `/`: every way of
-    naming a repository (`owner/repo`, a URL, an API path) does, so no shell
-    pattern over subcommands is needed and none is written. Given
-    `PANELATOR_SCHEDULER` is unset and an argument contains a `/`, then the
+    for every invocation in which any argument contains a `/` or the text
+    `graphql`: every way of naming a repository (`owner/repo`, a URL, an API
+    path) contains a `/`, and the one that names none, the GraphQL API
+    (`gh api graphql`, the path in any position), contains `graphql`, so no
+    shell pattern over subcommands is needed and none is written. Given
+    `PANELATOR_SCHEDULER` is unset and an argument contains a `/` or
+    `graphql`, then the
     shim exits 1 saying the gate is unavailable, as it exits today when
     `token.json` has no token. An invocation with no `/` in any argument is
     passed to `gh` unchanged.
@@ -455,6 +458,19 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
     against the configured repository a call to `pnpm`. The flag itself still
     counts for the body-flag test above. The repository a call acts on is
     always a separate token (`-R`, a selector, an API path).
+  - **GraphQL names no repository, so a write through it is refused.** A
+    mutation reaches any repository by node id (`addComment`, `createIssue`
+    with a `repositoryId` from an earlier read), so the gate cannot place
+    it. A `gh api graphql` call (a token equal to `graphql`, in any
+    position) that sets a method other than `GET` or carries a body flag
+    (`-f`, `-F`, `--field`, `--raw-field`, `--input`, attached forms
+    included; the query itself is passed in one) is treated as a write to a
+    repository the gate cannot name: it is refused, whatever
+    `first_contact_needs_approval` and the approved parties say, with text
+    saying to use the REST path (`repos/<owner>/<repo>/...`) so that the
+    party can be checked. A `gh api graphql` call with no body flag and no
+    method stays allowed as a read. A query sent as a body flag is
+    therefore refused too; reading the repository id is done with REST.
   - **Everything else naming another repository is a write.** The gate
     calls `checkContact` with `github:<owner>` of the first other
     repository referenced and, when refused, the shim exits 1 with the text
@@ -480,7 +496,8 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   `gh api --jq .number -X POST repos/other/repo/issues -f title=x`,
   `gh api repos/other/repo/issues -f title=x` (a body and no method),
   `gh api -ftitle=x repos/other/repo/issues`, `gh api https://api.github.com/repos/other/repo/issues -X POST`,
-  `gh repo fork other/repo`; allowed, reaching the fake unchanged, with no
+  `gh repo fork other/repo`, `gh api graphql -f query='mutation{addComment(input:{subjectId:"I_kwDOxxxx",body:"hi"}){clientMutationId}}'`
+  (no `/` in any argument), `gh api graphql -F query=@q.graphql`; allowed, reaching the fake unchanged, with no
   row: `gh api -X POST repos/{owner}/{repo}/issues/39/comments -f body=x`,
   the same with `:owner/:repo` and with the configured repository spelled
   out in another case, `gh issue create -R <configured repo> -t x -b y`,
@@ -492,7 +509,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   `gh issue view -R other/repo 1`, `gh api repos/other/repo/issues`,
   `gh api -H "Accept: application/vnd.github+json" repos/other/repo`,
   `gh pr view https://github.com/other/repo/pull/5`, `gh repo clone other/repo`,
-  `gh api /app`, `gh pr list`, `gh auth status`; and `gh issue create -R
+  `gh api graphql` with no body flag and no method, `gh api /app`, `gh pr list`, `gh auth status`; and `gh issue create -R
   other/repo` going through after an approval of AC-8. A new form found
   later is added to this list in the implementing PR, not argued over.
 - AC-12. **Approved parties are visible and only the maintainer removes
