@@ -76,6 +76,23 @@ describe("TelegramNotifier (spec 030 AC-9, AC-10)", () => {
     const lines = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(lines.map((l) => l.channel)).toEqual(["telegram", "log", "log"]);
   });
+  it("answers a reply to an alert with `Alerts take no reply` and matches it to no question (AC-10)", async () => {
+    const { TelegramAnswers } = await import("../src/telegram/answers.ts");
+    const { statePaths, ensureStateDirs } = await import("../src/state/paths.ts");
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { dirname } = await import("node:path");
+    const paths = statePaths(mkdtempSync(join(tmpdir(), "notify-reply-")));
+    await ensureStateDirs(paths);
+    mkdirSync(dirname(paths.telegramAlerts), { recursive: true });
+    writeFileSync(paths.telegramAlerts, JSON.stringify([101]));
+    const replies: { text: string; to?: number }[] = [];
+    const telegram = { sendReply: async (text: string, to?: number) => { replies.push({ text, to }); return 1; }, answerCallback: async () => {} };
+    const answers = new TelegramAnswers({ paths, telegram } as never, () => {});
+    await answers.handle({ update_id: 1, message: { message_id: 55, text: "approve", reply_to_message: { message_id: 101 } } } as never);
+    expect(replies).toHaveLength(1);
+    expect(replies[0].text).toMatch(/^Alerts take no reply\./);
+    expect(replies[0].to).toBe(55);
+  });
   it("LogNotifier writes channel log by default", async () => {
     const p = join(mkdtempSync(join(tmpdir(), "notify-")), "s.log");
     await new LogNotifier(p).notify(n);
