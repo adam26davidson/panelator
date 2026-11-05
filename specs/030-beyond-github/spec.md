@@ -406,7 +406,12 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   tokens")*:
   - **Which calls reach the gate.** The runner sets `PANELATOR_SCHEDULER`
     (the scheduler's entry point) in every stage's and standing agent's
-    environment. The shim runs `panelator-scheduler contacts gate -- "$@"`
+    environment, and the scheduler sets it in the environment of every
+    `check`, `expiry.probe` and `renew` spawn of AC-2 and AC-14
+    (`github-app-key`'s `gh api /app` contains a `/` and is run from
+    `cred set`, `cred check`, the credential check's input and the "Done"
+    answer of AC-8, none of them a stage), so the shim never finds it unset
+    in a spawn the system makes itself. The shim runs `panelator-scheduler contacts gate -- "$@"`
     for every invocation in which any argument contains a `/`: every way of
     naming a repository (`owner/repo`, a URL, an API path) does, so no shell
     pattern over subcommands is needed and none is written. Given
@@ -438,10 +443,18 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
     `--input`, as a token or attached as `-f<value>`). The group and the
     verb are the first two tokens of `argv`; given either starts with `-`,
     then the verb is unknown and the call is not a read. No token is
-    skipped as "a flag's value": every token is scanned for the shapes
-    above, so a header, a `--jq` program or a `--hostname` before an API
-    path never displaces the path, because the path is found by its shape,
-    not by its position.
+    skipped as "a flag's value" except the free-text values below: every
+    other token is scanned for the shapes above, so a `--hostname` before an
+    API path never displaces the path, because the path is found by its
+    shape, not by its position. **Free text is not a repository
+    reference.** The values of `-b`/`--body`, `-t`/`--title`, `-f`/`-F`/`--field`/`--raw-field`
+    (the text after the first `=`), `-H`/`--header`, `-q`/`--jq` and
+    `--template` (`-t` on `gh api`), whether the next token, after `=`, or
+    attached (`-bx`, `--body=x`, `-ftitle=x`), are never scanned, so a body
+    quoting `https://github.com/pnpm/pnpm/issues/1234` does not make a call
+    against the configured repository a call to `pnpm`. The flag itself still
+    counts for the body-flag test above. The repository a call acts on is
+    always a separate token (`-R`, a selector, an API path).
   - **Everything else naming another repository is a write.** The gate
     calls `checkContact` with `github:<owner>` of the first other
     repository referenced and, when refused, the shim exits 1 with the text
@@ -472,6 +485,10 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   the same with `:owner/:repo` and with the configured repository spelled
   out in another case, `gh issue create -R <configured repo> -t x -b y`,
   `gh pr comment https://github.com/<configured repo>/pull/5 --body x`,
+  `gh pr create -t "spec 030" -b "Fixes https://github.com/pnpm/pnpm/issues/1234"`,
+  `gh pr comment 148 --body "see https://github.com/other/repo/pull/5"`, the
+  `{owner}/{repo}` form above with `-f body=https://github.com/other/repo/pull/5`,
+  and `gh api -H "Accept: x/y" repos/{owner}/{repo}/pulls`,
   `gh issue view -R other/repo 1`, `gh api repos/other/repo/issues`,
   `gh api -H "Accept: application/vnd.github+json" repos/other/repo`,
   `gh pr view https://github.com/other/repo/pull/5`, `gh repo clone other/repo`,
