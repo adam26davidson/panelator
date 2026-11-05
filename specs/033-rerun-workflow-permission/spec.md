@@ -1,14 +1,13 @@
-# 032. The App's `actions` permission matches the `rerun_workflow` action
+# 033. The App's `actions` permission matches the `rerun_workflow` action
 
-Status: draft 2026-11-05 from the delivery-system design for issue #53;
+Status: written 2026-11-05 from the delivery-system design for issue #53;
 specs derived from that design need no maintainer approval (design section
-11). Awaiting the maintainer's answer to a capability question (design
-section 3, item 3): whether the installed GitHub App is granted `actions:
+11). The spec stage asked the maintainer, as a capability question (design
+section 3, item 3), whether the installed GitHub App is granted `actions:
 write`, which the `rerun_workflow` action of spec 008 needs and spec 001
-section 12 does not grant. The acceptance criteria below are written for the
-recommended answer (grant); the spec stage rewrites them in `record` mode if
-the answer differs, and records the answer as an ADR under `docs/decisions/`
-either way (process-spec 4.2 step 3).
+section 12 does not grant; the maintainer granted it on 2026-11-05
+*(maintainer answer, question #6660544631)*, recorded in
+[ADR 0006](../../docs/decisions/0006-app-actions-write-for-rerun-workflow.md).
 Class: tooling. Domain: backend.
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
@@ -21,6 +20,8 @@ exact access needed and gives step-by-step setup; least privilege);
 cancels it) and AC-9 (the action log and its `failed` status);
 [001-scheduler-core](../001-scheduler-core/spec.md) section 12 (the App's
 permission list, the record of what the installed App may do);
+[ADR 0006](../../docs/decisions/0006-app-actions-write-for-rerun-workflow.md)
+(the maintainer's grant of `actions: write`, the decision this spec carries);
 [030-beyond-github](../030-beyond-github/spec.md) AC-2 (the credential
 catalogue's `github-app-key` entry lists the App permissions of spec 001
 section 12).
@@ -56,10 +57,10 @@ installed App change together.
 
 ### The fix
 
-Granting the permission is the maintainer's action, outside any PR (design
-section 3 item 3), and is requested as a capability question with this spec.
-Once granted, this spec's implementation records the grant where readers
-look for it and proves the kind works end to end:
+Granting the permission was the maintainer's action, outside any PR (design
+section 3 item 3); it was asked as a capability question and granted on
+2026-11-05 (ADR 0006). This spec's implementation records the grant where
+readers look for it and proves the kind works end to end:
 
 - spec 001 section 12 lists `actions (write)` with the reason, in the way
   commit 3fa5c69 recorded the `workflows (write)` grant;
@@ -99,9 +100,8 @@ and by the recorded commands of AC-3.
   permission list reads `checks (read), actions (write)` in place of `checks
   and actions (read)`, and the list is followed by one sentence stating that
   `actions (write)` serves the `rerun_workflow` action of spec 008 AC-8 (re-run
-  and cancel a workflow run) and naming the ADR under `docs/decisions/` that
-  records the maintainer's grant and its date. The diff of that file touches
-  section 12 only.
+  and cancel a workflow run) and naming ADR 0006 and the grant's date,
+  2026-11-05. The diff of that file touches section 12 only.
 - AC-2. **The kind names its permission.** Given `agents/actions.yaml`, then
   the `rerun_workflow` entry's `description` still states the once-per-day
   limit and adds that the kind needs the App's `actions: write` permission
@@ -117,7 +117,9 @@ and by the recorded commands of AC-3.
   `gh api -i -X POST /repos/{owner}/{repo}/actions/runs/{run_id}/cancel`
   answering `202`. Given either answers `403`, then the grant is not live:
   the PR is not opened, and the stage reports the status it saw so the
-  question's answer can be checked. The scheduler itself is not run against
+  grant of ADR 0006 can be checked (the scheduler's token is refreshed every
+  50 minutes, so a grant accepted minutes earlier may not be on the token
+  yet; the stage waits for the next refresh before calling it a failure). The scheduler itself is not run against
   the live repository for this proof.
 - AC-4. **The credential catalogue agrees, when it exists.** Given
   `agents/credentials.yaml` (spec 030 AC-2) exists on `main` when this spec is
@@ -148,10 +150,10 @@ files:
 - `agents/credentials.yaml`: the `github-app-key` access list, only if the
   file exists on `main` (AC-4).
 
-The spec PR itself adds `specs/032-rerun-workflow-permission/spec.md`, the
-ADR under `docs/decisions/` that records the maintainer's answer (written in
-`record` mode, carrying the `(maintainer answer, question #<id>)` mark), and
-the `## Children` bullet in `docs/delivery-system-design.md`.
+The spec PR itself adds `specs/033-rerun-workflow-permission/spec.md`,
+`docs/decisions/0006-app-actions-write-for-rerun-workflow.md` (the
+maintainer's answer, carrying its `(maintainer answer, question #<id>)`
+mark), and the `## Children` bullet in `docs/delivery-system-design.md`.
 
 `specs/001-scheduler-core/spec.md` is a sensitive path (listed in
 `agents/sensitive-paths.txt`), so the security review runs on the
@@ -173,7 +175,7 @@ keeping AC-1's content):
 > workflows (write), checks (read), actions (write), metadata (read),
 > repository security advisories (write) for spec 004. `actions (write)`
 > serves the `rerun_workflow` action of spec 008 AC-8 (re-run and cancel a
-> workflow run); the maintainer granted it on <date> (ADR <number>).
+> workflow run); the maintainer granted it on 2026-11-05 (ADR 0006).
 
 ## 5. Verification
 
