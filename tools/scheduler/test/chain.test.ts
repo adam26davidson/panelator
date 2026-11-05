@@ -560,6 +560,18 @@ describe("chain: spec stage and spec track (AC-4, AC-19, AC-21, AC-22)", () => {
     expect(r.state).toMatchObject({ fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, specProblem: null, answer: null, answerQuestionId: null, answerKind: null });
     expect(r.actions.some((a) => a.type === "done" || a.type === "label")).toBe(false);
   });
+  it("a split (README.md pointer and a merged design) closes the issue and ends done instead of escalating (spec 031 AC-9)", () => {
+    const split = { type: "merge_result" as const, status: "merged" as const, specGate: { ok: false as const, gate: "spec-present" as const, reason: "specs/011-split/spec.md not found on main", specDirReadme: true, designTouched: true, design: "docs/designs/split.md" } };
+    const r = transition(at("merge", { track: "spec", pr: pr8 }), split);
+    expect(r.state).toMatchObject({ stage: "done", pr: null, heldWork: null, pendingAnswer: null });
+    expect(types(r.actions)).toEqual(["delete_branch", "close_issue", "label", "done"]);
+    expect(r.actions[1]).toMatchObject({ type: "close_issue", comment: expect.stringContaining("docs/designs/split.md") });
+    expect(r.actions[2]).toEqual({ type: "label", add: [], remove: ["in-progress"] });
+    for (const gate of [{ ...split.specGate, specDirReadme: false }, { ...split.specGate, designTouched: false }]) {
+      const e = transition(at("merge", { track: "spec", pr: pr8 }), { ...split, specGate: gate });
+      expect(e.state).toMatchObject({ stage: "spec", specMode: "write" });
+    }
+  });
   it("after a spec-track merge, a spec-present failure reruns the spec stage within bounds and a UI failure parks the issue (AC-4)", () => {
     const failed = { type: "merge_result" as const, status: "merged" as const, specGate: { ok: false as const, gate: "spec-present" as const, reason: "spec lacks a Parent: line" } };
     const r1 = transition(at("merge", { track: "spec", pr: pr8 }), failed);

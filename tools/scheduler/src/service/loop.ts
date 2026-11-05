@@ -34,6 +34,8 @@ import type { ServiceLog } from "./log.ts";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import type { StatePaths } from "../state/paths.ts";
 import { schedulerChanged } from "./git.ts";
+import { fileDesignChildren } from "../children/scan.ts";
+import { loadDesignTree } from "../gates/design-tree.ts";
 
 export interface SchedulerDeps extends DriverDeps {
   registry?:Record<string,StandingDefinition>;
@@ -48,6 +50,8 @@ export interface SchedulerDeps extends DriverDeps {
   requestRestart: () => void;
   /** I3: rewrites token.json now; the 50-minute timer does not fire across a laptop sleep. */
   refreshToken?: () => Promise<void>;
+  /** Spec 031 AC-3: the children scan; defaults to fileDesignChildren over the designs of the checked-out main. */
+  scanChildren?: () => Promise<unknown>;
 }
 
 /** I3: a token this close to expiry is refreshed at the start of a tick. */
@@ -107,6 +111,7 @@ export class Scheduler {
   #stopReason = "";
   #ticking = false;
   #restartPending = false;
+  #firstTick = true;
   /** Spec 016: the kind of the last running slot granted; a standing agent goes first after a start. */
   #lastGrant: "standing" | "chain" = "chain";
   #questionOperation:Promise<unknown>=Promise.resolve();
@@ -447,15 +452,39 @@ export class Scheduler {
       if(d.registry && d.parameters)await initializeAgents(d.paths,d.registry,d.parameters,d.now());
       const token = await readToken(d.paths).catch(() => null);
       if (token && new Date(token.expires_at).getTime() - d.now().getTime() < TOKEN_REFRESH_MARGIN_MS) await this.#refreshToken();
+      let mainMoved = false;
+      let fresh = false;
       try {
         await d.fetchOrigin();
         const ff = await d.fastForward();
+        fresh = true;
+        mainMoved = ff.moved;
         if (ff.moved && schedulerChanged(ff.changedPaths)) {
           this.#restartPending = true;
           info.restartPending = true;
         }
       } catch (e) {
         info.errors.push(`freshness: ${(e as Error).message}`);
+      }
+      // Spec 031 AC-3: the first tick after start and every move of main; a failure waits for the next move, never stops the tick.
+      if (fresh && (this.#firstTick || mainMoved)) {
+        this.#firstTick = false;
+        try {
+          if (d.scanChildren) await d.scanChildren();
+          else
+            await fileDesignChildren({
+              gh: d.gh,
+              paths: d.paths,
+              botLogin: d.botLogin,
+              now: d.now,
+              log: (rec) => d.serviceLog.write(rec),
+              designs: loadDesignTree(d.repoDir),
+            });
+        } catch (e) {
+          const error = (e as Error).message;
+          info.errors.push(`children scan: ${error}`);
+          d.serviceLog.write({ kind: "children-scan-failed", error });
+        }
       }
       if(d.registry && Object.keys(d.registry).length)try {
         const sha=execFileSync('git',['rev-parse','origin/main'],{cwd:d.repoDir,encoding:'utf8'}).trim();

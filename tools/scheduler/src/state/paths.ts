@@ -35,6 +35,8 @@ export interface StatePaths {
   contactParties: string;
   /** Spec 030 AC-5: the day each credential_expiry was last emitted. */
   credentialExpiryEmitted: string;
+  /** Spec 031 AC-4: consecutive scans on which a planned child could not be filed. */
+  childrenFailures: string;
 }
 
 export function statePaths(root: string): StatePaths {
@@ -67,9 +69,10 @@ export function statePaths(root: string): StatePaths {
     designRelabelled: join(root, "design", "relabelled.json"),
     contactParties: join(root, "contacts", "parties.json"),
     credentialExpiryEmitted: join(root, "credentials", "expiry-emitted.json"),
+    childrenFailures: join(root, "children", "failures.json"),
   };
 }
 
 export async function ensureStateDirs(p: StatePaths): Promise<void> {
-  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.contactParties), dirname(p.credentialExpiryEmitted), p.agents]) await mkdir(d, { recursive: true });
+  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.contactParties), dirname(p.credentialExpiryEmitted), dirname(p.childrenFailures), p.agents]) await mkdir(d, { recursive: true });
 }

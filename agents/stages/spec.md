@@ -66,6 +66,36 @@ The question check sent this back for you to decide: {{decide_input}}
 - `record`: the maintainer answered {{question}} with {{answer}}. Record the answer as
   below, then bring the spec in line with it.
 
+**A design's breakdown.** When you author a design (under `docs/designs/`) or revise one,
+the design's `## Children` section is its breakdown: every part of the design is covered by
+exactly one child, existing or planned, and no part by two. A child whose spec exists is a
+file bullet (`` - `specs/NNN-<slug>/spec.md` ``), a child whose spec does not exist yet is a
+planned bullet, never both:
+
+```
+- planned: <slug>
+  title: one line, the issue title
+  brief: one paragraph: what the child covers and what it leaves to its siblings, in enough
+    detail that a spec stage can write the spec from it and the design
+  after: sibling-slug, specs/NNN-other/spec.md
+  class: class:tooling
+  issue: #<n>
+```
+
+`title:` and `brief:` are required. Set `after:` only when a child cannot be built before a
+sibling merges. `class:` and `issue:` are optional (`issue:` only for an issue that already
+exists). The scheduler, not you, files one issue per planned child when the design merges;
+do not file issues or number the children's specs. When a child's spec is written, its spec
+PR replaces the planned bullet with the file bullet, keeping `(issue #<n>)`.
+
+**A split.** When the work of the issue turns out to be several parts that each need their
+own spec, do not write one large spec. In the one spec PR, write the sub-design under
+`docs/designs/` with its planned children (at least two), a `README.md` in the spec's
+directory (the path of the issue's `Spec:` line) that points to the sub-design, and an ADR
+under `docs/decisions/` when the split is itself a decision. List the sub-design in its
+parent's `## Children`. When that PR merges the scheduler files the children and closes
+this issue; the work continues in the children's issues.
+
 **Recording a maintainer answer.** Whenever a maintainer answer is present (in any mode),
 write it where it belongs: a product answer into `docs/product-spec.md` or the top design
 it belongs to (`docs/product-spec.md` or `docs/delivery-system-design.md`); a technical

@@ -64,6 +64,8 @@ export interface IssueData {
   labels: string[];
   labelEvents: LabelEvent[];
   createdAt: string;
+  /** Set by the GitHub client on every listing; absent on the literals gates build from a claim. */
+  state?: "open" | "closed";
 }
 
 export type SpecMode = "write" | "answer" | "revise" | "decide" | "record";

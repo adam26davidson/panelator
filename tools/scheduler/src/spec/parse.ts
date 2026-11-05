@@ -135,17 +135,93 @@ function findChildrenSection(lines: string[]): [number, number] | null {
   return [start, end];
 }
 
-/** The repo-relative paths on `- ` bullets under `## Children`; null when the heading is absent. */
+/** The repo-relative paths of the file children on `- ` bullets under `## Children`; null when the heading is absent. */
 export function parseChildren(text: string): string[] | null {
+  const entries = parseChildEntries(text);
+  if (!entries) return null;
+  return entries.filter((e) => e.kind === "file").map((e) => e.path!);
+}
+
+/** One bullet of a `## Children` section (spec 031 AC-1). */
+export interface ChildEntry {
+  kind: "file" | "planned";
+  /** File child: the repo-relative path. */
+  path?: string;
+  /** Planned child: the slug as written (validated by the design-tree check). */
+  slug?: string;
+  title?: string;
+  brief?: string;
+  after: string[];
+  /** The `class:` value as written. */
+  class?: string;
+  /** The recorded issue number. */
+  issue?: number;
+  /** The `issue:` value when it is not `#<n>`. */
+  issueRaw?: string;
+  /** A planned bullet missing `title:` or `brief:`. */
+  error?: string;
+  /** 0-based line within the text. */
+  line: number;
+}
+
+const PLANNED_BULLET = /^-\s+planned:\s*(\S*)\s*$/;
+const KEY_LINE = /^\s{2,}(title|brief|after|class|issue):\s*(.*?)\s*$/;
+
+/** Every bullet under `## Children`, file children and planned children; null when the heading is absent. */
+export function parseChildEntries(text: string): ChildEntry[] | null {
   const lines = text.split("\n");
   const range = findChildrenSection(lines);
   if (!range) return null;
-  const out: string[] = [];
-  for (const line of lines.slice(range[0] + 1, range[1])) {
-    const m = /^-\s+(?:`([^`\s]+)`|(\S+))/.exec(line);
-    if (m) out.push(m[1] ?? m[2]);
+  const out: ChildEntry[] = [];
+  let i = range[0] + 1;
+  while (i < range[1]) {
+    const line = lines[i]!;
+    const pm = PLANNED_BULLET.exec(line);
+    if (pm) {
+      const entry: ChildEntry = { kind: "planned", slug: pm[1], after: [], line: i };
+      const brief: string[] = [];
+      let inBrief = false;
+      i++;
+      while (i < range[1] && /^\s+\S/.test(lines[i]!)) {
+        const km = KEY_LINE.exec(lines[i]!);
+        if (km) {
+          inBrief = km[1] === "brief";
+          const v = km[2]!;
+          if (km[1] === "title") entry.title = v;
+          else if (km[1] === "brief") brief.push(v);
+          else if (km[1] === "after") entry.after = v.split(",").map((r) => r.trim()).filter(Boolean);
+          else if (km[1] === "class") entry.class = v;
+          else {
+            const n = /^#(\d+)$/.exec(v);
+            if (n) entry.issue = Number(n[1]);
+            else entry.issueRaw = v;
+          }
+        } else if (inBrief) brief.push(lines[i]!.trim());
+        i++;
+      }
+      const joined = brief.join(" ").replace(/\s+/g, " ").trim();
+      if (joined) entry.brief = joined;
+      const missing = [entry.title ? null : "title:", entry.brief ? null : "brief:"].filter(Boolean);
+      if (missing.length) entry.error = `missing ${missing.join(" and ")}`;
+      out.push(entry);
+      continue;
+    }
+    const m = /^-\s+(?:`([^`\s]+)`|(\S+))(.*)$/.exec(line);
+    if (m) {
+      const entry: ChildEntry = { kind: "file", path: m[1] ?? m[2], after: [], line: i };
+      const n = /\bissue #(\d+)/.exec(m[3] ?? "");
+      if (n) entry.issue = Number(n[1]);
+      out.push(entry);
+    }
+    i++;
   }
   return out;
+}
+
+/** `<slug>` for `specs/NNN-<slug>/spec.md`; null for any other path. */
+export function childSlugOfPath(path: string): string | null {
+  const m = /^specs\/\d+-([^/]+)\/spec\.md$/.exec(path);
+  return m ? m[1]! : null;
 }
 
 /** The text with the `## Children` section removed. */

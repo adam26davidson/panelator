@@ -19,3 +19,6 @@
    both reviews must approve, and that a sensitive path must be listed in the spec (security criterion 5
    names the current code). The protected decisions are those of security
    criterion 7; a verified answer is one the review input's cited-answers list marks verified.
+8. When the PR adds or changes a design's `## Children`, the breakdown fits the design: every part of the
+   design is covered by one child, no two children cover the same part, each planned child's brief is enough
+   to write a spec from, and each `after:` is justified by the design.

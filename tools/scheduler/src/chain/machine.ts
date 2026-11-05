@@ -575,6 +575,14 @@ function specMerged(state: ChainState, gate: PostMergeGate): Step {
   const after = (next: Step): Step => ({ state: next.state, actions: [deleteBranch, ...next.actions] });
   if (gate.ok) return proceedToPlan(state, fresh, after);
   if (gate.gate === "spec-present") {
+    // Spec 031 AC-9: a split. The stage wrote a sub-design with its children and a README.md pointer instead of a spec; its work now lives in the children's issues.
+    if (gate.specDirReadme && gate.designTouched) {
+      const comment = `The spec stage split this work into the design \`${gate.design ?? "docs/designs/"}\`, now merged. Its children are filed as issues by the scheduler from the design's \`## Children\` section, so this issue is closed.`;
+      return {
+        state: { ...state, ...fresh, stage: "done", pr: null, heldWork: null },
+        actions: [deleteBranch, { type: "close_issue", comment }, { type: "label", add: [], remove: [CLAIM_LABEL] }, { type: "done" }],
+      };
+    }
     return after(escalate({ ...state, pr: null, specProblem: gate.reason, specMode: "write" }, "spec", `spec-present failed after merge: ${gate.reason}`));
   }
   // Spec 029 AC-1: the UI design is missing on main, so the design stage runs with the gate's reason, on a fresh revision count.

@@ -28,14 +28,20 @@ export class GitHubClient {
 
   /** Full pagination, PRs dropped, count asserted against the GraphQL total (process-spec 6.4). */
   async listOpenIssues(): Promise<IssueData[]> {
+    return this.listIssues({ state: "open" });
+  }
+
+  /** The repository's issues in the given state(s), listed as listOpenIssues does (spec 031 AC-3). `labelEvents: false` skips the timeline call per issue, for callers that do not read it. */
+  async listIssues(opts: { state: "all" | "open" | "closed"; labelEvents?: boolean }): Promise<IssueData[]> {
+    const gqlStates = opts.state === "all" ? "OPEN,CLOSED" : opts.state.toUpperCase();
     // Right after a write the REST listing and the GraphQL total can briefly disagree (eventual
     // consistency, #26): re-list a bounded number of times, then fail loudly as before.
     let issues: Rec[] = [];
     for (let attempt = 0; ; attempt++) {
-      const raw = (await this.octokit.paginate("GET /repos/{owner}/{repo}/issues", { ...this.base, state: "open", per_page: 100 })) as Rec[];
+      const raw = (await this.octokit.paginate("GET /repos/{owner}/{repo}/issues", { ...this.base, state: opts.state, per_page: 100 })) as Rec[];
       issues = raw.filter((i) => !i.pull_request);
       const g = (await this.octokit.graphql(
-        `query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){issues(states:OPEN){totalCount}}}`,
+        `query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){issues(states:[${gqlStates}]){totalCount}}}`,
         this.base,
       )) as { repository: { issues: { totalCount: number } } };
       const total = g.repository.issues.totalCount;
@@ -51,8 +57,9 @@ export class GitHubClient {
         author: String(rec(i.user).login ?? ""),
         body: String(i.body ?? ""),
         labels: ((i.labels as unknown[]) ?? []).map((l) => (typeof l === "string" ? l : String(rec(l).name))),
-        labelEvents: await this.labelEvents(Number(i.number)),
+        labelEvents: opts.labelEvents === false ? [] : await this.labelEvents(Number(i.number)),
         createdAt: String(i.created_at),
+        state: String(i.state) === "closed" ? "closed" : "open",
       });
     }
     return out;
