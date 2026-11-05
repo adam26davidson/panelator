@@ -5,3 +5,8 @@ section 10. Every spec has a `Parent:` line naming its parent design, and that
 parent's `## Children` section lists the spec's path. Text marked
 `(maintainer answer, question #<id>)` records a maintainer decision: keep it as it is.
 When reviewing, judge only against the criteria file provided.
+A design's `## Children` section lists its breakdown: file children
+(`` - `specs/NNN-<slug>/spec.md` ``) and planned children, written `- planned: <slug>` followed by
+indented `title:`, `brief:` (a paragraph), and optionally `after:`, `class:` and `issue:` lines. The
+scheduler files one issue per planned child when the design merges; a spec's PR replaces its planned
+bullet with the file bullet.
