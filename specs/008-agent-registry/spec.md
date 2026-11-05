@@ -482,7 +482,10 @@ records as chain stages.
   open issues by label and by author (full pagination, process-spec 6.4),
   search open issues for a body marker, close an issue with a comment, remove
   a label, list check runs for a SHA, re-run and cancel a workflow run,
-  create a draft repository security advisory.
+  list the repository's draft security advisories and find the one whose
+  description carries a marker (run before the creation so a retried
+  advisory, AC-22, is not created twice), create a draft repository
+  security advisory.
 - `tools/scheduler/bin/scheduler.ts`: the `agent`, `action` and `param`
   commands (AC-6, AC-10, AC-17).
 - `agents/standing/findings-filer.md` and `agents/standing/action-audit.md`
