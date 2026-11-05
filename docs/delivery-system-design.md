@@ -506,3 +506,4 @@ are stale and are corrected as part of B.
 - `specs/025-filer-results-and-wakes/spec.md`
 - `specs/029-design-stage/spec.md`
 - `specs/030-beyond-github/spec.md`
+- `specs/031-design-files-children/spec.md`
