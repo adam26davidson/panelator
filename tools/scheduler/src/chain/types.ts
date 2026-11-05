@@ -99,7 +99,7 @@ export type ChainEvent =
   /** `at`: when the checks were read; `pending`: the required checks still pending or missing. */
   | { type: "checks"; status: "green" | "failed" | "pending"; log?: string; sensitive: boolean; at: string; pending?: string[] }
   /** `specGate`: on the spec and design tracks, spec-present and the UI-design gate run again on origin/main after the merge (AC-4). */
-  | { type: "merge_result"; status: "merged" | "not_mergeable"; detail?: string; specGate?: { ok: true } | { ok: false; gate: "spec-present" | "ui-design"; reason: string } }
+  | { type: "merge_result"; status: "merged" | "not_mergeable"; detail?: string; specGate?: { ok: true } | { ok: false; gate: "spec-present" | "ui-design"; reason: string; /** Spec 031 AC-9: the spec directory holds a README.md on main. */ specDirReadme?: boolean; /** Spec 031 AC-9: the merged diff changed a design under docs/designs/ listing at least two children; its path is in `design`. */ designTouched?: boolean; design?: string } }
   | { type: "rebase_conflict"; detail: string }
   /** Spec 024: before a conflict-pending fix runs, the driver found origin/main no longer conflicts with the head. Valid only in that fix. */
   | { type: "conflict_gone" }
@@ -124,6 +124,8 @@ export type Action =
   /** Carries the PR and its branch: the new state has already dropped the PR when the driver applies it (review focus 6). */
   | { type: "close_pr"; pr: number; branch: string; comment: string }
   | { type: "delete_branch"; branch: string }
+  /** Spec 031 AC-9: comments on the issue, then closes it. */
+  | { type: "close_issue"; comment: string }
   | { type: "finding"; stage: AgentStageName; finding: Finding }
   | { type: "pause"; question: Question; asking: AskingStage }
   | { type: "rerun_checks"; sha: string };

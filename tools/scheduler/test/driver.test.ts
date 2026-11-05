@@ -1138,6 +1138,56 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     expect(inputOf(paths, "7-spec-")).toMatchObject({ mode: "write", spec_problem: "specs/011-gone/spec.md not found on main" });
   }, 60_000);
 
+  describe("a split spec merged (spec 031 AC-9)", () => {
+    const design = "Parent: docs/delivery-system-design.md\n\n## Children\n\n- planned: a\n  title: A\n  brief: Part a.\n- planned: b\n  title: B\n  brief: Part b.\n  after: a\n";
+    const splitFiles = { "docs/designs/split.md": design, "specs/011-split/README.md": "This spec was split: see docs/designs/split.md.\n" };
+    const onSplit7 = (pair: ReturnType<typeof repoPair>, wt: string) => {
+      git(wt, "checkout", "-q", "-b", "spec-7");
+      commitIn(wt, splitFiles, "spec work: a split");
+      git(wt, "push", "-q", "-u", "origin", "spec-7");
+      // The squash merge: the spec PR's content lands on main.
+      commitIn(pair.repo, splitFiles, "spec PR (squash)");
+      git(pair.repo, "push", "-q", "origin", "main");
+    };
+    const route = (sha: string) => ghRoutes(sha, { issueBody: "Spec: specs/011-split/spec.md", prs: { 12: { headRef: "spec-7", head: sha } } });
+
+    it("comments, closes the issue, removes the claim label, records a debt system merge and ends done", async () => {
+      const { deps, claim, gh, paths, sha } = await setup(() => ({}), route, onSplit7);
+      const c = at(claim, { stage: "merge", track: "spec", pr: { number: 12, head_sha: sha } });
+      await writeClaim(paths, c);
+      const r = await step(deps, c);
+      expect(r.status).toBe("ended");
+      expect(await readClaim(paths, 7)).toBeNull();
+      const w = writes(gh);
+      expect(w).toContain("PUT /repos/o/r/pulls/12/merge");
+      expect(w).toContain("DELETE /repos/o/r/git/refs/heads/spec-7");
+      expect(w.indexOf("POST /repos/o/r/issues/7/comments")).toBeLessThan(w.indexOf("PATCH /repos/o/r/issues/7"));
+      expect(w).toContain("DELETE /repos/o/r/issues/7/labels/in-progress");
+      const comment = gh.calls.find((x) => x.url === "/repos/o/r/issues/7/comments");
+      expect(JSON.stringify(comment?.body)).toContain("docs/designs/split.md");
+      const merges = readFileSync(join(paths.root, "merges.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+      expect(merges).toEqual([expect.objectContaining({ issue: 7, pr: 12, cls: "debt", work: "system" })]);
+    }, 60_000);
+
+    it("still reruns the spec stage without the README.md pointer, and without a design in the diff", async () => {
+      for (const files of [{ "docs/designs/split.md": design }, { "specs/011-split/README.md": "pointer\n" }] as Record<string, string>[]) {
+        const prepare = (pair: ReturnType<typeof repoPair>, wt: string) => {
+          git(wt, "checkout", "-q", "-b", "spec-7");
+          commitIn(wt, files, "spec work");
+          git(wt, "push", "-q", "-u", "origin", "spec-7");
+          commitIn(pair.repo, files, "spec PR (squash)");
+          git(pair.repo, "push", "-q", "origin", "main");
+        };
+        const { deps, claim, paths, sha } = await setup(() => ({ spec: [] }), route, prepare);
+        const c = at(claim, { stage: "merge", track: "spec", pr: { number: 12, head_sha: sha } });
+        await writeClaim(paths, c);
+        const r = await step(deps, c);
+        expect(r.claim.state).toMatchObject({ stage: "spec", specMode: "write" });
+        expect(existsSync(join(paths.root, "merges.jsonl"))).toBe(false);
+      }
+    }, 60_000);
+  });
+
   it("starts the design stage, not a park, when the UI-design gate fails after the spec merge (spec 029 AC-1)", async () => {
     const ui = "specs/011-ui/spec.md";
     const files = {

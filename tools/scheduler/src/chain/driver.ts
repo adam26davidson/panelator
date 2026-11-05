@@ -22,7 +22,7 @@ import {
 } from "../runner/worktree.ts";
 import { buildSelectContext } from "../shortlist/fetch.ts";
 import { specPathFromIssueBody } from "../spec/link.ts";
-import { parseSpec } from "../spec/parse.ts";
+import { parseChildEntries, parseSpec } from "../spec/parse.ts";
 import type { StageInput } from "../stages/prompt.ts";
 import { removeClaim, writeClaim, type Claim } from "../state/claims.ts";
 import { appendFindings } from "../state/findings.ts";
@@ -864,7 +864,7 @@ async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> 
 }
 
 /** AC-4: after a spec PR merges, spec-present (with the parent checks) and the UI-design gate run again on origin/main. */
-async function specGateOnMain(deps: DriverDeps, claim: Claim): Promise<NonNullable<Extract<ChainEvent, { type: "merge_result" }>["specGate"]>> {
+async function specGateOnMain(deps: DriverDeps, claim: Claim, diffFiles: string[] = []): Promise<NonNullable<Extract<ChainEvent, { type: "merge_result" }>["specGate"]>> {
   await deps.fetchOrigin();
   const { title, body } = await fetchIssue(deps, claim.issue);
   const issue: IssueData = { number: claim.issue, title, author: "", body, labels: [], labelEvents: [], createdAt: "" };
@@ -872,7 +872,13 @@ async function specGateOnMain(deps: DriverDeps, claim: Claim): Promise<NonNullab
   const path = specPathFromIssueBody(body);
   const text = path ? ctx.readSpec(path) : null;
   const present = specPresentGate(issue, text, ctx.readSpec);
-  if (!present.ok) return { ok: false, gate: "spec-present", reason: present.reason };
+  if (!present.ok) {
+    // Spec 031 AC-9: tell the machine whether the stage split the work (a README.md pointer and a design with at least two children).
+    const dir = path ? path.replace(/\/[^/]*$/, "") : "";
+    const specDirReadme = !!path && ctx.readSpec(`${dir}/README.md`) !== null;
+    const design = diffFiles.filter((f) => f.startsWith("docs/designs/") && f.endsWith(".md")).find((f) => (parseChildEntries(ctx.readSpec(f) ?? "") ?? []).length >= 2);
+    return { ok: false, gate: "spec-present", reason: present.reason, specDirReadme, designTouched: design !== undefined, ...(design ? { design } : {}) };
+  }
   const ui = uiDesignGate(parseSpec(text ?? ""), ctx.listDesign(path ?? ""));
   if (!ui.ok) return { ok: false, gate: "ui-design", reason: ui.reason };
   return { ok: true };
@@ -892,7 +898,15 @@ async function mergeEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> {
   }
   await deps.emitEvent?.('merge',{issue:claim.issue,pr:pr.number,sha:pr.head_sha});
   // AC-4: a spec PR is not a feature or debt merge; the chain goes on after the gates on main.
-  if (claim.state.track === "spec" || claim.state.track === "design") return { type: "merge_result", status: "merged", specGate: await specGateOnMain(deps, claim) };
+  if (claim.state.track === "spec" || claim.state.track === "design") {
+    // The worktree still holds the spec branch here; its diff says whether a design was merged (spec 031 AC-9).
+    const diffFiles = claim.state.track === "spec" ? await diffFilesAgainstBase(claim.worktree).catch(() => [] as string[]) : [];
+    const specGate = await specGateOnMain(deps, claim, diffFiles);
+    if (!specGate.ok && specGate.gate === "spec-present" && specGate.specDirReadme && specGate.designTouched) {
+      await appendMerge(deps.paths, { issue: claim.issue, pr: pr.number, cls: "debt", work: "system", at: deps.now().toISOString() });
+    }
+    return { type: "merge_result", status: "merged", specGate };
+  }
   // The issue's labels give the merge record its class; no label refuses the merge (spec 006 AC-9).
   const labels = await deps.gh.issueLabels(claim.issue);
   const cls = classOf({ number: claim.issue, title: "", author: "", body: "", labels, labelEvents: [], createdAt: "" }, deps.cfg.labels);
@@ -1069,6 +1083,9 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         await deps.gh.deleteBranch(a.branch);
         break;
       }
+      case "close_issue":
+        await deps.gh.closeIssue(claim.issue, a.comment);
+        break;
       case "rerun_checks":
         await rerunChecks(deps, claim, a.sha);
         break;
