@@ -12,7 +12,7 @@ run_agent:
   description: Mark an agent due now.
 rerun_workflow:
   level: 1
-  description: Re-run a workflow at most once per day.
+  description: "Re-run a workflow at most once per day; needs the App's actions: write permission (spec 001 section 12)."
 undo:
   level: 1
   description: Reverse a recorded reversible action.

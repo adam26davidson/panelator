@@ -420,8 +420,11 @@ treated as stale.
 ## 12. GitHub App
 
 Permissions: issues (write), pull requests (write), contents (write), workflows
-(write), checks and actions (read), metadata (read), repository security advisories (write)
-for spec 004. Installation tokens expire after an hour, so the scheduler
+(write), checks (read), actions (write), metadata (read), repository security advisories (write)
+for spec 004. `actions (write)` serves the `rerun_workflow` action of spec 008
+AC-8 (re-run and cancel a workflow run); the maintainer granted it on
+2026-11-05 ([ADR 0006](../../docs/decisions/0006-app-actions-write-for-rerun-workflow.md)).
+Installation tokens expire after an hour, so the scheduler
 refreshes `token.json` every 50 minutes, and stages get a `gh` wrapper on
 `PATH` plus a git credential helper that read it; agents never handle
 tokens. Everything the pipeline files appears as the App's bot user, which
