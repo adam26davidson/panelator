@@ -89,11 +89,11 @@ into work:
   routes a sensitive diff to the security review. `tools/scheduler/`,
   `agents/` and `docs/delivery-system-design.md` are sensitive, so the
   security review runs on the implementation PR.
-- Any change to the delivery-system design other than its section 11 table,
-  the one sentence of section 10 that points at it, and its `## Children`
-  section (all tracking text under security criterion 7). Issue #103 asks
-  for the row E wording in the same two places; the migration of AC-11
-  supersedes that part of it and the finding on this spec says so.
+- Any change to the delivery-system design other than its section 11 table
+  (and the paragraph that replaces it, marked *(author's call)*) and its
+  `## Children` section (the parts security criterion 7 exempts). Section
+  10's sentence about specs A to G stays as it is; issue #103 or a
+  maintainer answer owns it.
 
 ## 3. Acceptance criteria
 
@@ -317,21 +317,14 @@ is re-triaged by the filer into a new issue, so it is not finished work)*.
   - section 11's table is replaced by a paragraph saying that the
     breakdown is the `## Children` section, where each child's row letter
     and issue are recorded, and that the scheduler files planned children
-    from it (this spec); the "Order" paragraph and the paragraph after the
-    table stay;
-  - section 10's sentence "This document's own children are specs A to G
-    below (F split into F1 and F2); E is expected to become a sub-design
-    (design stage, console) when it is written." becomes a sentence saying
-    the children are listed under `## Children`, that F was split into F1
-    and F2, and that E was delivered as spec 029 plus the console as two
-    children of this document (the part of issue #103 this covers). The
-    sentence after it ("The existing specs 001 to 005 get `Parent:` ...")
-    stays.
-
+    from it (this spec); the paragraph is marked *(author's call)*, so it is
+    not an added unmarked decision; the "Order" paragraph and the paragraph
+    after the table stay;
   No statement marked as a maintainer decision or unmarked design decision
-  is changed: the section 11 table, the `## Children` section and section
-  10's tracking sentence are the editorial parts security criterion 7
-  leaves unprotected. Given the migrated document on `main`, then the first
+  is changed: the section 11 table and the `## Children` section are the
+  editorial parts security criterion 7 leaves unprotected. Section 10's
+  sentence "This document's own children are specs A to G below ..." is not
+  touched; it is left to issue #103 or a maintainer answer. Given the migrated document on `main`, then the first
   scan files nothing (both planned children carry `issue:`) and unblocks
   nothing (#101 has no blocked marker comment).
 - AC-12. **Everything else is unchanged.** Given no design on `main` has a
@@ -407,9 +400,8 @@ shape of a file changed here changes with it and is listed.
   instructions, AC-10's breakdown instructions);
   `agents/profiles/spec/instructions.md` (the form of AC-1 in brief);
   `agents/profiles/spec/review-criteria.md` (criterion 8, AC-10).
-- **Documents.** `docs/delivery-system-design.md` (AC-11: section 10's
-  sentence, section 11's table, the `## Children` section, and nothing
-  else); `specs/README.md` (the planned-child form, AC-2); `tools/README.md`
+- **Documents.** `docs/delivery-system-design.md` (AC-11: section 11's
+  table, the `## Children` section, and nothing else); `specs/README.md` (the planned-child form, AC-2); `tools/README.md`
   (the scan, the markers and the state file). `dev-logs/` as a directory
   for the implementation's log.
 - **Tests, under `tools/scheduler/test/`.** `spec.test.ts` (AC-1);
