@@ -502,7 +502,8 @@ are stale and are corrected as part of B.
 - `specs/029-design-stage/spec.md` (row E, issue #38)
 - `specs/030-beyond-github/spec.md` (row F2, issue #39)
 - `specs/031-design-files-children/spec.md`
-- `specs/032-rerun-workflow-permission/spec.md` (issue #53)
+- `specs/032-spec-008-lists-advisory-lookup/spec.md`
+- `specs/033-rerun-workflow-permission/spec.md` (issue #53)
 - planned: console
   title: Specify and build the maintainer console (row E, second part)
   brief: The maintainer console of section 9, built on the design stage of spec 029 and
