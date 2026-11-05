@@ -16,3 +16,6 @@ rerun_workflow:
 undo:
   level: 1
   description: Reverse a recorded reversible action.
+renew_credential:
+  level: 1
+  description: Renew a credential whose catalogue entry has a renew command; a rotated secret cannot be undone.

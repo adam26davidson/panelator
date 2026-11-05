@@ -3,7 +3,7 @@ import {startTelegram,telegramCheck} from '../src/service/telegram-start.ts';
 import {TelegramPoller} from '../src/telegram/poller.ts';
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { adapterFor } from "../src/adapters/index.ts";
 import { agentsDir, defaultConfigPath, loadConfig, repoRoot } from "../src/config.ts";
@@ -28,6 +28,15 @@ import {registryActionsCheck,loadActionLevels,applyAction} from '../src/actions/
 import {ActionLog} from '../src/actions/log.ts';
 import {undoAction} from '../src/actions/undo.ts';
 import {onFindingsQueued} from '../src/state/findings.ts';
+import {loadCatalogue,checkCredentialNames} from '../src/credentials/catalogue.ts';
+import {CredentialStore} from '../src/credentials/store.ts';
+import {credSet,credList,credCheck,credImport,credRemove,credExec} from '../src/credentials/commands.ts';
+import type {CredDeps} from '../src/credentials/check.ts';
+import {TelegramNotifier} from '../src/notify/telegram.ts';
+import {contactsList,contactsRemove} from '../src/contacts/commands.ts';
+import {checkContact,classifyGh,recordRefusal} from '../src/contacts/gate.ts';
+import {listProfiles,resolveProfile} from '../src/profiles/resolve.ts';
+
 
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
@@ -39,7 +48,7 @@ await ensureStateDirs(paths);
 const serviceLog = new ServiceLog(paths.serviceLog);
 const binDir = dirname(fileURLToPath(import.meta.url));
 if(args[0]==='telegram-check'){
- try{console.log(await telegramCheck(cfg));process.exit(0);}catch(e){console.error((e as Error).message);process.exit(1);}
+ try{console.log(await telegramCheck(cfg,undefined,new CredentialStore(cfg.credentials.dir)));process.exit(0);}catch(e){console.error((e as Error).message);process.exit(1);}
 }
 
 /** I7: a configuration error the service cannot recover from by restarting; the unit's RestartPreventExitStatus=78 stops the loop. */
@@ -57,6 +66,41 @@ const {registry,parameters,levels}=(()=>{try {
 }catch(e){fail((e as Error).message);}})();
 await initializeAgents(paths,registry,parameters,new Date());
 const actionLog=new ActionLog(paths.actionsLog);
+// Spec 030 AC-2: the catalogue, and every credential a profile or standing agent lists must be in it.
+const catalogue=(()=>{try{
+  const c=loadCatalogue(join(agentsDir,'credentials.yaml'),{profiles:listProfiles(agentsDir),agents:Object.keys(registry)});
+  for(const p of listProfiles(agentsDir))checkCredentialNames(c,resolveProfile(agentsDir,p).credentials??[],`profile ${p}`);
+  for(const d of Object.values(registry))checkCredentialNames(c,d.credentials??[],`agent ${d.name}`);
+  return c;
+}catch(e){fail((e as Error).message);}})();
+const credStore=new CredentialStore(cfg.credentials.dir);
+const credDeps:CredDeps={store:credStore,catalogue,paths,binDir,now:()=>new Date()};
+const credentialsCmd={node:process.execPath,script:fileURLToPath(import.meta.url),config:resolve(flag('--config')??defaultConfigPath)};
+const pos=args.filter((a,i)=>a!=='--config'&&args[i-1]!=='--config');
+if(pos[0]==='cred'||pos[0]==='contacts') {
+  const gha=pos.slice(pos.indexOf('--')+1);
+  try {
+    const [command,verb,name]=pos;
+    const readStdin=async()=>{let t='';for await(const c of process.stdin)t+=c;return t;};
+    if(command==='cred'&&verb==='set'&&name)console.log(await credSet(credDeps,actionLog,name,await readStdin()));
+    else if(command==='cred'&&verb==='list')console.log(await credList(credDeps));
+    else if(command==='cred'&&verb==='check'){const r=await credCheck(credDeps,actionLog,name?name:undefined);console.log(r.text);process.exit(r.ok?0:1);}
+    else if(command==='cred'&&verb==='import')console.log(await credImport(credDeps,actionLog,{app_key:cfg.app.private_key_path,telegram:cfg.telegram!.credentials_path}));
+    else if(command==='cred'&&verb==='remove'&&name)console.log(await credRemove(credDeps,actionLog,name));
+    else if(command==='cred'&&verb==='exec'&&name)process.exit(await credExec(credDeps,name,gha));
+    else if(command==='contacts'&&verb==='list')console.log(await contactsList(paths));
+    else if(command==='contacts'&&verb==='remove'&&name)console.log(await contactsRemove(paths,actionLog,name));
+    else if(command==='contacts'&&verb==='gate') {
+      const hit=classifyGh(gha,cfg.repo);
+      if(hit){
+        const r=await checkContact({paths,parameters},hit.party);
+        if(!r.allowed){await recordRefusal(actionLog,process.env.PANELATOR_AGENT??'stage',hit.party,hit.command);console.error(r.text);process.exit(1);}
+      }
+      process.exit(0);
+    } else throw new Error('usage: cred set <name> (secret on stdin)|list|check [name]|import|remove <name>; contacts list|remove <party>');
+    process.exit(0);
+  }catch(e){console.error((e as Error).message);process.exit(1);}
+}
 const emitEvent=(event:string,payload:unknown)=>emit(paths,registry,event,payload);
 onFindingsQueued(paths,(count,offset)=>emitEvent('finding_queued',{count,offset}));
 
@@ -102,7 +146,7 @@ await actionLog.markStalePending();
 if (cfg.app.id === 0 || cfg.app.installation_id === 0) fail("GitHub App ids not set in agents/scheduler.yaml");
 let privateKey: string;
 try {
-  privateKey = readFileSync(cfg.app.private_key_path, "utf8");
+  privateKey = (await credStore.has('github-app-key')) ? await credStore.readSecret('github-app-key') : readFileSync(cfg.app.private_key_path, "utf8");
 } catch (e) {
   fail(`cannot read the GitHub App private key at ${cfg.app.private_key_path}: ${(e as Error).message}`);
 }
@@ -127,11 +171,12 @@ if (has("--check-auth")) {
 const stopRefresh = app.startTokenRefresh(paths);
 const gh = new GitHubClient(app.octokit, cfg.repo);
 
-const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec));
+const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec),undefined,credStore);
 let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
-  cfg, paths, gh, telegram,registry, parameters, emitEvent, notifier: rateLimited(new LogNotifier(paths.serviceLog), cfg.notify_rate_limit_hours),
+  credentials:{catalogue,cmd:credentialsCmd},credentialDeps:credDeps,
+  cfg, paths, gh, telegram,registry, parameters, emitEvent, notifier: rateLimited(telegram?new TelegramNotifier(new LogNotifier(paths.serviceLog),text=>telegram.sendReply(text),paths.telegramAlerts,rec=>serviceLog.write(rec)):new LogNotifier(paths.serviceLog), cfg.notify_rate_limit_hours),
   stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: repoRoot, binDir,
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),

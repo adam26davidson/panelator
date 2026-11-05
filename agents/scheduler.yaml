@@ -29,3 +29,8 @@ systemd:
 decide:
   base_url: ""               # /v1/systemone; unused in v0
   key_env: PANELATOR_DECIDE_KEY
+
+# Spec 030 AC-1: the encrypted credential store on the laptop.
+credentials:
+  dir: ~/.config/panelator/credentials
+  warn_days: 7

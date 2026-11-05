@@ -3,7 +3,10 @@ import { join } from 'node:path';
 import { parse } from 'yaml';
 import { splitFrontmatter, sharedDefinitionChecks, parseAgentDefinition } from '../stages/definition.ts';
 import type { StandingDefinition } from '../types.ts';
-import { schemaDir } from '../schema/validate.ts';
+import { schemaDir, validate, type SchemaName, type Validation } from '../schema/validate.ts';
+import { Ajv2020 } from 'ajv/dist/2020.js';
+import addFormatsModule from 'ajv-formats';
+const addFormats = addFormatsModule.default;
 
 export function parseDuration(value: string): number {
   const m = /^(\d+(?:\.\d+)?)(m|h|d)$/.exec(value);
@@ -13,7 +16,7 @@ export function parseDuration(value: string): number {
 export function parseStandingDefinition(markdown: string, events: readonly string[], actions: readonly string[]): StandingDefinition {
   const {frontmatter, body} = splitFrontmatter(markdown);
   const fm = parse(frontmatter) as Record<string, unknown>;
-  const keys = ['name','kind','trigger','harness','model','fallback','independent','tier','effort','bounds','permission','worktree','profile','input','output','actions'];
+  const keys = ['name','kind','trigger','harness','model','fallback','independent','tier','effort','bounds','permission','worktree','profile','input','output','actions','credentials'];
   for (const k of Object.keys(fm)) if (!keys.includes(k)) throw new Error(`unknown key ${k}`);
   for (const k of ['name','kind','harness','model','tier','permission','worktree','profile','input','output']) if (typeof fm[k] !== 'string' || !fm[k]) throw new Error(`${k} is required`);
   if (!/^[a-z][a-z0-9-]*$/.test(String(fm.name))) throw new Error('name must be a safe file name');
@@ -26,6 +29,7 @@ export function parseStandingDefinition(markdown: string, events: readonly strin
   if (t.events !== undefined && (!Array.isArray(t.events) || !t.events.length || t.events.some(e => !events.includes(e)))) throw new Error('trigger.events unknown or empty');
   const allowed = fm.actions ?? [];
   if (!Array.isArray(allowed) || allowed.some(k => typeof k !== 'string' || !actions.includes(k))) throw new Error('actions contains unknown kind');
+  if(fm.credentials!==undefined&&(!Array.isArray(fm.credentials)||fm.credentials.some(c=>typeof c!=='string'||!c)))throw new Error('credentials must be a list of names');
   if(fm.effort!==undefined && typeof fm.effort!=='string')throw new Error('effort must be a string');
   if(!/^[a-z][a-z0-9-]*$/.test(String(fm.profile)) || fm.profile==='from-issue')throw new Error('profile must be none or a profile name');
   if(!/^[a-z][a-z0-9-]*$/.test(String(fm.input)))throw new Error('input must be a schema name');
@@ -57,4 +61,24 @@ export function renderStandingPrompt(template: string, values: Record<string, un
     if (!Object.hasOwn(values,key)) throw new Error(`unknown placeholder: ${key}`);
     return typeof values[key] === 'string' ? values[key] as string : JSON.stringify(values[key]);
   });
+}
+
+/** Spec 030: the schemas this spec adds, validated beside the registry of src/schema/validate.ts (which is outside this spec's files). */
+export const SPEC_030_SCHEMAS = ['credential-catalogue', 'credential-index', 'contacts', 'credential-check-result', 'credential-check-input', 'infra-health-input'] as const;
+export type Spec030SchemaName = (typeof SPEC_030_SCHEMAS)[number];
+let extra: Ajv2020 | null = null;
+function extraAjv(): Ajv2020 {
+  if (extra) return extra;
+  extra = new Ajv2020({ allErrors: true, strict: true });
+  addFormats(extra);
+  // credential-check-result extends standing-result through allOf, so the base schema and the two it refers to are added under the names their $refs use.
+  for (const name of ['action', 'finding', 'standing-result', ...SPEC_030_SCHEMAS]) extra.addSchema(JSON.parse(readFileSync(join(schemaDir, `${name}.json`), 'utf8')), `${name}.json`);
+  return extra;
+}
+/** Validates against any schema under schemas/scheduler: the core registry's names, or one of spec 030's. */
+export function validateSchema(name: SchemaName | Spec030SchemaName, data: unknown): Validation {
+  if (!(SPEC_030_SCHEMAS as readonly string[]).includes(name)) return validate(name as SchemaName, data);
+  const fn = extraAjv().getSchema(`${name}.json`)!;
+  if (fn(data)) return { ok: true };
+  return { ok: false, errors: (fn.errors ?? []).map((e) => `${e.instancePath || '/'} ${e.message ?? ''}${Object.keys(e.params ?? {}).length ? ' ' + JSON.stringify(e.params) : ''}`.trim()) };
 }

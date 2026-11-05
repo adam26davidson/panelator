@@ -32,11 +32,16 @@ import {emit} from '../src/standing/events.ts';
 import {runStandingAgent} from '../src/standing/run.ts';
 import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
 import { chainWorld, standingWorld, scripted, RATE_LIMITED, type ChainWorld } from "./helpers/e2e-routes.ts";
+import { CredentialStore } from "../src/credentials/store.ts";
+import { parseCatalogue } from "../src/credentials/catalogue.ts";
+import { readParties } from "../src/contacts/gate.ts";
 import { git, repoPair, withDesign, withTopDesign } from "./helpers/repo-pair.ts";
 import { fileDesignChildren } from "../src/children/scan.ts";
 import { loadDesignTree } from "../src/gates/design-tree.ts";
 
 const spec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
+/** The fake `systemd-creds` of spec 030 section 3: reversible, not plaintext. */
+const fakeCreds = join(import.meta.dirname, "helpers", "fake-systemd-creds");
 const BOT = { login: "panelator-pipeline[bot]", type: "Bot" };
 
 describe('Telegram recorded chains',()=>{
@@ -190,6 +195,8 @@ const APPROVE = { verdict: "approve", findings_on_pr: [], declined_to_judge: [] 
 const CHANGES = { verdict: "changes_requested", findings_on_pr: [{ criterion: "AC-1", file: "a.txt", line: 1, scenario: "z is not produced" }], declined_to_judge: [] };
 const ask = (kind: Question["kind"], question: string): Question => ({
   kind, question, options: [{ label: "option 1", cost: "16 KB of RAM" }, { label: "option 2", cost: "a second flash partition" }], recommendation: "option 1",
+  // Spec 030 AC-6: a capability question about a credential carries its request.
+  ...(kind === "capability" ? { request: { type: "credential" as const, name: "flash-token", provider: "flashing-service", access: ["flash the test board"], setup: ["create a token in the flashing console", "run cred set flash-token"] } } : {}),
 });
 const ESCALATE = (q: Question) => ({ verdict: "escalate", findings_on_pr: [], declined_to_judge: [], escalation: q });
 const SEND = { verdict: "send", reasoning: "a trade-off only the maintainer can weigh" };
@@ -1203,4 +1210,119 @@ describe("end to end: the design stage (spec 029)", () => {
     expect(w.comments).toHaveLength(1);
     expect(w.adapter.ran).toEqual([]);
   }, 120_000);
+});
+
+describe("beyond GitHub: requests on capability questions (spec 030 AC-6 to AC-8)", () => {
+  const credRequest = { type: "credential" as const, name: "demo", provider: "demo", access: ["read the demo"], setup: ["create it", "run cred set demo"] };
+  const contactRequest = { type: "first_contact" as const, party: "github:other", channel: "github", why: "report a bug", message: "Hello, a bug." };
+  const withRequest = (request: Question["request"], text = "We need the demo credential. Can you set it up?"): Question => ({ ...ask("technical", text), kind: "capability", request });
+  async function world(question: Question, results: Record<string, unknown[]>, run: (c: string) => Promise<{ code: number; stdout: string; stderr: string }> = async () => ({ code: 0, stdout: "", stderr: "" })) {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: [{ escalation: question }, a.implement(9)], review: [APPROVE], "question-check": [SEND], ...results } as never });
+    const store = new CredentialStore(join(w.pair.root, "creds"), fakeCreds);
+    await store.writeSecret("demo", "secret-value", "maintainer");
+    const catalogue = parseCatalogue("demo:\n  provider: demo\n  purpose: p\n  access: [a]\n  used_by: [scheduler]\n  wrapper: none\n  expiry: none\n  check: 'true'\n  renew: manual\n  setup: [s]\n", { profiles: [], agents: [] });
+    w.deps.credentialDeps = { store, catalogue, paths: w.paths, binDir: "", now: () => new Date(), run };
+    return w;
+  }
+  const lastAnswered = async (w: ChainWorld) => (await readJsonLines<{ event: string; answer: string; outcome?: string; request?: unknown }>(w.paths.questionsLog)).filter((e) => e.event === "answered").at(-1)!;
+
+  it("sends a credential question without its setup steps back to the asking stage to decide, with no question check", async () => {
+    const w = await world(withRequest({ ...credRequest, setup: [] }), {});
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["plan", "implement", "implement", "review"]);
+    expect(String(inputsOf(w, "implement")[1].decide_input)).toContain("a credential request must give setup");
+    expect(await listPaused(w.paths)).toEqual([]);
+  }, 120_000);
+
+  it("pauses with the request in the comment, runs the entry's check on Done and resumes with `done (verified)`", async () => {
+    const w = await world(withRequest(credRequest), {});
+    await w.tick();
+    expect(pausedRecord(w)).toMatchObject({ phase: "paused", question: { request: credRequest } });
+    expect(w.comments.at(-1)!.body).toContain("1. create it\n2. run cred set demo");
+    w.reply("Done");
+    await w.tick();
+    await expectSettled(w);
+    const [question] = w.questions();
+    expect(inputsOf(w, "implement")[1].answer).toBe(`Question #${question.id}: done (verified)`);
+    expect(await lastAnswered(w)).toMatchObject({ answer: "done (verified)", outcome: "verified", request: credRequest });
+    expect(await readdirSync(w.paths.root)).not.toContain("secret-value");
+  }, 120_000);
+
+  it("resumes with the failing check when Done is answered but the credential does not work", async () => {
+    const w = await world(withRequest(credRequest), {}, async () => ({ code: 1, stdout: "", stderr: "401 unauthorized\n" }));
+    await w.tick();
+    w.reply("done");
+    await w.tick();
+    expect(inputsOf(w, "implement")[1].answer).toContain("done (check failed: exit 1: 401 unauthorized)");
+    expect(await lastAnswered(w)).toMatchObject({ outcome: "check_failed" });
+  }, 120_000);
+
+  it("registers the party on approval and leaves it unapproved on any other answer", async () => {
+    const approved = await world(withRequest(contactRequest, "May we report a bug to the vendor's repository?"), {});
+    await approved.tick();
+    approved.reply("Ok, send it");
+    await approved.tick();
+    await expectSettled(approved);
+    expect(await readParties(approved.paths)).toMatchObject([{ party: "github:other", channel: "github", issue: 7 }]);
+    expect(await lastAnswered(approved)).toMatchObject({ outcome: "approved" });
+    const denied = await world(withRequest(contactRequest, "May we report a bug to the vendor's repository?"), {});
+    await denied.tick();
+    denied.reply("Not now");
+    await denied.tick();
+    expect(await readParties(denied.paths)).toEqual([]);
+    expect(await lastAnswered(denied)).toMatchObject({ outcome: "text" });
+  }, 120_000);
+});
+
+describe("beyond GitHub: the two standing agents (spec 030 AC-13, AC-15)", () => {
+  const settle = async (w: Awaited<ReturnType<typeof standingWorld>>) => { await w.scheduler.tick(); for (let i = 0; i < 400 && w.scheduler.active; i++) await new Promise((r) => setTimeout(r, 25)); expect(w.scheduler.active).toBe(0); };
+  const runInput = (w: Awaited<ReturnType<typeof standingWorld>>, agent: string) => { const d = readdirSync(w.paths.runs).filter((x) => x.startsWith(`standing-${agent}`)).sort().at(-1)!; return JSON.parse(readFileSync(join(w.paths.runs, d, "input.json"), "utf8")); };
+
+  it("wakes the credential check on credential_expiry: one notification with the setup steps, nothing twice that day, no secret in its input", async () => {
+    const warning = { name: "demo", expires_at: "2026-10-04T00:00:00.000Z", steps: ["ignored: the entry's own steps are sent"] };
+    const w = await standingWorld({ "credential-check": [{ summary: "demo expires soon", warnings: [warning] }, { summary: "demo expires soon", warnings: [warning] }] }, ["credential-check"]);
+    const store = new CredentialStore(join(w.pair.root, "creds"), fakeCreds);
+    await store.writeSecret("demo", "very-secret-value", "maintainer", w.deps.now());
+    const catalogue = parseCatalogue("demo:\n  provider: demo\n  purpose: p\n  access: [read]\n  used_by: [credential-check]\n  wrapper: none\n  expiry: index\n  check: 'true'\n  renew: manual\n  setup: [open the console, create a new key, run cred set demo]\n", { profiles: [], agents: ["credential-check"] });
+    w.deps.credentialDeps = { store, catalogue, paths: w.paths, binDir: "", now: w.deps.now, run: async () => ({ code: 0, stdout: "", stderr: "" }) };
+    await store.updateIndex("demo", (e) => ({ ...e!, expires_at: "2026-10-04T00:00:00.000Z" }));
+    // the hourly expiry step of the tick (AC-5) raises the event that wakes the agent
+    await settle(w);
+    const input = runInput(w, "credential-check");
+    expect(input.events.events.map((e: { event: string; payload: unknown }) => [e.event, e.payload])).toEqual([["credential_expiry", { name: "demo", expires_at: "2026-10-04T00:00:00.000Z", last_check: null }]]);
+    expect(JSON.stringify(input)).not.toContain("very-secret-value");
+    expect(input.events.input.credentials[0]).toMatchObject({ name: "demo", state: "set", days_left: 3, renew: "manual" });
+    expect(input.events.input.check_results).toEqual([{ name: "demo", status: "ok", expires_at: "2026-10-04T00:00:00.000Z" }]);
+    const sent = w.notifications.filter((n) => n.label === "credential-expiry");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].text).toContain("1. open the console\n2. create a new key\n3. run cred set demo");
+    expect(sent[0].text).not.toContain("ignored");
+    await emit(w.paths, w.registry, "credential_expiry", { name: "demo", expires_at: "2026-10-04T00:00:00.000Z", last_check: "ok", again: true });
+    await settle(w);
+    expect(w.notifications.filter((n) => n.label === "credential-expiry")).toHaveLength(1);
+    expect(w.mock.unmatched).toEqual([]);
+  }, 60_000);
+
+  it("wakes infra health on ci_failure_main: re-runs once, pauses an agent with three failures, files a finding for an alarm kind it does not know", async () => {
+    const w = await standingWorld({ "infra-health": [{ summary: "re-ran main, paused operator", actions: [
+      { kind: "rerun_workflow", args: { run_id: 55 }, why: "main failed on the test check; one re-run" },
+      { kind: "rerun_workflow", args: { run_id: 55 }, why: "main failed on the test check; second re-run" },
+      { kind: "pause_agent", args: { name: "operator" }, why: "operator failed three times in a row" },
+    ], findings: [{ what: "unknown alarm kind aws_forecast_over_cap", where: "infra_alarm event", evidence: "payload kind not handled", noticed_how: "infra health sweep" }] }] }, ["infra-health"]);
+    await writeAgentState(w.paths, "operator", { ...(await readAgentState(w.paths, "operator"))!, failures: 3 });
+    await emit(w.paths, w.registry, "ci_failure_main", { check: "test", run_id: 55, sha: "abc" });
+    await emit(w.paths, w.registry, "infra_alarm", { kind: "aws_forecast_over_cap", forecast: 120 });
+    await settle(w);
+    const input = runInput(w, "infra-health");
+    expect(input.events.input.events.map((e: { event: string }) => e.event).sort()).toEqual(["ci_failure_main", "infra_alarm"]);
+    expect(input.events.input.agents.find((a: { name: string }) => a.name === "operator")).toMatchObject({ failures: 3, paused: false });
+    expect(w.mock.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/actions/runs/55/rerun")).toHaveLength(1);
+    expect((await readAgentState(w.paths, "operator"))).toMatchObject({ paused: true, paused_by: "infra-health" });
+    const log = await new ActionLog(w.paths.actionsLog).list();
+    expect(log.map((r) => `${r.kind}:${r.status}`)).toEqual(["rerun_workflow:applied", "rerun_workflow:refused", "pause_agent:applied"]);
+    expect((await readJsonLines<{ finding: { what: string } }>(w.paths.findingsQueue)).map((f) => f.finding.what)).toContain("unknown alarm kind aws_forecast_over_cap");
+    expect(w.mock.unmatched).toEqual([]);
+  }, 60_000);
 });

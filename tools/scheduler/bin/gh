@@ -15,6 +15,13 @@ if [ -z "$GH_TOKEN" ]; then
   exit 1
 fi
 export GH_TOKEN
+# spec 030 AC-11: a write to another repository needs an approved party; the scheduler decides and records.
+# Only the shapes that can name another repository reach the scheduler, so ordinary calls stay fast.
+if [ -n "${PANELATOR_SCHEDULER:-}" ]; then
+  case " $* " in
+    *" -R"*|*" --repo"*|*" api "*|*" fork "*) "$PANELATOR_SCHEDULER" contacts gate -- "$@" || exit 1 ;;
+  esac
+fi
 unset GITHUB_TOKEN
 # drop every PATH entry that resolves to this shim's directory (trailing slashes, symlinks,
 # metacharacters all compare by inode) and exec the real gh

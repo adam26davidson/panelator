@@ -8,9 +8,13 @@ import { TelegramPoller } from "../src/telegram/poller.ts";
 import { fakeTelegram } from "./helpers/fake-telegram.ts";
 import {
   ackText,
+  buttonLabel,
+  fixedButtons,
   questionMessage,
   matchUpdate,
 } from "../src/telegram/questions.ts";
+import { renderRequest } from "../src/chain/question.ts";
+import type { Question, Request } from "../src/types.ts";
 import { initialChainState } from "../src/chain/machine.ts";
 import { emptyTelegram, type PausedRecord } from "../src/state/paused.ts";
 const until = async (f: () => boolean) => {
@@ -321,5 +325,28 @@ describe("Telegram", () => {
       ).kind,
     ).toBe("answer");
     expect(ackText("plan", 9, new Date(0))).toContain("Picked up");
+  });
+});
+
+describe("request rendering and keyboards (spec 030 AC-7)", () => {
+  const q = (over: Partial<Question> = {}): Question => ({ kind: "capability", question: "Need a token for the vendor API", options: [{ label: "grant", cost: "5 min" }], recommendation: "grant", ...over });
+  const cred: Request = { type: "credential", name: "demo", provider: "demo", access: ["read"], setup: ["step one", "step two"] };
+  const contact: Request = { type: "first_contact", party: "github:other", channel: "github", why: "report a bug", message: "Hello,\nbug here" };
+  it("renders labelled fields, numbered steps and the quoted message", () => {
+    expect(renderRequest(cred)).toEqual(["Credential request", "Name: demo", "Provider: demo", "Access: read", "Setup:", "1. step one", "2. step two"]);
+    expect(renderRequest(contact).slice(-2)).toEqual(["> Hello,", "> bug here"]);
+    expect(renderRequest({ type: "funds", amount_usd: 20, purpose: "domain", charter_goal: "ship" })[1]).toBe("Amount: $20");
+  });
+  it("uses the fixed keyboards, whose buttons answer with their own label", () => {
+    expect(fixedButtons(cred)).toEqual(["Done", "Can't do this"]);
+    expect(fixedButtons(contact)).toEqual(["Approve", "Deny"]);
+    expect(fixedButtons({ type: "funds", amount_usd: 1, purpose: "p", charter_goal: "c" })).toEqual(["Approved", "Declined"]);
+    const rec = { issue: 9, nonce: "n1", phase: "paused", question: q({ request: contact }), telegram: { message_id: 5, thread_message_ids: [] } } as unknown as PausedRecord;
+    const m = questionMessage({ number: 9, title: "t" }, rec, "http://c");
+    expect(m.text).toContain("Message that would be sent:");
+    expect(m.reply_markup.inline_keyboard.map((r) => r[0].text)).toEqual(["Approve", "Deny"]);
+    expect(buttonLabel(rec.question, 2)).toBe("Deny");
+    const res = matchUpdate({ update_id: 1, callback_query: { id: "c", data: "q:n1:1", message: { message_id: 5, date: 1, chat: { id: 1 } } } }, [rec], null);
+    expect(res).toMatchObject({ kind: "answer", text: "Approve" });
   });
 });

@@ -59,6 +59,85 @@
     "new_blocker": {
       "type": "boolean",
       "description": "C3: in decide mode, a blocker other than the question sent back to decide."
+    },
+    "request": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "credential"
+            },
+            "name": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "access": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "setup": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "funds"
+            },
+            "amount_usd": {
+              "type": "number"
+            },
+            "purpose": {
+              "type": "string"
+            },
+            "charter_goal": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "first_contact"
+            },
+            "party": {
+              "type": "string"
+            },
+            "channel": {
+              "type": "string"
+            },
+            "why": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      ]
     }
   },
   "dependentRequired": {

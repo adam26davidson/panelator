@@ -1,0 +1,10 @@
+#!/bin/sh
+# Fake systemd-creds (spec 030 section 3): reversible, not plaintext (hex of the bytes, reversed marker).
+# usage: fake-systemd-creds --user encrypt|decrypt --name=<n> - -
+op=""
+for a in "$@"; do case "$a" in encrypt|decrypt) op=$a;; esac; done
+case "$op" in
+  encrypt) printf 'FAKECRED1:'; od -An -v -tx1 | tr -d ' \n' ;;
+  decrypt) head -c 9 >/dev/null; sed 's/^://' | tr -d '\n' | sed 's/\(..\)/\\x\1/g' | xargs -0 printf '%b' ;;
+  *) echo "fake-systemd-creds: bad op" >&2; exit 2 ;;
+esac

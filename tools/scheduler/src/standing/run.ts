@@ -5,7 +5,8 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import type {DriverDeps} from '../chain/driver.ts';
 import type {StandingDefinition,StageDefinition} from '../types.ts';
 import type {ParameterStore} from '../parameters/store.ts';
-import {validate,type SchemaName} from '../schema/validate.ts';
+import type {SchemaName} from '../schema/validate.ts';
+import {validateSchema} from './registry.ts';
 import {runStage,type StageOutcome} from '../runner/run.ts';
 import {retryDecision,afterFallback} from '../runner/retry.ts';
 import {modelLimitFallback,planLaunch,quotaParams,readBook,waitAfterLimit} from '../quota/book.ts';
@@ -20,7 +21,11 @@ import {applyFilerResult,type FilerResult} from '../filer/apply.ts';
 import {buildAuditInput} from './audit-input.ts';
 import {updateAgentState,type AgentState} from './state.ts';
 import {parseDuration} from './registry.ts';
+import {buildCredentialCheckInput} from './credential-check-input.ts';
+import {buildInfraHealthInput} from './infra-health-input.ts';
+import {claimOnce} from '../credentials/check.ts';
 const exec=promisify(execFile);
+const need=<T>(v:T|undefined):T=>{if(v===undefined)throw new Error('credential store is not configured');return v;};
 export interface StandingDeps extends DriverDeps {parameters:ParameterStore;botLogin:string}
 /** A repair turn only rewrites JSON it already has; the cap also keeps a session-lost fresh run from a full investigation. */
 const REPAIR_MAX_TURNS=5,REPAIR_MAX_ERRORS=40;
@@ -52,15 +57,15 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
    await mkdir(d.paths.worktrees,{recursive:true});
    await exec('git',['worktree','add','--detach',worktree,'origin/main'],{cwd:d.repoDir});created=true;
   }
-  const input=def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):null;
+  const input=def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):def.input==='credential-check-input'?await buildCredentialCheckInput(need(d.credentialDeps),d.cfg,received):def.input==='infra-health-input'?await buildInfraHealthInput(d.paths,received,now):null;
   const parameters=await d.parameters.all();
-  const inputCheck=validate(def.input as SchemaName,input??{events:received,since:state.last_run?.at??null,parameters});
+  const inputCheck=validateSchema(def.input as SchemaName,input??{events:received,since:state.last_run?.at??null,parameters});
   if(!inputCheck.ok)throw new Error(`standing input: ${inputCheck.errors.join('; ')}`);
   const profile=def.profile==='none'?null:resolveProfile(d.agentsDir,def.profile);
   // Standing agents have no write or GitHub tool, even when a profile normally supplies one.
-  const safeProfile=profile?{...profile,tools:['Read','Glob','Grep'],credentialHook:undefined}:null;
+  const safeProfile=profile?{...profile,tools:['Read','Glob','Grep'],credentials:def.credentials??[]}:null;
   const req={def,input:{} as StageInput,standingInput:{agent:def.name,events:input?{events:received,input}:received,since:state.last_run?.at??null,parameters},issue:0,attempt,worktree,profile:safeProfile,runId};
-  const context={paths:d.paths,adapter:d.adapterFor(def.harness),systemdScope:d.systemdScope,systemdRunBin:d.systemdRunBin,now:d.now,binDir:d.binDir,sessionWindowMs:quota.sessionWindowMs};
+  const context={paths:d.paths,adapter:d.adapterFor(def.harness),systemdScope:d.systemdScope,systemdRunBin:d.systemdRunBin,now:d.now,binDir:d.binDir,credentials:d.credentials,sessionWindowMs:quota.sessionWindowMs};
   const logLimit=(r:StageOutcome)=>{if(r.limit)d.log({kind:'quota-limit',agent:def.name,run_id:r.runId,key:r.limit.key,scope:r.limit.scope,resets_at:r.limit.resets_at,source:r.limit.source});};
   let ran={harness:moved?.harness??def.harness,model:moved?.model??def.model};
   let result=moved?await runStage({...context,adapter:d.adapterFor(moved.harness)},{...req,model:moved.model,harness:moved.harness,runId:runId+'-fallback'}):await runStage(context,req);
@@ -94,8 +99,14 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   const body=result.result as {summary:string;actions?:{kind:string;args:Record<string,unknown>;why:string}[];findings?:unknown[]};
   if(def.output==='filer-result')await applyFilerResult(filer,runId,input as Awaited<ReturnType<typeof buildFilerInput>>,body as FilerResult);
   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},body.findings??[]);
-  const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now};
+  const notifyCredential=(label:string,text:string,key:string)=>d.notifier.notify({issue:0,gate:`credential:${key}`,label,text});
+  const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now,credentials:d.credentialDeps,notify:notifyCredential};
   for(const action of body.actions??[])await applyAction(ctx,{...action,agent:def.name,run_id:runId},def.actions);
+  // Spec 030 AC-13: one credential-expiry notification per warning, with the entry's own setup steps, once per credential per day.
+  if(def.output==='credential-check-result')for(const w of (body as {warnings?:{name:string;expires_at:string|null;steps:string[]}[]}).warnings??[]) {
+   const entry=d.credentialDeps?.catalogue[w.name];if(!entry||!await claimOnce(d.paths,`warn:${w.name}`,d.now()))continue;
+   await notifyCredential('credential-expiry',`Credential ${w.name} ${w.expires_at?`expires ${w.expires_at}`:'needs attention'}. Steps:\n${entry.setup.map((s,i)=>`${i+1}. ${s}`).join('\n')}`,w.name);
+  }
   summary=body.summary;outcome='ok';
   await writeFile(join(d.paths.runs,result.runId,'summary.json'),JSON.stringify({summary}));
  }catch(e){error=(e as Error).message;d.log({kind:postponedUntil===null?'standing-error':'standing-postponed',agent:def.name,error});}

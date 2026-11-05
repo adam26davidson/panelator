@@ -12,16 +12,20 @@ import {resumeAgentKind} from './resume-agent.ts';
 import {runAgentKind} from './run-agent.ts';
 import {rerunWorkflowKind} from './rerun-workflow.ts';
 import {undoKind} from './undo.ts';
+import {renewCredentialKind} from './renew-credential.ts';
+import type {CredDeps} from '../credentials/check.ts';
 export interface ActionContext {
  paths:StatePaths; parameters:ParameterStore; log:ActionLog; levels:Record<string,1|2>; gh:Pick<GitHubClient,'rerunWorkflowRun'|'cancelWorkflowRun'>;
  now:()=>Date; actor?:string; reversing?:boolean;
+ /** Spec 030 AC-14: the credential store, and a way to tell the maintainer; unset outside the service. */
+ credentials?:CredDeps; notify?:(label:string,text:string,key:string)=>Promise<void>;
 }
 export interface ActionKind {
  changesMode:false;
  check(args:Record<string,unknown>,ctx:ActionContext):Promise<string|null>;
  apply(args:Record<string,unknown>,ctx:ActionContext):Promise<{undo:Inverse|null; undoes?:string}>;
 }
-export const KINDS:Record<string,ActionKind>={set_parameter:setParameterKind,pause_agent:pauseAgentKind,resume_agent:resumeAgentKind,run_agent:runAgentKind,rerun_workflow:rerunWorkflowKind,undo:undoKind};
+export const KINDS:Record<string,ActionKind>={set_parameter:setParameterKind,pause_agent:pauseAgentKind,resume_agent:resumeAgentKind,run_agent:runAgentKind,rerun_workflow:rerunWorkflowKind,undo:undoKind,renew_credential:renewCredentialKind};
 export function loadActionLevels(path:string):Record<string,1|2> {
  const file=parse(readFileSync(path,'utf8')) as Record<string,{level:1|2;description:string}>;
  if(!file||typeof file!=='object'||Array.isArray(file))throw new Error(`${path}: expected action map`);

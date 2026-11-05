@@ -1,3 +1,4 @@
+import type { CredDeps } from "../credentials/check.ts";
 import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -7,6 +8,7 @@ import { promisify } from "node:util";
 import { adapterFor as defaultAdapterFor } from "../adapters/index.ts";
 import type { Adapter } from "../adapters/types.ts";
 import type { Config } from "../config.ts";
+import { requestProblem } from "../decide/client.ts";
 import { ROOT } from "../gates/design-tree.ts";
 import { designScopeGate, isSensitive, scopeGate, specPresentGate, specScopeGate, uiDesignGate, type ScopeResult } from "../gates/index.ts";
 import type { GitHubClient } from "../github/client.ts";
@@ -16,7 +18,7 @@ import { listProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/re
 import { afterFallback, harnessForModel, retryDecision } from "../runner/retry.ts";
 import type { ParameterStore } from "../parameters/store.ts";
 import { modelLimitFallback, planLaunch, quotaParams, readBook, waitAfterLimit } from "../quota/book.ts";
-import { runStage, type StageOutcome } from "../runner/run.ts";
+import { runStage, type RunnerContext, type StageOutcome } from "../runner/run.ts";
 import {
   checkoutBranch, commitsPatch, deleteLocalBranch, diffFilesAgainstBase, discardUncommitted, onlyRebased, rebaseOntoMain, removeWorktree, syncToRemote, uncommittedPatch,
 } from "../runner/worktree.ts";
@@ -57,6 +59,10 @@ export interface DriverDeps {
   agentsDir: string;
   repoDir: string;
   binDir: string;
+  /** Spec 030 AC-3: set when the service has a credential catalogue; stages then get shims and the contact gate. */
+  credentials?: RunnerContext["credentials"];
+  /** Spec 030: the credential store and catalogue (hourly expiry step, renewals, credential answers); unset when none is configured. */
+  credentialDeps?: CredDeps;
   adapterFor: (harness: Harness) => Adapter;
   systemdScope: boolean;
   /** Test seam: a stand-in for systemd-run; production leaves it unset. */
@@ -564,6 +570,15 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
     ? { ...deps.stages.fix, model: design.model, harness: design.harness, tier: design.tier, fallback: design.fallback, independent: design.independent }
     : deps.stages[stage];
   if(state.conversation&&state.decideInput!==null)throw new Error('conversation turn in decide mode');
+  // Spec 030 AC-6: the question check's deterministic part. A credential, funds or first-contact need without its full
+  // request is sent back as decide_yourself with the fields it lacks; no model runs for it.
+  if (stage === "question-check" && state.question) {
+    const problem = requestProblem(state.question);
+    if (problem !== null) {
+      deps.log({ kind: "question-request", issue: claim.issue, stage: state.askingStage, reason: problem });
+      return { type: "stage_ok", stage: "question-check", result: { verdict: "decide_yourself", reasoning: problem } };
+    }
+  }
   if(state.resumeSession&&state.resumeSession.harness!==def.harness)deps.log({kind:'resume-fresh',issue:claim.issue,reason:'harness changed'});
   const sensitiveGlobs = readSensitiveGlobs(deps.agentsDir);
 
@@ -675,7 +690,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
     try {
       const out = await runStage(
         {
-          paths: deps.paths, adapter: deps.adapterFor(h), systemdScope: deps.systemdScope, systemdRunBin: deps.systemdRunBin, binDir: deps.binDir, now: deps.now,
+          paths: deps.paths, adapter: deps.adapterFor(h), systemdScope: deps.systemdScope, systemdRunBin: deps.systemdRunBin, binDir: deps.binDir, credentials: deps.credentials, now: deps.now,
           gitIdentity: botIdentity(deps), sessionWindowMs: quota.sessionWindowMs,
         },
         { def, input, issue: claim.issue, attempt, worktree: claim.worktree, profile, model, harness, runId,

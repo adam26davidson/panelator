@@ -1,5 +1,16 @@
 import type { PausedRecord } from "../state/paused.ts";
 import type { TelegramUpdate, Keyboard } from "./client.ts";
+import type { Question, Request } from "../types.ts";
+import { renderRequest } from "../chain/question.ts";
+
+/** Spec 030 AC-7: a request has a fixed keyboard; the stage's own options stay in the comment as the record. */
+export function fixedButtons(r: Request): string[] {
+  return r.type === "credential" ? ["Done", "Can't do this"] : r.type === "funds" ? ["Approved", "Declined"] : ["Approve", "Deny"];
+}
+/** The label of button `n` (1-based), for the answer text and the chosen line. */
+export function buttonLabel(q: Question, n: number): string | undefined {
+  return q.request ? fixedButtons(q.request)[n - 1] : q.options[n - 1]?.label;
+}
 export interface PendingSelection {
   message_id?: number;
   list_message_id: number;
@@ -17,16 +28,16 @@ export function questionMessage(
     text: [
       `#${issue.number} ${issue.title}`,
       r.question.question,
-      ...r.question.options.map((o, i) => `${i + 1}. ${o.label} — ${o.cost}`),
+      ...(r.question.request ? [renderRequest(r.question.request).join("\n")] : r.question.options.map((o, i) => `${i + 1}. ${o.label} — ${o.cost}`)),
       `Recommendation: ${r.question.recommendation}`,
       commentUrl,
     ].join("\n\n"),
     reply_markup: {
-      inline_keyboard: r.question.options.map((o, i) => {
+      inline_keyboard: (r.question.request ? fixedButtons(r.question.request).map((label) => ({ label })) : r.question.options).map((o, i) => {
         const callback_data = `q:${r.nonce}:${i + 1}`;
         if (Buffer.byteLength(callback_data) > 64)
           throw Error("callback data too long");
-        return [{ text: `${i + 1}. ${o.label}`.slice(0, 64), callback_data }];
+        return [{ text: (r.question.request ? o.label : `${i + 1}. ${o.label}`).slice(0, 64), callback_data }];
       }),
     },
   };
@@ -104,12 +115,12 @@ export function matchUpdate(
     const [, nonce, option] = cb.data.split(":");
     const r = records.find((r) => r.nonce === nonce);
     const n = Number(option);
-    const o = r?.question.options[n - 1];
+    const o = r ? buttonLabel(r.question, n) : undefined;
     if (!r || !o) return { kind: "ignore" };
     return {
       kind: "answer",
       record: r,
-      text: `${n}. ${o.label}`,
+      text: r.question.request ? o : `${n}. ${o}`,
       viaCallback: { id: cb.id, message_id: cb.message?.message_id ?? 0, n },
     };
   }

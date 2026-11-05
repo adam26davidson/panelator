@@ -1,3 +1,5 @@
+import { applyRequestAnswer, outcomeOf } from "../contacts/approve.ts";
+import { dueExpiryEvents, type CredDeps } from "../credentials/check.ts";
 import {TelegramAnswers} from '../telegram/answers.ts';
 import {questionMessage,reminderText} from '../telegram/questions.ts';
 import { applyActions, sendPausedQuestion, completePause, driveChain as defaultDriveChain, step, type DriverDeps } from "../chain/driver.ts";
@@ -345,7 +347,7 @@ export class Scheduler {
     await removeClaim(d.paths, rec.issue);
     const decision = pausedDecision(rec, await d.gh.listComments(rec.issue), d.cfg.maintainer, d.now());
     if (decision.kind === "resume") {
-      const resuming: PausedRecord = { ...rec, phase: "resuming", answer: decision.answer, reply_comment_id: decision.replyId,telegram:rec.telegram?{...rec.telegram,channel:'issue'}:null };
+      const resuming: PausedRecord = { ...rec, phase: "resuming", answer: await applyRequestAnswer(d, rec, decision.answer), reply_comment_id: decision.replyId,telegram:rec.telegram?{...rec.telegram,channel:'issue'}:null };
       await writePaused(d.paths, resuming);
       if(this.#capabilityAnswer(rec)){await this.#answerCapability(resuming);return false;}
       if(!slotFree)return false;
@@ -415,6 +417,7 @@ export class Scheduler {
       await appendQuestionLog(d.paths, {
         issue: rec.issue, at: d.now().toISOString(), event: "answered", asking_stage: rec.asking_stage,
         question_comment_id: questionId, reply_comment_id: rec.reply_comment_id, answer: rec.answer, question: rec.question,channel:rec.telegram?.channel??'issue',
+        ...(rec.question.request ? { request: rec.question.request, outcome: outcomeOf(rec.question, rec.answer) } : {}),
       });
     }
     let claim = await readClaim(d.paths, rec.issue);
@@ -436,6 +439,8 @@ export class Scheduler {
     info.claimed.push(rec.issue);
     this.#start(claim);
   }
+
+  #lastExpiryStep = 0;
 
   async tick(): Promise<TickInfo> {
     if (this.#ticking) return { eligible: 0, claimed: [], released: [], held: 0, standing: [], errors: ["tick already in progress"], restartPending: this.#restartPending };
@@ -485,6 +490,11 @@ export class Scheduler {
         const sha=execFileSync('git',['rev-parse','origin/main'],{cwd:d.repoDir,encoding:'utf8'}).trim();
         await watchMainChecks(d.gh,d.paths,d.registry,sha,d.cfg.required_checks,d.now());
       }catch(e){info.errors.push(`main checks: ${(e as Error).message}`);}
+      // Spec 030 AC-5: at most once an hour, wake the credential check for expiring or failing credentials.
+      if (d.credentialDeps && d.now().getTime() - this.#lastExpiryStep >= 3_600_000) {
+        this.#lastExpiryStep = d.now().getTime();
+        await dueExpiryEvents(d.credentialDeps, d.cfg.credentials.warn_days, (e, p) => d.emitEvent?.(e, p)).catch((e) => info.errors.push(`credential expiry: ${(e as Error).message}`));
+      }
       await pruneUsage(d.paths, d.now()).catch((e) => info.errors.push(`prune: ${(e as Error).message}`));
 
       if(d.telegram)await this.#serializeQuestions(async()=>this.telegramAnswers.auditLateIssueReplies((await listClaims(d.paths)).map(c=>c.issue))).catch(()=>d.log({kind:'telegram-issue-audit-failed'}));

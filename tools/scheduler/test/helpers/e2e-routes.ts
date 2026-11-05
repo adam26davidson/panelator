@@ -67,9 +67,11 @@ export function scripted(results: Record<string, Scripted[]>): Adapter & { ran: 
   };
 }
 
-export async function standingWorld(results:Record<string,Scripted[]>) {
+export async function standingWorld(results:Record<string,Scripted[]>,keep:string[]=[]) {
   const pair=repoPair({'README.md':'standing fixture'}),paths=statePaths(join(pair.root,'state'));await ensureStateDirs(paths);
   const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,registryActionsCheck(join(agentsDir,'actions.yaml')));
+  // Spec 030: the recorded runs of earlier specs run without the two agents it added, unless a test asks for them.
+  for(const n of ['credential-check','infra-health'])if(!keep.includes(n))delete registry[n];
   registry.operator={...registry['action-audit'],name:'operator',trigger:{schedule:'1h'},actions:['set_parameter','rerun_workflow'],input:'audit-input'};
   const cfg={...loadConfig(defaultConfigPath),repo:'o/r',required_checks:['test'],slots:1};
   const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),cfg,registry));
@@ -108,6 +110,7 @@ export async function chainWorld(opts: {
   issueBody?: string;
   labels?: string[];
   results: Record<string, Scripted[]>;
+  deps?: Partial<SchedulerDeps>;
   /** Spec 031: issue #7 does not exist until the children scan files it (the first created issue becomes #7). */
   issueFromScan?: boolean;
 }) {
@@ -266,6 +269,7 @@ export async function chainWorld(opts: {
     botLogin: BOT, serviceLog: new ServiceLog(paths.serviceLog), inhibitor: new SleepInhibitor({ enabled: false }),
     fastForward: async () => ({ moved: false, changedPaths: [] }), sleep: async () => {}, monotonic: () => 0, requestRestart: () => {},
   };
+  Object.assign(deps, opts.deps);
   const scheduler = new Scheduler(deps);
 
   return {

@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 export interface StatePaths {
   telegramOffset: string;
   telegramPending: string;
+  /** Spec 030 AC-10: ids of the alert messages sent, so a reply to one is not taken for an answer. */
+  telegramAlerts: string;
   root: string;
   claims: string;
   runs: string;
@@ -29,6 +31,10 @@ export interface StatePaths {
   quota: string;
   /** Spec 029 AC-8: the issues whose needs-design-stage label was removed, so a restart comments once. */
   designRelabelled: string;
+  /** Spec 030 AC-8: parties the maintainer approved for first contact. */
+  contactParties: string;
+  /** Spec 030 AC-5: the day each credential_expiry was last emitted. */
+  credentialExpiryEmitted: string;
   /** Spec 031 AC-4: consecutive scans on which a planned child could not be filed. */
   childrenFailures: string;
 }
@@ -38,6 +44,7 @@ export function statePaths(root: string): StatePaths {
     root,
     telegramOffset:join(root,'telegram','offset.json'),
     telegramPending:join(root,'telegram','pending.json'),
+    telegramAlerts:join(root,'telegram','alerts.json'),
     parameters: join(root, 'parameters.json'),
     parametersHistory: join(root, 'parameters', 'history.jsonl'),
     actionsLog: join(root, 'actions', 'log.jsonl'),
@@ -60,10 +67,12 @@ export function statePaths(root: string): StatePaths {
     questionsLog: join(root, "questions", "log.jsonl"),
     quota: join(root, "quota.json"),
     designRelabelled: join(root, "design", "relabelled.json"),
+    contactParties: join(root, "contacts", "parties.json"),
+    credentialExpiryEmitted: join(root, "credentials", "expiry-emitted.json"),
     childrenFailures: join(root, "children", "failures.json"),
   };
 }
 
 export async function ensureStateDirs(p: StatePaths): Promise<void> {
-  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), p.agents]) await mkdir(d, { recursive: true });
+  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.contactParties), dirname(p.credentialExpiryEmitted), dirname(p.childrenFailures), p.agents]) await mkdir(d, { recursive: true });
 }
