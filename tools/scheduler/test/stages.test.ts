@@ -141,6 +141,17 @@ describe("committed stage prompts (AC-1, AC-14, AC-15, AC-17)", () => {
       }
     });
   }
+  for (const n of ["plan", "implement", "fix"]) {
+    it(`${n}.md says a files entry ending in / covers a directory (spec 049 AC-4)`, () => {
+      const sentences = read(n).replace(/\s+/g, " ").split(/\.(?: |$)/);
+      expect(sentences.some((s) => s.includes("`/`") && s.includes("directory"))).toBe(true);
+    });
+  }
+  it("plan.md says when to list a directory and no longer asks for exact files (spec 049 AC-1)", () => {
+    const t = read("plan").replace(/\s+/g, " ");
+    expect(t.split(/\.(?: |$)/).find((s) => s.includes("`/`"))).toContain("fixtures");
+    expect(t).not.toContain("exact repo-relative files");
+  });
   const narrowed = /that a user could notice a change does not make it a product decision/i;
   for (const n of ["plan", "implement", "fix", "review"]) {
     it(`${n}.md carries history, answer, decide input, escalation and the follow-up rule`, () => {

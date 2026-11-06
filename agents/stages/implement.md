@@ -23,7 +23,7 @@ Issue {{issue}}
 Spec:
 {{spec}}
 
-Plan (your file scope; do not touch files outside it except lockfiles and schemas/):
+Plan (your file scope; an entry ending in `/` covers every file under that directory; do not touch files outside it except lockfiles and schemas/):
 {{plan}}
 
 {{profile_instructions}}
