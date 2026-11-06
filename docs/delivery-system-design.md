@@ -507,6 +507,7 @@ are stale and are corrected as part of B.
 - `specs/034-claim-drops-slot-field/spec.md` (issue #55)
 - `specs/035-pnpm-pinned-and-install-before-run/spec.md` (issue #56)
 - `specs/036-main-checks-watcher-needs-subscriber/spec.md` (issue #57)
+- `specs/037-filer-apply-lists-open-issues-once/spec.md` (issue #58)
 - planned: console
   title: Specify and build the maintainer console (row E, second part)
   brief: The maintainer console of section 9, built on the design stage of spec 029 and
