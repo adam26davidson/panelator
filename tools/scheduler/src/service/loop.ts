@@ -14,7 +14,7 @@ import {runStandingAgent} from '../standing/run.ts';
 import {CAPABILITY_CLOSED_MARKER,isCapabilityIssue} from '../filer/input.ts';
 import type {StandingDefinition} from '../types.ts';
 import type {ParameterStore} from '../parameters/store.ts';
-import {watchMainChecks} from '../standing/events.ts';
+import {hasSubscriber,watchMainChecks} from '../standing/events.ts';
 import {execFileSync} from 'node:child_process';
 import { rankIssues, classifyWork } from "../shortlist/rank.ts";
 import { selectEligible } from "../shortlist/select.ts";
@@ -481,7 +481,7 @@ export class Scheduler {
           d.serviceLog.write({ kind: "children-scan-failed", error });
         }
       }
-      if(d.registry && Object.keys(d.registry).length)try {
+      if(d.registry && hasSubscriber(d.registry,'ci_failure_main'))try {
         const sha=execFileSync('git',['rev-parse','origin/main'],{cwd:d.repoDir,encoding:'utf8'}).trim();
         await watchMainChecks(d.gh,d.paths,d.registry,sha,d.cfg.required_checks,d.now());
       }catch(e){info.errors.push(`main checks: ${(e as Error).message}`);}

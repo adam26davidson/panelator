@@ -1289,3 +1289,45 @@ describe("Scheduler.run", () => {
     expect(log.trim().split("\n").pop()).toContain('"kind":"stopped"');
   }, 30_000);
 });
+
+describe('Scheduler.tick: main check watcher (spec 036)',()=>{
+ const checkRoute:Route={method:'GET',path:/^\/repos\/o\/r\/commits\/[0-9a-f]+\/check-runs$/,reply:()=>({body:{total_count:1,check_runs:[{id:9,name:'test',status:'completed',conclusion:'failure'}]}})};
+ async function harness(){
+  const h=await setup([...routes([]),checkRoute]);
+  const {loadRegistry}=await import('../src/standing/registry.ts');
+  const {EVENT_NAMES}=await import('../src/standing/events.ts');
+  const {registryActionsCheck}=await import('../src/actions/index.ts');
+  const {loadParameterDefinitions}=await import('../src/parameters/definitions.ts');
+  const {ParameterStore}=await import('../src/parameters/store.ts');
+  const {initializeAgents,readAgentState}=await import('../src/standing/state.ts');
+  const all=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,registryActionsCheck(join(agentsDir,'actions.yaml')));
+  const a=all['action-audit'];
+  const subscribed={...all,'action-audit':{...a,trigger:{...a.trigger,events:[...(a.trigger.events??[]),'ci_failure_main']}}};
+  h.deps.cfg.required_checks=['test'];
+  const use=async(registry:typeof all)=>{h.deps.registry=registry;h.deps.parameters=new ParameterStore(h.paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),h.deps.cfg,registry));await initializeAgents(h.paths,registry,h.deps.parameters,h.deps.now());};
+  const checkCalls=()=>h.gh.calls.filter(c=>c.url.includes('/check-runs'));
+  const sha=()=>git(h.pair.repo,'rev-parse','origin/main').trim();
+  return {...h,all,subscribed,use,checkCalls,sha,readAgentState};
+ }
+ it('makes no check-run call when no agent subscribes (AC-1)',async()=>{
+  const h=await harness();await h.use(h.all);const t=await h.s.tick();
+  expect(h.checkCalls()).toHaveLength(0);expect(existsSync(h.paths.mainChecks)).toBe(false);expect(t.errors.filter(e=>e.startsWith('main checks:'))).toEqual([]);
+ },30000);
+ it('a subscriber turns the watcher on (AC-2)',async()=>{
+  const h=await harness();await h.use(h.subscribed);await h.s.tick();
+  const calls=h.checkCalls();expect(calls).toHaveLength(1);expect(calls[0].url).toContain(h.sha());
+  const st=(await h.readAgentState(h.paths,'action-audit'))!;
+  expect(st.pending_events.map(e=>({event:e.event,payload:e.payload}))).toEqual([{event:'ci_failure_main',payload:{check:'test',run_id:9,sha:h.sha()}}]);
+ },30000);
+ it('subscribing later resumes from the stored state (AC-3)',async()=>{
+  const h=await harness();const stored=JSON.stringify({$sha:h.sha(),test:'failed'});writeFileSync(h.paths.mainChecks,stored);
+  await h.use(h.all);await h.s.tick();
+  expect(readFileSync(h.paths.mainChecks,'utf8')).toBe(stored);expect(h.checkCalls()).toHaveLength(0);
+  await h.use(h.subscribed);await h.s.tick();
+  expect(h.checkCalls()).toHaveLength(1);expect((await h.readAgentState(h.paths,'action-audit'))!.pending_events).toEqual([]);
+ },30000);
+ it('an undefined or empty registry makes no check-run call (AC-4)',async()=>{
+  const h=await harness();h.deps.registry=undefined;await h.s.tick();expect(h.checkCalls()).toHaveLength(0);
+  h.deps.registry={};await h.s.tick();expect(h.checkCalls()).toHaveLength(0);
+ },30000);
+});
