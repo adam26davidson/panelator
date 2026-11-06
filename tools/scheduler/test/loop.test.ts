@@ -70,8 +70,30 @@ async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
     scanChildren: async () => {},
     fastForward: async () => ({ moved: false, changedPaths: [] }), sleep: async () => {}, monotonic: () => mono, requestRestart: () => { started.push(-1); },
   };
-  const s = new Scheduler(deps, { driveChain: drive ?? (async (_d, claim) => { started.push(claim.issue); return { ...claim, state: { ...claim.state, stage: "verify" } }; }) });
-  return { s, deps, gh, notifications, started, paths, pair, setNow: (d: Date) => { now = d; }, setMono: (m: number) => { mono = m; } };
+  // Runs a test deliberately holds open are counted here, so `settle` can wait for the scheduler's bookkeeping after a
+  // run returned or threw without waiting for the held ones.
+  let inFlight = 0;
+  const track = <A extends unknown[], R>(fn: (...a: A) => Promise<R>) => async (...a: A): Promise<R> => { inFlight++; try { return await fn(...a); } finally { inFlight--; } };
+  const s = new Scheduler(deps, { driveChain: track(drive ?? (async (_d, claim) => { started.push(claim.issue); return { ...claim, state: { ...claim.state, stage: "verify" } }; })) });
+  current = { s, inFlight: () => inFlight };
+  return { s, deps, gh, notifications, started, paths, pair, track, setNow: (d: Date) => { now = d; }, setMono: (m: number) => { mono = m; } };
+}
+
+/** The scheduler of the latest `setup`, and how many of its chains or standing runs a test is still holding open. */
+let current: { s: Scheduler; inFlight: () => number } | null = null;
+
+/**
+ * Lets the scheduler finish the bookkeeping of every chain or standing run that has returned or thrown (the claim and
+ * the ledger written, the failure counted, the finding and notification sent) before the test reads the state or ticks
+ * again. It waits until the active count is down to the runs the test still holds open (`track` in `setup`), then a
+ * short while for the rest of the event loop. A fixed 100 ms sleep raced that bookkeeping on a loaded CI runner: a tick
+ * then saw the chain still active and skipped it (loop.test.ts flaked on main on 2026-11-06, twice).
+ */
+async function settle(s: Scheduler | null = current?.s ?? null): Promise<void> {
+  await new Promise((r) => setTimeout(r, 20));
+  const deadline = Date.now() + 5000;
+  while (s !== null && s.active > (current?.inFlight() ?? 0) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+  await new Promise((r) => setTimeout(r, 50));
 }
 
 describe('Telegram answers and watchdog fallback',()=>{
@@ -114,7 +136,7 @@ describe('Telegram answers and watchdog fallback',()=>{
 
 describe("Scheduler.tick", () => {
   it('a due standing agent takes the free slot before shortlist and never overlaps itself',async()=>{
-    const {s,deps,paths}=await setup(routes([issue(1)]));
+    const {s,deps,paths,track}=await setup(routes([issue(1)]));
     const {loadRegistry}=await import('../src/standing/registry.ts');
     const {EVENT_NAMES}=await import('../src/standing/events.ts');
     const {registryActionsCheck}=await import('../src/actions/index.ts');
@@ -125,7 +147,7 @@ describe("Scheduler.tick", () => {
     deps.registry={'action-audit':all['action-audit']};deps.parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),deps.cfg,deps.registry));
     await initializeAgents(paths,deps.registry,deps.parameters,deps.now());
     const state=(await readAgentState(paths,'action-audit'))!;await writeAgentState(paths,'action-audit',{...state,next_run:deps.now().toISOString()});
-    let calls=0,finish!:()=>void;const pending=new Promise<void>(r=>{finish=r;});deps.runStanding=async()=>{calls++;await pending;};
+    let calls=0,finish!:()=>void;const pending=new Promise<void>(r=>{finish=r;});deps.runStanding=track(async()=>{calls++;await pending;});
     expect((await s.tick()).claimed).toEqual([]);expect(s.active).toBe(1);expect((await s.tick()).claimed).toEqual([]);expect(calls).toBe(1);
     finish();await new Promise(r=>setTimeout(r,20));expect(s.active).toBe(0);
   },30000);
@@ -313,19 +335,22 @@ describe("Scheduler.tick", () => {
     const { deps, paths, pair } = await setup(routes([]), 1, async () => { calls++; throw new Error("boom"); });
     await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
     for (let i = 0; i < 2; i++) {
-      await new Scheduler(deps, { driveChain: async () => { calls++; throw new Error(`boom ${i}`); } }).tick();
-      await new Promise((r) => setTimeout(r, 100));
+      const again = new Scheduler(deps, { driveChain: async () => { calls++; throw new Error(`boom ${i}`); } });
+      await again.tick();
+      await settle(again);
     }
     expect((await listClaims(paths))[0].state.chainFailures).toEqual({ count: 2, last: "boom 1" });
     expect(JSON.parse(readFileSync(join(paths.escalations, "7.json"), "utf8")).chainFailures).toEqual({ count: 2, last: "boom 1" });
     // A drive that returns resets the count.
-    await new Scheduler(deps, { driveChain: async (_d, c) => c }).tick();
-    await new Promise((r) => setTimeout(r, 100));
+    const reset = new Scheduler(deps, { driveChain: async (_d, c) => c });
+    await reset.tick();
+    await settle(reset);
     expect((await listClaims(paths))[0].state.chainFailures).toBeNull();
     expect(calls).toBe(2);
     // Tm6: the error kept is clipped like a history entry.
-    await new Scheduler(deps, { driveChain: async () => { throw new Error("x".repeat(HISTORY_ENTRY_MAX + 50)); } }).tick();
-    await new Promise((r) => setTimeout(r, 100));
+    const clipped = new Scheduler(deps, { driveChain: async () => { throw new Error("x".repeat(HISTORY_ENTRY_MAX + 50)); } });
+    await clipped.tick();
+    await settle(clipped);
     expect((await listClaims(paths))[0].state.chainFailures?.last).toHaveLength(HISTORY_ENTRY_MAX);
   }, 30_000);
 
@@ -410,7 +435,6 @@ const record = (over: Partial<PausedRecord> = {}): PausedRecord => ({
 const waiting = (labels = ["validated", "class:product", "needs-decision"]) => issue(7, labels);
 /** The real first step of the chain, so a resume's `answered` event is applied as the driver applies it. */
 const firstStep: Drive = async (d, claim) => (await step(d, claim)).claim;
-const settle = () => new Promise((r) => setTimeout(r, 100));
 const logLines = (paths: { questionsLog: string }) => { try { return readFileSync(paths.questionsLog, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
 const labelCalls = (gh: { calls: { method: string; url: string; body: unknown }[] }, n: number) =>
   gh.calls.filter((c) => c.url.startsWith(`/repos/o/r/issues/${n}/labels`)).map((c) => (c.method === "POST" ? `+${(c.body as { labels: string[] }).labels.join(",")}` : `-${decodeURIComponent(c.url.split("/").pop()!)}`));
@@ -1082,7 +1106,7 @@ async function withStanding(h: Harness, log: ReturnType<typeof grantLog>, due = 
   await initializeAgents(h.paths, h.deps.registry, h.deps.parameters, h.deps.now());
   const state = (await readAgentState(h.paths, "action-audit"))!;
   if (due) await writeAgentState(h.paths, "action-audit", { ...state, next_run: h.deps.now().toISOString() });
-  h.deps.runStanding = async () => { await log.hold("standing"); };
+  h.deps.runStanding = h.track(async () => { await log.hold("standing"); });
 }
 const answeredRoutes = (shortlist: unknown[] = []) =>
   routes([waiting(), ...shortlist], {}, { 7: [comment(500, BOT_LOGIN, "2026-10-12T08:00:00Z", "q"), comment(501, ME, "2026-10-12T09:00:00Z", "Use the file store.")] });

@@ -1020,7 +1020,7 @@ describe('standing agents: recorded runs through the real runner and mocked App'
  },30000);
 // Spec 045: a standing agent waits out a network outage; it is not the agent's failure.
  const serviceLines=(w:Awaited<ReturnType<typeof standingWorld>>,agent:string)=>readJsonLines<{kind:string;agent?:string;[k:string]:unknown}>(w.paths.serviceLog).then(rs=>rs.filter(r=>r.agent===agent));
- const kindsOf=(lines:{kind:string}[],kind:string)=>lines.filter(l=>l.kind===kind);
+ const kindsOf=<L extends {kind:string}>(lines:L[],kind:string)=>lines.filter(l=>l.kind===kind);
  const dueAt=async(w:Awaited<ReturnType<typeof standingWorld>>,name:string,patch:Partial<NonNullable<Awaited<ReturnType<typeof readAgentState>>>>={})=>{const st=(await readAgentState(w.paths,name))!;await writeAgentState(w.paths,name,{...st,next_run:w.deps.now().toISOString(),...patch});};
  const tickIdle=async(w:Awaited<ReturnType<typeof standingWorld>>)=>{await w.scheduler.tick();await idle(w);};
  const after=(w:Awaited<ReturnType<typeof standingWorld>>,ms:number)=>w.setNow(new Date(w.deps.now().getTime()+ms));
