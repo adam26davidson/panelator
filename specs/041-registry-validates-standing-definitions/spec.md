@@ -126,8 +126,12 @@ params as JSON, for example
   `/ must NOT have additional properties {"additionalProperty":"unknown"}`).
   The same holds for a missing required key (`/ must have required property
   'name' {"missingProperty":"name"}` when `name:` is removed), for
-  `kind: wrong`, for `worktree: issue`, for `effort: 3`, for
-  `name: Bad Name`, and for `profile: ''`. On `main` these failures are the
+  `worktree: issue`, for `effort: 3`, for
+  `name: Bad Name`, and for `profile: ''`. (`kind: wrong` is not among them: `loadRegistry` calls
+  `parseAgentDefinition` first, which reports `kind must be agent or
+  standing` before the schema is consulted, and
+  `tools/scheduler/src/stages/definition.ts` is unchanged; the schema's own
+  rejection of it is asserted in AC-6.) On `main` these failures are the
   hand checks' own messages (`unknown key unknown`, `name is required`,
   ...), so a test on any one of them distinguishes the two.
 - AC-2. **The trigger's shape is the schema's.** Given the fixture with
@@ -170,7 +174,8 @@ params as JSON, for example
 - AC-6. **The schema rejects what the schema says.** Given the parsed
   frontmatter of the fixture, when `validate('standing-definition', fm)` is
   called on it, then it is `{ ok: true }`; and with each of the changes of
-  AC-1 and AC-2 applied to that object, then `ok` is false and `errors`
+  AC-1 and AC-2 and with `kind: wrong` applied to that object (for `kind`,
+  `/kind must be equal to constant ...`), then `ok` is false and `errors`
   holds the messages those criteria name. Given `bounds` with a fourth key,
   a missing `max_turns` or `max_cost_usd: 0`, then `ok` is false
   (`/bounds must NOT have additional properties`, `/bounds must have required
