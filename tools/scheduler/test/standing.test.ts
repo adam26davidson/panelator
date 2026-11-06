@@ -30,7 +30,39 @@ Hello {{agent}}
 `;
 describe('standing registry', () => {
   function load(s = text) { const dir = mkdtempSync(join(tmpdir(), 'registry-')); writeFileSync(join(dir, 'test.md'), s); return loadRegistry(dir, ['merge'], []); }
-  it('loads and renders', () => { expect(load().test.actions).toEqual([]); expect(renderStandingPrompt('{{agent}}', {agent:'test'})).toBe('test'); });
+  it('loads and renders', () => {
+    const d = load().test;
+    expect(d.actions).toEqual([]);
+    expect(d).toMatchObject({name:'test',kind:'standing',trigger:{schedule:'1d',events:['merge']},tier:'strong',worktree:'none',profile:'none',input:'audit-input',output:'standing-result',bounds:{timeout_min:10,max_turns:10,max_cost_usd:1},prompt:'Hello {{agent}}\n'});
+    expect(renderStandingPrompt(d.prompt, {agent:'test'})).toBe('Hello test\n');
+  });
+  it.each([
+    ['schedule: 1d','schedule: 1.5d'], ['tier: strong','tier: strong\neffort: high'], ['tier: strong','tier: strong\nindependent: true\nfallback: other'], ['tier: strong','tier: standard\nfallback: other'],
+  ])('loads %s -> %s', (a,b) => expect(() => load(text.replace(a,b))).not.toThrow());
+  const P = '"^[a-z][a-z0-9-]*$" {"pattern":"^[a-z][a-z0-9-]*$"}';
+  it.each([
+    ['input: audit-input','input: audit-input\nunknown: true',': / must NOT have additional properties {"additionalProperty":"unknown"}'],
+    ['name: test\n','',`: / must have required property 'name' {"missingProperty":"name"}`],
+    ['worktree: none','worktree: issue',': /worktree must be equal to one of the allowed values {"allowedValues":["fresh","none"]}'],
+    ['input: audit-input','input: audit-input\neffort: 3',': /effort must be string {"type":"string"}'],
+    ['name: test','name: Bad Name',`: /name must match pattern ${P}`],
+    ['profile: none',"profile: ''",`: /profile must match pattern ${P}`],
+    ['trigger: {schedule: 1d, events: [merge]}','trigger: {}',': /trigger must NOT have fewer than 1 properties {"limit":1}'],
+    ['trigger: {schedule: 1d, events: [merge]}','trigger: {schedule: 1d, foo: 1}',': /trigger must NOT have additional properties {"additionalProperty":"foo"}'],
+    ['trigger: {schedule: 1d, events: [merge]}','trigger: {events: []}',': /trigger/events must NOT have fewer than 1 items {"limit":1}'],
+    ['trigger: {schedule: 1d, events: [merge]}','trigger: {schedule: soon}',': /trigger/schedule must match pattern'],
+    ['trigger: {schedule: 1d, events: [merge]}','trigger: [merge]',': /trigger must be object {"type":"object"}'],
+    ['schedule: 1d','schedule: 1m',': trigger.schedule must be between 1h and 30d'],
+    ['schedule: 1d','schedule: 31d',': trigger.schedule must be between 1h and 30d'],
+    ['events: [merge]','events: [oops]',': trigger.events unknown or empty'],
+    ['input: audit-input','input: audit-input\nactions: [oops]',': actions contains unknown kind'],
+    ['profile: none','profile: from-issue',': profile must be none or a profile name'],
+    ['output: standing-result','output: plan-result',': output must extend standing-result'],
+    ['input: audit-input','input: nope',': input schema missing'],
+    ['tier: strong','tier: strong\nfallback: other',': a strong-tier stage may not name a fallback unless independent'],
+    ['name: test','name: other',': name must equal file name'],
+    ['kind: standing','kind: wrong',': kind must be agent or standing'],
+  ])('rejects %s -> %s with the exact message', (a,b,msg) => expect(() => load(text.replace(a,b))).toThrow(msg));
   it.each([['kind: standing','kind: wrong'], ['schedule: 1d','schedule: 1m'], ['events: [merge]','events: [oops]'], ['name: test','name: other'], ['worktree: none','worktree: issue'], ['tier: strong','tier: strong\nfallback: other'], ['input: audit-input','input: audit-input\nunknown: true'], ['output: standing-result','output: plan-result'], ['profile: none\n',''], ['profile: none','profile: none\nactions: [oops]']])('rejects %s -> %s', (a,b) => expect(() => load(text.replace(a,b))).toThrow(/test.md/));
   it('rejects unknown placeholders', () => expect(() => renderStandingPrompt('{{oops}}', {})).toThrow());
   it('loads every real agent and cross-checks action code', () => {
