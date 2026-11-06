@@ -50,7 +50,8 @@ function buildCommand(run: ClaudeStageRun): Command {
 function judge(events: unknown[], exitCode: number | null, timedOut: boolean): Judgement {
   const result = claudeResult(events);
   const retries = events.map(rec).filter((e) => e.type === "system" && e.subtype === "api_retry");
-  const retryStatus = retries.length ? Number(retries[retries.length - 1].error_status) : null;
+  const lastRetryStatus = retries.length ? retries[retries.length - 1].error_status : null;
+  const retryStatus = typeof lastRetryStatus === "number" ? lastRetryStatus : null;
   const apiErrorStatus = (result && typeof result.api_error_status === "number" ? result.api_error_status : null) ?? retryStatus;
   const finalText = result && typeof result.result === "string" ? result.result : null;
   if (timedOut) return { outcome: "timeout", reason: "stage timeout", apiErrorStatus, finalText };

@@ -17,6 +17,8 @@ import {applyAction,loadActionLevels} from '../actions/index.ts';
 import {appendFindings} from '../state/findings.ts';
 import {buildFilerInput,type FilerDeps} from '../filer/input.ts';
 import {applyFilerResult,type FilerResult} from '../filer/apply.ts';
+import {transientCause,transientRun,outageBackoffS,OUTAGE_ALARM_MS,OUTAGE_CEILING_MS,CEILING_MIN_FAILURES,CEILING_MIN_SPAN_MS,PAST_CEILING} from '../chain/transient.ts';
+import {HISTORY_ENTRY_MAX} from '../chain/machine.ts';
 import {buildAuditInput} from './audit-input.ts';
 import {updateAgentState,type AgentState} from './state.ts';
 import {parseDuration} from './registry.ts';
@@ -43,6 +45,8 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  const filer:FilerDeps={paths:d.paths,gh:d.gh,botLogin:d.botLogin,now:d.now,classes:[...d.cfg.labels.feature_classes,...d.cfg.labels.debt_classes],notify:(text,key)=>d.notifier.notify({issue:0,gate:'standing',label:`${def.name}:${key??text}`,text}),log:d.log};
  let worktree=d.repoDir,created=false;
  let summary='',outcome='failed',error='standing run failed';
+ // Spec 045 AC-1: the outage cause label of a transient attempt; `judged` marks an error thrown for the run's own judgement, already classified.
+ let transient:string|null=null,judged=false;
  try {
   await updateAgentState(d.paths,def.name,s=>{const next={...s,running:{run_id:moved?runId+'-fallback':runId,started_at:now.toISOString()}};delete next.postponed_until;return next;});
   if(def.worktree==='fresh') {
@@ -90,7 +94,8 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   }
   // Spec 013 AC-7: a run still rate limited is postponed whatever the tier, never counted as a failure.
   if(result.judgement.outcome==='failed'&&result.judgement.apiErrorStatus===429)await postpone('rate limited (429)');
-  if(result.outcome!=='ok'||!result.result)throw new Error(result.reason??result.resultErrors.join('; '));
+  if(result.judgement.outcome==='failed')transient=transientRun(result.judgement);
+  if(result.outcome!=='ok'||!result.result){judged=true;throw new Error(result.reason??result.resultErrors.join('; '));}
   const body=result.result as {summary:string;actions?:{kind:string;args:Record<string,unknown>;why:string}[];findings?:unknown[]};
   if(def.output==='filer-result')await applyFilerResult(filer,runId,input as Awaited<ReturnType<typeof buildFilerInput>>,body as FilerResult);
   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},body.findings??[]);
@@ -98,17 +103,57 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   for(const action of body.actions??[])await applyAction(ctx,{...action,agent:def.name,run_id:runId},def.actions);
   summary=body.summary;outcome='ok';
   await writeFile(join(d.paths.runs,result.runId,'summary.json'),JSON.stringify({summary}));
- }catch(e){error=(e as Error).message;d.log({kind:postponedUntil===null?'standing-error':'standing-postponed',agent:def.name,error});}
+ }catch(e){
+  error=(e as Error).message;
+  // Spec 045 AC-1: an error thrown around the run is transient when it names the network; a judged failure never reaches the classifier again.
+  if(postponedUntil===null&&transient===null&&!judged)transient=transientCause(e);
+  if(postponedUntil!==null)d.log({kind:'standing-postponed',agent:def.name,error});
+  else if(transient===null)d.log({kind:'standing-error',agent:def.name,error});
+ }
  finally{
   if(created)await removeWorktree(d.repoDir,worktree).catch(e=>d.log({kind:'error',error:String(e)}));
   await updateAgentState(d.paths,def.name,s=>{const next={...s};delete next.running;return next;});
  }
  // Spec 013 AC-7: a quota postponement is not a failure: the count, pending events and schedule stay as they are.
  if(postponedUntil!==null){const until=postponedUntil;await updateAgentState(d.paths,def.name,s=>({...s,postponed_until:until,summary:error}));return;}
- if(outcome!=='ok'&&state.failures===0){await updateAgentState(d.paths,def.name,current=>({...current,failures:1}));return;}
+ // Spec 045 AC-2 to AC-6: a transient failure postpones the agent with backoff and counts nothing until the outage passes its ceiling.
+ let keepOutage=false;
+ if(transient!==null) {
+  const cause=transient,at=d.now(),nowMs=at.getTime(),prev=state.outage;
+  const count=(prev?.count??0)+1,since=prev?.since??at.toISOString(),last=error.slice(0,HISTORY_ENTRY_MAX);
+  const until=new Date(nowMs+outageBackoffS(count)*1000).toISOString(),age=nowMs-Date.parse(since);
+  if(!prev)d.log({kind:'standing-outage',agent:def.name,cause,error});
+  d.log({kind:'standing-postponed',agent:def.name,error:`${error}; postponed until ${until}`});
+  // AC-5: one alarm per agent per outage, once it is two hours old.
+  const alarm=!prev?.alarmed&&age>=OUTAGE_ALARM_MS;
+  const outage:NonNullable<AgentState['outage']>={since,count,last,alarmed:Boolean(prev?.alarmed)||alarm};
+  if(alarm) {
+   d.log({kind:'standing-outage-alarm',agent:def.name,since,failures:count,cause});
+   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:at.toISOString()},[{what:`network outage blocks standing agent ${def.name}`,where:`agents/standing/${def.name}.md`,evidence:`${count} transient failures since ${since} (${cause}); last: ${last}`,noticed_how:'standing run transient error'}],{exclude:def.name});
+   await d.notifier.notify({issue:0,gate:'infra',label:`${def.name}:outage`,text:`Standing agent ${def.name} has failed on a transient network error ${count} times since ${since} (${cause}); it keeps retrying. Last error: ${last}`});
+   await d.emitEvent?.('infra_alarm',{agent:def.name,since,failures:count,cause});
+  }
+  // AC-6: past the ceiling a failure counts as genuine only once enough of them span enough time.
+  if(age>=OUTAGE_CEILING_MS) {
+   const past={since:prev?.past_ceiling?.since??at.toISOString(),failures:(prev?.past_ceiling?.failures??0)+1};
+   outage.past_ceiling=past;
+   const counts=Boolean(prev?.ceiling)||(past.failures>=CEILING_MIN_FAILURES&&nowMs-Date.parse(past.since)>=CEILING_MIN_SPAN_MS);
+   if(counts) {
+    outage.ceiling=true;
+    if(!prev?.ceiling)d.log({kind:'standing-outage-ceiling',agent:def.name,since,failures:count,cause});
+    error=PAST_CEILING+error;keepOutage=true;
+   }
+  }
+  await updateAgentState(d.paths,def.name,s=>({...s,postponed_until:until,summary:error,outage}));
+  if(!keepOutage)return;
+ }
+ // Spec 045 AC-4: the next real outcome ends the outage.
+ const over=keepOutage?undefined:state.outage;
+ if(over)d.log({kind:'standing-outage-over',agent:def.name,since:over.since,failures:over.count});
+ if(outcome!=='ok'&&state.failures===0){await updateAgentState(d.paths,def.name,current=>{const n={...current,failures:1};if(over)delete n.outage;return n;});return;}
  const at=d.now().toISOString();
  const next=def.trigger.schedule?new Date(d.now().getTime()+parseDuration(String((await d.parameters.read(`schedule.${def.name}`)).value))).toISOString():null;
- await updateAgentState(d.paths,def.name,current=>({...current,last_run:{at,run_id:runId,outcome},summary:summary||error,next_run:next,failures:0,pending_events:current.pending_events.filter(e=>!received.some(r=>JSON.stringify(r)===JSON.stringify(e)))}));
+ await updateAgentState(d.paths,def.name,current=>{const n={...current,last_run:{at,run_id:runId,outcome},summary:summary||error,next_run:next,failures:0,pending_events:current.pending_events.filter(e=>!received.some(r=>JSON.stringify(r)===JSON.stringify(e)))};if(over)delete n.outage;return n;});
  if(outcome!=='ok') {
   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:at},[{what:`standing agent ${def.name} failed twice`,where:`agents/standing/${def.name}.md`,evidence:error,noticed_how:'standing run retry exhausted'}],{exclude:def.name});
   await filer.notify(`Standing agent ${def.name} failed twice: ${error}`);

@@ -1,3 +1,4 @@
+import type { Judgement } from "../adapters/types.ts";
 import { POSTPONE_WAIT_S, type LedgerCounts } from "./machine.ts";
 
 /**
@@ -50,7 +51,23 @@ function labelOf(text: string): string | null {
   if (code) return code[1];
   const lower = text.toLowerCase();
   for (const m of GIT_MESSAGES) if (lower.includes(m.toLowerCase())) return m;
+  if (CLAUDE_UNREACHABLE.test(text)) return "Can't reach the API server";
   return GIT_HTTP_5XX.test(text) ? "HTTP 5xx" : null;
+}
+
+/** Spec 045 AC-1: the Claude harness's own connection message, with a straight or curly apostrophe, whatever its case. */
+const CLAUDE_UNREACHABLE = /can[\u0027\u2019]t reach the api server/i;
+
+/**
+ * Spec 045 AC-1: the label of a transient failed run of a standing agent, else null. A judgement is transient when it
+ * failed with no HTTP status (and its reason names the network) or a 5xx; a 4xx (a 429 included) is never transient.
+ */
+export function transientRun(judgement: Judgement): string | null {
+  if (judgement.outcome !== "failed") return null;
+  const status = judgement.apiErrorStatus;
+  if (status === null) return transientCause(new Error(judgement.reason ?? ""));
+  if (status >= 500 && status <= 599) return transientCause(new Error(judgement.reason ?? "")) ?? `HTTP ${status}`;
+  return null;
 }
 
 /** AC-5: the wait after the `count`th consecutive transient failure: 60 s, doubling, capped at POSTPONE_WAIT_S. */

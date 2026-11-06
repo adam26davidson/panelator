@@ -12,6 +12,11 @@ export interface AgentState {
  running?:{run_id:string;started_at:string};
  /** Spec 013 AC-7: not started again before this instant (a quota limit or a deferral). */
  postponed_until?:string;
+ /**
+  * Spec 045 AC-2, AC-5, AC-6: the consecutive transient failures (a network outage) of this agent. The wait lives in
+  * `postponed_until`; none of these attempts counts in `failures` until the outage passes its ceiling.
+  */
+ outage?:{since:string;count:number;last:string;alarmed:boolean;past_ceiling?:{since:string;failures:number};ceiling?:boolean};
 }
 /** The routine events: only these wait for the debounce; anything else may need an answer now (spec 025 AC-12, AC-13). */
 export const DEBOUNCED_EVENTS:readonly string[]=['finding_queued'];

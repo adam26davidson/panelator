@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { claudeAdapter } from "../src/adapters/claude.ts";
 import { readJsonlFile } from "../src/adapters/jsonl.ts";
+import { transientRun } from "../src/chain/transient.ts";
 import type { StageRun } from "../src/adapters/types.ts";
 
 const fx = async (n: string) => (await readJsonlFile(join(import.meta.dirname, "fixtures", "streams", n))).records;
@@ -88,6 +89,11 @@ describe("claudeAdapter.judge (AC-21)", () => {
   });
   it("bounds on error_max_turns (review focus 1)", async () => {
     expect(claudeAdapter.judge(await fx("claude-max-turns.jsonl"), 1, false)).toMatchObject({ outcome: "bounds", reason: expect.stringMatching(/max turns/i) });
+  });
+  it("reports a null status, not 0, for an unreachable API (spec 045 AC-1)", async () => {
+    const j = claudeAdapter.judge(await fx("claude-unreachable.jsonl"), 1, false);
+    expect(j).toMatchObject({ outcome: "failed", reason: "API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)", apiErrorStatus: null });
+    expect(transientRun(j)).toBe("EAI_AGAIN");
   });
   it("reports 429 from the result and from api_retry events", async () => {
     expect(claudeAdapter.judge(await fx("claude-429.jsonl"), 1, false)).toMatchObject({ outcome: "failed", apiErrorStatus: 429 });
