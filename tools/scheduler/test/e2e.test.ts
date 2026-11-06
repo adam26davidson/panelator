@@ -1114,7 +1114,7 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   for(const part of ['4',since,'EAI_AGAIN'])expect(queue[0].finding.evidence).toContain(part);
   expect(w.notifications).toMatchObject([{gate:'infra',label:'operator:outage'}]);
   expect(log.kinds('operator','standing-outage-alarm')).toHaveLength(1);
-  expect(emitted.filter(a=>a[0]==='infra_alarm')).toEqual([['infra_alarm',{agent:'operator',since,failures:4,cause:'EAI_AGAIN'}]]);
+  expect(emitted.filter(a=>a[0]==='infra_alarm')).toEqual([['infra_alarm',{kind:'network_outage',agent:'operator',since,failures:4,cause:'EAI_AGAIN'}]]);
   expect(st.pending_events.filter(e=>e.event==='finding_queued')).toHaveLength(0);
   await tickAt(w,'2026-10-01T00:20:00.000Z');
   expect((await readAgentState(w.paths,'operator'))?.outage?.count).toBe(5);
