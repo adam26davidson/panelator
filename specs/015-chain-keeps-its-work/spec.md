@@ -176,7 +176,7 @@ claim is the record of its consecutive transient failures.
   `MAX_CHAIN_FAILURES` genuine failures in a row the `chain_error` event is
   raised as spec 006 AC-7 ("Repeated chain errors") says. Transient failures between genuine ones
   neither count nor reset the count.
-- AC-8. **A long outage raises one alarm.** Given an outage whose `since`
+- AC-8. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-1: the `infra_alarm` payload gains `kind: "network_outage"`. **A long outage raises one alarm.** Given an outage whose `since`
   is two hours or more before a transient failure and `alarmed` false, then
   the loop sets `alarmed`, logs `{ kind: "transient-outage-alarm", issue,
   since, failures, cause }`, appends one finding (`what: "network outage

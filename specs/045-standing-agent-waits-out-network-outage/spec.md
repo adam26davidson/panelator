@@ -177,7 +177,7 @@ transient failures, kept in its state file (AC-2).
   spec 008 AC-3 says: `failures` 1 after a first attempt, the finding and the
   notification after a second. Transient failures between genuine ones
   neither count nor reset `failures`.
-- AC-5. **A long outage raises one alarm.** Given a transient failure whose
+- AC-5. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-2: the `infra_alarm` payload gains `kind: "network_outage"`. **A long outage raises one alarm.** Given a transient failure whose
   outage's `since` is `OUTAGE_ALARM_MS` (two hours, spec 015 AC-8) or more
   before now and `alarmed` false, then the runner sets `alarmed` true, logs
   `{ kind: "standing-outage-alarm", agent, since, failures, cause }`, appends

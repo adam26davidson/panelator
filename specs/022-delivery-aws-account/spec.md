@@ -124,7 +124,7 @@ the open reservations in the ledger (AC-6).
   and the service keeps running. A different account id is never used: a
   test with a fake identity in another account asserts that no call other
   than the identity check is made.
-- AC-3. **Setup can be checked.** `panelator-scheduler aws-check` runs the
+- AC-3. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-7: at cap 0 the check makes no cost call and exits 0 on a matching identity. **Setup can be checked.** `panelator-scheduler aws-check` runs the
   identity check, then `aws ce get-cost-and-usage` for the current month, and
   prints: the caller ARN and account, whether it matches the configuration,
   the month-to-date cost, the cap, and the SSO session expiry read from the
@@ -135,7 +135,7 @@ the open reservations in the ledger (AC-6).
 
 **The daily pull and the forecast** (design section 8)
 
-- AC-4. **Actual spend is pulled once a day and recorded.** Given AWS on and
+- AC-4. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-5: while the cap is 0 the scheduled pull is skipped and only the identity check runs (AC-6 for a forced pull). **Actual spend is pulled once a day and recorded.** Given AWS on and
   the last successful pull older than `pull_interval_h` (or none yet), then
   the tick runs `aws ce get-cost-and-usage` for the current month at
   `MONTHLY` granularity, metric `UnblendedCost`, filtered to the configured
@@ -201,7 +201,7 @@ the open reservations in the ledger (AC-6).
   reflection treat it as the design says. A second pull in the same month
   above the same threshold sends nothing more. The maintainer's own alerts
   from AWS Budgets (section 8) arrive by email independently of this.
-- AC-9. **An over-cap forecast stops launches and wakes the shrinkers.**
+- AC-9. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-3: the alarm is the third `infra_alarm` producer, after the outage alarms of specs 015 and 045, and subscribers branch on `kind`. **An over-cap forecast stops launches and wakes the shrinkers.**
   Given `forecast_usd` above a non-zero cap after a pull or a ledger change,
   then: `reserveSpend` refuses every new reservation while it stays above
   (AC-6); the event `infra_alarm` is emitted (spec 008 AC-4, until now with
@@ -218,7 +218,7 @@ the open reservations in the ledger (AC-6).
 
 **Visibility**
 
-- AC-10. **The book is visible.** `panelator-scheduler aws` prints
+- AC-10. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-8: at cap 0 the tick field and the `aws` command show the skipped pull. **The book is visible.** `panelator-scheduler aws` prints
   `cost.json`, the open reservations, the released ones of the current
   month, whether AWS is on and why not, and the last pull's time, as a
   table or with `--json`. `panelator-scheduler aws pull` forces a pull now.
@@ -262,7 +262,7 @@ the open reservations in the ledger (AC-6).
   as the `gh` wrapper is, and a second profile for a second account is one
   stanza in `~/.aws/config`. The cost is a process spawn per call, a few
   calls a day.
-- **`infra_alarm`, not a new event.** Spec 008 reserved the name for exactly
+- **`infra_alarm`, not a new event.** Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-3: the event already has the outage producers of specs 015 and 045, and every payload carries a `kind`. Spec 008 reserved the name for exactly
   this: an infrastructure alarm that wakes a standing agent. F2's infra
   health subscribes; until then the event is recorded and nothing runs.
 - **Refusals notify through the `Notifier`.** F2 owns funds requests on
@@ -315,6 +315,8 @@ list, the security criteria, or what routes a sensitive diff to the security
 review.
 
 ## 6. Verification
+
+> Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-9: at cap 0 the post-deploy write-up records the identity check and the skipped pull.
 
 - `pnpm test` passes and `pnpm -F @panelator/scheduler typecheck` is clean,
   including recorded end-to-end runs (fake adapter, mocked GitHub, fake `aws`
@@ -380,7 +382,7 @@ Wait until `State` is `SUCCEEDED` and note `AccountId` (twelve digits). Then
 in the console, Billing and Cost Management, Cost Explorer, Preferences, turn
 on **Linked account access**, so the new account can read its own costs.
 
-**2. Give the pipeline least-privilege access.** Two options; the first is
+**2. Give the pipeline least-privilege access.** Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-4: the policy grants `sts:GetCallerIdentity` and `ce:GetCostAndUsage` only, as AC-4 prints it. Two options; the first is
 recommended.
 
 - *Option A, an SSO permission set (recommended: no long-lived key, and the
