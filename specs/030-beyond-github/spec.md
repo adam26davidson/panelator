@@ -439,7 +439,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
 
 **Infra health agent** (design sections 6.1 and 6.2; process-spec 4.4)
 
-- AC-15. **Infra health is a standing agent.** `agents/standing/infra-health.md`:
+- AC-15. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-3: the outage alarm is the payload of kind `network_outage`, and a payload without `kind` is filed as unknown. **Infra health is a standing agent.** `agents/standing/infra-health.md`:
   standard tier, Claude, `worktree: none`, schedule `6h`, events
   `infra_alarm` and `ci_failure_main`, credentials none, actions
   `rerun_workflow`, `run_agent`, `pause_agent`, output `standing-result`.
