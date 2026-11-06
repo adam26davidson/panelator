@@ -43,7 +43,7 @@ slot so other work continues, and spec 006 AC-13 builds on that.
   issue takes a slot (spec 006 AC-15).
 - Liveness and stale-claim handling (spec 001 section 8, spec 006 AC-7).
 - The `slot` field of the claim record, which today stores the size of the
-  active set at claim time rather than a slot number; nothing reads it.
+  active set at claim time rather than a slot number; nothing reads it (removed by spec 034).
 
 ## 3. Acceptance criteria
 

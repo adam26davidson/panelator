@@ -98,9 +98,15 @@ describe("result schemas", () => {
     expect(rec("")).toBe(false);
   });
 
+  it("does not know a claim slot field (spec 034 AC-3)", () => {
+    const base = { issue: 7, state: initialChainState(7), worktree: "/tmp/wt", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null };
+    expect(validate("claim", base).ok).toBe(true);
+    expect(validate("claim", { ...base, slot: 0 }).ok).toBe(false);
+  });
+
   it("validates a claim record and its chain state (spec 006 C12)", () => {
     const claim = (state: unknown) => validate("claim", {
-      issue: 7, slot: 0, state, worktree: "/tmp/wt", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null,
+      issue: 7, state, worktree: "/tmp/wt", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null,
     }).ok;
     expect(claim({ ...initialChainState(7), stage: "plan" })).toBe(true);
     expect(claim({ stage: "plan" })).toBe(false);
@@ -218,7 +224,7 @@ describe("spec 029 schemas", () => {
     expect(validate("stage-input", { ...base, spec_path: 3 }).ok).toBe(false);
   });
   it("claim, paused, question log and ledger accept the design stage, track and counters", () => {
-    const claim = (state: unknown) => validate("claim", { issue: 7, slot: 0, state, worktree: "/w", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null }).ok;
+    const claim = (state: unknown) => validate("claim", { issue: 7, state, worktree: "/w", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null }).ok;
     expect(claim({ ...initialChainState(7), stage: "design", track: "design", designProblem: "x", designRevisions: 1, askingStage: "design", resumeStage: "design" })).toBe(true);
     expect(claim({ ...initialChainState(7), track: "elsewhere" })).toBe(false);
     const ledger = ledgerOf(initialChainState(7));

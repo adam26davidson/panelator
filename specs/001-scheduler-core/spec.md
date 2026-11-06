@@ -401,7 +401,7 @@ issue comment.
 `~/.local/state/panelator-scheduler/`:
 
 ```
-claims/<issue>.json        issue, slot, chain state, fixes, worktree, started
+claims/<issue>.json        issue, chain state, fixes, worktree, started
 runs/<run-id>/             command.txt, events.jsonl, stderr.log, result.json, usage.json
 usage/<run-id>.json        the AC-24 record (180-day retention)
 patches/<issue>-<ts>.patch uncommitted work saved on release
@@ -410,6 +410,9 @@ findings/rejected/
 token.json                 current installation token and expiry
 log/                       service log with `tick` and `stopped` trailers
 ```
+
+Spec 034 removed the `slot` field from the claim record
+([034](../034-claim-drops-slot-field/spec.md)).
 
 GitHub holds the visible state: the claim label (`in-progress`, applied and
 removed only by the scheduler), `needs-*` labels, plan and

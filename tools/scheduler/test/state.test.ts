@@ -35,7 +35,7 @@ describe("claims", () => {
   it("writes, reads, lists, touches and removes", async () => {
     const p = fresh();
     await ensureStateDirs(p);
-    const c = { issue: 7, slot: 0, state: initialChainState(7), worktree: "/w/7", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null };
+    const c = { issue: 7, state: initialChainState(7), worktree: "/w/7", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null };
     await writeClaim(p, c);
     expect(await readClaim(p, 7)).toEqual(c);
     expect(await readClaim(p, 8)).toBeNull();
@@ -46,11 +46,26 @@ describe("claims", () => {
     await removeClaim(p, 7);
     expect(await readClaim(p, 7)).toBeNull();
   });
+  it("reads a pre-034 claim without slot and drops it on the next write (spec 034 AC-4)", async () => {
+    const p = fresh();
+    await ensureStateDirs(p);
+    const c = { issue: 7, state: initialChainState(7), worktree: "/w/7", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null };
+    writeFileSync(join(p.claims, "7.json"), JSON.stringify({ ...c, slot: 1 }));
+    const got = await readClaim(p, 7);
+    expect(got).toEqual(c);
+    expect("slot" in got!).toBe(false);
+    const [listed] = await listClaims(p);
+    expect("slot" in listed).toBe(false);
+    await touchClaim(p, 7, { run_id: "r1" });
+    const disk = JSON.parse(readFileSync(join(p.claims, "7.json"), "utf8"));
+    expect("slot" in disk).toBe(false);
+    expect(disk.run_id).toBe("r1");
+  });
   it("reads a pre-006 claim, normalised, and can rewrite it", async () => {
     const p = fresh();
     await ensureStateDirs(p);
     const { track: _t, rescues: _r, specRescues: _a, replans: _b, specRevisions: _c, specAnswers: _d, decideReturns: _e, history: _h, ...old } = initialChainState(7);
-    const raw = { issue: 7, slot: 0, state: { ...old, securityFinding: null }, worktree: "/w/7", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null };
+    const raw = { issue: 7, state: { ...old, securityFinding: null }, worktree: "/w/7", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null };
     writeFileSync(join(p.claims, "7.json"), JSON.stringify(raw));
     for (const got of [await readClaim(p, 7), (await listClaims(p))[0]]) {
       expect(got?.state.track).toBe("issue");
@@ -65,7 +80,7 @@ describe("claims", () => {
     const p = fresh();
     await ensureStateDirs(p);
     const c = {
-      issue: 7, slot: 0, state: initialChainState(7), worktree: "/w/7", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null,
+      issue: 7, state: initialChainState(7), worktree: "/w/7", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null,
       pendingEvent: { type: "answered" as const, answer: "A", questionId: 100 },
       pendingActions: [{ type: "wait" as const, seconds: 5 }],
     };

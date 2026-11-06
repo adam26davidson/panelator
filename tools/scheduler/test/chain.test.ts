@@ -366,7 +366,7 @@ describe("chain: ledger and claim state (AC-7)", () => {
       issue: 7, stage: "review", attempt: 1, fixes: 1, scopeViolations: 0, planFailures: 0, implementFailures: 0, securityFinding: true, sensitive: true,
       pr: { number: 9, head_sha: "a".repeat(40) }, plan, pendingFixInput: null, postponedUntil: null, resumeStage: null, conflictPending: false,
     };
-    const claim = { issue: 7, slot: 0, worktree: "/w/7", started_at: AT, last_activity_at: AT, run_id: null };
+    const claim = { issue: 7, worktree: "/w/7", started_at: AT, last_activity_at: AT, run_id: null };
     // C12: the raw pre-006 state does not match the schema; normalized, it does.
     expect(validate("claim", { ...claim, state: pre006 }).ok).toBe(false);
     const s = normalizeChainState(pre006);

@@ -110,7 +110,7 @@ async function setup(
     adapterFor: () => adapter, systemdScope: false, now: () => new Date(), log: () => {}, fetchOrigin: async () => { git(pair.repo, "fetch", "-q", "origin"); },
     unitActive: async () => false, stopUnit: async () => {},
   };
-  const claim: Claim = { issue: 7, slot: 0, state: initialChainState(7), worktree: wt.path, started_at: new Date().toISOString(), last_activity_at: new Date().toISOString(), run_id: null };
+  const claim: Claim = { issue: 7, state: initialChainState(7), worktree: wt.path, started_at: new Date().toISOString(), last_activity_at: new Date().toISOString(), run_id: null };
   await writeClaim(paths, claim);
   return { deps, claim, gh, notifications, adapter, pair, paths, sha };
 }

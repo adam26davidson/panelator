@@ -4,7 +4,6 @@
   "type": "object",
   "required": [
     "issue",
-    "slot",
     "state",
     "worktree",
     "started_at",
@@ -16,10 +15,6 @@
     "issue": {
       "type": "integer",
       "minimum": 1
-    },
-    "slot": {
-      "type": "integer",
-      "minimum": 0
     },
     "state": {
       "type": "object",
