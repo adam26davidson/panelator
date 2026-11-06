@@ -88,7 +88,7 @@ record as usual.
 mocked GitHub client of `tools/scheduler/test/e2e.test.ts` (the standing
 world) and `test/standing.test.ts`.
 
-- AC-1. **The failure finding skips its own agent.** Given a standing agent
+- AC-1. Amended by [045-standing-agent-waits-out-network-outage](../045-standing-agent-waits-out-network-outage/spec.md) AC-2: a transient-outage postponement is not a failure either. **The failure finding skips its own agent.** Given a standing agent
   X subscribed to `finding_queued` whose run fails for the second time (any
   failure that is not a quota postponement under spec 013 AC-7), when the
   scheduler appends the finding `standing agent X failed twice`, then the
