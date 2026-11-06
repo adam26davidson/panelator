@@ -1427,7 +1427,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     const c = at(t.claim, { stage: "implement", plan: plan as never });
     await writeClaim(t.paths, c);
     const r = await step(t.deps, c);
-    expect(r.claim.state).toMatchObject({ stage: "question-check", askingStage: "implement", heldWork: { branch: "issue-7", head: pushed } });
+    expect(r.claim.state).toMatchObject({ stage: "question-check", askingStage: "implement", heldWork: [{ branch: "issue-7", head: pushed }] });
     const saved = readdirSync(t.paths.patches).filter((f) => f.includes("held"));
     expect(saved).toHaveLength(1);
     expect(readFileSync(join(t.paths.patches, saved[0]), "utf8")).toContain("work.txt");
@@ -1440,7 +1440,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     const c = at(t.claim, { stage: "plan" });
     await writeClaim(t.paths, c);
     const r = await step(t.deps, c);
-    expect(r.claim.state.heldWork).toEqual({ branch: "issue-7", head: head(t.claim.worktree) });
+    expect(r.claim.state.heldWork).toEqual([{ branch: "issue-7", head: head(t.claim.worktree) }]);
     expect(readdirSync(t.paths.patches)).toEqual([]);
     expect(logs).toContainEqual(expect.objectContaining({ kind: "held-work", stage: "plan", pushed: false, patch: null }));
   }, 60_000);
@@ -1454,7 +1454,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
       git(wt, "push", "-q", "origin", "issue-7");
     });
     const logs = logsOf(t.deps);
-    const c = at(t.claim, { stage: "question-check", question: capability, askingStage: "implement", heldWork: { branch: "issue-7", head: held } });
+    const c = at(t.claim, { stage: "question-check", question: capability, askingStage: "implement", heldWork: [{ branch: "issue-7", head: held }] });
     await writeClaim(t.paths, c);
     await step(t.deps, c);
     expect(head(t.claim.worktree)).toBe(held);
@@ -1473,7 +1473,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
       held = commitIn(wt, { "work.txt": "w\n" });
       git(wt, "push", "-q", "origin", "issue-7");
     });
-    const heldWork = () => ({ branch: "issue-7", head: held });
+    const heldWork = () => [{ branch: "issue-7", head: held }];
     const qc = at(t.claim, { stage: "question-check", question: capability, askingStage: "implement", heldWork: heldWork(), plan: plan as never });
     await writeClaim(t.paths, qc);
     await step(t.deps, qc);
@@ -1499,7 +1499,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
       git(wt, "reset", "-q", "--hard", "origin/main");
     });
     const logs = logsOf(t.deps);
-    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: held } });
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: [{ branch: "issue-7", head: held }] });
     await writeClaim(t.paths, c);
     await step(t.deps, c);
     expect(head(t.claim.worktree)).toBe(held);
@@ -1514,23 +1514,23 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     git(scratch, "push", "-q", "origin", "issue-7");
     git(t.claim.worktree, "checkout", "-q", "--detach", "origin/main");
     git(t.claim.worktree, "branch", "-D", "issue-7");
-    const again = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: lost } });
+    const again = at(t.claim, { stage: "implement", plan: plan as never, heldWork: [{ branch: "issue-7", head: lost }] });
     await writeClaim(t.paths, again);
     const r = await step(t.deps, again);
     expect(head(t.claim.worktree)).toBe(remoteHead);
     expect(logs).toContainEqual({ kind: "held-work-restored", issue: 7, branch: "issue-7", head: remoteHead, source: "origin" });
-    expect(r.claim.state.heldWork).toEqual({ branch: "issue-7", head: remoteHead });
+    expect(r.claim.state.heldWork).toEqual([{ branch: "issue-7", head: remoteHead }]);
   }, 60_000);
 
   it("logs held-work-lost, clears the held work and prepares as without it when the commit is nowhere (AC-5)", async () => {
     const t = await setup(() => ({ implement: [] }));
     const logs = logsOf(t.deps);
     const lost = "1".repeat(40);
-    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: lost } });
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: [{ branch: "issue-7", head: lost }] });
     await writeClaim(t.paths, c);
     const r = await step(t.deps, c);
     expect(logs).toContainEqual({ kind: "held-work-lost", issue: 7, branch: "issue-7", head: lost });
-    expect(r.claim.state.heldWork).toBeNull();
+    expect(r.claim.state.heldWork).toEqual([]);
     expect(head(t.claim.worktree)).toBe(git(t.pair.repo, "rev-parse", "origin/main").trim());
   }, 60_000);
 
@@ -1542,7 +1542,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
       added = commitIn(wt, { "more.txt": "m\n" });
     });
     const logs = logsOf(t.deps);
-    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: held } });
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: [{ branch: "issue-7", head: held }] });
     await writeClaim(t.paths, c);
     await step(t.deps, c);
     expect(head(t.claim.worktree)).toBe(added);
@@ -1563,7 +1563,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
       git(wt, "reset", "-q", "--hard", "origin/main");
       commitIn(wt, { "other.txt": "o\n" }, "own");
     });
-    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: held } });
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: [{ branch: "issue-7", head: held }] });
     await writeClaim(t.paths, c);
     await step(t.deps, c);
     expect(head(t.claim.worktree)).toBe(held);
@@ -1582,7 +1582,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
       commitIn(wt, { "other.txt": "o\n" });
     });
     const logs = logsOf(t.deps);
-    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: held } });
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: [{ branch: "issue-7", head: held }] });
     await writeClaim(t.paths, c);
     await step(t.deps, c);
     expect(head(t.claim.worktree)).toBe(held);
@@ -1608,7 +1608,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     commitIn(scratch, { "main.txt": "m\n" });
     git(scratch, "push", "-q", "origin", "HEAD:main");
     const logs = logsOf(t.deps);
-    const c = at(t.claim, { stage: "fix", plan: plan as never, pr: { number: 9, head_sha: remote }, pendingFixInput: "x", heldWork: { branch: "issue-7", head: held } });
+    const c = at(t.claim, { stage: "fix", plan: plan as never, pr: { number: 9, head_sha: remote }, pendingFixInput: "x", heldWork: [{ branch: "issue-7", head: held }] });
     await writeClaim(t.paths, c);
     await step(t.deps, c);
     expect(head(t.claim.worktree)).toBe(held);
@@ -1632,7 +1632,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     remote = commitIn(scratch, { "elsewhere.txt": "e\n" });
     git(scratch, "push", "-q", "origin", "issue-7");
     const logs = logsOf(t.deps);
-    const c = at(t.claim, { stage: "fix", plan: plan as never, pr: { number: 9, head_sha: remote }, pendingFixInput: "x", heldWork: { branch: "issue-7", head: held } });
+    const c = at(t.claim, { stage: "fix", plan: plan as never, pr: { number: 9, head_sha: remote }, pendingFixInput: "x", heldWork: [{ branch: "issue-7", head: held }] });
     await writeClaim(t.paths, c);
     await step(t.deps, c);
     expect(logs).toContainEqual(expect.objectContaining({ kind: "worktree-synced", dropped: held }));
@@ -1644,7 +1644,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     let held = "";
     const failing = (sha: string): Route[] => [{ method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: () => ({ status: 422, body: { message: "lookup failed" } }) }, ...ghRoutes(sha)];
     const t = await setup(() => ({ implement: [] }), failing, (_p, wt) => { held = commitIn(wt, { "work.txt": "w\n" }); });
-    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: held } });
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: [{ branch: "issue-7", head: held }] });
     await writeClaim(t.paths, c);
     t.deps.fetchOrigin = async () => {};
     git(t.claim.worktree, "remote", "set-url", "origin", join(t.pair.root, "nonexistent.git"));
@@ -1679,7 +1679,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     expect(kept.stageRun?.stage).toBe("implement");
     const r = await step(t.deps, kept);
     expect(logs).toContainEqual(expect.objectContaining({ kind: "stage-result-kept", stage: "implement" }));
-    expect(r.claim.state).toMatchObject({ stage: "question-check", heldWork: { branch: "issue-7" } });
+    expect(r.claim.state).toMatchObject({ stage: "question-check", heldWork: [{ branch: "issue-7" }] });
     expect(readdirSync(t.paths.patches).filter((f) => f.includes("held"))).toHaveLength(1);
     expect(logs.filter((l) => l.kind === "held-work")).toHaveLength(1);
   }, 60_000);
@@ -1694,7 +1694,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     const remoteHead = commitIn(scratch, { "other.txt": "o\n" });
     git(scratch, "push", "-q", "origin", "issue-7");
     const lost = "1".repeat(40);
-    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: lost } });
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: [{ branch: "issue-7", head: lost }] });
     await writeClaim(t.paths, c);
     // The service's own fetch got through; the branch fetch then hits the outage.
     t.deps.fetchOrigin = async () => {};
@@ -1706,14 +1706,14 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     }
     expect(logs.find((r) => r.kind === "held-work-lost")).toBeUndefined();
     expect(logs.find((r) => r.kind === "stale-branch-dropped")).toBeUndefined();
-    expect((await readClaim(t.paths, 7))?.state.heldWork).toEqual({ branch: "issue-7", head: lost });
+    expect((await readClaim(t.paths, 7))?.state.heldWork).toEqual([{ branch: "issue-7", head: lost }]);
     expect(git(t.pair.origin, "rev-parse", "refs/heads/issue-7").trim()).toBe(remoteHead);
   }, 60_000);
 
   it("runs as without held work when the held head is already on main (AC-5)", async () => {
     const t = await setup(() => ({ implement: [] }));
     const logs = logsOf(t.deps);
-    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: { branch: "issue-7", head: head(t.claim.worktree) } });
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: [{ branch: "issue-7", head: head(t.claim.worktree) }] });
     await writeClaim(t.paths, c);
     await step(t.deps, c);
     expect(logs.find((r) => r.kind === "held-work-kept")).toBeUndefined();
@@ -1728,7 +1728,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
       git(wt, "push", "-q", "origin", "issue-7");
     });
     const logs = logsOf(t.deps);
-    const heldWork = { branch: "issue-7", head: held };
+    const heldWork = [{ branch: "issue-7", head: held }];
     const c = at(t.claim, { stage: "spec", track: "spec", specMode: "record", heldWork });
     await writeClaim(t.paths, c);
     await step(t.deps, c);
@@ -1743,6 +1743,77 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     expect(head(t.claim.worktree)).toBe(held);
   }, 60_000);
 
+  it("with holds on issue-7 and spec-7, the spec track keeps spec-7 and leaves issue-7 alone (spec 040 AC-5)", async () => {
+    const state: { pair?: ReturnType<typeof repoPair> } = {};
+    let issueHead = "";
+    let specHead = "";
+    const t = await setup(() => ({ spec: [] }), prRoutes(state), (p, wt) => {
+      state.pair = p;
+      issueHead = commitIn(wt, { "work.txt": "w\n" });
+      git(wt, "push", "-q", "origin", "issue-7");
+      git(wt, "checkout", "-q", "-b", "spec-7", "origin/main");
+      specHead = commitIn(wt, { "spec.txt": "s\n" });
+    });
+    const logs = logsOf(t.deps);
+    const c = at(t.claim, { stage: "spec", track: "spec", specMode: "record", heldWork: [{ branch: "issue-7", head: issueHead }, { branch: "spec-7", head: specHead }] });
+    await writeClaim(t.paths, c);
+    await step(t.deps, c);
+    expect(logs).toContainEqual({ kind: "held-work-kept", issue: 7, branch: "spec-7", head: specHead });
+    expect(logs.find((r) => r.kind === "recovered-commits" || r.kind === "stale-branch-dropped")).toBeUndefined();
+    expect(inputOf(t.paths, "7-spec-").held_work).toContain("spec-7");
+    expect(inputOf(t.paths, "7-spec-").held_work).toContain(specHead);
+    expect(inputOf(t.paths, "7-spec-").held_work).not.toContain("issue-7");
+    expect(t.adapter.heads).toEqual(["spec-7"]);
+    expect(head(t.claim.worktree)).toBe(specHead);
+    expect(originHas(state.pair!, "issue-7")).toBe(true);
+    expect(git(t.claim.worktree, "rev-parse", "issue-7").trim()).toBe(issueHead);
+    expect(readdirSync(t.paths.patches)).toEqual([]);
+  }, 60_000);
+
+  it("a spec-7 hold the preparation cannot keep is removed alone (spec 040 AC-5)", async () => {
+    const state: { pair?: ReturnType<typeof repoPair> } = {};
+    let issueHead = "";
+    const t = await setup(() => ({ spec: [] }), prRoutes(state), (p, wt) => {
+      state.pair = p;
+      issueHead = commitIn(wt, { "work.txt": "w\n" });
+      git(wt, "push", "-q", "origin", "issue-7");
+    });
+    const logs = logsOf(t.deps);
+    const lost = "1".repeat(40);
+    const c = at(t.claim, { stage: "spec", track: "spec", specMode: "record", heldWork: [{ branch: "issue-7", head: issueHead }, { branch: "spec-7", head: lost }] });
+    await writeClaim(t.paths, c);
+    const r = await step(t.deps, c);
+    expect(logs).toContainEqual({ kind: "held-work-lost", issue: 7, branch: "spec-7", head: lost });
+    expect(r.claim.state.heldWork).toEqual([{ branch: "issue-7", head: issueHead }]);
+    expect(logs.find((l) => l.kind === "recovered-commits" || l.kind === "stale-branch-dropped")).toBeUndefined();
+    expect(originHas(state.pair!, "issue-7")).toBe(true);
+  }, 60_000);
+
+  it("delete_branch reads the issue-7 hold wherever it sits in the list, and resets without one (spec 040 AC-6)", async () => {
+    const state: { pair?: ReturnType<typeof repoPair> } = {};
+    let held = "";
+    const t = await setup(() => ({ spec: [] }), prRoutes(state), (p, wt) => {
+      state.pair = p;
+      held = commitIn(wt, { "work.txt": "w\n" });
+      git(wt, "push", "-q", "origin", "issue-7");
+    });
+    const logs = logsOf(t.deps);
+    const main = git(state.pair!.repo, "rev-parse", "origin/main").trim();
+    const issueHold = { branch: "issue-7", head: held };
+    const cases: [string, { branch: string; head: string }[], string][] = [
+      ["second", [{ branch: "spec-7", head: "2".repeat(40) }, issueHold], held],
+      ["only", [issueHold], held],
+      ["none", [{ branch: "spec-7", head: "2".repeat(40) }], main],
+    ];
+    for (const [name, heldWork, expected] of cases) {
+      await applyActions(t.deps, at(t.claim, { track: "issue", heldWork }), [{ type: "delete_branch", branch: "spec-7" }]);
+      expect(branchIn(t.claim.worktree), name).toBe("issue-7");
+      expect(head(t.claim.worktree), name).toBe(expected);
+      if (expected === held) expect(logs, name).toContainEqual({ kind: "held-work-kept", issue: 7, branch: "issue-7", head: held });
+      git(t.claim.worktree, "checkout", "-q", "-B", "issue-7", held);
+    }
+  }, 60_000);
+
   it("still drops the stale branch and resets when there is no held work (AC-8)", async () => {
     const state: { pair?: ReturnType<typeof repoPair> } = {};
     const t = await setup(() => ({ implement: [] }), prRoutes(state), (p, wt) => {
@@ -1751,7 +1822,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
       git(wt, "push", "-q", "origin", "issue-7");
     });
     const logs = logsOf(t.deps);
-    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: null });
+    const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: [] });
     await writeClaim(t.paths, c);
     await step(t.deps, c);
     expect(logs.map((r) => r.kind)).toEqual(expect.arrayContaining(["recovered-commits", "stale-branch-dropped"]));

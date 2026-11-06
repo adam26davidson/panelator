@@ -38,7 +38,7 @@ import { classOf } from "../shortlist/rank.ts";
 import type {
   AgentStageName, FixOutcome, Harness, ImplementOutcome, ImplementResult, IssueData, PlanOutcome, Profile, SpecResult, DesignResult, StageDefinition,
 } from "../types.ts";
-import { CLAIM_LABEL, NEEDS_DECISION_LABEL, POSTPONE_WAIT_S, branchOf, initialChainState, ledgerOf, transition } from "./machine.ts";
+import { CLAIM_LABEL, NEEDS_DECISION_LABEL, POSTPONE_WAIT_S, branchOf, heldOn, initialChainState, ledgerOf, transition } from "./machine.ts";
 import { formatQuestion, questionBody, questionMarker } from "./question.ts";
 import type { Action, ChainEvent, ChainState } from "./types.ts";
 
@@ -257,10 +257,18 @@ async function specTrackScope(deps: DriverDeps, claim: Claim, diff: string[], sp
   return specScopeGate(diff, specPath, parent, before, after, claim.state.answerKind === "product", text);
 }
 
+/** Spec 040: the chain's holds with the entry for a branch set to a head, or removed. */
+function setHeld(state: ChainState, branch: string, head: string): ChainState {
+  return { ...state, heldWork: state.heldWork.map((h) => (h.branch === branch ? { branch, head } : h)) };
+}
+function dropHeld(state: ChainState, branch: string): ChainState {
+  return { ...state, heldWork: state.heldWork.filter((h) => h.branch !== branch) };
+}
+
 /** Spec 011 AC-4: what the resumed stage is told about the work it left before its question. */
 async function heldWorkText(deps: DriverDeps, claim: Claim): Promise<string | undefined> {
-  const held = claim.state.heldWork;
-  if (!held || held.branch !== branchOf(claim.state)) return undefined;
+  const held = heldOn(claim.state, branchOf(claim.state));
+  if (!held) return undefined;
   // Never claim work the worktree does not hold: the preparation kept it, advanced it, or dropped it.
   if ((await worktreeHead(claim.worktree)) !== held.head) return undefined;
   const pushed = await pushedBranch(claim.worktree, held.branch);
@@ -411,7 +419,7 @@ async function holdWork(deps: DriverDeps, claim: Claim, stage: Exclude<AgentStag
  * there is nothing to keep (the held head is on main, or the work is lost), and the failed-attempt path applies.
  */
 async function keepHeldWork(deps: DriverDeps, claim: Claim, branch: string): Promise<boolean> {
-  const held = claim.state.heldWork!;
+  const held = heldOn(claim.state, branch)!;
   const wt = claim.worktree;
   if (await refExists(wt, held.head) && await isAncestor(wt, held.head, "origin/main")) return false;
   let head = held.head;
@@ -423,7 +431,7 @@ async function keepHeldWork(deps: DriverDeps, claim: Claim, branch: string): Pro
       // The resumed stage committed on top of its held work (then failed, was postponed or crashed): that is held work too.
       if (current !== branch) await checkoutBranch(wt, branch, tip);
       head = tip;
-      claim.state = { ...claim.state, heldWork: { branch, head } };
+      claim.state = setHeld(claim.state, branch, head);
       deps.log({ kind: "held-work-advanced", issue: claim.issue, branch, from: held.head, to: head });
     } else if (current !== branch || tip !== held.head) {
       // The branch went elsewhere: its own commits are saved before it is put back at the held head (spec 005).
@@ -445,12 +453,12 @@ async function keepHeldWork(deps: DriverDeps, claim: Claim, branch: string): Pro
     });
     if (!(await refExists(wt, tracking))) {
       deps.log({ kind: "held-work-lost", issue: claim.issue, branch, head: held.head });
-      claim.state = { ...claim.state, heldWork: null };
+      claim.state = dropHeld(claim.state, branch);
       return false;
     }
     head = (await gitOut(wt, "rev-parse", tracking)).trim();
     await checkoutBranch(wt, branch, head);
-    claim.state = { ...claim.state, heldWork: { branch, head } };
+    claim.state = setHeld(claim.state, branch, head);
     deps.log({ kind: "held-work-restored", issue: claim.issue, branch, head, source: "origin" });
   }
   deps.log({ kind: "held-work-kept", issue: claim.issue, branch, head });
@@ -474,12 +482,13 @@ async function syncWorktree(deps: DriverDeps, claim: Claim): Promise<void> {
   }
   const branch = branchOf(claim.state);
   if (claim.state.pr === null) {
-    const held = claim.state.heldWork;
+    const held = heldOn(claim.state, branch);
     // Spec 011: work a stage left when it asked a question is the resumed stage's input, not a failed attempt's leftovers.
-    if (held && held.branch === branch && (await keepHeldWork(deps, claim, branch))) return;
+    if (held && (await keepHeldWork(deps, claim, branch))) return;
     const commits = await commitsPatch(claim.worktree, "origin/main");
     // AC-6: the held work of another branch (the issue's, while the spec track records an answer) is already saved and kept.
-    const heldElsewhere = claim.state.heldWork && claim.state.heldWork.branch !== branch && (await worktreeHead(claim.worktree)) === claim.state.heldWork.head;
+    const wtHead = claim.state.heldWork.some((h) => h.branch !== branch) ? await worktreeHead(claim.worktree) : null;
+    const heldElsewhere = claim.state.heldWork.some((h) => h.branch !== branch && h.head === wtHead);
     if (commits.trim() && !heldElsewhere) {
       const saved = await savePatch(deps.paths, claim.issue, commits, deps.now(), "commits");
       deps.log({ kind: "recovered-commits", issue: claim.issue, patch: saved, base: "origin/main" });
@@ -518,19 +527,19 @@ async function syncWorktree(deps: DriverDeps, claim: Claim): Promise<void> {
  * held work is cleared with `held-work-lost`.
  */
 async function settleHeldOnPr(deps: DriverDeps, claim: Claim, branch: string): Promise<void> {
-  const held = claim.state.heldWork;
-  if (!held || held.branch !== branch) return;
+  const held = heldOn(claim.state, branch);
+  if (!held) return;
   const head = await worktreeHead(claim.worktree);
   if (head === held.head) {
     deps.log({ kind: "held-work-kept", issue: claim.issue, branch, head });
     return;
   }
   if ((await refExists(claim.worktree, held.head)) && (await isAncestor(claim.worktree, held.head, head))) {
-    claim.state = { ...claim.state, heldWork: { branch, head } };
+    claim.state = setHeld(claim.state, branch, head);
     deps.log({ kind: "held-work-advanced", issue: claim.issue, branch, from: held.head, to: head });
     return;
   }
-  claim.state = { ...claim.state, heldWork: null };
+  claim.state = dropHeld(claim.state, branch);
   deps.log({ kind: "held-work-lost", issue: claim.issue, branch, head: held.head });
 }
 
@@ -616,7 +625,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   // The spec stage and the question check work from origin/main and are never rebased (spec section 4).
   // Spec 011: held work on the PR's branch is not rebased: the rewritten commits would be unpushed and diverged, and
   // the next preparation would drop them. The resumed stage pushes it; a later stage rebases.
-  const heldOnPr = claim.state.heldWork !== null && claim.state.heldWork.branch === branchOf(claim.state);
+  const heldOnPr = heldOn(claim.state, branchOf(claim.state)) !== null;
   if (!state.conversation&&!state.resumeSession&&stage !== "spec" && stage !== "design" && stage !== "question-check" && state.pr !== null && !heldOnPr && (!state.conflictPending || stage === "fix")) {
     const before = await worktreeHead(claim.worktree);
     const rebase = await rebaseOntoMain(claim.worktree, "origin/main", botIdentity(deps));
@@ -1086,8 +1095,8 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
           deps.log({ kind: "branch-saved", issue: claim.issue, branch: a.branch, patch: saved });
         }
         // Spec 011 AC-6: work held on the issue branch is where the resumed chain continues; no reset.
-        const held = claim.state.heldWork;
-        const keep = held && held.branch === `issue-${claim.issue}` && (await refExists(claim.worktree, held.head));
+        const held = heldOn(claim.state, `issue-${claim.issue}`);
+        const keep = held && (await refExists(claim.worktree, held.head));
         if (keep) deps.log({ kind: "held-work-kept", issue: claim.issue, branch: held.branch, head: held.head });
         await checkoutBranch(claim.worktree, `issue-${claim.issue}`, keep ? held.head : "origin/main");
         await deleteLocalBranch(claim.worktree, a.branch);

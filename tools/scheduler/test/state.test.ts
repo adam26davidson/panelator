@@ -71,10 +71,23 @@ describe("claims", () => {
       expect(got?.state.track).toBe("issue");
       expect(got?.state.rescues).toBe(0);
       expect(got?.state.history).toEqual([]);
-      expect(got?.state.heldWork).toBeNull();
+      expect(got?.state.heldWork).toEqual([]);
       expect(got?.state && "securityFinding" in got.state).toBe(false);
     }
     await writeClaim(p, (await readClaim(p, 7))!);
+  });
+  it("reads a claim whose heldWork is absent, null or spec 011's single object, as a list (spec 040 AC-7)", async () => {
+    const p = fresh();
+    await ensureStateDirs(p);
+    const { heldWork: _h, ...without } = initialChainState(7);
+    const one = { branch: "issue-7", head: "a".repeat(40) };
+    for (const [heldWork, want] of [[undefined, []], [null, []], [one, [one]], [[one], [one]]] as const) {
+      const raw = { issue: 7, state: { ...without, ...(heldWork === undefined ? {} : { heldWork }) }, worktree: "/w/7", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null };
+      writeFileSync(join(p.claims, "7.json"), JSON.stringify(raw));
+      expect((await readClaim(p, 7))?.state.heldWork).toEqual(want);
+      await writeClaim(p, (await readClaim(p, 7))!);
+      expect(JSON.parse(readFileSync(join(p.claims, "7.json"), "utf8")).state.heldWork).toEqual(want);
+    }
   });
   it("round-trips pendingEvent and pendingActions", async () => {
     const p = fresh();
