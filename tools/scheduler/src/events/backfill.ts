@@ -47,7 +47,7 @@ export async function backfillEvents(paths: StatePaths, log: (rec: Record<string
   for (const f of (await readdir(paths.usage).catch(() => [] as string[])).filter((n) => n.endsWith(".json")).sort()) {
     try {
       const r = JSON.parse(await readFile(join(paths.usage, f), "utf8")) as Record<string, unknown>;
-      await put("run.ended", f, String(r.run_id ?? f), r.ended_at, r, { ...issueOf(r), ...(typeof r.run_id === "string" ? { run_id: r.run_id } : {}) });
+      await put("run.ended", f, String(r.run_id ?? f), r.ended_at, r, { ...issueOf(r), ...(typeof r.run_id === "string" ? { run_id: r.run_id } : {}), ...(typeof r.run_id === "string" && r.run_id.startsWith("standing-") && typeof r.stage === "string" ? { agent: r.stage } : {}) });
     } catch (e) { if (!(e instanceof SyntaxError)) throw e; counts.skipped++; }
   }
   const jsonl = async (file: string, path: string, kind: EventKind, at: (r: Record<string, unknown>) => unknown, who: (r: Record<string, unknown>) => { issue?: number; run_id?: string; agent?: string }, payload: (r: Record<string, unknown>) => Record<string, unknown> = (r) => r) => {

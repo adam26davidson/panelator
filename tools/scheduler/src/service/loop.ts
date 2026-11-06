@@ -452,6 +452,7 @@ export class Scheduler {
     if (rec.telegram) await this.telegramAnswers.archive(rec);
     await removeClaim(d.paths, rec.issue);
     await removePaused(d.paths, rec.issue);
+    await record(d.paths, "pause.ended", d.now(), { stage: rec.asking_stage, question_comment_id: questionId, reason: "answered" }, { issue: rec.issue });
     d.serviceLog.write({ kind: "capability-answered", issue: rec.issue, question_id: questionId });
   }
 
