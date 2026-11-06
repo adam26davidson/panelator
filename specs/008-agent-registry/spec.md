@@ -107,7 +107,7 @@ records as chain stages.
   interval after the restart, and its schedule parameter (AC-13) is created.
   Given a removed file, then its state file and schedule parameter are kept
   for 30 days, then pruned, so a re-added agent resumes its history.
-- AC-3. **A due agent runs in a slot.** The scheduler keeps
+- AC-3. Amended by [045-standing-agent-waits-out-network-outage](../045-standing-agent-waits-out-network-outage/spec.md) AC-2: an attempt that fails on a transient infrastructure error postpones the agent with backoff and counts toward no failure until its outage passes the ceiling. **A due agent runs in a slot.** The scheduler keeps
   `agents/<name>.json` in the state directory: `last_run` (time, run id,
   outcome), `next_run`, `pending_events`, `paused` and `paused_by`, and the
   consecutive failure count. Given a tick, then after the resumes of spec 006
