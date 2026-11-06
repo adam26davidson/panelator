@@ -421,7 +421,7 @@ export class Scheduler {
     if (!claim) {
       const wt = await ensureWorktree(d.repoDir, d.paths.worktrees, rec.issue);
       claim = {
-        issue: rec.issue, slot: this.#active.size, state:{...rec.state,resumeSession:d.telegram?rec.session??null:null}, worktree: rec.session?.worktree??wt.path,
+        issue: rec.issue, state:{...rec.state,resumeSession:d.telegram?rec.session??null:null}, worktree: rec.session?.worktree??wt.path,
         telegram_thread:rec.telegram??null,
         started_at: d.now().toISOString(), last_activity_at: d.now().toISOString(), run_id: null,
         pendingEvent: { type: "answered", answer: rec.answer, questionId },
@@ -643,7 +643,7 @@ export class Scheduler {
             }
             const state = initialChainState(issue.number, specProblems.get(issue.number) ?? null, ledger, designProblems.get(issue.number) ?? null);
             const c: Claim = {
-              issue: issue.number, slot: this.#active.size, state, worktree: wt.path,
+              issue: issue.number, state, worktree: wt.path,
               started_at: d.now().toISOString(), last_activity_at: d.now().toISOString(), run_id: null,
             };
             await writeClaim(d.paths, c);

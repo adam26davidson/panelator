@@ -10,7 +10,6 @@ export interface Claim {
   asking_session?: import('./paused.ts').AskingSession|null;
   telegram_thread?: import('./paused.ts').TelegramThread|null;
   issue: number;
-  slot: number;
   state: ChainState;
   worktree: string;
   started_at: string;
@@ -56,9 +55,9 @@ export interface Outage {
   past_ceiling?: { since: string; failures: number };
 }
 
-/** Pre-006 claims carry `securityFinding` and lack the new fields; fill them on read. */
+/** Pre-006 claims carry `securityFinding` and lack the new fields; fill them on read. Pre-034 claims carry `slot`; drop it. */
 function parse(text: string): Claim {
-  const c = JSON.parse(text) as Claim;
+  const { slot: _slot, ...c } = JSON.parse(text) as Claim & { slot?: unknown };
   return { ...c, state: normalizeChainState(c.state) };
 }
 

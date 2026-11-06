@@ -130,6 +130,14 @@ describe("Scheduler.tick", () => {
     expect(t2.claimed).toEqual([]);
   }, 30_000);
 
+  it("writes a new claim with no slot field (spec 034 AC-1)", async () => {
+    const { s, paths } = await setup(routes([issue(3, ["validated"])]));
+    expect((await s.tick()).claimed).toEqual([3]);
+    const parsed = JSON.parse(readFileSync(join(paths.claims, "3.json"), "utf8"));
+    expect("slot" in parsed).toBe(false);
+    for (const k of ["issue", "state", "worktree", "started_at", "last_activity_at", "run_id"]) expect(k in parsed).toBe(true);
+  }, 30_000);
+
   it("claims two with slots: 2", async () => {
     const { s } = await setup(routes([issue(2), issue(1)]), 2);
     expect((await s.tick()).claimed).toEqual([1, 2]);
@@ -208,7 +216,7 @@ describe("Scheduler.tick", () => {
 
   it("releases a stale claim whose issue lost in-progress on GitHub (review focus 2)", async () => {
     const { s, deps, paths, pair } = await setup(routes([], { 7: ["validated"] }));
-    await writeClaim(paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
     const t = await s.tick();
     expect(t.released).toEqual([7]);
     expect(await listClaims(paths)).toEqual([]);
@@ -219,7 +227,7 @@ describe("Scheduler.tick", () => {
     const wt = join(pair.worktrees, "issue-7");
     git(pair.repo, "worktree", "add", "-q", "-B", "issue-7", wt, "origin/main");
     writeFileSync(join(wt, "wip.txt"), "wip\n");
-    await writeClaim(paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "implement" }, worktree: wt, started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T09:00:00Z", run_id: null });
+    await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "implement" }, worktree: wt, started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T09:00:00Z", run_id: null });
     setNow(new Date("2026-10-12T12:30:00Z"));
     const t = await s.tick();
     expect(t.released).toEqual([7]);
@@ -232,7 +240,7 @@ describe("Scheduler.tick", () => {
     const { s, paths, pair, setNow, started } = await setup(routes([]));
     const wt = join(pair.worktrees, "issue-7");
     git(pair.repo, "worktree", "add", "-q", "-B", "issue-7", wt, "origin/main");
-    await writeClaim(paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "waiting", resumeStage: "plan", postponedUntil: "2026-10-12T16:10:00Z" }, worktree: wt, started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T09:00:00Z", run_id: null });
+    await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "waiting", resumeStage: "plan", postponedUntil: "2026-10-12T16:10:00Z" }, worktree: wt, started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T09:00:00Z", run_id: null });
     setNow(new Date("2026-10-12T12:30:00Z"));
     const t = await s.tick();
     expect(t.released).toEqual([]);
@@ -242,7 +250,7 @@ describe("Scheduler.tick", () => {
 
   it("resumes a claim found on disk after a restart (AC-31)", async () => {
     const { s, deps, paths, pair, started } = await setup(routes([]));
-    await writeClaim(paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
     await s.tick();
     await new Promise((r) => setTimeout(r, 50));
     expect(started).toEqual([7]);
@@ -262,11 +270,12 @@ describe("Scheduler.tick", () => {
     let calls = 0;
     const { s, deps, paths, pair, gh } = await setup(routes([]), 1, async () => { calls++; throw new Error("boom"); });
     deps.log = (rec) => { if (rec.kind === "error") errors.push(rec); };
-    await writeClaim(paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
     for (let i = 1; i <= 3; i++) {
       const t = await s.tick();
       expect(t.released).toEqual([]);
-      for (let w = 0; w < 200 && errors.length < i; w++) await new Promise((r) => setTimeout(r, 25));
+      // The error is logged before the failure count is written and the chain leaves the active set: wait for both.
+      for (let w = 0; w < 200 && (errors.length < i || s.active > 0); w++) await new Promise((r) => setTimeout(r, 25));
       expect(errors).toHaveLength(i);
       expect(errors[i - 1]).toMatchObject({ kind: "error", issue: 7, error: "boom" });
     }
@@ -289,7 +298,7 @@ describe("Scheduler.tick", () => {
   it("keeps the failure count across a restart: a new Scheduler reads it from the claim (C7)", async () => {
     let calls = 0;
     const { deps, paths, pair } = await setup(routes([]), 1, async () => { calls++; throw new Error("boom"); });
-    await writeClaim(paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
     for (let i = 0; i < 2; i++) {
       await new Scheduler(deps, { driveChain: async () => { calls++; throw new Error(`boom ${i}`); } }).tick();
       await new Promise((r) => setTimeout(r, 100));
@@ -413,6 +422,15 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     expect(answered).toEqual([{ issue: 7, at: deps.now().toISOString(), event: "answered", asking_stage: "plan", question_comment_id: 500, reply_comment_id: 501, answer: "Use the file store.", question: Q,channel:'issue' }]);
   }, 30_000);
 
+  it("resumes a paused issue into a claim with no slot field (spec 034 AC-2)", async () => {
+    const rs = routes([waiting()], {}, { 7: [comment(500, BOT_LOGIN, "2026-10-12T08:00:00Z", "q"), comment(501, ME, "2026-10-12T09:00:00Z", "Use the file store.")] });
+    const { s, paths } = await setup(rs, 1, firstStep);
+    await writePaused(paths, record());
+    expect((await s.tick()).claimed).toEqual([7]);
+    await settle();
+    expect("slot" in JSON.parse(readFileSync(join(paths.claims, "7.json"), "utf8"))).toBe(false);
+  }, 30_000);
+
   it("closes a capability-hold issue on the maintainer's answer instead of resuming it (spec 014 AC-8)", async () => {
     const capability = { ...waiting(), title: "The GitHub App cannot create draft security advisories", body: "Capability needed\n\n<!-- panelator-capability:security-advisories -->" };
     const rs = routes([capability], {}, { 7: [comment(500, BOT_LOGIN, "2026-10-12T08:00:00Z", "q"), comment(501, ME, "2026-10-12T09:00:00Z", "Granted.")] });
@@ -493,7 +511,7 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
   it("removes the claim a crash mid-pause left on disk, without resuming it (review focus 8)", async () => {
     const { s, paths, pair, started, deps } = await setup(routes([waiting()]));
     await writePaused(paths, record({ phase: "pausing" }));
-    await writeClaim(paths, { issue: 7, slot: 0, state: pausedState(), worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: "2026-10-01T00:00:00Z", run_id: null });
+    await writeClaim(paths, { issue: 7, state: pausedState(), worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: "2026-10-01T00:00:00Z", run_id: null });
     const t = await s.tick();
     await settle();
     expect(started).toEqual([]);
@@ -505,7 +523,7 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
   it("removes a claim left on disk next to a record already paused", async () => {
     const { s, paths, pair, started, deps } = await setup(routes([waiting()]));
     await writePaused(paths, record());
-    await writeClaim(paths, { issue: 7, slot: 0, state: pausedState(), worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    await writeClaim(paths, { issue: 7, state: pausedState(), worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
     await s.tick();
     await settle();
     expect(started).toEqual([]);
@@ -520,7 +538,7 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     await writePaused(paths, record({ phase: "resuming", answer: "Use the file store.", reply_comment_id: 501 }));
     const wt = join(pair.worktrees, "issue-7");
     git(pair.repo, "worktree", "add", "-q", "-B", "issue-7", wt, "origin/main");
-    await writeClaim(paths, { issue: 7, slot: 0, state: pausedState(), worktree: wt, started_at: "2026-10-01T00:00:00Z", last_activity_at: "2026-10-01T00:00:00Z", run_id: null, pendingEvent: { type: "answered", answer: "Use the file store.", questionId: 500 } });
+    await writeClaim(paths, { issue: 7, state: pausedState(), worktree: wt, started_at: "2026-10-01T00:00:00Z", last_activity_at: "2026-10-01T00:00:00Z", run_id: null, pendingEvent: { type: "answered", answer: "Use the file store.", questionId: 500 } });
     await appendQuestionLog(paths, { issue: 7, at: "2026-10-12T11:00:00Z", event: "answered", asking_stage: "plan", question_comment_id: 500, reply_comment_id: 501, answer: "Use the file store.", question: Q });
     const t = await s.tick();
     await settle();
@@ -548,7 +566,7 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     let hold: () => void = () => {};
     const drive: Drive = async (_d, claim) => { await new Promise<void>((r) => { hold = r; }); return claim; };
     const { s, paths, pair, deps } = await setup(rs, 1, drive);
-    await writeClaim(paths, { issue: 3, slot: 0, state: { ...initialChainState(3), stage: "verify" }, worktree: join(pair.worktrees, "issue-3"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    await writeClaim(paths, { issue: 3, state: { ...initialChainState(3), stage: "verify" }, worktree: join(pair.worktrees, "issue-3"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
     // Issue 3's chain runs first; an answer resumes ahead of a claim that has not started (spec 016 AC-1).
     await s.tick();
     await writePaused(paths, record());
@@ -566,7 +584,7 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     const { s, paths, pair, started } = await setup(routes([], { 7: ["validated", "class:product"] }), 1, firstStep);
     const wt = join(pair.worktrees, "issue-7");
     git(pair.repo, "worktree", "add", "-q", "-B", "issue-7", wt, "origin/main");
-    await writeClaim(paths, { issue: 7, slot: 0, state: pausedState(), worktree: wt, started_at: "2026-10-01T00:00:00Z", last_activity_at: "2026-10-01T00:00:00Z", run_id: null, pendingEvent: { type: "answered", answer: "Use the file store.", questionId: 500 } });
+    await writeClaim(paths, { issue: 7, state: pausedState(), worktree: wt, started_at: "2026-10-01T00:00:00Z", last_activity_at: "2026-10-01T00:00:00Z", run_id: null, pendingEvent: { type: "answered", answer: "Use the file store.", questionId: 500 } });
     const t = await s.tick();
     await settle();
     expect(t.released).toEqual([]);
@@ -580,7 +598,7 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     let calls = 0;
     const { s, paths, pair, notifications } = await setup(routes([], { 7: ["validated", "class:product"] }), 1, async () => { calls++; throw new Error("boom"); });
     await writeClaim(paths, {
-      issue: 7, slot: 0, state: { ...initialChainState(7), stage: "abandoned" }, worktree: join(pair.worktrees, "issue-7"), started_at: "2026-10-01T00:00:00Z", last_activity_at: "2026-10-01T00:00:00Z", run_id: null,
+      issue: 7, state: { ...initialChainState(7), stage: "abandoned" }, worktree: join(pair.worktrees, "issue-7"), started_at: "2026-10-01T00:00:00Z", last_activity_at: "2026-10-01T00:00:00Z", run_id: null,
       pendingActions: [{ type: "comment", text: "abandoned" }],
     });
     for (let i = 0; i < MAX_CHAIN_FAILURES + 1; i++) {
@@ -601,7 +619,7 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
   it("never expires a claim in stage paused or abandoned, whose liveness_expired is invalid", async () => {
     const { s, paths, pair, gh } = await setup(routes([]), 2, async (_d, c) => c);
     for (const [n, stage] of [[5, "paused"], [6, "abandoned"]] as const) {
-      await writeClaim(paths, { issue: n, slot: 0, state: { ...initialChainState(n), stage }, worktree: join(pair.worktrees, `issue-${n}`), started_at: "2026-10-01T00:00:00Z", last_activity_at: "2026-10-01T00:00:00Z", run_id: null });
+      await writeClaim(paths, { issue: n, state: { ...initialChainState(n), stage }, worktree: join(pair.worktrees, `issue-${n}`), started_at: "2026-10-01T00:00:00Z", last_activity_at: "2026-10-01T00:00:00Z", run_id: null });
     }
     const t = await s.tick();
     expect(t.errors).toEqual([]);
@@ -646,7 +664,7 @@ describe("Scheduler.tick: transient failures (spec 015)", () => {
     const t = await setup(rs, 1, drive);
     const events: { event: string; payload: unknown }[] = [];
     t.deps.emitEvent = async (event, payload) => { events.push({ event, payload }); };
-    await writeClaim(t.paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "verify" }, worktree: join(t.pair.worktrees, "issue-7"), started_at: t.deps.now().toISOString(), last_activity_at: t.deps.now().toISOString(), run_id: null });
+    await writeClaim(t.paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(t.pair.worktrees, "issue-7"), started_at: t.deps.now().toISOString(), last_activity_at: t.deps.now().toISOString(), run_id: null });
     let now = t.deps.now();
     const advance = (s: number) => { now = new Date(now.getTime() + s * 1000); t.setNow(now); };
     return { ...t, events, advance, claim: async () => (await listClaims(t.paths))[0] };
@@ -823,7 +841,7 @@ const FUTURE = "2026-10-12T13:00:00Z";
 const PAST = "2026-10-12T11:00:00Z";
 const writeWaiting = (h: Harness, n: number, postponedUntil: string) =>
   writeClaim(h.paths, {
-    issue: n, slot: 0, state: { ...initialChainState(n), stage: "waiting", resumeStage: "review", postponedUntil },
+    issue: n, state: { ...initialChainState(n), stage: "waiting", resumeStage: "review", postponedUntil },
     worktree: join(h.pair.worktrees, `issue-${n}`), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null,
   });
 const rmClaim = async (h: Harness, n: number) => (await import("node:fs/promises")).unlink(join(h.paths.claims, `${n}.json`));
@@ -857,7 +875,7 @@ describe("Scheduler.tick: a postponed chain holds its slot (spec 009)", () => {
     const { st, drive } = holdingDrive();
     const shortlist: unknown[] = [];
     const h = await setup(routes(shortlist), 2, drive);
-    await writeClaim(h.paths, { issue: 3, slot: 0, state: { ...initialChainState(3), stage: "verify" }, worktree: join(h.pair.worktrees, "issue-3"), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null });
+    await writeClaim(h.paths, { issue: 3, state: { ...initialChainState(3), stage: "verify" }, worktree: join(h.pair.worktrees, "issue-3"), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null });
     await h.s.tick();
     await writeWaiting(h, 7, FUTURE);
     shortlist.push(issue(1), issue(2));
@@ -885,7 +903,7 @@ describe("Scheduler.tick: a postponed chain holds its slot (spec 009)", () => {
 
     const h2 = await setup(routes([waiting(), issue(1)]));
     await writePaused(h2.paths, record());
-    await writeClaim(h2.paths, { issue: 7, slot: 0, state: pausedState(), worktree: join(h2.pair.worktrees, "issue-7"), started_at: h2.deps.now().toISOString(), last_activity_at: h2.deps.now().toISOString(), run_id: null });
+    await writeClaim(h2.paths, { issue: 7, state: pausedState(), worktree: join(h2.pair.worktrees, "issue-7"), started_at: h2.deps.now().toISOString(), last_activity_at: h2.deps.now().toISOString(), run_id: null });
     expect((await h2.s.tick()).claimed).toEqual([1]);
   }, 30_000);
 
@@ -933,7 +951,7 @@ describe("Scheduler.tick: a postponed chain holds its slot (spec 009)", () => {
 describe("Scheduler.tick: a waiting claim is not stalled (spec 023)", () => {
   const waitingClaim = (h: Harness, n: number, postponedUntil: string, last_activity_at: string, state: Partial<Claim["state"]> = {}) =>
     writeClaim(h.paths, {
-      issue: n, slot: 0, state: { ...initialChainState(n), stage: "waiting", resumeStage: "plan", postponedUntil, ...state },
+      issue: n, state: { ...initialChainState(n), stage: "waiting", resumeStage: "plan", postponedUntil, ...state },
       worktree: join(h.pair.worktrees, `issue-${n}`), started_at: "2026-10-09T00:00:00Z", last_activity_at, run_id: null,
     });
   const releaseCalls = (h: Harness, n: number) => h.gh.calls.filter((c) => (c.method === "POST" && c.url === `/repos/o/r/issues/${n}/comments`) || (c.method === "DELETE" && c.url === `/repos/o/r/issues/${n}/labels/in-progress`));
@@ -967,7 +985,7 @@ describe("Scheduler.tick: a waiting claim is not stalled (spec 023)", () => {
   it("keeps a claim queued behind a full slot past the window, and starts it when the slot frees (AC-3, the #17 incident)", async () => {
     const { st, drive } = holdingDrive();
     const h = await setup(routes([issue(1)]), 1, drive);
-    await writeClaim(h.paths, { issue: 3, slot: 0, state: { ...initialChainState(3), stage: "verify" }, worktree: join(h.pair.worktrees, "issue-3"), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null });
+    await writeClaim(h.paths, { issue: 3, state: { ...initialChainState(3), stage: "verify" }, worktree: join(h.pair.worktrees, "issue-3"), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null });
     await h.s.tick();
     expect(st.started).toEqual([3]);
     await waitingClaim(h, 7, "2026-10-12T12:05:00Z", "2026-10-12T12:00:00Z");
@@ -1004,7 +1022,7 @@ describe("Scheduler.tick: a waiting claim is not stalled (spec 023)", () => {
     const h = await setup(routes([]));
     const wt = join(h.pair.worktrees, "issue-7");
     git(h.pair.repo, "worktree", "add", "-q", "-B", "issue-7", wt, "origin/main");
-    await writeClaim(h.paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage }, worktree: wt, started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T09:48:00Z", run_id: null });
+    await writeClaim(h.paths, { issue: 7, state: { ...initialChainState(7), stage }, worktree: wt, started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T09:48:00Z", run_id: null });
     const t = await h.s.tick();
     expect(t.released).toEqual([7]);
     expect(h.started).toEqual([]);
@@ -1014,7 +1032,7 @@ describe("Scheduler.tick: a waiting claim is not stalled (spec 023)", () => {
     const h = await setup(routes([]), 1, firstStep);
     const wt = join(h.pair.worktrees, "issue-7");
     git(h.pair.repo, "worktree", "add", "-q", "-B", "issue-7", wt, "origin/main");
-    await writeClaim(h.paths, { issue: 7, slot: 0, state: { ...initialChainState(7), stage: "waiting", resumeStage: "plan", postponedUntil: "2026-10-12T12:00:00Z" }, worktree: wt, started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T09:48:00Z", run_id: null });
+    await writeClaim(h.paths, { issue: 7, state: { ...initialChainState(7), stage: "waiting", resumeStage: "plan", postponedUntil: "2026-10-12T12:00:00Z" }, worktree: wt, started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T09:48:00Z", run_id: null });
     h.setNow(new Date("2026-10-12T12:00:11Z"));
     expect((await h.s.tick()).released).toEqual([]);
     await settle();
@@ -1036,7 +1054,7 @@ const grantLog = () => {
   return { grants, hold, release, drive };
 };
 const readyClaim = (h: Harness, n: number) =>
-  writeClaim(h.paths, { issue: n, slot: 0, state: { ...initialChainState(n), stage: "verify" }, worktree: join(h.pair.worktrees, `issue-${n}`), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null });
+  writeClaim(h.paths, { issue: n, state: { ...initialChainState(n), stage: "verify" }, worktree: join(h.pair.worktrees, `issue-${n}`), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null });
 /** Registers the action-audit agent; `due` puts its next_run at now. The stub never updates its state, so it stays due after each run. */
 async function withStanding(h: Harness, log: ReturnType<typeof grantLog>, due = true) {
   const { loadRegistry } = await import("../src/standing/registry.ts");
@@ -1232,7 +1250,7 @@ describe("Scheduler.tick: fair slot scheduling, failure and crash windows (spec 
     await withStanding(h, log);
     await readyClaim(h, 4);
     await writeClaim(h.paths, {
-      issue: 9, slot: 0, state: pausedState(), worktree: join(h.pair.worktrees, "issue-9"), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null,
+      issue: 9, state: pausedState(), worktree: join(h.pair.worktrees, "issue-9"), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null,
       pendingEvent: { type: "answered", answer: "Use the file store.", questionId: 500 },
     });
     const t = await h.s.tick();
