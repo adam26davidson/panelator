@@ -512,6 +512,7 @@ are stale and are corrected as part of B.
 - `specs/039-spec-pr-marks-superseded-text/spec.md` (issue #60)
 - `specs/040-held-work-per-branch/spec.md` (issue #68)
 - `specs/041-registry-validates-standing-definitions/spec.md` (issue #70)
+- `specs/042-poller-handler-failure-is-not-an-outage/spec.md` (issue #74)
 - planned: console
   title: Specify and build the maintainer console (row E, second part)
   brief: The maintainer console of section 9, built on the design stage of spec 029 and
