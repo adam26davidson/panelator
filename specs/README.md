@@ -49,3 +49,12 @@ rule and the design-tree check validates them. When the design merges, the
 scheduler files one App-authored `validated` issue per planned child with no
 issue; the spec PR written for that issue replaces the planned bullet with the
 file bullet, keeping `(issue #<n>)`.
+
+A spec that supersedes or amends a criterion, paragraph or section of a landed
+spec marks that text in its own spec PR (spec 039, ADR 0009):
+`Superseded by [NNN-slug](../NNN-slug/spec.md) AC-k:` when the text no longer
+applies, or `Amended by [NNN-slug](../NNN-slug/spec.md) AC-k: <one clause>.`
+when it applies as changed, prepended to the earlier text, which stays as the
+record. The spec-scope gate allows another spec's `spec.md` only when the new
+spec links to it, and the spec review checks that every change there is such a
+mark.

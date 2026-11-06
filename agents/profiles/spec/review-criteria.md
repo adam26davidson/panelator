@@ -9,8 +9,16 @@
    what panelator is and promises its users), no large technical decision with real uncertainty, and nothing
    only the maintainer can do. A large decision with one clearly right answer is fine, recorded as an ADR.
 5. The PR edits nothing outside the allowed paths: the spec's directory, `docs/designs/`, `docs/decisions/`,
-   the `## Children` section of the spec's parent design, and the top designs only while recording a
-   maintainer's product answer.
+   the `## Children` section of the spec's parent design, the `spec.md` of a spec the new spec links to
+   (spec 039), and the top designs only while recording a maintainer's product answer. Every change to
+   another spec's `spec.md` is a mark: text prepended to the smallest unit it applies to (a criterion,
+   after its `AC-n.` number and before its text or bold title; a titled paragraph inside a criterion,
+   after its bold title; a section, as a block quote under its heading) that reads either
+   `Superseded by [NNN-slug](../NNN-slug/spec.md) AC-k:` or
+   `Amended by [NNN-slug](../NNN-slug/spec.md) AC-k: <one clause>.`, where `NNN-slug` is the new spec
+   and `AC-k` (or `section k`) is where the new spec says what applies. The earlier text follows the
+   mark unchanged, and the new spec's status line names the earlier spec and the units it marks. An edit
+   that is not a mark, or a mark that names a spec other than the new one, is a finding under this criterion.
 6. The PR changes or removes no text marked `(maintainer answer, question #<id>)` unless it cites an id that
    the review input's cited-answers list marks verified and that is newer than the marked one (AC-10, AC-18).
 7. The spec plans no change to `docs/charter.md`, to a protected maintainer decision without a
