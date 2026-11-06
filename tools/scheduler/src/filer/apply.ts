@@ -135,7 +135,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
     if(triage.filter(t=>t.ref===dec.ref&&t.outcome==='retry').length>=2){row.outcome='defer';row.reason='retry limit of two exhausted';break;}
     await d.gh.comment(abandoned!.issue.number,stripCapabilityMarkers(`Retry: ${dec.reason}`)+`\n\n${marker}`);await d.gh.removeLabel(abandoned!.issue.number,'abandoned');row.issue=abandoned!.issue.number;break;
    case 'rewrite': row.issue=await file();await d.gh.closeIssue(abandoned!.issue.number,stripCapabilityMarkers(`Superseded by #${row.issue}: ${dec.reason}`));closed(abandoned!.issue.number);break;
-   case 'close':await d.gh.closeIssue(abandoned!.issue.number,stripCapabilityMarkers(dec.reason));row.issue=abandoned!.issue.number;break;
+   case 'close':await d.gh.closeIssue(abandoned!.issue.number,stripCapabilityMarkers(dec.reason));closed(abandoned!.issue.number);row.issue=abandoned!.issue.number;break;
    case 'discard':case 'defer':break;
   }
   const fb=applied.fallback;

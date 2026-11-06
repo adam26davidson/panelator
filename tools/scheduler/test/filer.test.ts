@@ -502,10 +502,8 @@ it('AC-6: the capability lookup and a file share one listing',async()=>{
  gh.listOpenIssuesByAuthor.mockClear();gh.listOpenIssuesByAuthor.mockResolvedValue([{...capIssue,labels:[]}] as never);
  const input:FilerInput={records:[{ref:'1',finding:secret},{ref:'2',finding:{...finding,what:'plain'}}],abandoned:[],open_issues:[],cursor:0,issue_classes:['class:bug']};
  const before=listings(gh);
- await applyFilerResult(d,'run-3',{...input,records:[input.records[0]!]},{summary:'s',decisions:[{ref:'1',outcome:'security',reason:'p',advisory}]});
- expect(listings(gh)-before).toBe(1);expect(gh.createIssue).not.toHaveBeenCalled();expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1)).toMatchObject({held:true,capability_issue:42});expect(gh.searchOpenIssuesByMarker).not.toHaveBeenCalled();
- const y=await setup();y.d.classes=['class:bug','class:tooling'];y.gh.listOpenIssuesByAuthor.mockResolvedValue([{...capIssue,labels:[]}] as never);
- await applyFilerResult(y.d,'run',{...y.input,records:recs(2)},{summary:'s',decisions:[filed('1'),filed('2')]});expect(listings(y.gh)).toBe(1);
+ await applyFilerResult(d,'run-3',input,{summary:'s',decisions:[{ref:'1',outcome:'security',reason:'p',advisory},filed('2')]});
+ expect(listings(gh)-before).toBe(1);expect(gh.createIssue).toHaveBeenCalledTimes(1);expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).find(t=>t.ref==='1'&&t.held)).toMatchObject({held:true,capability_issue:42});expect(gh.searchOpenIssuesByMarker).not.toHaveBeenCalled();
 });
 it('AC-7: an issue created in the batch is a merge target',async()=>{
  const {d,gh,input}=await setup();const full:FilerInput={...input,records:recs(2)};
@@ -517,6 +515,9 @@ it('AC-8: an issue closed in the batch is no longer a merge target',async()=>{
  const full:FilerInput={...input,records:recs(1),abandoned:[abandonedRec(7)]};
  await applyFilerResult(d,'run',full,{summary:'s',decisions:[{ref:'issue:7',outcome:'rewrite',reason:'better',issue},{ref:'1',outcome:'merge_into',reason:'same',issue_number:7}]});
  expect(gh.comment).not.toHaveBeenCalled();expect(gh.createIssue).toHaveBeenCalledTimes(2);expect(listings(gh)).toBe(1);
+ const x=await setup();x.gh.listOpenIssuesByAuthor.mockResolvedValue([botIssue(7)] as never);
+ await applyFilerResult(x.d,'run',{...x.input,records:recs(2),abandoned:[abandonedRec(7)]},{summary:'s',decisions:[filed('1'),{ref:'issue:7',outcome:'close',reason:'c'},{ref:'2',outcome:'merge_into',reason:'same',issue_number:7}]});
+ expect(x.gh.closeIssue).toHaveBeenCalledWith(7,expect.any(String));expect(x.gh.comment).not.toHaveBeenCalledWith(7,expect.stringContaining('same'));expect(x.gh.createIssue).toHaveBeenCalledTimes(2);expect(listings(x.gh)).toBe(1);
 });
 it('AC-9: a failed listing aborts the batch with nothing applied',async()=>{
  const {d,gh,input,paths}=await setup();gh.listOpenIssuesByAuthor.mockRejectedValue(new Error('issue list incomplete: got 6, server reports 7'));
