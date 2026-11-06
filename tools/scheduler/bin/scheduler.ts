@@ -129,7 +129,7 @@ const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec));
 let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
-  cfg, paths, gh, telegram,registry, parameters, emitEvent, notifier: rateLimited(new LogNotifier(paths.serviceLog), cfg.notify_rate_limit_hours),
+  cfg, paths, gh, telegram: null,registry, parameters, emitEvent, notifier: rateLimited(new LogNotifier(paths.serviceLog), cfg.notify_rate_limit_hours),
   stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: repoRoot, binDir,
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),
@@ -152,7 +152,7 @@ const scheduler: Scheduler = new Scheduler({
   },
 });
 
-const telegramPoller=telegram?new TelegramPoller(telegram.client,paths.telegramOffset,cfg.telegram!.long_poll_timeout_s,u=>scheduler.handleTelegramUpdate(u),rec=>serviceLog.write(rec),undefined,u=>scheduler.confirmTelegramUpdate(u)):null;
+const telegramPoller=telegram?new TelegramPoller(telegram.client,paths.telegramOffset,cfg.telegram!.long_poll_timeout_s,u=>scheduler.handleTelegramUpdate(u),rec=>serviceLog.write(rec),undefined,u=>scheduler.confirmTelegramUpdate(u),()=>scheduler.setTelegram(telegram)):null;
 telegramPoller?.start();
 for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => {scheduler.stop(sig);void telegramPoller?.stop();});
 

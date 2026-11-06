@@ -121,6 +121,8 @@ export class Scheduler {
   handleTelegramUpdate(u:import('../telegram/client.ts').TelegramUpdate){return this.#serializeQuestions(()=>this.telegramAnswers.handle(u));}
   confirmTelegramUpdate(u:import('../telegram/client.ts').TelegramUpdate){return this.#serializeQuestions(()=>this.telegramAnswers.confirmed(u));}
 
+  setTelegram(channel: SchedulerDeps["telegram"]): void { this.#deps.telegram = channel; }
+
   constructor(deps: SchedulerDeps, opts: { driveChain?: DriveFn } = {}) {
     this.#deps = deps;
     this.telegramAnswers=new TelegramAnswers(deps,()=>this.wake());

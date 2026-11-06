@@ -5,6 +5,7 @@ import {emptyTelegram} from '../src/state/paused.ts';
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
 import { agentsDir, defaultConfigPath, loadConfig } from "../src/config.ts";
@@ -17,7 +18,7 @@ import { listClaims, readClaim, writeClaim } from "../src/state/claims.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import { writeToken } from "../src/state/token.ts";
 import { HISTORY_ENTRY_MAX, initialChainState, ledgerOf } from "../src/chain/machine.ts";
-import { step } from "../src/chain/driver.ts";
+import { step, completePause } from "../src/chain/driver.ts";
 import { questionMarker } from "../src/chain/question.ts";
 import { writeLedger } from "../src/state/ledger.ts";
 import { listPaused, writePaused, type PausedRecord } from "../src/state/paused.ts";
@@ -90,7 +91,7 @@ describe('Telegram answers and watchdog fallback',()=>{
   const poll=new TelegramPoller(deps.telegram!.client,paths.telegramOffset,50,u=>s.handleTelegramUpdate(u),r=>logs.push(r),async ms=>{waits.push(ms);},u=>s.confirmTelegramUpdate(u));
   try{await writePaused(paths,tgRecord());server.push(message(1,'Use the file store.'));poll.start();
    for(let i=0;i<400&&!(existsSync(paths.telegramOffset)&&JSON.parse(readFileSync(paths.telegramOffset,'utf8')).next_update_id===2&&server.sent.length>=1);i++)await new Promise(r=>setTimeout(r,10));
-   expect(logs).toHaveLength(1);expect(logs[0]).toMatchObject({kind:'telegram-handler-failed',update_id:1});expect(String(logs[0].error)).toContain('mock github comment failure');
+   expect(logs).toHaveLength(2);expect(logs[0]).toMatchObject({kind:'telegram',status:'connected'});expect(logs[1]).toMatchObject({kind:'telegram-handler-failed',update_id:1});expect(String(logs[1].error)).toContain('mock github comment failure');
    expect(logs.some(l=>l.kind==='telegram-outage'||l.kind==='telegram-recovered')).toBe(false);expect(waits).toEqual([2000]);
    expect(gh.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/comments'))).toHaveLength(2);expect(server.sent).toHaveLength(1);expect((await listPaused(paths))[0].phase).toBe('resuming');
   }finally{await poll.stop();await server.close();}
@@ -1342,4 +1343,50 @@ describe('Scheduler.tick: main check watcher (spec 036)',()=>{
   const h=await harness();h.deps.registry=undefined;await h.s.tick();expect(h.checkCalls()).toHaveLength(0);
   h.deps.registry={};await h.s.tick();expect(h.checkCalls()).toHaveLength(0);
  },30000);
+});
+
+describe("Telegram attaches when connected (spec 043)", () => {
+  const pausing = (): PausedRecord => ({ issue: 7, phase: "pausing", nonce: "nonce", state: initialChainState(7), question: { kind: "product", question: "Which layout?", options: [{ label: "second", cost: "none" }], recommendation: "second" }, asking_stage: "plan", question_comment_id: null, asked_at: null, reminded: false, answer: null, reply_comment_id: null, telegram: emptyTelegram() });
+  const poller = async (s: Scheduler, server: Awaited<ReturnType<typeof fakeTelegram>>, logs: Record<string, unknown>[], hook: () => void = () => {}) => {
+    const { TelegramPoller } = await import("../src/telegram/poller.ts");
+    const client = new TelegramClient("secret", 42, server.url);
+    return new TelegramPoller(client, join(tmpdir(), `tg-offset-${Math.random()}.json`), 1, async () => {}, (r) => logs.push(r), async () => { await new Promise((r) => setTimeout(r, 5)); }, undefined, () => { s.setTelegram(telegramChannel(client)); hook(); });
+  };
+  const until = async (f: () => boolean) => { for (let i = 0; i < 400 && !f(); i++) await new Promise((r) => setTimeout(r, 10)); expect(f()).toBe(true); };
+  it("AC-3: a pause before the connection is an issue question; after it, a Telegram one", async () => {
+    const { s, deps, paths } = await setup(routes([waiting()]), 1, firstStep);
+    const server = await fakeTelegram(); const logs: Record<string, unknown>[] = []; let hooked = 0;
+    server.fail("getMe", 500, 1000);
+    const p1 = await poller(s, server, logs, () => hooked++);
+    p1.start();
+    try {
+      await until(() => logs.some((l) => l.status === "connecting"));
+      await completePause(deps, pausing());
+      const [r] = await listPaused(paths);
+      expect(r.telegram).toMatchObject({ sent: false, message_id: null });
+      expect(server.sent).toEqual([]);
+      expect(hooked).toBe(0);
+      await p1.stop();
+      server.fail("getMe", 200, 0);
+      const p2 = await poller(s, server, logs, () => hooked++);
+      p2.start();
+      await until(() => hooked === 1);
+      await p2.stop();
+      await completePause(deps, { ...pausing(), nonce: "n2", issue: 8 });
+      expect(server.sent).toHaveLength(1);
+      expect((await listPaused(paths)).find((x) => x.issue === 8)?.telegram?.sent).toBe(true);
+    } finally { await p1.stop(); await server.close(); }
+  }, 30000);
+  it("AC-4: a tick completes while getMe is failing", async () => {
+    const { s } = await setup(routes([]));
+    const server = await fakeTelegram(); const logs: Record<string, unknown>[] = []; let hooked = 0;
+    server.fail("getMe", 500, 1000);
+    const p = await poller(s, server, logs, () => hooked++);
+    p.start();
+    try {
+      await Promise.race([s.tick(), new Promise((_, rej) => setTimeout(() => rej(new Error("tick hung")), 10000))]);
+      expect(logs.some((l) => l.status === "connected")).toBe(false);
+      expect(hooked).toBe(0);
+    } finally { await p.stop(); await server.close(); }
+  }, 30000);
 });

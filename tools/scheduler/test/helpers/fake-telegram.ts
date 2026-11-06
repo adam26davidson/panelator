@@ -6,7 +6,7 @@ export async function fakeTelegram() {
   const edits: unknown[] = [];
   const answeredCallbacks: unknown[] = [];
   const updates: TelegramUpdate[] = [];
-  const failures = new Map<string, number>();
+  const failures = new Map<string, { code: number; times: number }>();
   let flush: (() => void) | undefined;
   const server = createServer(async (req, res) => {
     let raw = "";
@@ -19,12 +19,12 @@ export async function fakeTelegram() {
     };
     const failure = failures.get(method);
     if (failure) {
-      failures.delete(method);
-      res.statusCode = failure;
+      if (--failure.times <= 0) failures.delete(method);
+      res.statusCode = failure.code;
       res.end(
         JSON.stringify({
           ok: false,
-          error_code: failure,
+          error_code: failure.code,
           description: "test error",
         }),
       );
@@ -79,7 +79,9 @@ export async function fakeTelegram() {
       updates.push(u);
       flush?.();
     },
-    fail: (method: string, code: number) => failures.set(method, code),
+    // times = 0 clears a pending failure
+    fail: (method: string, code: number, times = 1) =>
+      times > 0 ? failures.set(method, { code, times }) : failures.delete(method),
     close: async () => {
       server.closeAllConnections();
       await new Promise<void>((r) => server.close(() => r()));
