@@ -78,8 +78,8 @@ export interface ChainState {
   parkedPr: { number: number; head_sha: string } | null;
   pendingSince: string | null;
   checksRerun: boolean;
-  /** AC-1: the branch and head a stage left when its result carried a question; kept until a PR is bound on it or the attempt is discarded. */
-  heldWork: { branch: string; head: string } | null;
+  /** Spec 011 AC-1, spec 040: the branch and head a stage left when its result carried a question, one entry per branch; an entry is kept until a PR is bound on its branch or the attempt is discarded. */
+  heldWork: { branch: string; head: string }[];
 }
 
 export type ChainEvent =

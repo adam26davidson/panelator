@@ -292,27 +292,23 @@
           "type": "boolean"
         },
         "heldWork": {
-          "oneOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "object",
-              "required": [
-                "branch",
-                "head"
-              ],
-              "additionalProperties": false,
-              "properties": {
-                "branch": {
-                  "type": "string"
-                },
-                "head": {
-                  "type": "string"
-                }
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "branch",
+              "head"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "type": "string"
+              },
+              "head": {
+                "type": "string"
               }
             }
-          ]
+          }
         },
         "answerQuestionIds": {
           "type": "array",

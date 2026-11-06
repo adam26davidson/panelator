@@ -561,6 +561,63 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
       expect(w.mergeRequests).toEqual([12, 9]);
     }, 120_000);
 
+    describe("the spec stage asks while recording an answer (spec 040 AC-8)", () => {
+      for (const kind of ["capability", "other"] as const) {
+        it(`a ${kind} question from the spec stage: issue-7's work is kept and continued after the spec PR merges`, async () => {
+          let w!: ChainWorld;
+          const a = agents(() => w);
+          const held = { head: "" };
+          const recording = { head: "" };
+          const starts: string[] = [];
+          const specHeads: string[] = [];
+          const marks = () => w.questions().map((q) => `(maintainer answer, question #${q.id})`).join(", ");
+          const asks = (run: StageRun) => {
+            recording.head = w.push(run, { "specs/010-thing/spec.md": specOf().replace("Do a thing.", `Do a thing, half written ${marks()}.`) }, "recording");
+            return { verdict: "question", question: ask(kind, "Does the board have a second flash chip?") };
+          };
+          const revises = (run: StageRun) => {
+            specHeads.push(rev(run));
+            return a.spec(12, { "specs/010-thing/spec.md": specOf().replace("Do a thing.", `Do a thing, in RAM ${marks()}.`) })(run);
+          };
+          w = await chainWorld({
+            files: repoFiles(),
+            results: {
+              plan: [PLAN, PLAN],
+              implement: [asksAfterPushing(() => w, ask("technical", "Cache the frames in RAM or in flash?"), held), a.implement(9, { "a.txt": "pr 9\n" }, (run) => starts.push(rev(run)))],
+              review: [APPROVE, APPROVE], "question-check": [SEND, SEND], spec: [asks, revises],
+            },
+          });
+          await w.tick();
+          w.reply("RAM.");
+          await w.tick();
+          if (kind === "capability") {
+            w.reply("Yes, it has one.");
+            await w.tick();
+          }
+          await expectSettled(w);
+
+          const ran = kind === "capability"
+            ? ["plan", "implement", "question-check", "spec", "question-check", "spec", "review", "plan", "implement", "review"]
+            : ["plan", "implement", "question-check", "spec", "spec", "review", "plan", "implement", "review"];
+          expect(w.adapter.ran).toEqual(ran);
+          const resumed = inputsOf(w, "spec")[1].held_work as string;
+          expect(specHeads).toEqual([recording.head]);
+          expect(resumed).toContain("spec-7");
+          expect(resumed).toContain(recording.head);
+          expect(resumed).not.toContain("issue-7");
+          expect(kinds(w, "held-work").map((r) => r.branch)).toEqual(["issue-7", "spec-7"]);
+          expect(kinds(w, "stale-branch-dropped")).toEqual([]);
+          expect(kinds(w, "recovered-commits")).toEqual([]);
+          expect(inputsOf(w, "plan")[1].held_work).toContain("issue-7");
+          expect(inputsOf(w, "plan")[1].held_work).toContain(held.head);
+          expect(starts).toEqual([held.head]);
+          expect(runsOf(w, "implement")[1].branch).toBe("issue-7");
+          expect(w.writes()).not.toContain("DELETE /repos/o/r/git/refs/heads/issue-7");
+          expect(w.mergeRequests).toEqual([12, 9]);
+        }, 180_000);
+      }
+    });
+
     it("decide_yourself after a question: the stage in decide mode continues from the held head", async () => {
       let w!: ChainWorld;
       const a = agents(() => w);

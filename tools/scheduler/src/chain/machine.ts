@@ -61,7 +61,7 @@ export function initialChainState(issue: number, specProblem: string | null = nu
     track: "issue", rescues: 0, specRescues: 0, replans: 0, specRevisions: 0, designRevisions: 0, specAnswers: 0, decideReturns: 0, history: [],
     rescueRun: false, specMode: null, specProblem, designProblem, question: null, askingStage: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
     pendingAnswer: null, recordIds: [], recordKind: null, recordAnswer: false, decideInput: null, decidedQuestion: null, parkedPr: null, pendingSince: null, checksRerun: false, securityPass: false,
-    chainFailures: null, chainErrors: 0, heldWork: null,
+    chainFailures: null, chainErrors: 0, heldWork: [],
     ...(ledger ? { ...ledgerOf(ledger), history: ledger.history.slice(-HISTORY_MAX_ENTRIES).map(clip) } : {}),
   };
 }
@@ -72,7 +72,30 @@ export function normalizeChainState(raw: unknown): ChainState {
     throw new Error("invalid chain state: not an object with a numeric issue");
   }
   const { securityFinding: _dropped, ...rest } = raw as Record<string, unknown>;
-  return { ...initialChainState(rest.issue as number), ...rest } as ChainState;
+  const state = { ...initialChainState(rest.issue as number), ...rest } as ChainState;
+  state.heldWork = normalizeHeld(rest.heldWork);
+  const conv = state.conversation;
+  if (conv && typeof conv === "object" && conv.next && typeof conv.next === "object") {
+    state.conversation = { ...conv, next: { ...conv.next, heldWork: normalizeHeld((conv.next as { heldWork?: unknown }).heldWork) } };
+  }
+  return state;
+}
+
+/** Spec 040 AC-7: absent and `null` are no holds, spec 011's single entry is a one-entry list. */
+function normalizeHeld(raw: unknown): ChainState["heldWork"] {
+  if (Array.isArray(raw)) return raw as ChainState["heldWork"];
+  if (typeof raw === "object" && raw !== null) return [raw as ChainState["heldWork"][number]];
+  return [];
+}
+
+/** Spec 040: the hold on a branch, or null. */
+export function heldOn(state: Pick<ChainState, "heldWork">, branch: string): { branch: string; head: string } | null {
+  return state.heldWork.find((h) => h.branch === branch) ?? null;
+}
+
+function withoutHeld(state: ChainState): ChainState["heldWork"] {
+  const branch = branchOf(state);
+  return state.heldWork.filter((h) => h.branch !== branch);
 }
 
 /** The branch of the PR the chain works on; the spec stage always runs on the spec track, the design stage on the design track. */
@@ -155,7 +178,7 @@ function rerun(state: ChainState, stuck: Stuck, fixInput: string, patch: Partial
  * input of a rescue fix (the work the fix loop could not finish); it defaults to `reason`.
  */
 function escalate(state: ChainState, stuck: Stuck, reason: string, fixInput: string = reason): Step {
-  const s = note({ ...state, heldWork: null }, `${stuck}: ${reason}`);
+  const s = note({ ...state, heldWork: [] }, `${stuck}: ${reason}`);
   if (s.track === "spec" || stuck === "spec") {
     if (s.specRescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { specRescues: s.specRescues + 1, rescueRun: true, track: "spec" });
     return abandon(s, stuck);
@@ -240,7 +263,7 @@ function abandon(s: ChainState, stuck: Stuck): Step {
   if (s.pr) closes.push({ type: "close_pr", pr: s.pr.number, branch: branchOf(s), comment: why });
   if (s.parkedPr) closes.push({ type: "close_pr", pr: s.parkedPr.number, branch: `issue-${s.issue}`, comment: why });
   return {
-    state: { ...s, stage: "abandoned", pr: null, parkedPr: null, rescueRun: false, heldWork: null },
+    state: { ...s, stage: "abandoned", pr: null, parkedPr: null, rescueRun: false, heldWork: [] },
     actions: [
       ...closes,
       { type: "comment", text: abandonmentComment(s) },
@@ -342,12 +365,14 @@ function ask(state: ChainState, stage: Stuck, question: Question, head?: string)
 function heldPatch(state: ChainState, stage: Stuck, head: string | undefined): Pick<ChainState, "heldWork"> | Record<string, never> {
   if (stage === "review") return {};
   if (!head) throw new Error(`stage_ok of ${stage} without a head (issue ${state.issue})`);
-  return { heldWork: { branch: branchOf(state), head } };
+  const branch = branchOf(state);
+  const entry = { branch, head };
+  return { heldWork: state.heldWork.some((h) => h.branch === branch) ? state.heldWork.map((h) => (h.branch === branch ? entry : h)) : [...state.heldWork, entry] };
 }
 
 /** AC-7: a PR bound on the held branch makes the work the PR's. */
 function unholdIfBound(state: ChainState): ChainState {
-  return state.heldWork && state.heldWork.branch === branchOf(state) ? { ...state, heldWork: null } : state;
+  return heldOn(state, branchOf(state)) ? { ...state, heldWork: withoutHeld(state) } : state;
 }
 
 function failedInDecideMode(state: ChainState, stage: Stuck): Step {
@@ -575,7 +600,7 @@ function specMerged(state: ChainState, gate: PostMergeGate): Step {
     if (gate.specDirReadme && gate.designTouched) {
       const comment = `The spec stage split this work into the design \`${gate.design ?? "docs/designs/"}\`, now merged. Its children are filed as issues by the scheduler from the design's \`## Children\` section, so this issue is closed.`;
       return {
-        state: { ...state, ...fresh, stage: "done", pr: null, heldWork: null },
+        state: { ...state, ...fresh, stage: "done", pr: null, heldWork: [] },
         actions: [deleteBranch, { type: "close_issue", comment }, { type: "label", add: [], remove: [CLAIM_LABEL] }, { type: "done" }],
       };
     }
@@ -669,7 +694,7 @@ function releaseClaim(state: ChainState, why: string, text: string, gate: string
   }
   if (state.parkedPr) closes.push({ type: "close_pr", pr: state.parkedPr.number, branch: `issue-${state.issue}`, comment: closeComment });
   return {
-    state: { ...state, stage: "released", ...(state.track !== "issue" ? { pr: null } : {}), parkedPr: null, heldWork: null },
+    state: { ...state, stage: "released", ...(state.track !== "issue" ? { pr: null } : {}), parkedPr: null, heldWork: [] },
     actions: [
       ...closes,
       { type: "comment", text },
@@ -761,7 +786,7 @@ function baseTransition(state: ChainState, event: ChainEvent, bounds: Bounds): S
       return { state: { ...state, stage: "waiting", resumeStage: event.stage, postponedUntil: null }, actions: [event.until ? { type: "wait", seconds: POSTPONE_WAIT_S, until: event.until } : { type: "wait", seconds: POSTPONE_WAIT_S }] };
     }
     // AC-7: the asking stage failing is a failed attempt; the question check's own failures keep the work.
-    const s = note(event.stage === state.askingStage ? { ...state, heldWork: null } : state, `${event.stage} attempt ${state.attempt} failed: ${event.reason}`);
+    const s = note(event.stage === state.askingStage ? { ...state, heldWork: withoutHeld(state) } : state, `${event.stage} attempt ${state.attempt} failed: ${event.reason}`);
     if (s.rescueRun && event.stage !== "question-check") return escalate(s, event.stage, `rescue run failed: ${event.reason}`, s.pendingFixInput ?? event.reason);
     switch (s.stage) {
       case "plan":
@@ -824,7 +849,7 @@ function baseTransition(state: ChainState, event: ChainEvent, bounds: Bounds): S
           const gate = event.specGate ?? { ok: false as const, gate: "spec-present" as const, reason: "the post-merge spec gates did not run" };
           if (state.track === "spec") return specMerged(state, gate);
           if (state.track === "design") return designMerged(state, gate, bounds);
-          return { state: { ...state, stage: "done", pendingAnswer: null, heldWork: null }, actions: [{ type: "label", add: [], remove: [CLAIM_LABEL] }, { type: "done" }] };
+          return { state: { ...state, stage: "done", pendingAnswer: null, heldWork: [] }, actions: [{ type: "label", add: [], remove: [CLAIM_LABEL] }, { type: "done" }] };
         }
         return toFix(state, `PR not mergeable:\n${event.detail ?? ""}`);
       }

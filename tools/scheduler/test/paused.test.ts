@@ -74,8 +74,20 @@ describe("paused records", () => {
     expect(got.state.track).toBe("issue");
     expect(got.state.rescues).toBe(0);
     expect(got.state.history).toEqual([]);
-    expect(got.state.heldWork).toBeNull();
+    expect(got.state.heldWork).toEqual([]);
     expect("securityFinding" in got.state).toBe(false);
+  });
+  it("normalizes held work in a paused record's state (spec 040 AC-7)", async () => {
+    const p = fresh();
+    await ensureStateDirs(p);
+    const { heldWork: _h, ...without } = initialChainState(7);
+    const one = { branch: "issue-7", head: "a".repeat(40) };
+    const { writeFileSync } = await import("node:fs");
+    for (const [heldWork, want] of [[undefined, []], [null, []], [one, [one]]] as const) {
+      writeFileSync(join(p.paused, "7.json"), JSON.stringify({ ...rec(), state: { ...without, ...(heldWork === undefined ? {} : { heldWork }) } }));
+      const [got] = await listPaused(p);
+      expect(got.state.heldWork).toEqual(want);
+    }
   });
   it("rejects an invalid record", async () => {
     const p = fresh();
