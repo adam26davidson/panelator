@@ -22,6 +22,7 @@ import {HISTORY_ENTRY_MAX} from '../chain/machine.ts';
 import {buildAuditInput} from './audit-input.ts';
 import {updateAgentState,type AgentState} from './state.ts';
 import {parseDuration} from './registry.ts';
+import {record} from '../events/store.ts';
 const exec=promisify(execFile);
 export interface StandingDeps extends DriverDeps {parameters:ParameterStore;botLogin:string}
 /** A repair turn only rewrites JSON it already has; the cap also keeps a session-lost fresh run from a full investigation. */
@@ -44,7 +45,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  const postpone=async(reason:string)=>{postponedUntil=await waitAfterLimit(d.paths,def.harness,def.model,d.now());throw new Error(`${reason}; postponed until ${postponedUntil}`);};
  const filer:FilerDeps={paths:d.paths,gh:d.gh,botLogin:d.botLogin,now:d.now,classes:[...d.cfg.labels.feature_classes,...d.cfg.labels.debt_classes],notify:(text,key)=>d.notifier.notify({issue:0,gate:'standing',label:`${def.name}:${key??text}`,text}),log:d.log};
  let worktree=d.repoDir,created=false;
- let summary='',outcome='failed',error='standing run failed';
+ let summary='',outcome='failed',error='standing run failed',actionCount=0,findingCount=0;
  // Spec 045 AC-1: the outage cause label of a transient attempt; `judged` marks an error thrown for the run's own judgement, already classified.
  let transient:string|null=null,judged=false;
  try {
@@ -99,8 +100,9 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   const body=result.result as {summary:string;actions?:{kind:string;args:Record<string,unknown>;why:string}[];findings?:unknown[]};
   if(def.output==='filer-result')await applyFilerResult(filer,runId,input as Awaited<ReturnType<typeof buildFilerInput>>,body as FilerResult);
   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},body.findings??[]);
-  const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now};
+  const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog,d.paths),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now};
   for(const action of body.actions??[])await applyAction(ctx,{...action,agent:def.name,run_id:runId},def.actions);
+  actionCount=body.actions?.length??0;findingCount=body.findings?.length??0;
   summary=body.summary;outcome='ok';
   await writeFile(join(d.paths.runs,result.runId,'summary.json'),JSON.stringify({summary}));
  }catch(e){
@@ -114,6 +116,8 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   if(created)await removeWorktree(d.repoDir,worktree).catch(e=>d.log({kind:'error',error:String(e)}));
   await updateAgentState(d.paths,def.name,s=>{const next={...s};delete next.running;return next;});
  }
+ // Spec 026 AC-2: every attempt that ran is recorded, the first failed one before the scheduler waits for the retry.
+ await record(d.paths,'agent.run',d.now(),{outcome,summary:summary||error,events_received:received.length,actions:actionCount,findings:findingCount,attempt,...(outcome==='failed'?{error}:{})},{agent:def.name,run_id:runId});
  // Spec 013 AC-7: a quota postponement is not a failure: the count, pending events and schedule stay as they are.
  if(postponedUntil!==null){const until=postponedUntil;await updateAgentState(d.paths,def.name,s=>({...s,postponed_until:until,summary:error}));return;}
  // Spec 045 AC-2 to AC-6: a transient failure postpones the agent with backoff and counts nothing until the outage passes its ceiling.

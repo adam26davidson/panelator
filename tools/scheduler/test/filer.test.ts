@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import type {GitHubClient} from '../src/github/client.ts';
 import {statePaths,ensureStateDirs} from '../src/state/paths.ts';
 import {buildFilerInput,readJsonLines,type FilerDeps,type FilerInput,type TriageEntry} from '../src/filer/input.ts';
+import {openIndex} from '../src/events/index.ts';
 import {applyFilerResult,resolveClass,type Decision} from '../src/filer/apply.ts';
 // A pass-through, so a test can crash the triage log between two writes (spec 019 AC-2).
 vi.mock('node:fs/promises',async(orig)=>{const m=await orig<typeof import('node:fs/promises')>();return {...m,appendFile:vi.fn(m.appendFile)};});
@@ -136,6 +137,9 @@ it('holds a permission failure after three attempts and raises one content-free 
  expect(gh.createIssue).toHaveBeenCalledTimes(1);
  const [title,body,labels]=gh.createIssue.mock.calls[0];
  expect(labels).toEqual(['class:tooling','validated']);expect(body).toContain('<!-- panelator-capability:security-advisories -->');expect(body).toMatch(/kind `capability`/);expect(body).toContain('HTTP 403');
+ // Spec 026 AC-2: the capability issue is recorded as filed, with its body as created.
+ {const db=openIndex(paths);const rows=db.prepare("SELECT issue, payload FROM events WHERE kind = 'issue.filed'").all() as {issue:number;payload:string}[];db.close();
+  expect(rows).toHaveLength(1);expect(rows[0].issue).toBe(42);expect(JSON.parse(rows[0].payload)).toEqual({number:42,by:'bot',class:'class:tooling',labels:['class:tooling','validated'],marker:'<!-- panelator-capability:security-advisories -->',body});}
  for(const text of ['Token leaks','Second leak','secret-evidence','Secret title','Secret description'])expect(title+body).not.toContain(text);
  const held=notify.mock.calls.map(c=>String((c as unknown[])[0])).filter(t=>t.includes('held'));
  expect(held).toHaveLength(2);expect(held[0]).toContain('Secret title');

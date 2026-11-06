@@ -59,3 +59,18 @@ Security findings are routed to draft repository advisories, never public issues
 Wiping the state directory forgets every claim but leaves their `in-progress` labels on GitHub; remove those by hand, or the issues are never picked up again.
 
 The shipped profiles are `backend`, `design`, `security` and `spec`. A plan whose domain names any other profile fails, and the firmware HIL check of spec section 8 has no owner until the firmware profile spec.
+
+## Events (spec 026)
+
+The scheduler appends every run, stage transition, merge, CI result, review, finding, action, question, pause,
+slot sample, notification, parameter change, issue it files and standing-agent run as one JSON line to
+`events/<YYYY-MM>.jsonl` in its state directory, through `recordEvent`; the backfill's `recordBackfillEvent` is the
+only other writer. Nothing rewrites or deletes those files. `events/index.sqlite` is a derived `node:sqlite` index,
+rebuilt from the JSONL whenever it is missing or unreadable and reloaded when it carries an older schema version;
+every connection waits up to 30 seconds for a lock, because the service and the laptop commands open the same file.
+A line that fails to parse is skipped and reported once in the service log.
+
+- `panelator-scheduler events backfill` records the older records (`usage/`, `merges.jsonl`, the action, question,
+  finding and parameter logs) as events, once. A second run records nothing. A record whose shape fails its payload
+  schema is kept as it is and counted as `old_shape`. The service runs it at its first start after this code lands
+  (`events/backfilled.json` holds the time and counts).

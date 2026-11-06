@@ -25,6 +25,12 @@ export interface StatePaths {
   mainChecks: string;
   findingsCursor: string;
   findingsTriage: string;
+  /** Spec 026: the event store; the index and the backfill marker are the only other files under `events/`. */
+  events: string;
+  eventsIndex: string;
+  eventsBackfilled: string;
+  /** Spec 026: issues already recorded as eligible. Not under `events/`: it is rewritten. */
+  eligibleMarks: string;
   /** Spec 013: the quota book. */
   quota: string;
   /** Spec 029 AC-8: the issues whose needs-design-stage label was removed, so a restart comments once. */
@@ -45,6 +51,10 @@ export function statePaths(root: string): StatePaths {
     mainChecks: join(root, 'main-checks.json'),
     findingsCursor: join(root, 'findings', 'cursor.json'),
     findingsTriage: join(root, 'findings', 'triage.jsonl'),
+    events: join(root, 'events'),
+    eventsIndex: join(root, 'events', 'index.sqlite'),
+    eventsBackfilled: join(root, 'events', 'backfilled.json'),
+    eligibleMarks: join(root, 'shortlist', 'eligible.json'),
     claims: join(root, "claims"),
     runs: join(root, "runs"),
     usage: join(root, "usage"),
@@ -65,5 +75,5 @@ export function statePaths(root: string): StatePaths {
 }
 
 export async function ensureStateDirs(p: StatePaths): Promise<void> {
-  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), p.agents]) await mkdir(d, { recursive: true });
+  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), p.agents, p.events, dirname(p.eligibleMarks)]) await mkdir(d, { recursive: true });
 }

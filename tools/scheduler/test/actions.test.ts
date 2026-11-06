@@ -13,7 +13,7 @@ import {buildAuditInput} from '../src/standing/audit-input.ts';
 import {applyAction,KINDS,registryActionsCheck,loadActionLevels,type ActionContext} from '../src/actions/index.ts';
 it('logs allowed actions, refuses locks and permissions, undoes and recovers pending',async()=>{
  const paths=statePaths(await mkdtemp(join(tmpdir(),'actions-'))); await ensureStateDirs(paths);
- const log=new ActionLog(paths.actionsLog); const parameters=new ParameterStore(paths,loadParameterDefinitions('agents/parameters.yaml',{slots:1},{}));
+ const log=new ActionLog(paths.actionsLog,paths); const parameters=new ParameterStore(paths,loadParameterDefinitions('agents/parameters.yaml',{slots:1},{}));
  const ctx={paths,parameters,log,levels:{set_parameter:1,undo:1},now:()=>new Date(),gh:{rerunWorkflowRun:async()=>{},cancelWorkflowRun:async()=>{}}} as ActionContext;
  const req={agent:'test',run_id:'run',kind:'set_parameter',args:{name:'system_work_share',value:0.5},why:'Adjust the balance of system work'};
  const a=await applyAction(ctx,req,['set_parameter']); expect(a.status).toBe('applied');
@@ -29,7 +29,7 @@ it('logs allowed actions, refuses locks and permissions, undoes and recovers pen
 });
 it('enforces maintainer pauses, run marks, levels, rerun limits and inverse policy',async()=>{
  const paths=statePaths(await mkdtemp(join(tmpdir(),'actions-')));await ensureStateDirs(paths);
- const log=new ActionLog(paths.actionsLog),parameters=new ParameterStore(paths,loadParameterDefinitions('agents/parameters.yaml',{slots:1},{}));
+ const log=new ActionLog(paths.actionsLog,paths),parameters=new ParameterStore(paths,loadParameterDefinitions('agents/parameters.yaml',{slots:1},{}));
  const calls:string[]=[];const ctx:ActionContext={paths,log,parameters,levels:Object.fromEntries(Object.keys(KINDS).map(k=>[k,1])),now:()=>new Date(),gh:{rerunWorkflowRun:async()=>{calls.push('rerun');},cancelWorkflowRun:async()=>{calls.push('cancel');}}};
  await writeAgentState(paths,'audit',{last_run:null,next_run:null,pending_events:[],paused:false,paused_by:null,failures:0});
  const request=(kind:string,args:Record<string,unknown>,maintainer=false)=>applyAction(ctx,{agent:maintainer?'maintainer':'test',run_id:'run',kind,args,why:'An independently verified operational change'},maintainer?'maintainer':Object.keys(KINDS));
@@ -55,7 +55,7 @@ it('applyAction is the only writer of the action log',()=>{
 });
 it('audit input: effects carry defined kinds, refusals carry what was asked',async()=>{
  const paths=statePaths(await mkdtemp(join(tmpdir(),'actions-')));await ensureStateDirs(paths);
- const log=new ActionLog(paths.actionsLog),parameters=new ParameterStore(paths,loadParameterDefinitions('agents/parameters.yaml',{slots:1},{}));
+ const log=new ActionLog(paths.actionsLog,paths),parameters=new ParameterStore(paths,loadParameterDefinitions('agents/parameters.yaml',{slots:1},{}));
  const levels=loadActionLevels('agents/actions.yaml');
  const ctx={paths,parameters,log,levels,now:()=>new Date(),gh:{rerunWorkflowRun:async()=>{},cancelWorkflowRun:async()=>{}}} as ActionContext;
  const req={agent:'test',run_id:'run',kind:'set_parameter',args:{name:'system_work_share',value:0.5},why:'Adjust the balance of system work'};

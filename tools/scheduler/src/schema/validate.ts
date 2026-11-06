@@ -22,10 +22,12 @@ export type SchemaName =
   | "escalation-ledger"
   | "question-log-entry"
   | "standing-definition" | "standing-result" | "action" | "action-log-entry"
-  | "parameter-definition" | "parameters" | "filer-result" | "triage-entry" | "agent-state" | "filer-input" | "audit-input";
+  | "parameter-definition" | "parameters" | "filer-result" | "triage-entry" | "agent-state" | "filer-input" | "audit-input"
+  | "event";
 
 const NAMES: SchemaName[] = [
   "standing-definition", "standing-result", "action", "action-log-entry", "parameter-definition", "parameters", "filer-result", "triage-entry", "agent-state", "filer-input", "audit-input",
+  "event",
   "finding",
   "plan-result",
   "implement-result",
@@ -53,8 +55,8 @@ for (const name of NAMES) {
 
 export type Validation = { ok: true } | { ok: false; errors: string[] };
 
-export function validate(name: SchemaName, data: unknown): Validation {
-  const fn = ajv.getSchema(`${name}.json`);
+export function validate(name: SchemaName, data: unknown, fragment?: string): Validation {
+  const fn = ajv.getSchema(`${name}.json${fragment ? `#/$defs/${fragment}` : ""}`);
   if (!fn) throw new Error(`unknown schema: ${name}`);
   if (fn(data)) return { ok: true };
   const errors = (fn.errors ?? []).map((e) => `${e.instancePath || "/"} ${e.message ?? ""}${Object.keys(e.params ?? {}).length ? " " + JSON.stringify(e.params) : ""}`.trim());

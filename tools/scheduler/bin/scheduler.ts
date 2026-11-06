@@ -10,6 +10,7 @@ import { agentsDir, defaultConfigPath, loadConfig, repoRoot } from "../src/confi
 import { createAppClient } from "../src/github/auth.ts";
 import { GitHubClient } from "../src/github/client.ts";
 import { LogNotifier } from "../src/notify/log.ts";
+import { recordedNotifier } from "../src/notify/recorded.ts";
 import { rateLimited } from "../src/notify/rate-limit.ts";
 import { fastForwardMain, fetchOrigin } from "../src/service/git.ts";
 import { SleepInhibitor } from "../src/service/inhibit.ts";
@@ -56,9 +57,16 @@ const {registry,parameters,levels}=(()=>{try {
   return {registry,parameters,levels:loadActionLevels(join(agentsDir,'actions.yaml'))};
 }catch(e){fail((e as Error).message);}})();
 await initializeAgents(paths,registry,parameters,new Date());
-const actionLog=new ActionLog(paths.actionsLog);
+const actionLog=new ActionLog(paths.actionsLog,paths);
 
 // Local administration works without service auth or the main-only checkout requirement.
+if(args[0]==='events'&&args[1]==='backfill') {
+  // Spec 026 AC-4: the records that exist before the event store, once; a second run records nothing.
+  const {backfillEvents}=await import('../src/events/backfill.ts');
+  const counts=await backfillEvents(paths,rec=>serviceLog.write(rec));
+  console.log(JSON.stringify(counts,null,2));
+  process.exit(0);
+}
 if(args[0]==='quota') {
   // Spec 013 AC-10: the quota book, with the claims and agents waiting on it.
   const {readBook,quotaSummary}=await import('../src/quota/book.ts');
@@ -126,7 +134,7 @@ const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec));
 let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
-  cfg, paths, gh, telegram: null,registry, parameters, notifier: rateLimited(new LogNotifier(paths.serviceLog), cfg.notify_rate_limit_hours),
+  cfg, paths, gh, telegram: null,registry, parameters, notifier: rateLimited(recordedNotifier(new LogNotifier(paths.serviceLog), paths), cfg.notify_rate_limit_hours),
   stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: repoRoot, binDir,
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),

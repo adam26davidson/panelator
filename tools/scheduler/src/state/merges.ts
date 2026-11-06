@@ -1,5 +1,6 @@
 import { appendFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { record } from "../events/store.ts";
 import type { RecentMerges } from "../shortlist/rank.ts";
 import type { StatePaths } from "./paths.ts";
 
@@ -15,6 +16,7 @@ const file = (p: StatePaths) => join(p.root, "merges.jsonl");
 
 export async function appendMerge(p: StatePaths, m: MergeRecord): Promise<void> {
   await appendFile(file(p), JSON.stringify(m) + "\n");
+  await record(p, "merge", m.at, { ...m }, { issue: m.issue });
 }
 
 export async function recentMerges(p: StatePaths, now: Date, days = 14): Promise<RecentMerges> {
