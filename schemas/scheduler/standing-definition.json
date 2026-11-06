@@ -5,13 +5,28 @@
   "properties": {
     "name": {
       "type": "string",
-      "minLength": 1
+      "pattern": "^[a-z][a-z0-9-]*$"
     },
     "kind": {
       "const": "standing"
     },
     "trigger": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "schedule": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d+)?[mhd]$"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        }
+      },
+      "minProperties": 1,
+      "additionalProperties": false
     },
     "harness": {
       "enum": [
@@ -30,7 +45,27 @@
       ]
     },
     "bounds": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "timeout_min": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_turns": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_cost_usd": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "timeout_min",
+        "max_turns",
+        "max_cost_usd"
+      ],
+      "additionalProperties": false
     },
     "permission": {
       "const": "no-prompt"
@@ -43,15 +78,15 @@
     },
     "profile": {
       "type": "string",
-      "minLength": 1
+      "pattern": "^[a-z][a-z0-9-]*$"
     },
     "input": {
       "type": "string",
-      "minLength": 1
+      "pattern": "^[a-z][a-z0-9-]*$"
     },
     "output": {
       "type": "string",
-      "minLength": 1
+      "pattern": "^[a-z][a-z0-9-]*$"
     },
     "actions": {
       "type": "array",

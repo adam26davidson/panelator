@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { initialChainState, ledgerOf } from "../src/chain/machine.ts";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parse } from "yaml";
+import { splitFrontmatter } from "../src/stages/definition.ts";
 import { validate } from "../src/schema/validate.ts";
 
 const finding = {
@@ -236,5 +240,46 @@ describe("spec 029 schemas", () => {
     const { designRevisions: _omitted, ...old } = ledger;
     expect(validate("escalation-ledger", old).ok).toBe(true);
     expect(validate("escalation-ledger", { ...ledger, designRevisions: -1 }).ok).toBe(false);
+  });
+});
+
+describe("standing definition schema", () => {
+  const dir = "agents/standing";
+  it("accepts every checked-in standing agent", () => {
+    const files = readdirSync(dir).filter(f => f.endsWith(".md"));
+    expect(files).toEqual(expect.arrayContaining(["action-audit.md", "findings-filer.md"]));
+    for (const f of files) {
+      const fm = parse(splitFrontmatter(readFileSync(join(dir, f), "utf8")).frontmatter);
+      expect(validate("standing-definition", fm)).toEqual({ ok: true });
+    }
+  });
+  const fm = {
+    name: "test", kind: "standing", trigger: { schedule: "1d", events: ["merge"] }, harness: "claude", model: "test",
+    tier: "strong", bounds: { timeout_min: 10, max_turns: 10, max_cost_usd: 1 }, permission: "no-prompt",
+    worktree: "none", profile: "none", input: "audit-input", output: "standing-result",
+  };
+  const { name: _name, ...noName } = fm;
+  const P = '"^[a-z][a-z0-9-]*$" {"pattern":"^[a-z][a-z0-9-]*$"}';
+  it("accepts the fixture", () => expect(validate("standing-definition", fm)).toEqual({ ok: true }));
+  it.each<[string, unknown, string]>([
+    ["unknown key", { ...fm, unknown: true }, '/ must NOT have additional properties {"additionalProperty":"unknown"}'],
+    ["missing name", noName, `/ must have required property 'name' {"missingProperty":"name"}`],
+    ["worktree", { ...fm, worktree: "issue" }, "/worktree must be equal to one of the allowed values"],
+    ["effort", { ...fm, effort: 3 }, '/effort must be string {"type":"string"}'],
+    ["name pattern", { ...fm, name: "Bad Name" }, `/name must match pattern ${P}`],
+    ["empty profile", { ...fm, profile: "" }, `/profile must match pattern ${P}`],
+    ["kind", { ...fm, kind: "wrong" }, "/kind must be equal to constant"],
+    ["empty trigger", { ...fm, trigger: {} }, '/trigger must NOT have fewer than 1 properties {"limit":1}'],
+    ["trigger key", { ...fm, trigger: { schedule: "1d", foo: 1 } }, '/trigger must NOT have additional properties {"additionalProperty":"foo"}'],
+    ["empty events", { ...fm, trigger: { events: [] } }, '/trigger/events must NOT have fewer than 1 items {"limit":1}'],
+    ["schedule syntax", { ...fm, trigger: { schedule: "soon" } }, "/trigger/schedule must match pattern"],
+    ["trigger array", { ...fm, trigger: ["merge"] }, '/trigger must be object {"type":"object"}'],
+    ["bounds extra", { ...fm, bounds: { ...fm.bounds, extra: 1 } }, "/bounds must NOT have additional properties"],
+    ["bounds missing", { ...fm, bounds: { timeout_min: 10, max_cost_usd: 1 } }, "/bounds must have required property 'max_turns'"],
+    ["bounds zero", { ...fm, bounds: { ...fm.bounds, max_cost_usd: 0 } }, "/bounds/max_cost_usd must be > 0"],
+  ])("rejects %s", (_n, data, msg) => {
+    const r = validate("standing-definition", data);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.some(e => e.startsWith(msg))).toBe(true);
   });
 });
