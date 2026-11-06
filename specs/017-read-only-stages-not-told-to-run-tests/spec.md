@@ -8,7 +8,7 @@ Derives from: [delivery-system design](../../docs/delivery-system-design.md)
 section 4 (the chain has no human stops, so a stage must be able to follow
 every instruction its prompt gives it) and section 10 ("Small work skips
 layers": a bug spec hangs directly off a top design);
-[001-scheduler-core](../001-scheduler-core/spec.md) section 8 (the stage
+[001-scheduler-core](../001-scheduler-core/spec.md) section 6 (the stage
 prompt and its `{{profile_instructions}}` placeholder) and section 9 (a
 profile's `instructions.md` is appended to the prompt of every stage that
 runs under it); the read-only tool rule of the claude adapter (invariant
