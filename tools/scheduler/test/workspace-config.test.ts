@@ -32,3 +32,25 @@ describe("pnpm-workspace.yaml build-script approval", () => {
     }
   });
 });
+
+const root = join(import.meta.dirname, "..", "..", "..");
+
+describe("pinned pnpm and install-before-run (spec 035)", () => {
+  it("pins packageManager to one exact pnpm 10.x version", () => {
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { packageManager: string };
+    expect(pkg.packageManager).toMatch(/^pnpm@10\.\d+\.\d+$/);
+  });
+
+  it("lets pnpm/action-setup read the version from packageManager", () => {
+    const ci = parse(readFileSync(join(root, ".github", "workflows", "ci.yml"), "utf8")) as {
+      jobs: { test: { steps: { uses?: string; with?: Record<string, unknown> }[] } };
+    };
+    const steps = ci.jobs.test.steps.filter((s) => s.uses?.startsWith("pnpm/action-setup"));
+    expect(steps).toHaveLength(1);
+    expect(steps[0]?.with?.version).toBeUndefined();
+  });
+
+  it("installs a missing or stale node_modules before a script runs", () => {
+    expect(workspace.verifyDepsBeforeRun).toBe("install");
+  });
+});
