@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { agentsDir } from "../src/config.ts";
+import { agentsDir, repoRoot } from "../src/config.ts";
 import { isSensitive } from "../src/gates/index.ts";
 import { listProfiles, readSensitiveGlobs, resolveProfile } from "../src/profiles/resolve.ts";
 
@@ -46,6 +46,18 @@ describe("profiles", () => {
         if (sentence.includes("pnpm test")) expect(sentence, name).toContain("shell");
       }
     }
+  });
+  const agentsMdSentences = () =>
+    readFileSync(join(repoRoot, "AGENTS.md"), "utf8").replace(/\s+/g, " ").split(/\.(?: |$)/);
+  it("AGENTS.md tells only a session with a shell to run the suite (spec 046 AC-2)", () => {
+    const instructions = agentsMdSentences().filter((s) => /run `pnpm test`/i.test(s));
+    expect(instructions.length).toBeGreaterThanOrEqual(1);
+    for (const sentence of instructions) expect(sentence).toContain("shell");
+  });
+  it("AGENTS.md names every session without a shell (spec 046 AC-3)", () => {
+    const sentence = agentsMdSentences().find((s) => s.includes("without a shell"));
+    expect(sentence).toBeDefined();
+    for (const phrase of ["plan", "review", "question-check", "conversation turn", "standing agent"]) expect(sentence).toContain(phrase);
   });
   it("throws on an unknown profile", () => {
     expect(() => resolveProfile(agentsDir, "nope")).toThrow(/unknown profile/);
