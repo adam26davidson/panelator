@@ -247,10 +247,13 @@ describe("backfill (AC-4)", () => {
     const p = await stateWith();
     await backfillEvents(p);
     const before = sizes(p);
+    const marker = readFileSync(p.eventsBackfilled, "utf8");
+    // A record written live after the first run is not backfilled by a later one.
+    appendFileSync(p.actionsLog, JSON.stringify({ at: "2026-10-01T00:00:00.000Z", id: "late", status: "applied" }) + "\n");
     const second = await backfillEvents(p);
-    expect(second.recorded).toEqual({});
-    expect(second.already_present).toBe(8);
+    expect(second.recorded).toEqual({ "run.ended": 2, merge: 1, action: 1, question: 1, "finding.queued": 1, "finding.triaged": 1, "parameter.changed": 1 });
     expect(sizes(p)).toEqual(before);
+    expect(readFileSync(p.eventsBackfilled, "utf8")).toBe(marker);
   });
 });
 

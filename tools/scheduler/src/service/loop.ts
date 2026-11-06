@@ -179,6 +179,16 @@ export class Scheduler {
     await rename(d.paths.eligibleMarks + ".tmp", d.paths.eligibleMarks);
   }
 
+  /** A claim closes the wait: the next period of eligibility records again. */
+  async #dropEligibleMark(issue: number): Promise<void> {
+    const d = this.#deps;
+    let marks: number[];
+    try { marks = JSON.parse(await readFile(d.paths.eligibleMarks, "utf8")); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return; throw e; }
+    if (!marks.includes(issue)) return;
+    await writeFile(d.paths.eligibleMarks + ".tmp", JSON.stringify(marks.filter((n) => n !== issue)));
+    await rename(d.paths.eligibleMarks + ".tmp", d.paths.eligibleMarks);
+  }
+
   #start(claim: Claim): void {
     if (this.#active.has(claim.issue)) return;
     const d = this.#deps;
@@ -696,6 +706,7 @@ export class Scheduler {
             held++;
             await d.gh.addLabels(issue.number, [CLAIM_LABEL]);
             await record(d.paths, "issue.claimed", d.now(), { slot: held }, { issue: issue.number });
+            await this.#dropEligibleMark(issue.number);
             info.claimed.push(issue.number);
             this.#start(c);
             return true;

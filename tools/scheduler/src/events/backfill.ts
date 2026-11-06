@@ -22,6 +22,11 @@ async function lines(path: string): Promise<string[]> {
 
 /** Records the records that exist before spec 012 as events (AC-4). The id derives from the source record, so a second run records nothing. */
 export async function backfillEvents(paths: StatePaths, log: (rec: Record<string, unknown>) => void = () => {}): Promise<BackfillCounts> {
+  // Written once (AC-1, AC-4): after the marker, live recording has begun and a rerun would duplicate it.
+  try {
+    const { at: _at, ...stored } = JSON.parse(await readFile(paths.eventsBackfilled, "utf8"));
+    return stored as BackfillCounts;
+  } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
   const counts: BackfillCounts = { recorded: {}, already_present: 0, old_shape: 0, skipped: 0 };
   const db = openIndex(paths, { log });
   const present = new Set((db.prepare("SELECT id FROM events").all() as { id: string }[]).map((r) => r.id));
