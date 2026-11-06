@@ -1156,9 +1156,9 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   expect(w.adapter.ran.filter(s=>s==='findings-filer')).toHaveLength(3);
   const input=JSON.stringify(lastFilerInput(w));expect(input).toContain('foreign finding');expect(input).toContain(FAILED_TWICE);
  },30000);
- it('the exclusion holds with the service\'s two-parameter emitEvent, as bin/scheduler.ts supplies it (spec 020 AC-1, AC-2)',async()=>{
+ it('the exclusion holds whatever emitEvent a caller supplies, a two-parameter one included (spec 020 AC-1, AC-2)',async()=>{
   const w=await standingWorld({'findings-filer':[undefined,undefined,{summary:'triaged',decisions:[]}]});
-  // bin/scheduler.ts injects an emitEvent that never sees a third argument; the failure finding must still skip its agent.
+  // An injected emitEvent that never sees a third argument must not defeat the exclusion: the queue's listener does not go through it.
   w.deps.emitEvent=(event:string,payload:unknown)=>emit(w.paths,w.registry,event,payload,w.deps.now());
   const state=(await readAgentState(w.paths,'findings-filer'))!;state.next_run=w.deps.now().toISOString();await writeAgentState(w.paths,'findings-filer',state);
   await w.scheduler.tick();await idle(w);await w.scheduler.tick();await idle(w);

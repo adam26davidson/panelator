@@ -20,7 +20,7 @@ import { loadStageDefinitions } from "../src/stages/definition.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 
 import {loadRegistry} from '../src/standing/registry.ts';
-import {EVENT_NAMES,emit} from '../src/standing/events.ts';
+import {EVENT_NAMES} from '../src/standing/events.ts';
 import {initializeAgents,listAgentStates} from '../src/standing/state.ts';
 import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
 import {ParameterStore} from '../src/parameters/store.ts';
@@ -28,7 +28,6 @@ import {setParameterModeCommand} from '../src/parameters/command.ts';
 import {registryActionsCheck,loadActionLevels,applyAction} from '../src/actions/index.ts';
 import {ActionLog} from '../src/actions/log.ts';
 import {undoAction} from '../src/actions/undo.ts';
-import {onFindingsQueued} from '../src/state/findings.ts';
 
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
@@ -58,8 +57,6 @@ const {registry,parameters,levels}=(()=>{try {
 }catch(e){fail((e as Error).message);}})();
 await initializeAgents(paths,registry,parameters,new Date());
 const actionLog=new ActionLog(paths.actionsLog);
-const emitEvent=(event:string,payload:unknown)=>emit(paths,registry,event,payload);
-onFindingsQueued(paths,(count,offset)=>emitEvent('finding_queued',{count,offset}));
 
 // Local administration works without service auth or the main-only checkout requirement.
 if(args[0]==='quota') {
@@ -129,7 +126,7 @@ const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec));
 let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
-  cfg, paths, gh, telegram: null,registry, parameters, emitEvent, notifier: rateLimited(new LogNotifier(paths.serviceLog), cfg.notify_rate_limit_hours),
+  cfg, paths, gh, telegram: null,registry, parameters, notifier: rateLimited(new LogNotifier(paths.serviceLog), cfg.notify_rate_limit_hours),
   stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: repoRoot, binDir,
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),
