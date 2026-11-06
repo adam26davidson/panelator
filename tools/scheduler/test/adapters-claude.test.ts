@@ -92,6 +92,14 @@ describe("claudeAdapter.judge (AC-21)", () => {
   it("reports 429 from the result and from api_retry events", async () => {
     expect(claudeAdapter.judge(await fx("claude-429.jsonl"), 1, false)).toMatchObject({ outcome: "failed", apiErrorStatus: 429 });
   });
+  it("reports a null status, not 0, when the api_retry records carry none (spec 045 AC-1)", () => {
+    const text = "API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)";
+    const retry = { type: "system", subtype: "api_retry", error_status: null, error: "unknown" };
+    const events = [retry, retry, { type: "result", subtype: "success", is_error: true, result: text }];
+    const j = claudeAdapter.judge(events, 1, false);
+    expect(j).toMatchObject({ outcome: "failed", reason: text });
+    expect(j.apiErrorStatus).toBeNull();
+  });
   it("timeout wins over everything", async () => {
     expect(claudeAdapter.judge(await fx("claude-success.jsonl"), null, true).outcome).toBe("timeout");
   });

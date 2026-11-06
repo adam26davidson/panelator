@@ -26,10 +26,13 @@ const script = join(import.meta.dirname, "..", "fixtures", "stage-script.ts");
 const events = join(import.meta.dirname, "..", "fixtures", "streams", "claude-success.jsonl");
 export const BOT = "panelator-pipeline[bot]";
 
-/** A scripted result: a value, `undefined` for a failed run, `RATE_LIMITED` for a 429, or a function of the run that does the agent's git work first. */
+/** A scripted result: a value, `undefined` for a failed run, `RATE_LIMITED` for a 429, `NETWORK_DOWN` for a harness that cannot reach the API, or a function of the run that does the agent's git work first. */
 export type Scripted = unknown | ((run: StageRun) => unknown);
 /** A scripted run the vendor rate-limited: the fake harness exits 2 and `judge` reports a 429. */
 export const RATE_LIMITED = Symbol("rate-limited");
+/** Spec 045: a scripted run whose harness could not reach the API: the fake harness exits 3 and `judge` reports the live reason with no status. */
+export const NETWORK_DOWN = Symbol("network-down");
+export const NETWORK_DOWN_REASON = "API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)";
 
 export interface RunSeen {
   resume?:{sessionId:string};
@@ -58,11 +61,11 @@ export function scripted(results: Record<string, Scripted[]>): Adapter & { ran: 
       });
       const next = results[run.stage]?.shift();
       const r = typeof next === "function" ? (next as (run: StageRun) => unknown)(run) : next;
-      const argv = [process.execPath, script, events, run.resultPath, r === RATE_LIMITED ? "2" : r === undefined ? "1" : "0", "0"];
-      if (r !== undefined && r !== RATE_LIMITED) argv.push(JSON.stringify(r));
+      const argv = [process.execPath, script, events, run.resultPath, r === RATE_LIMITED ? "2" : r === NETWORK_DOWN ? "3" : r === undefined ? "1" : "0", "0"];
+      if (r !== undefined && r !== RATE_LIMITED && r !== NETWORK_DOWN) argv.push(JSON.stringify(r));
       return { argv, env: {} };
     },
-    judge: (_e, exit, t) => t ? { outcome: "timeout", reason: "t", apiErrorStatus: null, finalText: null } : exit === 0 ? { outcome: "ok", reason: null, apiErrorStatus: null, finalText: "x" } : exit === 2 ? { outcome: "failed", reason: "429", apiErrorStatus: 429, finalText: null } : { outcome: "failed", reason: "exit", apiErrorStatus: null, finalText: null },
+    judge: (_e, exit, t) => t ? { outcome: "timeout", reason: "t", apiErrorStatus: null, finalText: null } : exit === 0 ? { outcome: "ok", reason: null, apiErrorStatus: null, finalText: "x" } : exit === 2 ? { outcome: "failed", reason: "429", apiErrorStatus: 429, finalText: null } : exit === 3 ? { outcome: "failed", reason: NETWORK_DOWN_REASON, apiErrorStatus: null, finalText: null } : { outcome: "failed", reason: "exit", apiErrorStatus: null, finalText: null },
     usage: () => ({ cost_usd: 0.1, input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0 }),
   };
 }
@@ -90,8 +93,8 @@ export async function standingWorld(results:Record<string,Scripted[]>) {
     {method:'POST',path:/^\/repos\/o\/r\/security-advisories$/,reply:()=>({status:201,body:{ghsa_id:'GHSA-fixture'}})},
     {method:'GET',path:/^\/repos\/o\/r\/commits\/[^/]+\/check-runs$/,reply:()=>({body:{total_count:1,check_runs:[{id:1,name:'test',status:'completed',conclusion:'success'}]}})},
   ];
-  const mock=mockGitHub(routes),gh=new GitHubClient(new Octokit({auth:'x',request:{fetch:mock.fetch}}),'o/r'),adapter=scripted(results),notifications:Notification[]=[];
-  const deps:SchedulerDeps={cfg,paths,registry,parameters,gh,botLogin:BOT,notifier:{notify:async n=>{notifications.push(n);}},stages:loadStageDefinitions(join(agentsDir,'stages')),agentsDir,repoDir:pair.repo,binDir:join(pair.root,'bin'),adapterFor:()=>adapter,systemdScope:false,now:()=>now,log:()=>{},fetchOrigin:async()=>{},unitActive:async()=>false,stopUnit:async()=>{},serviceLog:new ServiceLog(paths.serviceLog),inhibitor:new SleepInhibitor({enabled:false}),fastForward:async()=>({moved:false,changedPaths:[]}),sleep:async()=>{},monotonic:()=>0,requestRestart:()=>{}};
+  const serviceLog=new ServiceLog(paths.serviceLog),mock=mockGitHub(routes),gh=new GitHubClient(new Octokit({auth:'x',request:{fetch:mock.fetch}}),'o/r'),adapter=scripted(results),notifications:Notification[]=[];
+  const deps:SchedulerDeps={cfg,paths,registry,parameters,gh,botLogin:BOT,notifier:{notify:async n=>{notifications.push(n);}},stages:loadStageDefinitions(join(agentsDir,'stages')),agentsDir,repoDir:pair.repo,binDir:join(pair.root,'bin'),adapterFor:()=>adapter,systemdScope:false,now:()=>now,log:rec=>serviceLog.write(rec),fetchOrigin:async()=>{},unitActive:async()=>false,stopUnit:async()=>{},serviceLog,inhibitor:new SleepInhibitor({enabled:false}),fastForward:async()=>({moved:false,changedPaths:[]}),sleep:async()=>{},monotonic:()=>0,requestRestart:()=>{}};
   const scheduler=new Scheduler(deps);
   return {pair,paths,registry,parameters,deps,scheduler,adapter,mock,gh,issues,comments,notifications,setNow:(value:Date)=>{now=value;}};
 }

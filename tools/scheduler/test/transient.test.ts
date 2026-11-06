@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RequestError } from "octokit";
-import { forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, transientCause } from "../src/chain/transient.ts";
+import { forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, transientCause, transientRun } from "../src/chain/transient.ts";
 import { ledgerOf, initialChainState, POSTPONE_WAIT_S } from "../src/chain/machine.ts";
 
 const errno = (code: string, message = `${code} x`) => Object.assign(new Error(message), { code });
@@ -109,5 +109,30 @@ describe("forgiveTransientChainErrors (spec 015 AC-11)", () => {
       "chain error in fix (counted): upstream said ECONNRESET",
     ] };
     expect(forgiveTransientChainErrors(ledger)).toEqual({ ledger, forgiven: 0 });
+  });
+});
+
+describe("transientRun (spec 045 AC-1)", () => {
+  const failed = (reason: string | null, apiErrorStatus: number | null = null) => ({ outcome: "failed" as const, reason, apiErrorStatus, finalText: null });
+  it("labels the Claude harness's connection message, with its code or without", () => {
+    expect(transientRun(failed("API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)"))).toBe("EAI_AGAIN");
+    expect(transientRun(failed("API Error: Can't reach the API server — check your internet or DNS"))).toBe("Can't reach the API server");
+    expect(transientRun(failed("api error: CAN'T REACH THE API SERVER"))).toBe("Can't reach the API server");
+  });
+  it("classifies a 5xx status as transient and any 4xx as genuine whatever the reason says", () => {
+    expect(transientRun(failed("overloaded", 529))).toBe("HTTP 529");
+    expect(transientRun(failed("read ECONNRESET", 401))).toBeNull();
+    expect(transientRun(failed("rate limited", 429))).toBeNull();
+  });
+  it("treats exit codes, invalid results, bounds and ok runs as genuine", () => {
+    expect(transientRun(failed("exit 1"))).toBeNull();
+    expect(transientRun(failed("result: invalid"))).toBeNull();
+    expect(transientRun(failed(null))).toBeNull();
+    expect(transientRun({ outcome: "bounds", reason: "max turns reached", apiErrorStatus: null, finalText: null })).toBeNull();
+    expect(transientRun({ outcome: "bounds", reason: "max budget reached", apiErrorStatus: null, finalText: null })).toBeNull();
+    expect(transientRun({ outcome: "ok", reason: null, apiErrorStatus: null, finalText: null })).toBeNull();
+  });
+  it("labels a socket error thrown around the run", () => {
+    expect(transientCause(new Error("read EHOSTUNREACH"))).toBe("EHOSTUNREACH");
   });
 });

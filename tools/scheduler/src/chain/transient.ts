@@ -1,3 +1,4 @@
+import type { Judgement } from "../adapters/types.ts";
 import { POSTPONE_WAIT_S, type LedgerCounts } from "./machine.ts";
 
 /**
@@ -17,6 +18,8 @@ const CODE_IN_MESSAGE = new RegExp(`\\b(${[...CODES].join("|")})\\b`);
 const GIT_MESSAGES = [
   "Could not resolve hostname", "Could not resolve host", "Temporary failure in name resolution", "Connection timed out", "Connection reset",
   "Failed to connect to", "The remote end hung up unexpectedly", "early EOF", "RPC failed", "socket hang up",
+  // Spec 045 AC-1: the Claude harness's own connection message ("API Error: Can't reach the API server — check your internet or DNS").
+  "Can't reach the API server",
 ];
 const GIT_HTTP_5XX = /The requested URL returned error: 5\d\d/i;
 const MAX_DEPTH = 5;
@@ -51,6 +54,18 @@ function labelOf(text: string): string | null {
   const lower = text.toLowerCase();
   for (const m of GIT_MESSAGES) if (lower.includes(m.toLowerCase())) return m;
   return GIT_HTTP_5XX.test(text) ? "HTTP 5xx" : null;
+}
+
+/**
+ * Spec 045 AC-1: the label for a failed standing run's judgement when it is transient, else null. A 4xx status is genuine
+ * whatever the reason says (429 is spec 013's path); a 5xx is transient; with no status the reason decides.
+ */
+export function transientRun(judgement: Judgement): string | null {
+  if (judgement.outcome !== "failed") return null;
+  const status = judgement.apiErrorStatus;
+  if (typeof status === "number" && status >= 500 && status <= 599) return `HTTP ${status}`;
+  if (status !== null && status !== undefined) return null;
+  return transientCause(new Error(judgement.reason ?? ""));
 }
 
 /** AC-5: the wait after the `count`th consecutive transient failure: 60 s, doubling, capped at POSTPONE_WAIT_S. */

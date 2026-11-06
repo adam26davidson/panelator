@@ -13,6 +13,17 @@ const finding = {
   noticed_how: "while adding the checks call",
 };
 
+describe("agent-state schema (spec 045)", () => {
+  const base = { last_run: null, next_run: null, pending_events: [], paused: false, paused_by: null, failures: 0 };
+  it("accepts an outage with its optional ceiling fields and rejects a malformed one", () => {
+    const outage = { since: "2026-11-06T10:00:00.000Z", count: 3, last: "read EHOSTUNREACH", alarmed: false };
+    expect(validate("agent-state", base).ok).toBe(true);
+    expect(validate("agent-state", { ...base, outage }).ok).toBe(true);
+    expect(validate("agent-state", { ...base, outage: { ...outage, ceiling: true, past_ceiling: { since: outage.since, failures: 2 } } }).ok).toBe(true);
+    expect(validate("agent-state", { ...base, outage: { since: outage.since } }).ok).toBe(false);
+  });
+});
+
 describe("result schemas", () => {
   it('accepts settled conversation turns only with a non-empty decision on every asking stage',()=>{
     for(const name of ['plan-result','implement-result','review-result','fix-result','spec-result','design-result'] as const){
