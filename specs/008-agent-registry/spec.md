@@ -320,9 +320,12 @@ records as chain stages.
   shape is put right before validation.)
 - AC-17. **The maintainer's commands.** `panelator-scheduler param list`
   prints every parameter with its value, mode, `set_by` and time;
-  `param set <name> <value>` and `param mode <name> auto|locked` call the
-  functions of AC-12 as `maintainer` and are logged in the action log with
-  `agent: maintainer`. The commands run on the laptop as the user the
+  `param set <name> <value>` calls `setParameter` of AC-12 as `maintainer`
+  through the `set_parameter` kind and is logged in the action log with
+  `agent: maintainer`; `param mode <name> auto|locked` calls
+  `setParameterMode` as `maintainer`, prints the parameter's new state, and
+  is recorded in the parameter history of AC-11 with `actor: maintainer`, not
+  in the action log, since no action kind sets a mode (AC-12; spec 038). The commands run on the laptop as the user the
   service runs as; they are the console's stand-in until spec E.
 - AC-18. **A filed issue enters the shortlist.** Given a `file` decision,
   then the scheduler creates the issue as the App with the class label and

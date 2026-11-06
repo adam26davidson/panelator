@@ -40,7 +40,7 @@ undo, which needs the App). Use `node tools/scheduler/bin/scheduler.ts` followed
 
 - `agent list`, `agent pause <name>`, `agent resume <name>`, `agent run <name>`.
 - `action list [--since <ISO time>]`, `action undo <id>`.
-- `param list`, `param set <name> <value>`, `param mode <name> auto|locked`.
+- `param list`, `param set <name> <value>`, `param mode <name> auto|locked` (prints the parameter's new state; recorded in the parameter history).
 
 Numbers and booleans use JSON syntax; durations use `1h`, `12h`, `7d`, etc. Only the
 maintainer commands may change a parameter's mode or resume a maintainer-paused agent.

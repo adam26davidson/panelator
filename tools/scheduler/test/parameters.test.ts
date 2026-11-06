@@ -1,5 +1,6 @@
 import {it, expect} from 'vitest';
-import {mkdtemp,writeFile} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile} from 'node:fs/promises';
+import {existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {statePaths, ensureStateDirs} from '../src/state/paths.ts';
@@ -8,6 +9,7 @@ import {EVENT_NAMES} from '../src/standing/events.ts';
 import {registryActionsCheck} from '../src/actions/index.ts';
 import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
 import {ParameterStore, ParameterLockedError} from '../src/parameters/store.ts';
+import {setParameterModeCommand} from '../src/parameters/command.ts';
 it('enforces locks, maintainer-only modes, types and ranges, persists history', async () => {
  const paths=statePaths(await mkdtemp(join(tmpdir(),'params-'))); await ensureStateDirs(paths);
  const defs=loadParameterDefinitions('agents/parameters.yaml',{slots:2},{}); const store=new ParameterStore(paths,defs);
@@ -40,4 +42,23 @@ it('schedule parameters retain maintainer values and locks across definition cha
  expect((await newer.read('schedule.action-audit')).value).toBe('2d');expect((await newer.read('schedule.action-audit')).mode).toBe('locked');
  await expect(newer.setParameter('schedule.action-audit','3d','audit')).rejects.toThrow(/locked/);
  await newer.setParameterMode('schedule.action-audit','auto','maintainer');await expect(newer.setParameter('schedule.action-audit','30m','audit')).rejects.toThrow(/range/);
+});
+it('param mode records in the parameter history only and prints the new state',async()=>{
+ const paths=statePaths(await mkdtemp(join(tmpdir(),'params-')));await ensureStateDirs(paths);
+ const store=new ParameterStore(paths,loadParameterDefinitions('agents/parameters.yaml',{slots:1},{}));
+ const history=async()=>(await readFile(paths.parametersHistory,'utf8').catch(()=>'')).split('\n').filter(Boolean).map(l=>JSON.parse(l));
+ const locked=await setParameterModeCommand(store,'system_work_share','locked');
+ expect(locked).toEqual({name:'system_work_share',...await store.read('system_work_share')});
+ expect(locked.mode).toBe('locked');expect(locked.set_by).toBe('maintainer');
+ expect(JSON.parse(await readFile(paths.parameters,'utf8')).system_work_share).toMatchObject({mode:'locked',set_by:'maintainer'});
+ let h=await history();expect(h).toHaveLength(1);
+ expect(h[0]).toMatchObject({name:'system_work_share',field:'mode',old:'auto',new:'locked',actor:'maintainer'});
+ expect(existsSync(paths.actionsLog)).toBe(false);
+ expect((await setParameterModeCommand(store,'system_work_share','auto')).mode).toBe('auto');
+ expect(await history()).toHaveLength(2);expect(existsSync(paths.actionsLog)).toBe(false);
+ const before=[await readFile(paths.parameters,'utf8'),await readFile(paths.parametersHistory,'utf8')];
+ await expect(setParameterModeCommand(store,'no_such_parameter','locked')).rejects.toThrow('undefined parameter no_such_parameter');
+ await expect(setParameterModeCommand(store,'system_work_share','frozen')).rejects.toThrow('mode must be auto or locked');
+ expect([await readFile(paths.parameters,'utf8'),await readFile(paths.parametersHistory,'utf8')]).toEqual(before);
+ expect(existsSync(paths.actionsLog)).toBe(false);
 });
