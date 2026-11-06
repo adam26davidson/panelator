@@ -79,8 +79,8 @@ export class TelegramClient {
       );
     return data.result;
   }
-  getMe() {
-    return this.call<{ id: number; username: string }>("getMe");
+  getMe(signal?: AbortSignal) {
+    return this.call<{ id: number; username: string }>("getMe", {}, signal);
   }
   getUpdates(opts: {
     offset: number;

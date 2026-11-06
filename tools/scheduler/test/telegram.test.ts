@@ -118,7 +118,7 @@ describe("Telegram", () => {
     );
     poll.start();
     try {
-      await until(() => server.requests.length === 1);
+      await until(() => server.requests.length === 2);
       for (const id of [1, 2])
         server.push({
           update_id: id,
@@ -131,7 +131,10 @@ describe("Telegram", () => {
         });
       await until(() => server.requests.some((r) => r.body.offset === 3));
       expect(handled).toBe(0);
-      expect(logs).toEqual([{ kind: "telegram-foreign-chat", chat_id: 99 }]);
+      expect(logs).toEqual([
+        { kind: "telegram", status: "connected", username: "test_bot" },
+        { kind: "telegram-foreign-chat", chat_id: 99 },
+      ]);
       expect(JSON.stringify(logs)).not.toContain("PRIVATE");
     } finally {
       await poll.stop();
@@ -162,7 +165,7 @@ describe("Telegram", () => {
     );
     poll.start();
     try {
-      await until(() => server.requests.length === 1);
+      await until(() => server.requests.length === 2);
       expect(waits).toEqual([
         1000, 2000, 4000, 8000, 16000, 32000, 60000, 60000,
       ]);
@@ -170,8 +173,9 @@ describe("Telegram", () => {
         update_id: 4,
         message: { message_id: 1, date: 1, chat: { id: 42 }, text: "ok" },
       });
-      await until(() => server.requests.length === 2);
+      await until(() => server.requests.length === 3);
       expect(logs).toEqual([
+        { kind: "telegram", status: "connected", username: "test_bot" },
         { kind: "telegram-outage" },
         { kind: "telegram-recovered" },
       ]);
@@ -231,7 +235,7 @@ describe("Telegram", () => {
     );
     poll.start();
     try {
-      await until(() => server.requests.length === 1);
+      await until(() => server.requests.length === 2);
       server.push({
         update_id: 8,
         message: {
@@ -246,7 +250,7 @@ describe("Telegram", () => {
         readFile(join(dir, "offset.json"), "utf8"),
       ).rejects.toThrow();
       release();
-      await until(() => server.requests.length >= 3);
+      await until(() => server.requests.length >= 4);
       expect(
         JSON.parse(await readFile(join(dir, "offset.json"), "utf8"))
           .next_update_id,
@@ -370,6 +374,7 @@ describe("Telegram poller handler failures (spec 042)", () => {
       await until(() => calls === 2);
       await until(() => r.server.requests.some((q) => q.body.offset === 2));
       expect(r.logs).toEqual([
+        { kind: "telegram", status: "connected", username: "test_bot" },
         { kind: "telegram-handler-failed", update_id: 1, error: "boom" },
       ]);
       expect(r.waits).toEqual([2000]);
@@ -398,6 +403,7 @@ describe("Telegram poller handler failures (spec 042)", () => {
     try {
       await until(() => calls === 2);
       expect(r.logs).toEqual([
+        { kind: "telegram", status: "connected", username: "test_bot" },
         { kind: "telegram-handler-failed", update_id: 1, error: "bad" },
       ]);
       await expect(r.offsetFile()).rejects.toThrow();
@@ -439,6 +445,7 @@ describe("Telegram poller handler failures (spec 042)", () => {
       await until(() => r.server.requests.some((q) => q.body.offset === 6));
       expect(calls).toBe(3);
       expect(r.logs).toEqual([
+        { kind: "telegram", status: "connected", username: "test_bot" },
         { kind: "telegram-update-deferred", update_id: 5 },
       ]);
       expect(r.waits).toEqual([2000, 2000]);
@@ -471,6 +478,7 @@ describe("Telegram poller handler failures (spec 042)", () => {
     try {
       await until(() => r.server.requests.some((q) => q.body.offset === 2));
       expect(r.logs).toEqual([
+        { kind: "telegram", status: "connected", username: "test_bot" },
         { kind: "telegram-outage" },
         { kind: "telegram-recovered" },
         { kind: "telegram-handler-failed", update_id: 1, error: "boom" },
@@ -505,6 +513,95 @@ describe("Telegram poller handler failures (spec 042)", () => {
     } finally {
       await poll.stop();
       await server.close();
+    }
+  });
+});
+
+describe("Telegram poller connect step (spec 043)", () => {
+  const rig = async (
+    sleep: ((ms: number) => Promise<void>) | undefined,
+    waits: number[] = [],
+  ) => {
+    const server = await fakeTelegram();
+    const dir = await mkdtemp(join(tmpdir(), "connect-"));
+    const logs: Record<string, unknown>[] = [];
+    let hook = 0;
+    const poll = new TelegramPoller(
+      new TelegramClient("PRIVATE-TOKEN", 42, server.url),
+      join(dir, "offset.json"),
+      50,
+      async () => {},
+      (r) => logs.push(r),
+      sleep && (async (ms) => {
+        waits.push(ms);
+        await sleep(ms);
+      }),
+      undefined,
+      () => {
+        hook++;
+      },
+    );
+    return { server, poll, logs, hook: () => hook };
+  };
+  const connected = { kind: "telegram", status: "connected", username: "test_bot" };
+  it("AC-1: retries getMe with backoff, logs connecting once, then connects", async () => {
+    const waits: number[] = [];
+    const r = await rig(async () => {}, waits);
+    r.server.fail("getMe", 500, 2);
+    r.poll.start();
+    try {
+      await until(() => r.server.requests.some((q) => q.method === "getUpdates"));
+      expect(r.logs).toEqual([
+        { kind: "telegram", status: "connecting", reason: "getMe: connection failed" },
+        connected,
+      ]);
+      expect(waits).toEqual([1000, 2000]);
+      expect(r.hook()).toBe(1);
+      expect(r.server.requests.slice(0, 4).map((q) => q.method)).toEqual([
+        "getMe", "getMe", "getMe", "getUpdates",
+      ]);
+      expect(JSON.stringify(r.logs)).not.toContain("PRIVATE-TOKEN");
+    } finally {
+      await r.poll.stop();
+      await r.server.close();
+    }
+  });
+  it("AC-2: an authorization error turns Telegram off, at once or after retries", async () => {
+    for (const retry of [false, true]) {
+      const holder: { server?: Awaited<ReturnType<typeof fakeTelegram>> } = {};
+      const r = await rig(async () => {
+        holder.server!.fail("getMe", 401);
+      });
+      holder.server = r.server;
+      r.server.fail("getMe", retry ? 500 : 401);
+      r.poll.start();
+      try {
+        await until(() => r.logs.some((l) => l.status === "off"));
+        await r.poll.stop();
+        expect(r.logs.filter((l) => l.status === "off")).toEqual([
+          { kind: "telegram", status: "off", reason: "getMe: unauthorized" },
+        ]);
+        expect(r.logs.some((l) => l.status === "connecting")).toBe(retry);
+        expect(r.server.requests.some((q) => q.method === "getUpdates")).toBe(false);
+        expect(r.hook()).toBe(0);
+      } finally {
+        await r.poll.stop();
+        await r.server.close();
+      }
+    }
+  });
+  it("AC-1: a stop during the connecting wait issues no getUpdates", async () => {
+    const r = await rig(undefined);
+    r.server.fail("getMe", 500, 1000);
+    r.poll.start();
+    try {
+      await until(() => r.logs.length === 1);
+      const t = Date.now();
+      await r.poll.stop();
+      expect(Date.now() - t).toBeLessThan(1500);
+      expect(r.server.requests.some((q) => q.method === "getUpdates")).toBe(false);
+    } finally {
+      await r.server.close();
     }
   });
 });

@@ -1,7 +1,7 @@
 import { readFile, writeFile, rename } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { UpdateDeferred } from "./answers.ts";
-import { TelegramClient, type TelegramUpdate } from "./client.ts";
+import { TelegramClient, isAuthError, type TelegramUpdate } from "./client.ts";
 export async function saveJson(path: string, value: unknown) {
   await writeFile(path + ".tmp", JSON.stringify(value));
   await rename(path + ".tmp", path);
@@ -19,6 +19,7 @@ export class TelegramPoller {
   private log: (r: Record<string, unknown>) => void;
   private sleep?: (ms: number) => Promise<void>;
   private afterConfirm?: (u: TelegramUpdate) => Promise<void>;
+  private onConnected?: () => void | Promise<void>;
   constructor(
     client: TelegramClient,
     offsetPath: string,
@@ -27,7 +28,9 @@ export class TelegramPoller {
     log: (r: Record<string, unknown>) => void,
     sleep?: (ms: number) => Promise<void>,
     afterConfirm?: (u: TelegramUpdate) => Promise<void>,
+    onConnected?: () => void | Promise<void>,
   ) {
+    this.onConnected = onConnected;
     this.sleep = sleep;
     this.afterConfirm = afterConfirm;
     this.client = client;
@@ -58,6 +61,29 @@ export class TelegramPoller {
       ),
     ).next_update_id as number;
     let backoff = 1;
+    let connecting = false;
+    while (!this.controller.signal.aborted) {
+      try {
+        const me = await this.client.getMe(this.controller.signal);
+        this.log({ kind: "telegram", status: "connected", username: me.username });
+        await this.onConnected?.();
+        break;
+      } catch (e) {
+        if (this.controller.signal.aborted) return;
+        if (isAuthError(e)) {
+          this.log({ kind: "telegram", status: "off", reason: "getMe: unauthorized" });
+          return;
+        }
+        if (!connecting) {
+          connecting = true;
+          this.log({ kind: "telegram", status: "connecting", reason: "getMe: connection failed" });
+        }
+        await this.pause(backoff * 1000);
+        backoff = Math.min(60, backoff * 2);
+      }
+    }
+    if (this.controller.signal.aborted) return;
+    backoff = 1;
     let outage = false;
     while (!this.controller.signal.aborted) {
       try {

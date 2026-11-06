@@ -1,6 +1,6 @@
 import type { Config } from "../config.ts";
 import { readTelegramCredentials } from "../telegram/credentials.ts";
-import { TelegramClient, isAuthError } from "../telegram/client.ts";
+import { TelegramClient } from "../telegram/client.ts";
 import { telegramChannel } from "../telegram/channel.ts";
 export async function startTelegram(
   cfg: Config,
@@ -19,20 +19,7 @@ export async function startTelegram(
     credentials.chat_id,
     baseUrl,
   );
-  try {
-    const me = await client.getMe();
-    log({ kind: "telegram", status: "connected", username: me.username });
-    return telegramChannel(client);
-  } catch (e) {
-    log({
-      kind: "telegram",
-      status: "off",
-      reason: isAuthError(e)
-        ? "getMe: unauthorized"
-        : "getMe: connection failed",
-    });
-    return null;
-  }
+  return telegramChannel(client);
 }
 export async function telegramCheck(
   cfg: Config,
