@@ -137,6 +137,9 @@ describe('Telegram pause and conversation protection',()=>{
 
 const plan = { verdict: "ready", domain: "backend", tasks: [{ id: "T1", description: "d", files: ["a.txt"] }] };
 const impl = (sha: string) => ({ pr_number: 9, head_sha: sha, tasks_done: ["T1"] });
+const settled = { conversation: "settled", decision: "approve it", findings: [] };
+const outside = "conversation turn outside a conversation";
+
 const approve = { verdict: "approve", findings_on_pr: [], declined_to_judge: [] };
 
 /** A stand-in for systemd-run, written to tmp: drops the scope flags and runs the command after `--`. */
@@ -405,6 +408,33 @@ describe("driveChain", () => {
     expect(c.state).toMatchObject({ stage: "implement", rescues: 1, rescueRun: true, pr: null });
     expect(c.state.history).toContain("implement attempt 1 failed: result: pr mismatch");
     expect(gh.calls.find((call) => call.method === "PUT")).toBeUndefined();
+  }, 60_000);
+
+  it("fails a plain review run returning the conversation shape as a run, not a chain failure (spec 044 AC-2)", async () => {
+    const { deps, claim, gh, sha } = await setup(() => ({ review: [settled, approve] }), undefined);
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    const c: Claim = { ...claim, state: { ...claim.state, stage: "review", attempt: 1, plan: plan as never, pr: { number: 9, head_sha: sha } } };
+    const r = await step(deps, c);
+    expect(r.claim.state.history).toContain(`review attempt 1 failed: result: invalid: ${outside}`);
+    expect(r.claim.state).toMatchObject({ stage: "review", attempt: 2, chainFailures: null, chainErrors: 0 });
+    expect(logs.filter((l) => l.kind === "chain-error" || l.kind === "pending-work-failing")).toEqual([]);
+    expect(gh.calls.some((x) => /\/pulls\/9\/(reviews|merge)/.test(x.url))).toBe(false);
+    const r2 = await step(deps, r.claim);
+    expect(r2.claim.state.history).not.toContain("review attempt 2 failed: result: invalid");
+  }, 60_000);
+
+  it("fails an implement run returning the conversation shape with the same reason, not pr mismatch (spec 044 AC-3)", async () => {
+    const { deps, claim, gh } = await setup(() => ({ plan: [plan], implement: [settled] }));
+    let c2 = claim;
+    let before = 0;
+    for (let i = 0; i < 6 && !c2.state.history.some((h: string) => h.startsWith("implement attempt 1 failed")); i++) {
+      before = gh.calls.length;
+      c2 = (await step(deps, c2)).claim;
+    }
+    expect(c2.state.history).toContain(`implement attempt 1 failed: result: invalid: ${outside}`);
+    expect(c2.state.history.some((h: string) => h.endsWith("result: pr mismatch"))).toBe(false);
+    expect(gh.calls.slice(before).some((x) => x.url.includes("/pulls/"))).toBe(false);
   }, 60_000);
 
   it("waits without running anything while the claim's stage scope is still active (I2)", async () => {
@@ -1302,6 +1332,14 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     expect(r.claim.state.history).toContain("spec attempt 1 failed: result: invalid");
     const run = readdirSync(paths.runs).find((d) => d.startsWith("7-spec-1-"))!;
     expect(JSON.parse(readFileSync(join(paths.runs, run, "outcome.json"), "utf8")).resultErrors.join(" ")).toMatch(/spec_path.*pattern/);
+    expect(gh.calls.some((x) => x.method === "PATCH" && x.url === "/repos/o/r/issues/7")).toBe(false);
+  }, 60_000);
+
+  it("fails a spec run returning the conversation shape with the same reason, not pr mismatch (spec 044 AC-3)", async () => {
+    const { r, gh } = await specRun(settled);
+    expect(r.claim.state).toMatchObject({ stage: "spec", attempt: 2 });
+    expect(r.claim.state.history).toContain(`spec attempt 1 failed: result: invalid: ${outside}`);
+    expect(r.claim.state.history).not.toContain("spec attempt 1 failed: result: pr mismatch");
     expect(gh.calls.some((x) => x.method === "PATCH" && x.url === "/repos/o/r/issues/7")).toBe(false);
   }, 60_000);
 
