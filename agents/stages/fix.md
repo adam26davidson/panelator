@@ -26,7 +26,7 @@ Issue {{issue}}
 Spec:
 {{spec}}
 
-Plan (file scope):
+Plan (file scope; an entry ending in `/` covers every file under that directory):
 {{plan}}
 
 Pull request: {{pr}}

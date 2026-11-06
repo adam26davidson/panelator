@@ -39,8 +39,13 @@ the maintainer, for the reasons given: decide it yourself, and do not ask it aga
 the decision is a large one, write it as an ADR in `docs/decisions/` (a new file, with its
 reasoning): include that file in a task's files so the implement stage writes it.
 
-Produce an ordered list of implementation tasks, each with the exact repo-relative files
-it will create or modify. Classify the issue's domain as one of backend, web-ui, widget,
+Produce an ordered list of implementation tasks, each with the repo-relative files it
+will create or modify. A `files` entry that ends in `/` covers every file under that
+directory: list the directory when a task adds tests, fixtures or helpers whose names are
+not yet known (for example `tools/scheduler/test/`), and name a file exactly when the task
+changes only files it already knows. The implementation may touch only what the plan lists
+(lockfiles and `schemas/` excepted), so a helper under an unlisted directory fails the
+scope gate. Classify the issue's domain as one of backend, web-ui, widget,
 firmware, infra. If the spec cannot be implemented as written, set verdict to spec_gap and
 list precise questions; the spec stage answers them. Do not guess past a gap in the spec.
 
