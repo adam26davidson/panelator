@@ -469,7 +469,8 @@ records as chain stages.
   reads the parent chain on `origin/main`.
 - `tools/scheduler/src/service/loop.ts`: the standing-agent step of a tick
   (AC-3), `slots` from the store, the event emits at merge, abandonment,
-  queue append and resume (AC-4), the `ci_failure_main` watcher.
+  queue append and resume (AC-4), the `ci_failure_main` watcher, run only
+  when an agent subscribes (spec 036).
 - `tools/scheduler/src/chain/driver.ts`: emits `merge`, `issue_abandoned`
   and `maintainer_reply`; `src/state/findings.ts`: emits `finding_queued`.
 - `tools/scheduler/src/state/paths.ts`: `agents/`, `actions/log.jsonl`,

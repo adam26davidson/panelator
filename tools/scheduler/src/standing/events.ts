@@ -10,6 +10,9 @@ export async function emit(paths:StatePaths,registry:Record<string,StandingDefin
   await updateAgentState(paths,d.name,s=>s.pending_events.some(e=>e.event===event&&JSON.stringify(e.payload)===JSON.stringify(payload))?s:{...s,pending_events:[...s.pending_events,{event,payload,at:now.toISOString()}]});
  }
 }
+export function hasSubscriber(registry:Record<string,StandingDefinition>,event:string):boolean {
+ return Object.values(registry).some(d=>d.trigger.events?.includes(event));
+}
 export async function watchMainChecks(gh:GitHubClient,paths:StatePaths,registry:Record<string,StandingDefinition>,sha:string,required:string[],now=new Date()):Promise<void> {
  let previous:Record<string,string>={};try{previous=JSON.parse(await readFile(paths.mainChecks,'utf8'));}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
  const checks=await gh.checks(sha,required);const next:Record<string,string>={$sha:sha};
