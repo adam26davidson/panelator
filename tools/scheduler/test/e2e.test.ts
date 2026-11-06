@@ -31,7 +31,10 @@ import {readAgentState,writeAgentState} from '../src/standing/state.ts';
 import {emit} from '../src/standing/events.ts';
 import {runStandingAgent} from '../src/standing/run.ts';
 import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
-import { chainWorld, standingWorld, scripted, RATE_LIMITED, NETWORK_DOWN, UNREACHABLE_REASON, type ChainWorld } from "./helpers/e2e-routes.ts";
+import { openIndex } from "../src/events/index.ts";
+import { EVENT_KINDS } from "../src/events/kinds.ts";
+import { validate } from "../src/schema/validate.ts";
+import { chainWorld, standingWorld, scripted, RATE_LIMITED, NETWORK_DOWN, UNREACHABLE_REASON, worldPaths, type ChainWorld } from "./helpers/e2e-routes.ts";
 import { git, repoPair, withDesign, withTopDesign } from "./helpers/repo-pair.ts";
 import { fileDesignChildren } from "../src/children/scan.ts";
 import { loadDesignTree } from "../src/gates/design-tree.ts";
@@ -100,6 +103,7 @@ describe("end to end: one issue through the whole chain with the fake adapter an
     const SHA = git(pair.repo, "rev-parse", "origin/main").trim();
     const paths = statePaths(join(pair.root, "state"));
     await ensureStateDirs(paths);
+    worldPaths.push(paths);
     const labels = new Set(["validated", "class:product"]);
     const comments: string[] = [];
     const labelLog: string[] = [];
@@ -965,7 +969,7 @@ describe("end to end: the chain keeps its work (spec 015 AC-12)", () => {
 
 describe('standing agents: recorded runs through the real runner and mocked App',()=>{
  const why='Independently verified operational adjustment';
- const context=(w:Awaited<ReturnType<typeof standingWorld>>)=>({paths:w.paths,parameters:w.parameters,log:new ActionLog(w.paths.actionsLog),levels:loadActionLevels(join(agentsDir,'actions.yaml')),gh:w.gh,now:w.deps.now});
+ const context=(w:Awaited<ReturnType<typeof standingWorld>>)=>({paths:w.paths,parameters:w.parameters,log:new ActionLog(w.paths.actionsLog,w.paths),levels:loadActionLevels(join(agentsDir,'actions.yaml')),gh:w.gh,now:w.deps.now});
  async function idle(w:Awaited<ReturnType<typeof standingWorld>>){for(let i=0;i<1000&&w.scheduler.active;i++)await new Promise(r=>setTimeout(r,25));expect(w.scheduler.active).toBe(0);}
  it('takes a slot on a missed schedule once, applies a parameter and command undo, logs locked refusal',async()=>{
   const w=await standingWorld({operator:[{summary:'adjusted',actions:[{kind:'set_parameter',args:{name:'system_work_share',value:0.5},why},{kind:'set_parameter',args:{name:'aws_cap_usd',value:1},why}]}]});
@@ -1017,6 +1021,17 @@ describe('standing agents: recorded runs through the real runner and mocked App'
   await w.scheduler.tick();await idle(w);expect((await readAgentState(w.paths,'operator'))?.failures).toBe(1);
   await w.scheduler.tick();await idle(w);expect((await readAgentState(w.paths,'operator'))?.last_run?.outcome).toBe('failed');
   expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);expect(w.notifications).toHaveLength(1);
+ },30000);
+it('records two agent.run events when a standing agent fails once and succeeds on the retry (spec 026 AC-2)',async()=>{
+  const w=await standingWorld({operator:[undefined,{summary:'recovered'}]});
+  const state=(await readAgentState(w.paths,'operator'))!;state.next_run=w.deps.now().toISOString();await writeAgentState(w.paths,'operator',state);
+  await w.scheduler.tick();await idle(w);await w.scheduler.tick();await idle(w);
+  const db=openIndex(w.paths);
+  const runs=(db.prepare("SELECT agent, run_id, payload FROM events WHERE kind = 'agent.run' ORDER BY at, rowid").all() as {agent:string;run_id:string;payload:string}[]).map(r=>({agent:r.agent,...JSON.parse(r.payload)}));
+  db.close();
+  expect(runs).toHaveLength(2);
+  expect(runs[0]).toMatchObject({agent:'operator',outcome:'failed',attempt:1,error:expect.any(String)});
+  expect(runs[1]).toMatchObject({agent:'operator',outcome:'ok',attempt:2,summary:'recovered'});
  },30000);
 const FAILED_TWICE='standing agent findings-filer failed twice';
  const filerRunWords=(w:Awaited<ReturnType<typeof standingWorld>>)=>readdirSync(w.paths.runs).filter(d=>d.startsWith('standing-findings-filer')).sort((x,y)=>Number(x.split('-')[4])-Number(y.split('-')[4]));
@@ -1363,4 +1378,29 @@ describe("end to end: the design stage (spec 029)", () => {
     expect(w.comments).toHaveLength(1);
     expect(w.adapter.ran).toEqual([]);
   }, 120_000);
+});
+
+describe("every event kind is recorded across the recorded chains (spec 026 AC-2)", () => {
+  /** Kinds with no producer yet: spec 027 adds `metrics.snapshot`, spec 028 `reflection.plan` and empties this list. */
+  const NOT_YET_PRODUCED = ["metrics.snapshot", "reflection.plan"];
+  /** `aws.cost` has its producer in spec F1; the F1 and F2 contact kinds are not asserted either. */
+  const RESERVED = ["aws.cost"];
+  it("finds each kind at least once in the events/ files the runs above left", () => {
+    expect(worldPaths.length).toBeGreaterThan(5);
+    const seen = new Set<string>();
+    const contacts = new Set<string>();
+    for (const p of worldPaths) {
+      if (!existsSync(p.events)) continue;
+      for (const f of readdirSync(p.events).filter((f) => f.endsWith(".jsonl"))) {
+        for (const l of readFileSync(join(p.events, f), "utf8").split("\n").filter(Boolean)) {
+          const e = JSON.parse(l);
+          expect(validate("event", e), l).toEqual({ ok: true });
+          seen.add(e.kind);
+          if (e.kind === "maintainer.contact") contacts.add(e.payload.kind);
+        }
+      }
+    }
+    expect(EVENT_KINDS.filter((k) => !seen.has(k) && !RESERVED.includes(k) && !NOT_YET_PRODUCED.includes(k))).toEqual([]);
+    for (const k of ["notification", "question", "reminder"]) expect(contacts.has(k), k).toBe(true);
+  });
 });

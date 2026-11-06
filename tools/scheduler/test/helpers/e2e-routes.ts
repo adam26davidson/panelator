@@ -22,6 +22,11 @@ import {ParameterStore} from '../../src/parameters/store.ts';
 import {loadParameterDefinitions} from '../../src/parameters/definitions.ts';
 import {registryActionsCheck} from '../../src/actions/index.ts';
 
+import {recordedNotifier} from '../../src/notify/recorded.ts';
+
+/** Every world's state paths, so a final test can union the event kinds the recorded runs produced (spec 026 AC-2). */
+export const worldPaths:StatePaths[]=[];
+
 const script = join(import.meta.dirname, "..", "fixtures", "stage-script.ts");
 const events = join(import.meta.dirname, "..", "fixtures", "streams", "claude-success.jsonl");
 export const BOT = "panelator-pipeline[bot]";
@@ -71,7 +76,7 @@ export function scripted(results: Record<string, Scripted[]>): Adapter & { ran: 
 }
 
 export async function standingWorld(results:Record<string,Scripted[]>) {
-  const pair=repoPair({'README.md':'standing fixture'}),paths=statePaths(join(pair.root,'state'));await ensureStateDirs(paths);
+  const pair=repoPair({'README.md':'standing fixture'}),paths=statePaths(join(pair.root,'state'));await ensureStateDirs(paths);worldPaths.push(paths);
   const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,registryActionsCheck(join(agentsDir,'actions.yaml')));
   registry.operator={...registry['action-audit'],name:'operator',trigger:{schedule:'1h'},actions:['set_parameter','rerun_workflow'],input:'audit-input'};
   const cfg={...loadConfig(defaultConfigPath),repo:'o/r',required_checks:['test'],slots:1};
@@ -94,7 +99,7 @@ export async function standingWorld(results:Record<string,Scripted[]>) {
     {method:'GET',path:/^\/repos\/o\/r\/commits\/[^/]+\/check-runs$/,reply:()=>({body:{total_count:1,check_runs:[{id:1,name:'test',status:'completed',conclusion:'success'}]}})},
   ];
   const mock=mockGitHub(routes),gh=new GitHubClient(new Octokit({auth:'x',request:{fetch:mock.fetch}}),'o/r'),adapter=scripted(results),notifications:Notification[]=[];
-  const deps:SchedulerDeps={cfg,paths,registry,parameters,gh,botLogin:BOT,notifier:{notify:async n=>{notifications.push(n);}},stages:loadStageDefinitions(join(agentsDir,'stages')),agentsDir,repoDir:pair.repo,binDir:join(pair.root,'bin'),adapterFor:()=>adapter,systemdScope:false,now:()=>now,log:()=>{},fetchOrigin:async()=>{},unitActive:async()=>false,stopUnit:async()=>{},serviceLog:new ServiceLog(paths.serviceLog),inhibitor:new SleepInhibitor({enabled:false}),fastForward:async()=>({moved:false,changedPaths:[]}),sleep:async()=>{},monotonic:()=>0,requestRestart:()=>{}};
+  const deps:SchedulerDeps={cfg,paths,registry,parameters,gh,botLogin:BOT,notifier:recordedNotifier({notify:async n=>{notifications.push(n);}},paths),stages:loadStageDefinitions(join(agentsDir,'stages')),agentsDir,repoDir:pair.repo,binDir:join(pair.root,'bin'),adapterFor:()=>adapter,systemdScope:false,now:()=>now,log:()=>{},fetchOrigin:async()=>{},unitActive:async()=>false,stopUnit:async()=>{},serviceLog:new ServiceLog(paths.serviceLog),inhibitor:new SleepInhibitor({enabled:false}),fastForward:async()=>({moved:false,changedPaths:[]}),sleep:async()=>{},monotonic:()=>0,requestRestart:()=>{}};
   const scheduler=new Scheduler(deps);
   return {pair,paths,registry,parameters,deps,scheduler,adapter,mock,gh,issues,comments,notifications,setNow:(value:Date)=>{now=value;}};
 }
@@ -116,6 +121,7 @@ export async function chainWorld(opts: {
 }) {
   const pair = repoPair(opts.files);
   const paths: StatePaths = statePaths(join(pair.root, "state"));
+  worldPaths.push(paths);
   await ensureStateDirs(paths);
   // GitHub's side of a merge: a clone that squashes a PR branch into main and pushes it.
   const side = join(pair.root, "github-side");
@@ -261,7 +267,7 @@ export async function chainWorld(opts: {
   await writeAgentState(paths,'findings-filer',{...(await readAgentState(paths,'findings-filer'))!,paused:true,paused_by:'maintainer'});
   const deps: SchedulerDeps = {
     cfg, paths, registry, parameters, gh: new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r"),
-    notifier: { notify: async (n) => { notifications.push(n); } },
+    notifier: recordedNotifier({ notify: async (n) => { notifications.push(n); } }, paths),
     stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: pair.repo, binDir: join(pair.root, "bin"),
     adapterFor: () => adapter, systemdScope: false, now: () => new Date(), log: (rec) => { logs.push(rec); },
     fetchOrigin: async () => { git(pair.repo, "fetch", "-q", "origin"); },

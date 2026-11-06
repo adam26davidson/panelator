@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { createIssueRecorded } from "../events/filed.ts";
 import { childClass } from "../gates/design-tree.ts";
 import type { IssueComment } from "../github/types.ts";
 import { parseChildEntries, type ChildEntry } from "../spec/parse.ts";
@@ -130,7 +131,7 @@ export async function fileDesignChildren(d: ChildrenDeps): Promise<ChildrenResul
       const key = `${design}:${slug}`;
       let number: number;
       try {
-        number = await d.gh.createIssue(neutraliseChildMarkers(entry.title ?? slug), body, labels);
+        number = await createIssueRecorded(d.gh, d.paths, { title: neutraliseChildMarkers(entry.title ?? slug), body, labels, by: d.botLogin, class: labels[0]!, marker: childMarker(design, slug) });
       } catch (e) {
         const error = message(e);
         d.log({ kind: "child-filing-failed", design, slug, error });

@@ -1,6 +1,8 @@
 import {appendFile,writeFile,rename} from 'node:fs/promises';
 import type {IssueData,Question} from '../types.ts';
 import {validate} from '../schema/validate.ts';
+import {record as recordEvt} from '../events/store.ts';
+import {createIssueRecorded} from '../events/filed.ts';
 import {readJsonLines,recordKey,settledCursor,advisoryAttempts,isRestingDiscard,isCapabilityIssue,stripCapabilityMarkers,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,CAPABILITY_TITLE,CAPABILITY_CLOSED_MARKER,type AdvisoryFailure,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
 export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'};rests_on_pr?:number}
 export interface FilerResult {summary:string;decisions:Decision[]}
@@ -93,7 +95,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
    let body=stripCapabilityMarkers(issue.body.replace(/^\s*Spec:.*$/gm,''));
    if(dec.outcome==='escalate')body=`Possible design flaw\n\n${body}\n\nQuestion for the spec stage:\n${JSON.stringify(dec.question,null,2)}`;
    const title=stripCapabilityMarkers(issue.title),text=stripCapabilityMarkers(`${body}\n\nFiler verification: ${dec.reason}`)+`\n\n${marker}`,labels=[issue.class,'validated'];
-   return created(await d.gh.createIssue(title,text,labels),title,text,labels);
+   return created(await createIssueRecorded(d.gh,d.paths,{title,body:text,labels,by:d.botLogin,class:issue.class,marker}),title,text,labels);
   };
   // A security flag overrides every public outcome; a discard is private and stays a discard (AC-19). A record
   // already judged security once (a retried advisory) is as private as a flagged one (spec 014 AC-9), and so is a
@@ -117,7 +119,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
      // is raised with the maintainer through the chain. Any held ref stays linked to an open capability issue (spec 014 AC-5, AC-6).
      row.held=true;
      let filed=false,n=await capabilityIssue();
-     if(n===null&&kind==='permission'){const held=lastRows().filter(t=>t.held&&t.ref!==dec.ref).length+1;{const text=capabilityIssueBody(status,held),labels=[d.classes.includes('class:tooling')?'class:tooling':d.classes[0]!,'validated'];n=capability=created(await d.gh.createIssue(CAPABILITY_TITLE,text,labels),CAPABILITY_TITLE,text,labels);}filed=true;}
+     if(n===null&&kind==='permission'){const held=lastRows().filter(t=>t.held&&t.ref!==dec.ref).length+1;{const text=capabilityIssueBody(status,held),labels=[d.classes.includes('class:tooling')?'class:tooling':d.classes[0]!,'validated'];n=capability=created(await createIssueRecorded(d.gh,d.paths,{title:CAPABILITY_TITLE,body:text,labels,by:d.botLogin,class:labels[0]!,marker:CAPABILITY_MARKER}),CAPABILITY_TITLE,text,labels);}filed=true;}
      if(n!==null)row.capability_issue=n;
      row.reason+=` (held after ${row.attempt} attempts${row.capability_issue?`; capability issue #${row.capability_issue}`:''})`;
      // A daily probe that fails again under the same open question stays quiet; the full error stays private.
@@ -149,6 +151,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   const {reoffered:_entryReoffered,...shared}=row;
   const copies=row.failed?[]:(record?.duplicate_refs??[]).filter(ref=>!settled.has(ref)||reopened(ref)).map(ref=>({...shared,ref,reason:`same record as ref ${dec.ref}: ${row.reason}`,...(reopened(ref)?{reoffered:true}:{})}));
   await appendFile(d.paths.findingsTriage,[row,...copies].map(c=>JSON.stringify(c)+'\n').join(''));triage.push(row,...copies);
+  for(const c of [row,...copies])await recordEvt(d.paths,'finding.triaged',c.at,c as unknown as Record<string,unknown>,{run_id:runId});
   // Logged once the decision is kept, so a settled ref or a batch that aborts earlier logs nothing (spec 018 AC-3).
   if(fb)d.log?.({kind:'filer-class-fallback',run_id:runId,ref:dec.ref,class:fb.class,used:fb.used});
   // Advisories work again, so the capability question is settled (spec 014 AC-6); done after the row is kept, and

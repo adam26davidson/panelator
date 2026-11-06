@@ -2,6 +2,7 @@ import {withStateLock} from '../parameters/store.ts';
 import { appendFile, writeFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { validate } from "../schema/validate.ts";
+import { record } from "../events/store.ts";
 import type { AgentStageName } from "../types.ts";
 import type { StatePaths } from "./paths.ts";
 
@@ -35,6 +36,7 @@ export async function appendFindings(p: StatePaths, env: FindingEnvelope, findin
     const offset=await stat(p.findingsQueue).then(s=>s.size).catch(e=>{if((e as NodeJS.ErrnoException).code==='ENOENT')return 0;throw e;});
     await (opts.emit ?? listeners.get(p.root))?.(queued,offset,opts.exclude);
     await appendFile(p.findingsQueue, lines);
+    for (const line of lines.split("\n").filter(Boolean)) await record(p, "finding.queued", env.timestamp, JSON.parse(line), { issue: env.issue, run_id: env.run_id });
   });
   return { queued, rejected };
 }
