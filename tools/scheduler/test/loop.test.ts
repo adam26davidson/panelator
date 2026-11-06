@@ -274,7 +274,8 @@ describe("Scheduler.tick", () => {
     for (let i = 1; i <= 3; i++) {
       const t = await s.tick();
       expect(t.released).toEqual([]);
-      for (let w = 0; w < 200 && errors.length < i; w++) await new Promise((r) => setTimeout(r, 25));
+      // The error is logged before the failure count is written and the chain leaves the active set: wait for both.
+      for (let w = 0; w < 200 && (errors.length < i || s.active > 0); w++) await new Promise((r) => setTimeout(r, 25));
       expect(errors).toHaveLength(i);
       expect(errors[i - 1]).toMatchObject({ kind: "error", issue: 7, error: "boom" });
     }
