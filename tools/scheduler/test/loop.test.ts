@@ -83,6 +83,18 @@ describe('Telegram answers and watchdog fallback',()=>{
   const {s,deps,paths,gh}=await setup(routes([waiting()]),1,firstStep);const server=await fakeTelegram();deps.telegram=telegramChannel(new TelegramClient('SECRET',42,server.url));
   try{await writePaused(paths,tgRecord());const u=message(1,'Use the file store.');await s.handleTelegramUpdate(u);expect(server.sent).toHaveLength(0);expect((await listPaused(paths))[0].phase).toBe('resuming');await s.handleTelegramUpdate(u);await s.confirmTelegramUpdate(u);await s.confirmTelegramUpdate(u);expect(server.sent).toHaveLength(1);expect(server.sent[0].text).toContain('Picked up your reply from 11:00');expect(gh.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/comments'))).toHaveLength(1);await s.tick();expect(await listPaused(paths)).toEqual([]);expect(logLines(paths).filter(e=>e.event==='answered')).toHaveLength(1);}finally{await server.close();}
  },30000);
+ it('a GitHub error while posting the answer is a handler failure, not a Telegram outage (spec 042 AC-4)',async()=>{
+  let posts=0;const rs=routes([waiting()]).map(r=>r.method==='POST'&&String(r.path).includes('comments')?{...r,reply:(m:RegExpExecArray,b:unknown,u:URL)=>posts++===0?{status:422,body:{message:'mock github comment failure'}}:r.reply(m,b,u)}:r);
+  const {s,deps,paths,gh}=await setup(rs,1,firstStep);const server=await fakeTelegram();deps.telegram=telegramChannel(new TelegramClient('secret',42,server.url));
+  const logs:Record<string,unknown>[]=[],waits:number[]=[];const {TelegramPoller}=await import('../src/telegram/poller.ts');
+  const poll=new TelegramPoller(deps.telegram!.client,paths.telegramOffset,50,u=>s.handleTelegramUpdate(u),r=>logs.push(r),async ms=>{waits.push(ms);},u=>s.confirmTelegramUpdate(u));
+  try{await writePaused(paths,tgRecord());server.push(message(1,'Use the file store.'));poll.start();
+   for(let i=0;i<400&&!(existsSync(paths.telegramOffset)&&JSON.parse(readFileSync(paths.telegramOffset,'utf8')).next_update_id===2&&server.sent.length>=1);i++)await new Promise(r=>setTimeout(r,10));
+   expect(logs).toHaveLength(1);expect(logs[0]).toMatchObject({kind:'telegram-handler-failed',update_id:1});expect(String(logs[0].error)).toContain('mock github comment failure');
+   expect(logs.some(l=>l.kind==='telegram-outage'||l.kind==='telegram-recovered')).toBe(false);expect(waits).toEqual([2000]);
+   expect(gh.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/comments'))).toHaveLength(2);expect(server.sent).toHaveLength(1);expect((await listPaused(paths))[0].phase).toBe('resuming');
+  }finally{await poll.stop();await server.close();}
+ },30000);
  it('keeps free text while two questions are open, then a selection answers the right one',async()=>{
   const {s,deps,paths}=await setup(routes([]));const server=await fakeTelegram();deps.telegram=telegramChannel(new TelegramClient('secret',42,server.url));
   try{await writePaused(paths,tgRecord(7));await writePaused(paths,tgRecord(8));await s.handleTelegramUpdate(message(2,'Choose the file store'));expect(server.sent[0].text).toContain('#7');expect(server.sent[0].text).toContain('#8');const u={update_id:3,callback_query:{id:'pick',data:'pick:8',message:{message_id:1,date:1,chat:{id:42}}}};await s.handleTelegramUpdate(u);await s.confirmTelegramUpdate(u);const all=await listPaused(paths);expect(all.find(r=>r.issue===7)?.phase).toBe('paused');expect(all.find(r=>r.issue===8)?.answer).toBe('Choose the file store');expect(server.answeredCallbacks).toHaveLength(1);}finally{await server.close();}

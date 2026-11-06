@@ -19,6 +19,12 @@ interface Journal {
   handled: number[];
   answered: PausedRecord[];
 }
+export class UpdateDeferred extends Error {
+  constructor() {
+    super("question send still completing");
+    this.name = "UpdateDeferred";
+  }
+}
 export class TelegramAnswers {
   private d: DriverDeps;
   private wake: () => void;
@@ -111,7 +117,7 @@ export class TelegramAnswers {
     // Leave the update unconfirmed until that record is committed, rather than
     // letting the completing pause overwrite an answer or replying 'No open question'.
     if (records.some((r) => r.phase === "pausing"))
-      throw new Error("question send still completing");
+      throw new UpdateDeferred();
     const match = matchUpdate(
       u,
       [

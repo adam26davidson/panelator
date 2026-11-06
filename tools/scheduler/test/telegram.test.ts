@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readTelegramCredentials } from "../src/telegram/credentials.ts";
 import { TelegramClient } from "../src/telegram/client.ts";
+import { UpdateDeferred } from "../src/telegram/answers.ts";
 import { TelegramPoller } from "../src/telegram/poller.ts";
 import { fakeTelegram } from "./helpers/fake-telegram.ts";
 import {
@@ -321,5 +322,189 @@ describe("Telegram", () => {
       ).kind,
     ).toBe("answer");
     expect(ackText("plan", 9, new Date(0))).toContain("Picked up");
+  });
+});
+
+const msg = (id: number) => ({
+  update_id: id,
+  message: {
+    message_id: id,
+    date: 1,
+    chat: { id: 42 },
+    text: "PRIVATE TEXT",
+  },
+});
+describe("Telegram poller handler failures (spec 042)", () => {
+  const rig = async (
+    onUpdate: (u: { update_id: number }) => Promise<void>,
+    prep?: (client: TelegramClient) => void,
+  ) => {
+    const server = await fakeTelegram();
+    const dir = await mkdtemp(join(tmpdir(), "handler-"));
+    const logs: Record<string, unknown>[] = [];
+    const waits: number[] = [];
+    const client = new TelegramClient("secret", 42, server.url);
+    prep?.(client);
+    const poll = new TelegramPoller(
+      client,
+      join(dir, "offset.json"),
+      50,
+      onUpdate,
+      (r) => logs.push(r),
+      async (ms) => {
+        waits.push(ms);
+      },
+    );
+    const offsetFile = () =>
+      readFile(join(dir, "offset.json"), "utf8").then(JSON.parse);
+    return { server, poll, logs, waits, offsetFile, dir };
+  };
+  it("AC-1: logs a handler failure, keeps the offset, waits 2 s, redelivers", async () => {
+    let calls = 0;
+    const r = await rig(async () => {
+      if (calls++ === 0) throw Error("boom");
+    });
+    r.server.push(msg(1));
+    r.poll.start();
+    try {
+      await until(() => calls === 2);
+      await until(() => r.server.requests.some((q) => q.body.offset === 2));
+      expect(r.logs).toEqual([
+        { kind: "telegram-handler-failed", update_id: 1, error: "boom" },
+      ]);
+      expect(r.waits).toEqual([2000]);
+      const asked = r.server.requests.filter((q) => q.method === "getUpdates");
+      expect(asked[1].body.offset).toBe(0);
+      expect(asked[2].body.offset).toBe(2);
+      expect(await r.offsetFile()).toEqual({ next_update_id: 2 });
+      const text = JSON.stringify(r.logs);
+      for (const x of ["PRIVATE", "42", r.server.url])
+        expect(text).not.toContain(x);
+    } finally {
+      await r.poll.stop();
+      await r.server.close();
+    }
+  });
+  it("AC-1: offset file is not written until the redelivery is handled; non-Error is stringified", async () => {
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((x) => (release = x));
+    const r = await rig(async () => {
+      if (calls++ === 0) throw "bad";
+      await gate;
+    });
+    r.server.push(msg(1));
+    r.poll.start();
+    try {
+      await until(() => calls === 2);
+      expect(r.logs).toEqual([
+        { kind: "telegram-handler-failed", update_id: 1, error: "bad" },
+      ]);
+      await expect(r.offsetFile()).rejects.toThrow();
+      release();
+      await until(() => r.server.requests.some((q) => q.body.offset === 2));
+      expect(await r.offsetFile()).toEqual({ next_update_id: 2 });
+    } finally {
+      release();
+      await r.poll.stop();
+      await r.server.close();
+    }
+  });
+  it("AC-1: the rest of a failed batch waits for the redelivery", async () => {
+    const seen: number[] = [];
+    const r = await rig(async (u) => {
+      seen.push(u.update_id);
+      if (seen.length === 1) throw Error("boom");
+    });
+    r.server.push(msg(1));
+    r.server.push(msg(2));
+    r.poll.start();
+    try {
+      await until(() => r.server.requests.some((q) => q.body.offset === 3));
+      expect(seen).toEqual([1, 1, 2]);
+      expect(await r.offsetFile()).toEqual({ next_update_id: 3 });
+    } finally {
+      await r.poll.stop();
+      await r.server.close();
+    }
+  });
+  it("AC-2: a deferred update is logged once and not as a failure", async () => {
+    let calls = 0;
+    const r = await rig(async () => {
+      if (calls++ < 2) throw new UpdateDeferred();
+    });
+    r.server.push(msg(5));
+    r.poll.start();
+    try {
+      await until(() => r.server.requests.some((q) => q.body.offset === 6));
+      expect(calls).toBe(3);
+      expect(r.logs).toEqual([
+        { kind: "telegram-update-deferred", update_id: 5 },
+      ]);
+      expect(r.waits).toEqual([2000, 2000]);
+      expect(await r.offsetFile()).toEqual({ next_update_id: 6 });
+    } finally {
+      await r.poll.stop();
+      await r.server.close();
+    }
+  });
+  it("AC-3: recovery is logged before the handler failure; one backoff step plus the fixed wait", async () => {
+    let calls = 0;
+    const r = await rig(
+      async () => {
+        if (calls++ === 0) throw Error("boom");
+      },
+      (client) => {
+        const get = client.getUpdates.bind(client);
+        let failed = false;
+        client.getUpdates = (opts) => {
+          if (!failed) {
+            failed = true;
+            return Promise.reject(Error("down"));
+          }
+          return get(opts);
+        };
+      },
+    );
+    r.server.push(msg(1));
+    r.poll.start();
+    try {
+      await until(() => r.server.requests.some((q) => q.body.offset === 2));
+      expect(r.logs).toEqual([
+        { kind: "telegram-outage" },
+        { kind: "telegram-recovered" },
+        { kind: "telegram-handler-failed", update_id: 1, error: "boom" },
+      ]);
+      expect(r.waits).toEqual([1000, 2000]);
+    } finally {
+      await r.poll.stop();
+      await r.server.close();
+    }
+  });
+  it("stop ends the handler wait", async () => {
+    const server = await fakeTelegram();
+    const dir = await mkdtemp(join(tmpdir(), "handler-"));
+    let calls = 0;
+    const poll = new TelegramPoller(
+      new TelegramClient("secret", 42, server.url),
+      join(dir, "offset.json"),
+      50,
+      async () => {
+        calls++;
+        throw Error("boom");
+      },
+      () => {},
+    );
+    server.push(msg(1));
+    poll.start();
+    try {
+      await until(() => calls === 1);
+      const t = Date.now();
+      await poll.stop();
+      expect(Date.now() - t).toBeLessThan(1500);
+    } finally {
+      await poll.stop();
+      await server.close();
+    }
   });
 });
