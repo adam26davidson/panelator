@@ -62,10 +62,10 @@ validating the platform binary.)*
 - Pinning `packageManager` to an exact pnpm version, so that pnpm's version
   management makes the laptop run the same pnpm as CI. The laptop and CI
   run different major versions today and this spec makes the first run pass
-  on both; aligning them is separate work.
+  on both; aligning them is separate work (done by spec 035).
 - Making pnpm 10 install before a script as pnpm 12 does
-  (`verifyDepsBeforeRun`). CI installs explicitly; the laptop runs pnpm 12.
-- Having the scheduler run `pnpm install` itself before a stage starts.
+  (`verifyDepsBeforeRun`). CI installs explicitly; the laptop runs pnpm 12 (done by spec 035).
+- Having the scheduler run `pnpm install` itself before a stage starts (decided against by ADR 0008; the script installs, spec 035).
 - Changing the CI workflow, the vitest configuration, or the esbuild or
   vitest versions.
 - Approving, or ignoring, any package other than esbuild.

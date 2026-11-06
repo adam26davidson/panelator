@@ -2,6 +2,8 @@ packages:
   - "tools/*"
   - "web"
   - "sdk/assemblyscript"
+# A script installs a missing or stale node_modules first, under any pnpm (spec 035).
+verifyDepsBeforeRun: install
 allowBuilds:
   esbuild: true
   "@playwright/browser-chromium": true
