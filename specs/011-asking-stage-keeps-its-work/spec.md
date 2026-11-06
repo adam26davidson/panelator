@@ -85,13 +85,13 @@ nothing.
 
 "Given" states use the fake harness and a mocked GitHub API, as in spec 001.
 
-**Definitions.** *Held work* is the field `heldWork` of `ChainState`:
+**Definitions.** Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) section 3: `heldWork` is a list of `{ branch, head }` entries, at most one per branch, empty when nothing is held. *Held work* is the field `heldWork` of `ChainState`:
 `{ branch, head } | null`, where `branch` is the chain's branch at the time
 (`issue-<n>` or `spec-<n>`, spec 006 AC-21) and `head` is the worktree's
 `HEAD` commit when the asking stage's result was read. The *asking stage* and
 the *question path* are as spec 006 AC-12 to AC-15 define them.
 
-- AC-1. **A question records the work.** Given a plan, implement or fix
+- AC-1. Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) AC-1: a question replaces the hold on the chain's branch only; a question on another branch adds a hold beside the existing ones. **A question records the work.** Given a plan, implement or fix
   result that carries an `escalation`, or a spec result with verdict
   `question`, when the driver turns it into its `stage_ok` event, then the
   event carries `head`, the worktree's `HEAD` after the run, and the driver
@@ -106,7 +106,7 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
   `paused` for a follow-up). A `stage_ok` on that path without `head` throws,
   as one without `scope` does today. A follow-up or a second question from
   the resumed stage replaces the held work with the new head.
-- AC-2. **The question check runs on the work as it was left.** Given held
+- AC-2. Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) AC-5: `held-work-lost` removes the hold on that branch only. **The question check runs on the work as it was left.** Given held
   work on the chain's branch, the worktree on that branch at the held head,
   and no PR bound, when the question check is prepared (first attempt,
   retry, or after a quota postponement), then the preparation fetches, saves
@@ -146,7 +146,7 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
   with `held_work` naming an open PR, then its result may report that PR: the
   binding check of spec 001 (open, from the chain's branch, at the result's
   head) is unchanged.
-- AC-5. **A lost worktree is restored.** Given held work and a worktree whose
+- AC-5. Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) AC-5: `held-work-lost` removes the hold on that branch only. **A lost worktree is restored.** Given held work and a worktree whose
   `HEAD` is not the held head (the worktree was recreated from `origin/main`,
   or a crash left it elsewhere), when the next stage on the question path is
   prepared, then the driver puts the branch at the held head when that commit
@@ -163,7 +163,7 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
   fallback in the last case. Given the held head is reachable from
   `origin/main` (the stage committed nothing), then there is nothing to keep
   and the preparation runs as without held work.
-- AC-6. **Held work survives the spec PR that records an answer.** Given
+- AC-6. Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) AC-6: the route may hold work on `issue-<n>` and `spec-<n>` at once, and the `delete_branch` action reads the `issue-<n>` hold. **Held work survives the spec PR that records an answer.** Given
   implement asked a product or technical question with held work on
   `issue-<n>`, when the reply routes to the spec stage in `record` mode
   (spec 006 AC-18, on `spec-<n>`), then the spec-track preparation leaves
@@ -174,7 +174,7 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
   plan then runs with `held_work` in its input and implement continues from
   the branch (AC-3, AC-4). The chain's fresh stage counters (spec 006 AC-4)
   are unchanged.
-- AC-7. **Held work is cleared when the work is bound or discarded, and only
+- AC-7. Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) AC-2 to AC-4: a bound PR and the asking stage's failure clear the hold on the chain's branch only; the other clears empty the list. **Held work is cleared when the work is bound or discarded, and only
   then.** The machine clears `heldWork` on:
   - a `stage_ok` of implement or spec (`revised`) that binds a PR on the
     held branch: the work is then the PR's, and spec 005 AC-3 applies;
@@ -200,7 +200,7 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
   test of the driver, then their patches, closed PRs and deleted branches are
   as today. Given a claim after a release, then the preparation drops a
   branch left on origin as today.
-- AC-9. **A claim written before this spec loads.** Given a claim or paused
+- AC-9. Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) AC-7: a record without `heldWork` normalizes to `[]`, and one with this spec's single object to a one-entry list. **A claim written before this spec loads.** Given a claim or paused
   record without `heldWork`, when it is read, then it normalizes to `null`
   and its chain continues (spec 006 AC-7).
 - AC-10. **End to end.** Recorded end-to-end chains (fake adapter, mocked
@@ -249,6 +249,8 @@ exceptions.
   transitions.
 
 ## 5. Interfaces and files
+
+> Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) section 5: `heldWork` is a list, `initialChainState` sets `[]`, the clears work per entry and the driver's lookups are by branch.
 
 - `tools/scheduler/src/chain/types.ts`: `heldWork: { branch: string; head:
   string } | null` in `ChainState`; `head?: string` on the `stage_ok` events
