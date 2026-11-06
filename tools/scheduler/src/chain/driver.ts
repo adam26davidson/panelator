@@ -246,7 +246,7 @@ async function splitParent(worktree: string, specPath: string, diff: string[]): 
   return null;
 }
 
-/** AC-21, AC-22: the spec PR's scope, judged with the spec's Parent: from the worktree and the parent before (origin/main) and after. */
+/** AC-21, AC-22: the spec PR's scope, judged with the spec's Parent: from the worktree and the parent before (origin/main) and after; the spec's text goes to the gate for the links of spec 039 AC-4. */
 async function specTrackScope(deps: DriverDeps, claim: Claim, diff: string[], specPath: string | null): Promise<ScopeResult> {
   if (!specPath) return { ok: false, violations: ["the issue body has no Spec: line naming the spec this PR changes"] };
   const text = await readFile(join(claim.worktree, specPath), "utf8").catch(() => "");
@@ -254,7 +254,7 @@ async function specTrackScope(deps: DriverDeps, claim: Claim, diff: string[], sp
   const parent = text ? parseSpec(text).parent : await splitParent(claim.worktree, specPath, diff);
   const before = parent ? gitShow(deps.repoDir, `origin/main:${parent}`) ?? "" : "";
   const after = parent ? await readFile(join(claim.worktree, parent), "utf8").catch(() => "") : "";
-  return specScopeGate(diff, specPath, parent, before, after, claim.state.answerKind === "product");
+  return specScopeGate(diff, specPath, parent, before, after, claim.state.answerKind === "product", text);
 }
 
 /** Spec 011 AC-4: what the resumed stage is told about the work it left before its question. */

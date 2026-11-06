@@ -316,7 +316,7 @@ AC-10 second sentence, AC-13)
   answer. Given the check
   fails, it is retried once (the fallback of AC-26 applies first); a second
   failure is a bound hit for the stage that asked (AC-1).
-- AC-13. **A sent question pauses the issue.** Given `send`, then, in this
+- AC-13. Amended by [011-asking-stage-keeps-its-work](../011-asking-stage-keeps-its-work/spec.md) section 4: the chain state written to the paused record includes the held work. **A sent question pauses the issue.** Given `send`, then, in this
   order:
   - the chain state, the asking stage, the question and a new random nonce
     are written to `paused/<issue>.json` in the state directory;
@@ -356,7 +356,7 @@ AC-10 second sentence, AC-13)
   question from the same stage on the same issue goes to the check again. A
   second `decide_yourself` on the issue is a bound hit on the escalation path
   (AC-1 to AC-5).
-- AC-15. **The maintainer's reply resumes the issue.** Given an issue labelled
+- AC-15. Amended by [011-asking-stage-keeps-its-work](../011-asking-stage-keeps-its-work/spec.md) section 4: with held work the stage resumes in the worktree as the asking stage left it, with the held work as input. **The maintainer's reply resumes the issue.** Given an issue labelled
   `needs-decision` with a `paused/` record, when a poll finds a comment by the
   maintainer whose id is higher than the question comment's id and whose
   creation time is later, then, in this order:
@@ -509,14 +509,14 @@ AC-10 second sentence, AC-13)
   `spec-<issue>` is deleted, so the next claim starts the spec work again from
   `origin/main`.
 
-  **A branch left by a failed attempt.** Given a stage is about to run with
+  **A branch left by a failed attempt.** Amended by [011-asking-stage-keeps-its-work](../011-asking-stage-keeps-its-work/spec.md) section 4: applies only when the chain holds no work on the branch; the question check and the stages the question path resumes are not retries. Given a stage is about to run with
   no PR bound (on either track: a retry, a rescue, a re-plan, a revision, or
   a claim after a release) and the chain's branch (`issue-<issue>` or
   `spec-<issue>`) exists on origin, then before the stage runs its commits
   are saved as a patch, every open PR from it is closed with a comment, and
   the branch is deleted on GitHub, so the stage's push and PR start clean.
 
-  **Scope.** The scope check of AC-22 holds the spec PR to:
+  **Scope.** Amended by [039-spec-pr-marks-superseded-text](../039-spec-pr-marks-superseded-text/spec.md) AC-1: the list also allows the spec.md of another spec the new spec links to, for the marks of its AC-5. The scope check of AC-22 holds the spec PR to:
   - the spec's directory;
   - `docs/designs/`;
   - `docs/decisions/`;

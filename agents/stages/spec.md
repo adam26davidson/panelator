@@ -164,7 +164,19 @@ branches.
 - the `## Children` section of the spec's parent design, which is one of the two top
   designs (`docs/product-spec.md`, `docs/delivery-system-design.md`) or a file under
   `docs/designs/`; the charter (`docs/charter.md`) is never a parent and is never edited;
+- the `spec.md` of another spec that the new spec links to, for marks only (below);
 - the top designs in full, only while recording a maintainer's product answer.
+
+**Marking superseded text.** When the spec supersedes or amends a criterion, paragraph or
+section of a landed spec, write a mark on that text in the same PR and name it in the
+status line, instead of recording a reading only in the new spec. A mark is prepended to the
+smallest unit it applies to (a criterion, after its `AC-n.` and before its text or bold
+title; a titled paragraph inside a criterion, after its bold title; a section, as a block
+quote under its heading) and reads `Superseded by [NNN-slug](../NNN-slug/spec.md) AC-k:` or
+`Amended by [NNN-slug](../NNN-slug/spec.md) AC-k: <one clause>.`, where `NNN-slug` is the new
+spec and `AC-k` (or `section k`) is where it says what applies. The earlier text stays
+unchanged after the mark. The new spec may still explain the amendment in its own text; the
+mark points to that explanation. The new spec must link to the spec it marks.
 
 **The spec's field set.** A status line; `Class:` and `Domain:`; a `Parent:` line naming the
 parent design file; derives-from links to the design-tree or ADR entries it comes from; then

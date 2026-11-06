@@ -200,6 +200,32 @@ describe("specScopeGate (AC-21, AC-22)", () => {
     expect(specScopeGate([SPEC, "docs/delivery-system-design.md"], SPEC, TOP, before, before, true)).toEqual({ ok: true });
     expect(specScopeGate(["docs/charter.md"], SPEC, TOP, before, before, true).ok).toBe(false);
   });
+  describe("another spec's spec.md (spec 039 AC-1 to AC-3)", () => {
+    const S006 = "specs/006-no-human-stops/spec.md";
+    const gate = (files: string[], text: string) => specScopeGate(files, SPEC, TOP, before, childrenOnly, false, text);
+    it("allows it when the new spec links to it, relative or from the root", () => {
+      expect(gate([SPEC, S006], "See [x](../006-no-human-stops/spec.md).")).toEqual({ ok: true });
+      expect(gate([SPEC, S006], "See specs/006-no-human-stops/spec.md.")).toEqual({ ok: true });
+    });
+    it("reports a violation that says why when it is not linked", () => {
+      const msg = { ok: false, violations: [`${S006}: another spec; ${SPEC} does not link to it`] };
+      expect(gate([S006], "No links here.")).toEqual(msg);
+      expect(gate([S006], "")).toEqual(msg);
+      expect(specScopeGate([S006], SPEC, TOP, before, childrenOnly)).toEqual(msg);
+    });
+    it("allows only spec.md of another spec, whatever the new spec links to", () => {
+      const text = "../006-no-human-stops/spec.md ../029-design-stage/spec.md ../012-metrics-reflection/spec.md";
+      for (const f of ["specs/006-no-human-stops/plans/plan.md", "specs/029-design-stage/design/home.png", "specs/012-metrics-reflection/README.md"]) {
+        expect(gate([f], text)).toEqual({ ok: false, violations: [`${f}: outside spec PR scope`] });
+      }
+    });
+    it("leaves the charter, top designs and specs/README.md as they were", () => {
+      const text = "docs/charter.md specs/README.md ../006-no-human-stops/spec.md";
+      expect(gate(["docs/charter.md"], text)).toMatchObject({ ok: false, violations: [expect.stringMatching(/^docs\/charter\.md: /)] });
+      expect(specScopeGate([TOP], SPEC, TOP, before, aboveChildren, false, text)).toEqual({ ok: false, violations: [`${TOP}: changes outside its Children section`] });
+      expect(gate(["specs/README.md"], text)).toEqual({ ok: false, violations: ["specs/README.md: outside spec PR scope"] });
+    });
+  });
 });
 
 describe("fixLoopGate (AC-13)", () => {

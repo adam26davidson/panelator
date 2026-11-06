@@ -161,7 +161,7 @@ fake harness and a mocked GitHub API unless marked (real).
   cache-read and cache-write tokens, turns, tool calls, wall seconds, start
   and end timestamps, issue, stage, attempt, and the path of the raw event
   stream.
-- AC-25. Given a Claude stage fails with API error status 429 and cost at or
+- AC-25. Amended by [009-postponed-chain-holds-slot](../009-postponed-chain-holds-slot/spec.md) section 3: the held claim holds its concurrency slot while the chain waits. Given a Claude stage fails with API error status 429 and cost at or
   below `retry_cost_limit`, when the stage definition names a `fallback`,
   then it is retried once on the fallback with a new session; given the
   stage is tagged `tier: strong`, then it is not retried on a weaker model

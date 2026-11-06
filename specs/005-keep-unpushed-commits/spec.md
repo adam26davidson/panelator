@@ -30,7 +30,7 @@ when `commitsPatch(worktree, base, head = "HEAD")` is called, then it
 returns the output of `git format-patch --stdout <base>..<head>`; given no
 such commits, it returns an empty string.
 
-AC-2. Given a claim with no pull request whose worktree carries a commit
+AC-2. Amended by [011-asking-stage-keeps-its-work](../011-asking-stage-keeps-its-work/spec.md) section 4: applies when the chain holds no work on the branch; with held work the commits are kept and no recovered-commits record is written. Given a claim with no pull request whose worktree carries a commit
 not on `origin/main`, when the next stage is prepared, then before the
 reset a patch of those commits is written under `patches/` through the
 existing `savePatch`, a log record `{ kind: "recovered-commits", issue,

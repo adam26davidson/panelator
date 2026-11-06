@@ -10,7 +10,8 @@ const DECISIONS = "docs/decisions/";
  * The spec PR's scope (AC-21, AC-22): the spec's directory, docs/designs/, docs/decisions/, and the
  * Children section of the parent when it is a top design (a parent under docs/designs/ is allowed in
  * full). With `recordsProductAnswer`, either top design in full. The charter is never allowed, and a
- * parent that is not a top design or under docs/designs/ is a violation whatever the diff.
+ * parent that is not a top design or under docs/designs/ is a violation whatever the diff. Spec 039: the
+ * spec.md of another spec is also allowed when `specText` (the new spec's text) links to it, for marks only.
  */
 export function specScopeGate(
   diffFiles: string[],
@@ -19,7 +20,8 @@ export function specScopeGate(
   parentBefore: string,
   parentAfter: string,
   recordsProductAnswer = false,
-): ScopeResult {
+  specText = "",
+):ScopeResult {
   const specDir = posix.dirname(specPath) + "/";
   parentPath = parentPath === null ? null : posix.normalize(parentPath);
   const parentIsDesign = parentPath !== null && (TOP_DESIGNS.includes(parentPath) || parentPath.startsWith(DESIGNS));
@@ -29,12 +31,17 @@ export function specScopeGate(
 
   for (const f of diffFiles) {
     if (f === parentPath && !parentIsDesign) continue; // already reported above
+    const other = /^(specs\/[^/]+\/)spec\.md$/.exec(f);
     // The charter and the top designs are decided before any prefix allow, so an unvalidated spec path cannot widen them.
     if (f === ROOT) violations.push(`${f}: the charter is never changed by a spec PR`);
     else if (TOP_DESIGNS.includes(f)) {
       if (recordsProductAnswer) continue;
       if (f === parentPath && stripChildren(parentBefore) === stripChildren(parentAfter)) continue;
       violations.push(f === parentPath ? `${f}: changes outside its Children section` : `${f}: outside spec PR scope`);
+    } else if (other && other[1] !== specDir) {
+      const dir = other[1].slice("specs/".length);
+      if (specText.includes(`../${dir}spec.md`) || specText.includes(`specs/${dir}spec.md`)) continue;
+      violations.push(`${f}: another spec; ${specPath} does not link to it`);
     } else if (f.startsWith(specDir) || f.startsWith(DESIGNS) || f.startsWith(DECISIONS)) continue;
     else violations.push(`${f}: outside spec PR scope`);
   }
