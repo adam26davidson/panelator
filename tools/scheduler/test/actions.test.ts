@@ -8,7 +8,9 @@ import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
 import {ActionLog} from '../src/actions/log.ts';
 import {readAgentState,writeAgentState} from '../src/standing/state.ts';
 import {readJsonLines} from '../src/filer/input.ts';
-import {applyAction,KINDS,registryActionsCheck,type ActionContext} from '../src/actions/index.ts';
+import {readdirSync,readFileSync} from 'node:fs';
+import {buildAuditInput} from '../src/standing/audit-input.ts';
+import {applyAction,KINDS,registryActionsCheck,loadActionLevels,type ActionContext} from '../src/actions/index.ts';
 it('logs allowed actions, refuses locks and permissions, undoes and recovers pending',async()=>{
  const paths=statePaths(await mkdtemp(join(tmpdir(),'actions-'))); await ensureStateDirs(paths);
  const log=new ActionLog(paths.actionsLog); const parameters=new ParameterStore(paths,loadParameterDefinitions('agents/parameters.yaml',{slots:1},{}));
@@ -43,4 +45,27 @@ it('enforces maintainer pauses, run marks, levels, rerun limits and inverse poli
  const level=await request('set_parameter',{name:'system_work_share',value:0.4});expect(level.reason).toBe('level 2');expect(await readJsonLines(paths.findingsQueue)).toHaveLength(1);
  expect((await request('unknown',{})).status).toBe('refused');
  expect((await request('run_agent',{name:'audit',previous:'forged'})).status).toBe('refused');
+});
+it('applyAction is the only writer of the action log',()=>{
+ const files:string[]=[];
+ for(const dir of ['tools/scheduler/src','tools/scheduler/bin'])for(const f of readdirSync(dir,{recursive:true,encoding:'utf8'})){
+  const rel=`${dir}/${f}`;if(rel.endsWith('.ts')&&readFileSync(rel,'utf8').includes('writePending('))files.push(rel);
+ }
+ expect(files.sort()).toEqual(['tools/scheduler/src/actions/index.ts','tools/scheduler/src/actions/log.ts']);
+});
+it('audit input: effects carry defined kinds, refusals carry what was asked',async()=>{
+ const paths=statePaths(await mkdtemp(join(tmpdir(),'actions-')));await ensureStateDirs(paths);
+ const log=new ActionLog(paths.actionsLog),parameters=new ParameterStore(paths,loadParameterDefinitions('agents/parameters.yaml',{slots:1},{}));
+ const levels=loadActionLevels('agents/actions.yaml');
+ const ctx={paths,parameters,log,levels,now:()=>new Date(),gh:{rerunWorkflowRun:async()=>{},cancelWorkflowRun:async()=>{}}} as ActionContext;
+ const req={agent:'test',run_id:'run',kind:'set_parameter',args:{name:'system_work_share',value:0.5},why:'Adjust the balance of system work'};
+ const a=await applyAction(ctx,req,['set_parameter']);expect(a.status).toBe('applied');
+ expect((await applyAction(ctx,{...req,kind:'undo',args:{action_id:a.id}},['undo'])).status).toBe('applied');
+ expect((await applyAction(ctx,{...req,kind:'parameter_mode',args:{name:'system_work_share',mode:'locked'}},['set_parameter'])).status).toBe('refused');
+ const input=await buildAuditInput(paths,null,new Date());
+ for(const [kind,g] of Object.entries(input.kinds as Record<string,any>))if(g.applied+g.failed+g.undone>0)expect(Object.hasOwn(levels,kind)).toBe(true);
+ const g=(input.kinds as any).parameter_mode;
+ expect(g).toMatchObject({refused:1,applied:0,failed:0,undone:0});
+ expect(g.entries[0].reason).toBe('unknown action kind');
+ expect((input.kinds as any).set_parameter.undone).toBe(1);expect((input.kinds as any).undo.applied).toBe(1);
 });

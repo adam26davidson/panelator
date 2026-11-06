@@ -23,7 +23,8 @@ import {loadRegistry} from '../src/standing/registry.ts';
 import {EVENT_NAMES,emit} from '../src/standing/events.ts';
 import {initializeAgents,listAgentStates} from '../src/standing/state.ts';
 import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
-import {ParameterStore,withStateLock} from '../src/parameters/store.ts';
+import {ParameterStore} from '../src/parameters/store.ts';
+import {setParameterModeCommand} from '../src/parameters/command.ts';
 import {registryActionsCheck,loadActionLevels,applyAction} from '../src/actions/index.ts';
 import {ActionLog} from '../src/actions/log.ts';
 import {undoAction} from '../src/actions/undo.ts';
@@ -83,10 +84,7 @@ if(['param','agent','action'].includes(args[0])) {
       const row=await applyAction(ctx,{agent:'maintainer',run_id:'command',kind:'set_parameter',args:{name,value:parsed},why:'Maintainer command line parameter change'},'maintainer');
       if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
     } else if(command==='param'&&verb==='mode') {
-      await withStateLock(actionLog.path+'.operation',async()=>{
-        const pending=await actionLog.writePending({agent:'maintainer',run_id:'command',kind:'parameter_mode',args:{name,value},why:'Maintainer command line parameter mode change',undo:null});
-        try {await parameters.setParameterMode(name,value as 'auto'|'locked','maintainer');await actionLog.settle(pending.id,'applied');}catch(e){await actionLog.settle(pending.id,'refused',(e as Error).message);throw e;}
-      });
+      console.log(JSON.stringify(await setParameterModeCommand(parameters,name,value)));
     } else if(command==='agent'&&['pause','resume','run'].includes(verb)) {
       if(!registry[name])throw new Error(`unknown agent ${name}`);
       const row=await applyAction(ctx,{agent:'maintainer',run_id:'command',kind:`${verb}_agent`,args:{name},why:`Maintainer command line ${verb} agent request`},'maintainer');
