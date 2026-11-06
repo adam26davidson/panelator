@@ -10,9 +10,9 @@ skips layers": a bug spec hangs directly off a top design);
 [007-telegram-channel](../007-telegram-channel/spec.md), whose AC-2 this spec
 amends (marked as section 4 records) and whose AC-3 (an update is confirmed
 only after it is acted on) it keeps; consistent with
-[012-metrics-reflection](../012-metrics-reflection/spec.md) section 2 (the
-service log is the maintainer's only view of the channel until the console
-lands).
+[007-telegram-channel](../007-telegram-channel/spec.md) section 2 (the
+service log is where the Notifier writes until a later spec routes it over
+the channel).
 
 ## 1. Goal
 
@@ -79,10 +79,8 @@ and one error type, cheap to reverse; no ADR (design section 3, item 2).
 - Routing the new log lines anywhere other than the service log (spec 030's
   alerts, the console).
 - The `afterConfirm` hook (`confirmed` in `answers.ts`): it runs after the
-  offset has moved and is not inside the handler's `try` today; a throw from
-  it keeps reaching the outer `catch`. This spec moves it under the same
-  handler `try` as section 3 AC-1 says, since it is part of acting on an
-  update, but changes nothing else about it.
+  offset has moved, and its calls are Telegram API sends. A throw from it
+  keeps reaching the outer `catch` as today; this spec does not change it.
 
 ## 3. Acceptance criteria
 
@@ -92,7 +90,7 @@ the `log` callback the poller is constructed with; a *line* is one record.
 
 - AC-1. **A handler throw is logged as a handler failure and leaves the
   offset.** Given Telegram on and an update from the configured chat, when
-  `onUpdate` (or `afterConfirm`) rejects with any error other than the one
+  `onUpdate` rejects with any error other than the one
   of AC-2, then the poller writes one line
   `{ kind: "telegram-handler-failed", update_id: <id>, error: <message> }`,
   where `error` is the error's `message` (or `String(error)` when it has
@@ -154,12 +152,14 @@ twice, is what this spec relies on and leaves alone.
 ## 5. Interfaces and files
 
 - `tools/scheduler/src/telegram/poller.ts`: the loop gains an inner `try`
-  around `this.onUpdate(u)`, the offset write and `this.afterConfirm?.(u)`
-  (AC-1); on a throw it logs `telegram-handler-failed` (or
+  around `this.onUpdate(u)` only (AC-1); the offset write and
+  `this.afterConfirm?.(u)` stay after it, outside that `try`. On a throw
+  from `onUpdate` the loop logs `telegram-handler-failed` (or
   `telegram-update-deferred` for an `UpdateDeferred`, once per `update_id`),
   breaks out of the batch, waits 2 s (the injected `sleep` or `delay` with
   the abort signal, as the backoff sleep does) and continues the outer
-  loop. The outer `catch` is reached only by `getUpdates` (AC-3). The
+  loop. A `onUpdate` throw never reaches the outer `catch`; `getUpdates`
+  errors (AC-3) and, as today, `afterConfirm` throws do. The
   constructor signature is unchanged. The 2 s is a module constant
   (`HANDLER_RETRY_MS`), not configuration.
 - `tools/scheduler/src/telegram/answers.ts`: `export class UpdateDeferred
