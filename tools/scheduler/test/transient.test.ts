@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RequestError } from "octokit";
-import { forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, transientCause } from "../src/chain/transient.ts";
+import { forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, transientCause, transientRun } from "../src/chain/transient.ts";
 import { ledgerOf, initialChainState, POSTPONE_WAIT_S } from "../src/chain/machine.ts";
 
 const errno = (code: string, message = `${code} x`) => Object.assign(new Error(message), { code });
@@ -109,5 +109,28 @@ describe("forgiveTransientChainErrors (spec 015 AC-11)", () => {
       "chain error in fix (counted): upstream said ECONNRESET",
     ] };
     expect(forgiveTransientChainErrors(ledger)).toEqual({ ledger, forgiven: 0 });
+  });
+});
+
+describe("transientRun (spec 045 AC-1)", () => {
+  const LIVE = "API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)";
+  const j = (reason: string | null, apiErrorStatus: number | null, outcome: "failed" | "timeout" | "bounds" | "ok" = "failed") => ({ outcome, reason, apiErrorStatus, finalText: null });
+  it("labels the live reason by its code and the same message without one by the message", () => {
+    expect(transientCause(new Error(LIVE))).toBe("EAI_AGAIN");
+    expect(transientRun(j(LIVE, null))).toBe("EAI_AGAIN");
+    expect(transientRun(j("API Error: Can't reach the API server", null))).toBe("Can't reach the API server");
+    expect(transientRun(j("api error: CAN\u2019T REACH THE API SERVER (check)", null))).toBe("Can't reach the API server");
+  });
+  it("treats a 5xx as transient and names it", () => {
+    expect(transientRun(j("overloaded", 529))).toBe("HTTP 529");
+  });
+  it("treats every other class as genuine", () => {
+    expect(transientRun(j("read ECONNRESET", 401))).toBeNull();
+    expect(transientRun(j("rate limited", 429))).toBeNull();
+    expect(transientRun(j("exit 1", null))).toBeNull();
+    expect(transientRun(j("result: invalid", null))).toBeNull();
+    expect(transientRun(j("max turns reached", null, "bounds"))).toBeNull();
+    expect(transientRun(j("max budget reached", null, "bounds"))).toBeNull();
+    expect(transientRun(j("stage timeout", null, "timeout"))).toBeNull();
   });
 });

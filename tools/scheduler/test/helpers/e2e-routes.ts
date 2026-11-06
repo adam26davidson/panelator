@@ -26,10 +26,13 @@ const script = join(import.meta.dirname, "..", "fixtures", "stage-script.ts");
 const events = join(import.meta.dirname, "..", "fixtures", "streams", "claude-success.jsonl");
 export const BOT = "panelator-pipeline[bot]";
 
-/** A scripted result: a value, `undefined` for a failed run, `RATE_LIMITED` for a 429, or a function of the run that does the agent's git work first. */
+/** A scripted result: a value, `undefined` for a failed run, `RATE_LIMITED` for a 429, `NETWORK_DOWN` for an unreachable API, or a function of the run that does the agent's git work first. */
 export type Scripted = unknown | ((run: StageRun) => unknown);
 /** A scripted run the vendor rate-limited: the fake harness exits 2 and `judge` reports a 429. */
 export const RATE_LIMITED = Symbol("rate-limited");
+/** A scripted run whose harness could not reach the API (spec 045): the fake harness exits 3 and `judge` reports the live reason with no status. */
+export const NETWORK_DOWN = Symbol("network-down");
+export const UNREACHABLE_REASON = "API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)";
 
 export interface RunSeen {
   resume?:{sessionId:string};
@@ -58,11 +61,11 @@ export function scripted(results: Record<string, Scripted[]>): Adapter & { ran: 
       });
       const next = results[run.stage]?.shift();
       const r = typeof next === "function" ? (next as (run: StageRun) => unknown)(run) : next;
-      const argv = [process.execPath, script, events, run.resultPath, r === RATE_LIMITED ? "2" : r === undefined ? "1" : "0", "0"];
-      if (r !== undefined && r !== RATE_LIMITED) argv.push(JSON.stringify(r));
+      const argv = [process.execPath, script, events, run.resultPath, r === RATE_LIMITED ? "2" : r === NETWORK_DOWN ? "3" : r === undefined ? "1" : "0", "0"];
+      if (r !== undefined && r !== RATE_LIMITED && r !== NETWORK_DOWN) argv.push(JSON.stringify(r));
       return { argv, env: {} };
     },
-    judge: (_e, exit, t) => t ? { outcome: "timeout", reason: "t", apiErrorStatus: null, finalText: null } : exit === 0 ? { outcome: "ok", reason: null, apiErrorStatus: null, finalText: "x" } : exit === 2 ? { outcome: "failed", reason: "429", apiErrorStatus: 429, finalText: null } : { outcome: "failed", reason: "exit", apiErrorStatus: null, finalText: null },
+    judge: (_e, exit, t) => t ? { outcome: "timeout", reason: "t", apiErrorStatus: null, finalText: null } : exit === 0 ? { outcome: "ok", reason: null, apiErrorStatus: null, finalText: "x" } : exit === 2 ? { outcome: "failed", reason: "429", apiErrorStatus: 429, finalText: null } : exit === 3 ? { outcome: "failed", reason: UNREACHABLE_REASON, apiErrorStatus: null, finalText: null } : { outcome: "failed", reason: "exit", apiErrorStatus: null, finalText: null },
     usage: () => ({ cost_usd: 0.1, input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0 }),
   };
 }
