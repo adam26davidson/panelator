@@ -508,6 +508,7 @@ are stale and are corrected as part of B.
 - `specs/035-pnpm-pinned-and-install-before-run/spec.md` (issue #56)
 - `specs/036-main-checks-watcher-needs-subscriber/spec.md` (issue #57)
 - `specs/037-filer-apply-lists-open-issues-once/spec.md` (issue #58)
+- `specs/038-param-mode-leaves-the-action-log/spec.md` (issue #59)
 - planned: console
   title: Specify and build the maintainer console (row E, second part)
   brief: The maintainer console of section 9, built on the design stage of spec 029 and
