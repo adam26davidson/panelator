@@ -505,6 +505,7 @@ are stale and are corrected as part of B.
 - `specs/032-spec-008-lists-advisory-lookup/spec.md`
 - `specs/033-rerun-workflow-permission/spec.md` (issue #53)
 - `specs/034-claim-drops-slot-field/spec.md` (issue #55)
+- `specs/035-pnpm-pinned-and-install-before-run/spec.md` (issue #56)
 - planned: console
   title: Specify and build the maintainer console (row E, second part)
   brief: The maintainer console of section 9, built on the design stage of spec 029 and
