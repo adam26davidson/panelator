@@ -71,7 +71,7 @@ credentials file of AC-1 is present and valid at service start.
 
 **Credentials and connection**
 
-- AC-1. **Credentials live outside the repository.** `agents/scheduler.yaml`
+- AC-1. Amended by [043-telegram-connects-with-backoff](../043-telegram-connects-with-backoff/spec.md) AC-1: the `getMe` check runs in the poller, retried with the AC-2 backoff; only an authorization error turns Telegram off, and a connection failure is logged once as `telegram: connecting` and retried. **Credentials live outside the repository.** `agents/scheduler.yaml`
   gains a `telegram` block: `credentials_path` (default
   `~/.config/panelator/telegram.json`) and `long_poll_timeout_s` (default
   50). The file holds `{ "bot_token": "<token>", "chat_id": <integer> }`.
@@ -84,7 +84,7 @@ credentials file of AC-1 is present and valid at service start.
   prompt, or any file in the repository; a test asserts the log and the
   stage environment after a question is sent. A `telegram` config block
   with an unknown key fails config validation (spec 001 AC-1 rules).
-- AC-2. Amended by [042-poller-handler-failure-is-not-an-outage](../042-poller-handler-failure-is-not-an-outage/spec.md) AC-1: the outage, recovery and backoff lines are for a `getUpdates` error only; a throw from the update handler is logged as a handler failure, leaves the offset and retries after a fixed 2 s. **One long-poll connection, no timer.** Given Telegram on, then the
+- AC-2. Amended by [042-poller-handler-failure-is-not-an-outage](../042-poller-handler-failure-is-not-an-outage/spec.md) AC-1: the outage, recovery and backoff lines are for a `getUpdates` error only; a throw from the update handler is logged as a handler failure, leaves the offset and retries after a fixed 2 s. Amended by [043-telegram-connects-with-backoff](../043-telegram-connects-with-backoff/spec.md) AC-1: the loop starts with a `getMe` connect step paced by the same 1 to 60 s backoff, and "Telegram on" includes that the step has succeeded. **One long-poll connection, no timer.** Given Telegram on, then the
   scheduler process keeps one `getUpdates` request open with the configured
   timeout and `allowed_updates: ["message", "callback_query"]`, and issues
   the next one as soon as the previous returns. No periodic Telegram poll
