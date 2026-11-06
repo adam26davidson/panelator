@@ -129,8 +129,7 @@ export class Scheduler {
     if(deps.registry) {
       deps.emitEvent ??= (event,payload,exclude)=>emit(deps.paths,deps.registry!,event,payload,deps.now(),exclude);
       // Spec 020 AC-1: the queue's listener delivers through emit itself, so the excluded agent (the one a failure
-      // finding names) is honoured whatever emitEvent the service or a test supplied (bin/scheduler.ts passes a
-      // two-parameter wrapper that would drop it).
+      // finding names) is honoured whatever emitEvent the service or a test supplied.
       onFindingsQueued(deps.paths,(count,offset,exclude)=>emit(deps.paths,deps.registry!,'finding_queued',{count,offset},deps.now(),exclude));
     }
     this.#drive = opts.driveChain ?? defaultDriveChain;
