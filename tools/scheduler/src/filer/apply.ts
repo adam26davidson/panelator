@@ -1,5 +1,5 @@
 import {appendFile,writeFile,rename} from 'node:fs/promises';
-import type {Question} from '../types.ts';
+import type {IssueData,Question} from '../types.ts';
 import {validate} from '../schema/validate.ts';
 import {readJsonLines,recordKey,settledCursor,advisoryAttempts,isRestingDiscard,isCapabilityIssue,stripCapabilityMarkers,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,CAPABILITY_TITLE,CAPABILITY_CLOSED_MARKER,type AdvisoryFailure,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
 export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'};rests_on_pr?:number}
@@ -57,13 +57,18 @@ ${CAPABILITY_MARKER}`;
 async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:FilerResult,triage:TriageEntry[]):Promise<void> {
  // The open capability issue, looked up at most once per batch and only while something is held (spec 014 AC-6).
  let capability:number|null|undefined;
- const capabilityIssue=async()=>capability!==undefined?capability:(capability=(await d.gh.searchOpenIssuesByMarker(CAPABILITY_MARKER)).find(i=>isCapabilityIssue(i,d.botLogin))?.number??null);
+ // The bot's open issues, listed at most once per batch and kept current with the batch's own creates and closes (spec 037).
+ let open:IssueData[]|undefined;
+ const openBotIssues=async()=>open??=await d.gh.listOpenIssuesByAuthor(d.botLogin);
+ const created=(number:number,title:string,body:string,labels:string[])=>{open?.push({number,title,author:d.botLogin,body,labels,state:'open',labelEvents:[],createdAt:d.now().toISOString()});return number;};
+ const closed=(number:number)=>{if(open)open=open.filter(i=>i.number!==number);};
+ const capabilityIssue=async()=>capability!==undefined?capability:(capability=(await openBotIssues()).find(i=>isCapabilityIssue(i,d.botLogin))?.number??null);
  const lastRows=()=>{const m=new Map<string,TriageEntry>();for(const t of triage)m.set(t.ref,t);return [...m.values()];};
  const heldUnderIssue=()=>lastRows().some(t=>t.held&&t.capability_issue!==undefined);
  // The closing comment carries a marker, so a close that failed after commenting does not comment again.
  const closeCapability=async(n:number,text:string)=>{
   if(!(await d.gh.listComments(n)).some(c=>c.body.includes(CAPABILITY_CLOSED_MARKER)))await d.gh.comment(n,`${text}\n\n${CAPABILITY_CLOSED_MARKER}`);
-  await d.gh.closeIssue(n,'');capability=null;
+  await d.gh.closeIssue(n,'');closed(n);capability=null;
  };
  let touchedHeld=false;
  for(const dec of result.decisions) {
@@ -77,7 +82,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   const applied:{fallback?:{class:string;used:string}}={};
   const file=async()=>{
    const issue=dec.issue?{...dec.issue}:{title:record?.finding.what??abandoned!.issue.title,body:JSON.stringify(record?.finding??abandoned!.issue,null,2),class:defaultClass(d.classes)};
-   const existing=(await d.gh.searchOpenIssuesByMarker('<!-- panelator-finding:')).find(i=>i.author===d.botLogin&&new RegExp(`<!-- panelator-finding:[^:]+:${dec.ref.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')} -->`).test(i.body));
+   const existing=(await openBotIssues()).find(i=>i.author===d.botLogin&&new RegExp(`<!-- panelator-finding:[^:]+:${dec.ref.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')} -->`).test(i.body));
    if(existing)return existing.number;
    // The class is resolved only where it is applied, so one decision's label never decides the batch (spec 018 AC-2, AC-3).
    const resolved=resolveClass(issue.class,d.classes);
@@ -87,7 +92,8 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
    // Nor can it carry the capability issue's marker (spec 014 AC-6).
    let body=stripCapabilityMarkers(issue.body.replace(/^\s*Spec:.*$/gm,''));
    if(dec.outcome==='escalate')body=`Possible design flaw\n\n${body}\n\nQuestion for the spec stage:\n${JSON.stringify(dec.question,null,2)}`;
-   return d.gh.createIssue(stripCapabilityMarkers(issue.title),stripCapabilityMarkers(`${body}\n\nFiler verification: ${dec.reason}`)+`\n\n${marker}`,[issue.class,'validated']);
+   const title=stripCapabilityMarkers(issue.title),text=stripCapabilityMarkers(`${body}\n\nFiler verification: ${dec.reason}`)+`\n\n${marker}`,labels=[issue.class,'validated'];
+   return created(await d.gh.createIssue(title,text,labels),title,text,labels);
   };
   // A security flag overrides every public outcome; a discard is private and stays a discard (AC-19). A record
   // already judged security once (a retried advisory) is as private as a flagged one (spec 014 AC-9), and so is a
@@ -111,7 +117,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
      // is raised with the maintainer through the chain. Any held ref stays linked to an open capability issue (spec 014 AC-5, AC-6).
      row.held=true;
      let filed=false,n=await capabilityIssue();
-     if(n===null&&kind==='permission'){const held=lastRows().filter(t=>t.held&&t.ref!==dec.ref).length+1;n=capability=await d.gh.createIssue(CAPABILITY_TITLE,capabilityIssueBody(status,held),[d.classes.includes('class:tooling')?'class:tooling':d.classes[0],'validated']);filed=true;}
+     if(n===null&&kind==='permission'){const held=lastRows().filter(t=>t.held&&t.ref!==dec.ref).length+1;{const text=capabilityIssueBody(status,held),labels=[d.classes.includes('class:tooling')?'class:tooling':d.classes[0]!,'validated'];n=capability=created(await d.gh.createIssue(CAPABILITY_TITLE,text,labels),CAPABILITY_TITLE,text,labels);}filed=true;}
      if(n!==null)row.capability_issue=n;
      row.reason+=` (held after ${row.attempt} attempts${row.capability_issue?`; capability issue #${row.capability_issue}`:''})`;
      // A daily probe that fails again under the same open question stays quiet; the full error stays private.
@@ -121,14 +127,14 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   } else switch(dec.outcome) {
    case 'file':case 'escalate': row.issue=await file();break;
    case 'merge_into': {
-    const target=(await d.gh.listOpenIssuesByAuthor(d.botLogin)).find(i=>i.number===dec.issue_number);
+    const target=(await openBotIssues()).find(i=>i.number===dec.issue_number);
     if(!target){row.outcome='file';row.reason+=' (merge target closed or not bot-authored)';row.issue=await file();}
     else {const comments=await d.gh.listComments(target.number);if(!comments.some(c=>c.body.includes(`:${dec.ref} -->`)))await d.gh.comment(target.number,stripCapabilityMarkers(`${JSON.stringify(record?.finding,null,2)}\n\n${dec.reason}`)+`\n\n${marker}`);row.issue=target.number;}break;
    }
    case 'retry':
     if(triage.filter(t=>t.ref===dec.ref&&t.outcome==='retry').length>=2){row.outcome='defer';row.reason='retry limit of two exhausted';break;}
     await d.gh.comment(abandoned!.issue.number,stripCapabilityMarkers(`Retry: ${dec.reason}`)+`\n\n${marker}`);await d.gh.removeLabel(abandoned!.issue.number,'abandoned');row.issue=abandoned!.issue.number;break;
-   case 'rewrite': row.issue=await file();await d.gh.closeIssue(abandoned!.issue.number,stripCapabilityMarkers(`Superseded by #${row.issue}: ${dec.reason}`));break;
+   case 'rewrite': row.issue=await file();await d.gh.closeIssue(abandoned!.issue.number,stripCapabilityMarkers(`Superseded by #${row.issue}: ${dec.reason}`));closed(abandoned!.issue.number);break;
    case 'close':await d.gh.closeIssue(abandoned!.issue.number,stripCapabilityMarkers(dec.reason));row.issue=abandoned!.issue.number;break;
    case 'discard':case 'defer':break;
   }

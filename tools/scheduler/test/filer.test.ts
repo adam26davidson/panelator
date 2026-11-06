@@ -53,7 +53,7 @@ it('merge_into comments on a bot issue, or files a fallback for missing targets'
  await applyFilerResult(x.d,'run',x.input,{summary:'merge',decisions:[{ref:'1',outcome:'merge_into',reason:'same issue',issue_number:4}]});expect(x.gh.comment).toHaveBeenCalledTimes(1);expect(x.gh.createIssue).not.toHaveBeenCalled();
 });
 it('uses stable source markers after a crash between issue creation and triage',async()=>{
- const {d,input,gh}=await setup();gh.searchOpenIssuesByMarker.mockResolvedValue([{number:9,author:'bot',body:'<!-- panelator-finding:old-run:1 -->'}] as never);
+ const {d,input,gh}=await setup();gh.listOpenIssuesByAuthor.mockResolvedValue([{number:9,author:'bot',body:'<!-- panelator-finding:old-run:1 -->'}] as never);
  await applyFilerResult(d,'new-run',input,{summary:'file',decisions:[{ref:'1',outcome:'file',reason:'verified',issue}]});expect(gh.createIssue).not.toHaveBeenCalled();
 });
 it('escalations are design-flaw issues for spec/question-check, not direct questions',async()=>{
@@ -130,7 +130,6 @@ it('holds a permission failure after three attempts and raises one content-free 
  expect((await run(1)).records.map(r=>[r.ref,r.advisory_attempts])).toEqual([['1',1],['2',1]]);
  expect(gh.createIssue).not.toHaveBeenCalled();
  // The listing stays empty: the issue created for ref 1 is remembered for ref 2 in the same batch (review 4).
- gh.searchOpenIssuesByMarker.mockResolvedValue([]);
  await run(2);
  const triage=await readJsonLines<TriageEntry>(paths.findingsTriage);
  expect(triage.slice(-2)).toEqual([expect.objectContaining({ref:'1',failed:true,attempt:3,held:true,capability_issue:42}),expect.objectContaining({ref:'2',held:true,capability_issue:42})]);
@@ -155,8 +154,7 @@ it('probes one held ref a day while the capability issue is open, re-holding on 
  const {d,paths,gh,notify,clock,run}=await securitySetup([secret,{...secret,what:'Second leak'}]);
  gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
  for(let i=0;i<3;i++)await run(i);
- gh.listOpenIssuesByAuthor.mockResolvedValue([{number:42,title:'cap',labels:[]}] as never);
- gh.searchOpenIssuesByMarker.mockResolvedValue([capIssue] as never);
+ gh.listOpenIssuesByAuthor.mockResolvedValue([{...capIssue,labels:[]}] as never);
  expect((await buildFilerInput(d)).records).toEqual([]);
  clock.plus(25*3600000);
  const probe=await buildFilerInput(d);expect(probe.records.map(r=>[r.ref,r.advisory_attempts])).toEqual([['1',2]]);
@@ -169,21 +167,20 @@ it('probes one held ref a day while the capability issue is open, re-holding on 
  gh.listOpenIssuesByAuthor.mockResolvedValue([]);
  expect((await buildFilerInput(d)).records.map(r=>[r.ref,r.advisory_attempts])).toEqual([['1',2],['2',2]]);
  // A probe that succeeds closes the capability issue once, listing it once per batch (review 6).
- gh.createDraftSecurityAdvisory.mockResolvedValue('GHSA-ok');gh.searchOpenIssuesByMarker.mockClear();
+ gh.createDraftSecurityAdvisory.mockResolvedValue('GHSA-ok');gh.listOpenIssuesByAuthor.mockReset();gh.listOpenIssuesByAuthor.mockResolvedValueOnce([]).mockResolvedValue([{...capIssue,labels:[]}] as never);
  await run('ok');
- expect(gh.searchOpenIssuesByMarker).toHaveBeenCalledTimes(1);expect(gh.closeIssue).toHaveBeenCalledTimes(1);expect(gh.closeIssue.mock.calls[0]).toEqual([42,'']);expect(gh.comment).toHaveBeenCalledWith(42,expect.stringMatching(/advisor/i));
+ expect(gh.listOpenIssuesByAuthor).toHaveBeenCalledTimes(2);expect(gh.searchOpenIssuesByMarker).not.toHaveBeenCalled();expect(gh.closeIssue).toHaveBeenCalledTimes(1);expect(gh.closeIssue.mock.calls[0]).toEqual([42,'']);expect(gh.comment).toHaveBeenCalledWith(42,expect.stringMatching(/advisor/i));
  expect((await buildFilerInput(d)).records).toEqual([]);
 });
 it('a successful advisory with no held row does not list issues (review 6)',async()=>{
  const {gh,run}=await securitySetup([secret]);
- await run(0);expect(gh.createDraftSecurityAdvisory).toHaveBeenCalledTimes(1);expect(gh.searchOpenIssuesByMarker).not.toHaveBeenCalled();
+ await run(0);expect(gh.createDraftSecurityAdvisory).toHaveBeenCalledTimes(1);expect(gh.listOpenIssuesByAuthor).toHaveBeenCalledTimes(1);expect(gh.searchOpenIssuesByMarker).not.toHaveBeenCalled();
 });
 it('the last held ref succeeding still closes the capability issue (review 6)',async()=>{
  const {gh,clock,run}=await securitySetup([secret]);
  gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
  for(let i=0;i<3;i++)await run(i);
- gh.listOpenIssuesByAuthor.mockResolvedValue([{number:42,title:'cap',labels:[]}] as never);
- gh.searchOpenIssuesByMarker.mockResolvedValue([capIssue] as never);
+ gh.listOpenIssuesByAuthor.mockResolvedValue([{...capIssue,labels:[]}] as never);
  clock.plus(25*3600000);gh.createDraftSecurityAdvisory.mockResolvedValue('GHSA-ok');
  expect((await run('probe')).records.map(r=>r.ref)).toEqual(['1']);
  expect(gh.closeIssue).toHaveBeenCalledWith(42,'');expect(gh.comment).toHaveBeenCalledWith(42,expect.stringMatching(/advisor/i));
@@ -194,8 +191,7 @@ it('a held ref stays held when the failure kind changes, keeping its capability 
  const {d,paths,gh,clock,run}=await securitySetup([secret]);
  gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
  for(let i=0;i<3;i++)await run(i);
- gh.listOpenIssuesByAuthor.mockResolvedValue([{number:42,title:capIssue.title,labels:[]}] as never);
- gh.searchOpenIssuesByMarker.mockResolvedValue([capIssue] as never);
+ gh.listOpenIssuesByAuthor.mockResolvedValue([{...capIssue,labels:[]}] as never);
  clock.plus(25*3600000);gh.createDraftSecurityAdvisory.mockRejectedValue(failing(502,'Bad gateway'));
  expect((await run('probe')).records.map(r=>r.ref)).toEqual(['1']);
  expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1)).toMatchObject({ref:'1',held:true,failure:'error',capability_issue:42,attempt:3});
@@ -225,7 +221,7 @@ it('the capability marker cannot be smuggled into filed issues or merge comments
  expect(gh.createIssue.mock.calls[0][1]).not.toContain('<!-- panelator-capability:');expect(String((gh.comment.mock.calls[0] as unknown[])[1])).not.toContain('<!-- panelator-capability:');
  // A bot issue carrying the marker under another title is not the capability issue.
  const x=await securitySetup([secret]);x.gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
- x.gh.searchOpenIssuesByMarker.mockResolvedValue([{...capIssue,number:9,title:'Some finding'}] as never);
+ x.gh.listOpenIssuesByAuthor.mockResolvedValue([{...capIssue,labels:[],number:9,title:'Some finding'}] as never);
  for(let i=0;i<3;i++)await x.run(i);
  expect(x.gh.createIssue).toHaveBeenCalledTimes(1);expect((await readJsonLines<TriageEntry>(x.paths.findingsTriage)).at(-1)?.capability_issue).toBe(42);
 });
@@ -233,8 +229,7 @@ it('discarding the last held ref closes the capability issue; a close already co
  const {d,gh,clock,run}=await securitySetup([secret]);
  gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
  for(let i=0;i<3;i++)await run(i);
- gh.listOpenIssuesByAuthor.mockResolvedValue([{number:42,title:capIssue.title,labels:[]}] as never);
- gh.searchOpenIssuesByMarker.mockResolvedValue([capIssue] as never);
+ gh.listOpenIssuesByAuthor.mockResolvedValue([{...capIssue,labels:[]}] as never);
  clock.plus(25*3600000);
  gh.listComments.mockResolvedValue([{body:'done <!-- panelator-capability-closed -->'}] as never);
  const probe=await buildFilerInput(d);
@@ -404,8 +399,7 @@ it('copies of a held advisory are not sent on their own; they ride on its probe 
  gh.createDraftSecurityAdvisory.mockRejectedValue(denied());
  for(let i=0;i<3;i++)expect((await run(i)).records.map(r=>[r.ref,r.duplicate_refs])).toEqual([['1',['2','3']]]);
  expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1)).toMatchObject({ref:'1',held:true,capability_issue:42});
- gh.listOpenIssuesByAuthor.mockResolvedValue([{number:42,title:capIssue.title,labels:[]}] as never);
- gh.searchOpenIssuesByMarker.mockResolvedValue([capIssue] as never);
+ gh.listOpenIssuesByAuthor.mockResolvedValue([{...capIssue,labels:[]}] as never);
  expect((await run(3,'file')).records).toEqual([]);
  expect(gh.createIssue).toHaveBeenCalledTimes(1);
  clock.plus(25*3600000);gh.createDraftSecurityAdvisory.mockResolvedValue('GHSA-ok');
@@ -460,4 +454,73 @@ it('an escalation settles its copies onto the one design-flaw issue (AC-2, revie
  await applyFilerResult(d,'run',await buildFilerInput(d),{summary:'x',decisions:[{ref:'1',outcome:'escalate',reason:'flaw',issue,question:{kind:'technical',question:'q?',options:[{label:'a',cost:'b'}],recommendation:'a'}}]});
  expect(gh.createIssue).toHaveBeenCalledTimes(1);
  expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).map(t=>[t.ref,t.outcome,t.issue])).toEqual([['1','escalate',42],['2','escalate',42]]);
+});
+
+// Spec 037: applying a filer result lists the open issues at most once.
+const listings=(gh:Awaited<ReturnType<typeof setup>>['gh'])=>[gh.listOpenIssuesByAuthor,gh.searchOpenIssuesByMarker,gh.listOpenIssuesByLabel,(gh as unknown as {listOpenIssues?:{mock:{calls:unknown[]}}}).listOpenIssues].reduce((n,f)=>n+(f?.mock.calls.length??0),0);
+const recs=(n:number)=>Array.from({length:n},(_,i)=>({ref:String(i+1),finding:{...finding,what:`bug ${i+1}`}}));
+const abandonedRec=(n:number)=>({ref:`issue:${n}`,issue:{number:n,title:'Old',body:'old',labels:[]}}) as never;
+const botIssue=(number:number,body='')=>({number,title:'t',author:'bot',body,labels:[],labelEvents:[],state:'open',createdAt:'2026-10-01T00:00:00Z'});
+const filed=(ref:string):Decision=>({ref,outcome:'file',reason:'verified',issue});
+it('AC-1: a batch of 20 files lists once, by author',async()=>{
+ const {d,gh,paths}=await setup();const input:FilerInput={...(await setup()).input,records:recs(20)};
+ await applyFilerResult(d,'run',input,{summary:'s',decisions:input.records.map(r=>filed(r.ref))});
+ expect(listings(gh)).toBe(1);expect(gh.listOpenIssuesByAuthor).toHaveBeenCalledWith('bot');expect(gh.createIssue).toHaveBeenCalledTimes(20);
+ expect(await readJsonLines<TriageEntry>(paths.findingsTriage)).toHaveLength(20);
+});
+it('AC-2: a mixed batch lists once and keeps each effect',async()=>{
+ const {d,gh,input}=await setup();gh.listOpenIssuesByAuthor.mockResolvedValue([botIssue(4),botIssue(7)] as never);
+ const q={kind:'technical' as const,question:'q?',options:[{label:'a',cost:'b'}],recommendation:'a'};
+ const full:FilerInput={...input,records:recs(3),abandoned:[abandonedRec(7)]};
+ await applyFilerResult(d,'run',full,{summary:'s',decisions:[filed('1'),{ref:'2',outcome:'escalate',reason:'r',issue,question:q},{ref:'3',outcome:'merge_into',reason:'same',issue_number:4},{ref:'issue:7',outcome:'rewrite',reason:'better',issue}]});
+ expect(listings(gh)).toBe(1);expect(gh.createIssue).toHaveBeenCalledTimes(3);expect(gh.comment).toHaveBeenCalledWith(4,expect.any(String));expect(gh.closeIssue).toHaveBeenCalledWith(7,expect.stringContaining('Superseded'));
+});
+it('AC-3: decisions needing no lookup make no listing',async()=>{
+ const {d,gh,input}=await setup();const full:FilerInput={...input,records:recs(1),abandoned:[abandonedRec(5),abandonedRec(6),abandonedRec(8)]};
+ await applyFilerResult(d,'run',full,{summary:'s',decisions:[{ref:'1',outcome:'discard',reason:'no'},{ref:'issue:5',outcome:'retry',reason:'r'},{ref:'issue:6',outcome:'close',reason:'c'},{ref:'issue:8',outcome:'defer',reason:'d'}]});
+ expect(listings(gh)).toBe(0);
+});
+it('AC-4: the marker check reads the bot listing',async()=>{
+ const {d,gh,input,paths}=await setup();gh.listOpenIssuesByAuthor.mockResolvedValue([botIssue(9,'<!-- panelator-finding:old-run:1 -->')] as never);
+ await applyFilerResult(d,'new-run',input,{summary:'s',decisions:[filed('1')]});
+ expect(gh.createIssue).not.toHaveBeenCalled();expect(gh.searchOpenIssuesByMarker).not.toHaveBeenCalled();expect((await readJsonLines<TriageEntry>(paths.findingsTriage))[0].issue).toBe(9);
+ const x=await setup();// authored by someone else, so not in the bot's listing
+ await applyFilerResult(x.d,'new-run',x.input,{summary:'s',decisions:[filed('1')]});expect(x.gh.createIssue).toHaveBeenCalledTimes(1);
+});
+it('AC-5: the merge target is read from the cache; a missing one files',async()=>{
+ const {d,gh,input,paths}=await setup();gh.listOpenIssuesByAuthor.mockResolvedValue([botIssue(4)] as never);
+ await applyFilerResult(d,'run',input,{summary:'s',decisions:[{ref:'1',outcome:'merge_into',reason:'same',issue_number:4}]});
+ expect(gh.comment).toHaveBeenCalledTimes(1);expect(gh.createIssue).not.toHaveBeenCalled();expect(listings(gh)).toBe(1);
+ const x=await setup();x.gh.listOpenIssuesByAuthor.mockResolvedValue([botIssue(5)] as never);
+ await applyFilerResult(x.d,'run',x.input,{summary:'s',decisions:[{ref:'1',outcome:'merge_into',reason:'same',issue_number:4}]});
+ expect(x.gh.createIssue).toHaveBeenCalledTimes(1);expect(listings(x.gh)).toBe(1);expect((await readJsonLines<TriageEntry>(x.paths.findingsTriage))[0].reason).toContain('merge target closed or not bot-authored');
+ void paths;
+});
+it('AC-6: the capability lookup and a file share one listing',async()=>{
+ const {d,gh,paths,run}=await securitySetup([secret]);d.classes=['class:bug','class:tooling'];
+ gh.createDraftSecurityAdvisory.mockRejectedValue(denied());for(let i=0;i<2;i++)await run(i);
+ gh.listOpenIssuesByAuthor.mockClear();gh.listOpenIssuesByAuthor.mockResolvedValue([{...capIssue,labels:[]}] as never);
+ const input:FilerInput={records:[{ref:'1',finding:secret},{ref:'2',finding:{...finding,what:'plain'}}],abandoned:[],open_issues:[],cursor:0,issue_classes:['class:bug']};
+ const before=listings(gh);
+ await applyFilerResult(d,'run-3',{...input,records:[input.records[0]!]},{summary:'s',decisions:[{ref:'1',outcome:'security',reason:'p',advisory}]});
+ expect(listings(gh)-before).toBe(1);expect(gh.createIssue).not.toHaveBeenCalled();expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).at(-1)).toMatchObject({held:true,capability_issue:42});expect(gh.searchOpenIssuesByMarker).not.toHaveBeenCalled();
+ const y=await setup();y.d.classes=['class:bug','class:tooling'];y.gh.listOpenIssuesByAuthor.mockResolvedValue([{...capIssue,labels:[]}] as never);
+ await applyFilerResult(y.d,'run',{...y.input,records:recs(2)},{summary:'s',decisions:[filed('1'),filed('2')]});expect(listings(y.gh)).toBe(1);
+});
+it('AC-7: an issue created in the batch is a merge target',async()=>{
+ const {d,gh,input}=await setup();const full:FilerInput={...input,records:recs(2)};
+ await applyFilerResult(d,'run',full,{summary:'s',decisions:[filed('1'),{ref:'2',outcome:'merge_into',reason:'same',issue_number:42}]});
+ expect(gh.comment).toHaveBeenCalledWith(42,expect.any(String));expect(gh.createIssue).toHaveBeenCalledTimes(1);expect(listings(gh)).toBe(1);
+});
+it('AC-8: an issue closed in the batch is no longer a merge target',async()=>{
+ const {d,gh,input}=await setup();gh.listOpenIssuesByAuthor.mockResolvedValue([botIssue(7)] as never);
+ const full:FilerInput={...input,records:recs(1),abandoned:[abandonedRec(7)]};
+ await applyFilerResult(d,'run',full,{summary:'s',decisions:[{ref:'issue:7',outcome:'rewrite',reason:'better',issue},{ref:'1',outcome:'merge_into',reason:'same',issue_number:7}]});
+ expect(gh.comment).not.toHaveBeenCalled();expect(gh.createIssue).toHaveBeenCalledTimes(2);expect(listings(gh)).toBe(1);
+});
+it('AC-9: a failed listing aborts the batch with nothing applied',async()=>{
+ const {d,gh,input,paths}=await setup();gh.listOpenIssuesByAuthor.mockRejectedValue(new Error('issue list incomplete: got 6, server reports 7'));
+ const full:FilerInput={...input,records:recs(3),cursor:0};
+ await expect(applyFilerResult(d,'run',full,{summary:'s',decisions:full.records.map(r=>filed(r.ref))})).rejects.toThrow('issue list incomplete: got 6, server reports 7');
+ expect(gh.createIssue).not.toHaveBeenCalled();expect(await readJsonLines(paths.findingsTriage)).toEqual([]);expect(JSON.parse(await readFile(paths.findingsCursor,'utf8')).line).toBe(0);
 });

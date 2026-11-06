@@ -328,8 +328,8 @@ records as chain stages.
   then the scheduler creates the issue as the App with the class label and
   `validated`, and a body that ends with a hidden marker
   `<!-- panelator-finding:<run id>:<ref> -->`, used so a crash does not file
-  it twice (the scheduler searches open issues for the marker before
-  creating). A `web-ui` or `widget` spec is not written by the filer; the
+  it twice (the scheduler searches the bot's open issues for the marker
+  before creating, listing them once per run; spec 037). A `web-ui` or `widget` spec is not written by the filer; the
   issue has no `Spec:` line, so the chain starts at the spec stage (spec 006
   AC-19). Given a `merge_into` decision whose issue is closed or not
   bot-authored, then the decision is applied as `file` instead and the
