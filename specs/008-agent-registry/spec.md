@@ -75,7 +75,7 @@ records as chain stages.
 
 **Registry** (design section 6.1)
 
-- AC-1. **A standing agent is a file.** `agents/standing/<name>.md` has YAML
+- AC-1. Amended by [041-registry-validates-standing-definitions](../041-registry-validates-standing-definitions/spec.md) AC-7: the frontmatter's shape is checked against `standing-definition.json` before the loader's own checks. **A standing agent is a file.** `agents/standing/<name>.md` has YAML
   frontmatter and a prompt body, parsed by the stage-definition loader:
   `name` (equal to the file name), `kind: standing`, `trigger`, `harness`,
   `model`, optional `fallback`, `tier`, optional `effort`, `bounds`
