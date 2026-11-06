@@ -517,6 +517,7 @@ are stale and are corrected as part of B.
 - `specs/044-conversation-turn-outside-a-conversation-is-an-invalid-result/spec.md` (issue #76)
 - `specs/045-standing-agent-waits-out-network-outage/spec.md` (issue #78)
 - `specs/046-agents-md-conditions-pnpm-test-on-a-shell/spec.md` (issue #80)
+- `specs/047-spec-017-cites-stages-section/spec.md` (issue #81)
 - planned: console
   title: Specify and build the maintainer console (row E, second part)
   brief: The maintainer console of section 9, built on the design stage of spec 029 and
