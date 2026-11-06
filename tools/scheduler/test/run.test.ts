@@ -114,6 +114,27 @@ describe("runStage", () => {
     expect(outcome.resultErrors).toEqual(out.resultErrors);
     expect(outcome).toMatchObject({ outcome: "failed", reason: "result: invalid", ioErrors: [] });
   });
+  it("fails a plain run that returns the conversation shape (spec 044 AC-1)", async () => {
+    const { paths, ctx, req } = setup({ result: { conversation: "settled", decision: "approve it", findings: [] } });
+    await ensureStateDirs(paths);
+    const out = await runStage(ctx, req);
+    const reason = "result: invalid: conversation turn outside a conversation";
+    expect(out.outcome).toBe("failed");
+    expect(out.reason).toBe(reason);
+    expect(out.resultErrors).toEqual(["conversation turn outside a conversation"]);
+    expect(out.result).toBeNull();
+    const dir = join(paths.runs, out.runId);
+    expect(JSON.parse(readFileSync(join(dir, "outcome.json"), "utf8"))).toMatchObject({ outcome: "failed", reason, resultErrors: ["conversation turn outside a conversation"] });
+    expect(existsSync(join(dir, "usage.json"))).toBe(true);
+  });
+  it("accepts the conversation shape from a conversation turn (spec 044 AC-4)", async () => {
+    const { paths, ctx, req } = setup({ result: { conversation: "settled", decision: "approve it", findings: [] } });
+    await ensureStateDirs(paths);
+    req.conversation = true;
+    const out = await runStage(ctx, req);
+    expect(out.outcome).toBe("ok");
+    expect(out.result).toMatchObject({ conversation: "settled" });
+  });
   it("records failed on a non-zero exit", async () => {
     const { paths, ctx, req } = setup({ result: goodPlan, exitCode: 1 });
     await ensureStateDirs(paths);
