@@ -1,14 +1,17 @@
 import { readFile, writeFile, rename } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
+import { UpdateDeferred } from "./answers.ts";
 import { TelegramClient, type TelegramUpdate } from "./client.ts";
 export async function saveJson(path: string, value: unknown) {
   await writeFile(path + ".tmp", JSON.stringify(value));
   await rename(path + ".tmp", path);
 }
+export const HANDLER_RETRY_MS = 2000;
 export class TelegramPoller {
   private controller = new AbortController();
   private running: Promise<void> | null = null;
   private foreign = new Set<number>();
+  private deferred = new Set<number>();
   private client: TelegramClient;
   private offsetPath: string;
   private timeout: number;
@@ -40,6 +43,14 @@ export class TelegramPoller {
     this.controller.abort();
     await this.running;
   }
+  private async pause(ms: number) {
+    try {
+      if (this.sleep) await this.sleep(ms);
+      else await delay(ms, undefined, { signal: this.controller.signal });
+    } catch {
+      /* stopping */
+    }
+  }
   private async loop() {
     let offset = JSON.parse(
       await readFile(this.offsetPath, "utf8").catch(
@@ -60,6 +71,7 @@ export class TelegramPoller {
           outage = false;
         }
         backoff = 1;
+        let handlerFailed = false;
         for (const u of updates.sort((a, b) => a.update_id - b.update_id)) {
           if (this.controller.signal.aborted) break;
           if (u.update_id < offset) continue;
@@ -72,27 +84,41 @@ export class TelegramPoller {
               this.foreign.add(chat);
               this.log({ kind: "telegram-foreign-chat", chat_id: chat });
             }
-          } else await this.onUpdate(u);
+          } else {
+            try {
+              await this.onUpdate(u);
+            } catch (e) {
+              if (e instanceof UpdateDeferred) {
+                if (!this.deferred.has(u.update_id)) {
+                  this.deferred.add(u.update_id);
+                  this.log({
+                    kind: "telegram-update-deferred",
+                    update_id: u.update_id,
+                  });
+                }
+              } else
+                this.log({
+                  kind: "telegram-handler-failed",
+                  update_id: u.update_id,
+                  error: e instanceof Error ? e.message : String(e),
+                });
+              handlerFailed = true;
+              break;
+            }
+          }
           if (this.controller.signal.aborted) break;
           await saveJson(this.offsetPath, { next_update_id: u.update_id + 1 });
           offset = u.update_id + 1;
           await this.afterConfirm?.(u);
         }
+        if (handlerFailed) await this.pause(HANDLER_RETRY_MS);
       } catch {
         if (this.controller.signal.aborted) break;
         if (!outage) {
           outage = true;
           this.log({ kind: "telegram-outage" });
         }
-        try {
-          if (this.sleep) await this.sleep(backoff * 1000);
-          else
-            await delay(backoff * 1000, undefined, {
-              signal: this.controller.signal,
-            });
-        } catch {
-          /* stopping */
-        }
+        await this.pause(backoff * 1000);
         backoff = Math.min(60, backoff * 2);
       }
     }
