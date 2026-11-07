@@ -786,7 +786,7 @@ describe("Scheduler.tick: transient failures (spec 015)", () => {
     const findings = readFileSync(t.paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(findings).toHaveLength(1);
     expect(findings[0].finding).toMatchObject({ what: "network outage blocks the chain", noticed_how: "scheduler transient error" });
-    expect(t.events.filter((e) => e.event === "infra_alarm")).toEqual([{ event: "infra_alarm", payload: expect.objectContaining({ issue: 7, since: "2026-10-12T12:00:00.000Z", cause: "EAI_AGAIN" }) }]);
+    expect(t.events.filter((e) => e.event === "infra_alarm")).toEqual([{ event: "infra_alarm", payload: expect.objectContaining({ kind: "network_outage", issue: 7, since: "2026-10-12T12:00:00.000Z", cause: "EAI_AGAIN" }) }]);
     expect(t.notifications.filter((n) => n.gate === "chain_error")).toEqual([]);
   }, 60_000);
 

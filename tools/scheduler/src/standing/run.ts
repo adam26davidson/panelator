@@ -135,7 +135,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
    d.log({kind:'standing-outage-alarm',agent:def.name,since,failures:count,cause});
    await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:at.toISOString()},[{what:`network outage blocks standing agent ${def.name}`,where:`agents/standing/${def.name}.md`,evidence:`${count} transient failures since ${since} (${cause}); last: ${last}`,noticed_how:'standing run transient error'}],{exclude:def.name});
    await d.notifier.notify({issue:0,gate:'infra',label:`${def.name}:outage`,text:`Standing agent ${def.name} has failed on a transient network error ${count} times since ${since} (${cause}); it keeps retrying. Last error: ${last}`});
-   await d.emitEvent?.('infra_alarm',{agent:def.name,since,failures:count,cause});
+   await d.emitEvent?.('infra_alarm',{kind:'network_outage',agent:def.name,since,failures:count,cause});
   }
   // AC-6: past the ceiling a failure counts as genuine only once enough of them span enough time.
   if(age>=OUTAGE_CEILING_MS) {

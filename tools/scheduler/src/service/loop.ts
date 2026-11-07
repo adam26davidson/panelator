@@ -314,7 +314,7 @@ export class Scheduler {
       evidence: `${count} transient failures since ${since} (${cause}); last: ${outage.last}`, noticed_how: "scheduler transient error",
     }]);
     await d.notifier.notify({ issue, gate: "infra", label: "", text: `Issue #${issue}: the scheduler has failed on a transient network error for ${hours} h (${cause}); it keeps retrying. Last error: ${outage.last}` });
-    await d.emitEvent?.("infra_alarm", { issue, since, failures: count, cause });
+    await d.emitEvent?.("infra_alarm", { kind: "network_outage", issue, since, failures: count, cause });
   }
 
   /** C7: the chain's `chain_error` event, written into the claim first so a crash finishes it, then applied by the driver. */
