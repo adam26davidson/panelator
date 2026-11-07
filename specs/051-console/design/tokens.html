@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Console tokens (spec 051)</title>
+<style>
+  /* Base tokens of tools/design-stage/src/tokens.css, unchanged, plus the console's extensions below. */
+  :root {
+    --color-bg: #ffffff; --color-surface: #f6f7f9; --color-text: #14181f; --color-muted: #4a5360;
+    --color-accent: #0b5fd6; --color-danger: #b42318; --color-ok: #067647;
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --text-sm: 14px; --text-base: 16px; --text-lg: 20px; --text-xl: 28px;
+    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px; --space-8: 32px;
+    --radius-sm: 6px; --radius-md: 12px; --radius-lg: 20px;
+
+    /* console extensions */
+    --color-border: #d5d9e0; --color-track: #e3e7ed;
+    --color-accent-soft: #e8f0fc; --color-ok-soft: #e5f4ec; --color-danger-soft: #fdecea;
+    --color-warn: #7a4100; --color-warn-soft: #fff3dc;
+    --color-violet: #5b3fc4; --color-violet-soft: #efebfb;
+    --color-series-1: #2a78d6; --color-series-2: #eb6834;
+    --shadow-1: 0 1px 2px rgba(20,24,31,.06), 0 1px 3px rgba(20,24,31,.08);
+  }
+  body { margin: 0; padding: 32px; font-family: var(--font-sans); color: var(--color-text); background: var(--color-surface); }
+  h1 { font-size: var(--text-xl); } h2 { font-size: var(--text-lg); margin-top: 32px; }
+  table { border-collapse: collapse; background: var(--color-bg); font-size: var(--text-sm); }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--color-border); vertical-align: middle; }
+  .sw { width: 40px; height: 24px; border-radius: 6px; border: 1px solid var(--color-border); }
+  code { font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+<h1>Maintainer console tokens</h1>
+<p>One token set for every screen in this directory. The stories carry it in <code>console-kit.tsx</code>; the
+console app's Tailwind theme (spec 051 section 5) maps these names one to one. Light theme only: the console has one
+user and the charter asks for nothing more; a dark theme would be its own validated step set, not an inversion.</p>
+
+<h2>Colour</h2>
+<table>
+  <tr><th></th><th>Token</th><th>Value</th><th>Use</th><th>Text contrast (WCAG)</th></tr>
+  <tr><td><div class="sw" style="background:#ffffff"></div></td><td><code>--color-bg</code></td><td>#ffffff</td><td>cards, rail, tab bar, inputs</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#f6f7f9"></div></td><td><code>--color-surface</code></td><td>#f6f7f9</td><td>page, sign-in, locked note</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#14181f"></div></td><td><code>--color-text</code></td><td>#14181f</td><td>body text, tooltip</td><td>17.8 on bg · 16.6 on surface</td></tr>
+  <tr><td><div class="sw" style="background:#4a5360"></div></td><td><code>--color-muted</code></td><td>#4a5360</td><td>secondary text, axes</td><td>7.8 on bg · 7.3 on surface · 6.3 on track</td></tr>
+  <tr><td><div class="sw" style="background:#0b5fd6"></div></td><td><code>--color-accent</code></td><td>#0b5fd6</td><td>links, primary buttons, running stage, pending</td><td>5.8 on bg · 5.1 on accent-soft · white on it 5.8</td></tr>
+  <tr><td><div class="sw" style="background:#e8f0fc"></div></td><td><code>--color-accent-soft</code></td><td>#e8f0fc</td><td>current nav item, pending note</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#067647"></div></td><td><code>--color-ok</code></td><td>#067647</td><td>fresh chip, applied, done stages</td><td>5.0 on ok-soft</td></tr>
+  <tr><td><div class="sw" style="background:#e5f4ec"></div></td><td><code>--color-ok-soft</code></td><td>#e5f4ec</td><td>fresh chip, applied badge</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#7a4100"></div></td><td><code>--color-warn</code></td><td>#7a4100</td><td>stale, locked, reminded, paused by you</td><td>7.4 on warn-soft</td></tr>
+  <tr><td><div class="sw" style="background:#fff3dc"></div></td><td><code>--color-warn-soft</code></td><td>#fff3dc</td><td>stale banner and chip</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#b42318"></div></td><td><code>--color-danger</code></td><td>#b42318</td><td>offline, refused, failed, question count</td><td>6.6 on bg · 5.8 on danger-soft · white on it 6.6</td></tr>
+  <tr><td><div class="sw" style="background:#fdecea"></div></td><td><code>--color-danger-soft</code></td><td>#fdecea</td><td>offline banner, refused note</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#5b3fc4"></div></td><td><code>--color-violet</code></td><td>#5b3fc4</td><td>questions banner, product kind, quality goal</td><td>white on it 7.1 · 6.1 on violet-soft</td></tr>
+  <tr><td><div class="sw" style="background:#efebfb"></div></td><td><code>--color-violet-soft</code></td><td>#efebfb</td><td>kind and goal badges</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#d5d9e0"></div></td><td><code>--color-border</code></td><td>#d5d9e0</td><td>card and row borders (decorative)</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#e3e7ed"></div></td><td><code>--color-track</code></td><td>#e3e7ed</td><td>pending stages, meter track, segmented control, skeletons, grid lines</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#2a78d6"></div></td><td><code>--color-series-1</code></td><td>#2a78d6</td><td>chart series 1 (a metric, the new metric), spend meter</td><td>graphic 4.4:1 on bg (≥ 3)</td></tr>
+  <tr><td><div class="sw" style="background:#eb6834"></div></td><td><code>--color-series-2</code></td><td>#eb6834</td><td>chart series 2 (the replaced metric, always dashed)</td><td>graphic 3.2:1 on bg (≥ 3)</td></tr>
+</table>
+<p>Chart colours follow the entity, never the rank: slot 1 is always the current metric, slot 2 the metric it
+replaces, and the replaced line is dashed so the pair is told apart without colour. Values and labels use text
+tokens, never a series colour. Status colours (ok, warn, danger) always come with a word or icon.</p>
+
+<h2>Type</h2>
+<table>
+  <tr><th>Token</th><th>Size</th><th>Use</th><th>Sample</th></tr>
+  <tr><td><code>--text-sm</code></td><td>14px / 600 for labels</td><td>meta, badges, tabs, axes, notes; the smallest size used anywhere</td><td style="font-size:14px">Updated 18 s ago</td></tr>
+  <tr><td><code>--text-base</code></td><td>16px / 400–600</td><td>body, list titles, inputs</td><td style="font-size:16px">Event store retention</td></tr>
+  <tr><td><code>--text-lg</code></td><td>20px / 650</td><td>section and card titles, chart headline value</td><td style="font-size:20px;font-weight:650">Up next</td></tr>
+  <tr><td>page title (mobile)</td><td>24px / 700</td><td>h1 under 720px</td><td style="font-size:24px;font-weight:700">Parameters</td></tr>
+  <tr><td><code>--text-xl</code></td><td>28px / 700</td><td>h1 from 720px, stat tile values</td><td style="font-size:28px;font-weight:700">2.4 days</td></tr>
+  <tr><td><code>--font-mono</code></td><td>14–16px</td><td>parameter, agent and metric names</td><td><code>standing.event_debounce</code></td></tr>
+</table>
+<p>System font stacks only. Numbers use tabular figures.</p>
+
+<h2>Spacing, radii, elevation</h2>
+<table>
+  <tr><th>Token</th><th>Value</th><th>Use</th></tr>
+  <tr><td><code>--space-1 … --space-8</code></td><td>4 · 8 · 12 · 16 · 24 · 32 px</td><td>16 page padding and card padding on mobile; 24 from 720px; 32–40 page padding on desktop</td></tr>
+  <tr><td><code>--radius-sm</code></td><td>6px</td><td>buttons, inputs, notes, segmented controls</td></tr>
+  <tr><td><code>--radius-md</code></td><td>12px</td><td>cards, tiles, banners</td></tr>
+  <tr><td>pill</td><td>999px</td><td>badges, freshness chip, counts</td></tr>
+  <tr><td><code>--shadow-1</code></td><td>2 soft layers</td><td>cards and tiles only</td></tr>
+  <tr><td>tap target</td><td>44px minimum</td><td>every control on mobile; tabs 60px; question banner 56px</td></tr>
+</table>
+
+<h2>Breakpoints</h2>
+<table>
+  <tr><th>Name</th><th>Range</th><th>Rendered at</th><th>Layout</th></tr>
+  <tr><td>mobile</td><td>&lt; 720px</td><td>390 × 844</td><td>one column, bottom tab bar (6 tabs), account button in the header</td></tr>
+  <tr><td>tablet</td><td>720–1199px</td><td>820 × 1180</td><td>side rail 208px, one column; Home tiles 2 × 2; Parameters value and mode side by side</td></tr>
+  <tr><td>desktop</td><td>≥ 1200px</td><td>1440 × 900</td><td>side rail 240px; Home card beside up next, tiles 4 across; History charts 2 across; Actions, Agents, Parameters as tables</td></tr>
+</table>
+</body>
+</html>
