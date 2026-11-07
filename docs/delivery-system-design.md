@@ -521,18 +521,7 @@ are stale and are corrected as part of B.
 - `specs/048-bin-drops-dead-finding-queued-listener/spec.md` (issue #83)
 - `specs/049-plan-prompt-names-the-directory-scope-entry/spec.md` (issue #84)
 - `specs/050-infra-alarm-kind-and-aws-cap-zero/spec.md` (issue #100)
-- planned: console
-  title: Specify and build the maintainer console (row E, second part)
-  brief: The maintainer console of section 9, built on the design stage of spec 029 and
-    hosted in the delivery account of spec 022 as ADR 0005 decides (a static React app on S3
-    behind CloudFront, a small serverless API and one DynamoDB table in one CloudFormation
-    stack, GitHub sign-in for the maintainer's login only). It covers the Home screen of
-    direction A, the Questions, History, Actions, Agents and Parameters screens at mobile,
-    tablet and desktop sizes, the scheduler pushing state snapshots and pulling changes over
-    a held-open connection, and the package separate from `web/`. It leaves the design stage
-    itself and the AWS account and cap to its siblings.
-  after: specs/029-design-stage/spec.md, specs/022-delivery-aws-account/spec.md
-  issue: #101
+- `specs/051-console/spec.md` (row E, the console, issue #101)
 - planned: test-board
   title: Test board and automatic stable firmware promotion (design spec G)
   brief: Row G of section 11 and the firmware paragraphs of section 5. It covers running
