@@ -10,7 +10,7 @@ function OpenQuestion({ q, telegram }: { q: (typeof QUESTIONS)[number]; telegram
   return (
     <li className="c-card c-section" style={{ gap: 12 }}>
       <div className="c-wrap">
-        <a className="c-strong" href={`#issue-${q.issue}`}>#{q.issue}</a>
+        <a className="c-link" style={{ minWidth: 44, fontSize: "var(--text-base)" }} href={`#issue-${q.issue}`}>#{q.issue}</a>
         <span className={`c-badge ${KIND_TONE[q.kind]}`}>{q.kind}</span>
         {q.status === "reminded" ? <span className="c-badge warn">Reminded</span> : <span className="c-badge accent">Open</span>}
         <span className="c-sm c-muted">{q.asked}</span>
@@ -40,7 +40,7 @@ function AnsweredQuestion({ q }: { q: (typeof ANSWERED)[number] }) {
   return (
     <li className="c-card c-section" style={{ gap: 8 }}>
       <div className="c-wrap">
-        <a className="c-strong" href={`#issue-${q.issue}`}>#{q.issue}</a>
+        <a className="c-link" style={{ minWidth: 44, fontSize: "var(--text-base)" }} href={`#issue-${q.issue}`}>#{q.issue}</a>
         <span className={`c-badge ${KIND_TONE[q.kind]}`}>{q.kind}</span>
         <span className="c-badge ok">{Icon.check(14)} Answered</span>
         <span className="c-sm c-muted">{q.answered}</span>

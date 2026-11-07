@@ -237,7 +237,7 @@ const CSS = `
 .c-agents-grid { grid-template-columns: minmax(0, 1fr); }
 .c-params-grid { grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 1200px) {
-  .c-thead { display: grid; padding: var(--space-3) var(--space-6); font-size: var(--text-sm); font-weight: 600; color: var(--color-muted);
+  .c-thead { display: grid; column-gap: var(--space-3); padding: var(--space-3) var(--space-6); font-size: var(--text-sm); font-weight: 600; color: var(--color-muted);
     background: var(--color-surface); border-bottom: 1px solid var(--color-border); }
   .c-actions-grid { grid-template-columns: 132px minmax(0, 1fr) 140px 168px 128px; align-items: start; }
   .c-agents-grid { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr) 120px 150px; align-items: center; }
