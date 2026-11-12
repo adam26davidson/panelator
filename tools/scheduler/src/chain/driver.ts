@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { adapterFor as defaultAdapterFor } from "../adapters/index.ts";
 import type { Adapter } from "../adapters/types.ts";
 import type { Config } from "../config.ts";
-import { ROOT } from "../gates/design-tree.ts";
+import { ROOT, TOP_DESIGNS } from "../gates/design-tree.ts";
 import { designScopeGate, isSensitive, scopeGate, specPresentGate, specScopeGate, uiDesignGate, type ScopeResult } from "../gates/index.ts";
 import type { GitHubClient } from "../github/client.ts";
 import type { PullRequestInfo } from "../github/types.ts";
@@ -249,6 +249,20 @@ async function splitParent(worktree: string, specPath: string, diff: string[]): 
   return null;
 }
 
+/** Spec 052 AC-4: the top design a parent under docs/designs/ descends from, found by following Parent: lines in the worktree; null when the walk ends elsewhere, at a missing file or a loop. */
+export async function designTop(worktree: string, parent: string): Promise<string | null> {
+  const seen = new Set<string>();
+  let cur: string | null = parent;
+  while (cur !== null && cur.startsWith("docs/designs/") && !seen.has(cur)) {
+    seen.add(cur);
+    const text: string | null = await readFile(join(worktree, cur), "utf8").catch(() => null);
+    if (text === null) return null;
+    cur = parseSpec(text).parent;
+    if (cur !== null && TOP_DESIGNS.includes(cur)) return cur;
+  }
+  return null;
+}
+
 /** AC-21, AC-22: the spec PR's scope, judged with the spec's Parent: from the worktree and the parent before (origin/main) and after; the spec's text goes to the gate for the links of spec 039 AC-4. */
 async function specTrackScope(deps: DriverDeps, claim: Claim, diff: string[], specPath: string | null): Promise<ScopeResult> {
   if (!specPath) return { ok: false, violations: ["the issue body has no Spec: line naming the spec this PR changes"] };
@@ -257,7 +271,16 @@ async function specTrackScope(deps: DriverDeps, claim: Claim, diff: string[], sp
   const parent = text ? parseSpec(text).parent : await splitParent(claim.worktree, specPath, diff);
   const before = parent ? gitShow(deps.repoDir, `origin/main:${parent}`) ?? "" : "";
   const after = parent ? await readFile(join(claim.worktree, parent), "utf8").catch(() => "") : "";
-  return specScopeGate(diff, specPath, parent, before, after, claim.state.answerKind === "product", text);
+  let top: { path: string; before: string; after: string } | null = null;
+  const topPath = parent?.startsWith("docs/designs/") ? await designTop(claim.worktree, parent) : null;
+  if (topPath) {
+    top = {
+      path: topPath,
+      before: gitShow(deps.repoDir, `origin/main:${topPath}`) ?? "",
+      after: await readFile(join(claim.worktree, topPath), "utf8").catch(() => ""),
+    };
+  }
+  return specScopeGate(diff, specPath, parent, before, after, claim.state.answerKind === "product", text, top);
 }
 
 /** Spec 040: the chain's holds with the entry for a branch set to a head, or removed. */

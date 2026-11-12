@@ -12,6 +12,8 @@ const DECISIONS = "docs/decisions/";
  * full). With `recordsProductAnswer`, either top design in full. The charter is never allowed, and a
  * parent that is not a top design or under docs/designs/ is a violation whatever the diff. Spec 039: the
  * spec.md of another spec is also allowed when `specText` (the new spec's text) links to it, for marks only.
+ * Spec 052: when the parent is under docs/designs/, the Children section of `top` (the top design the
+ * parent descends from) is also allowed, judged with the same stripChildren comparison.
  */
 export function specScopeGate(
   diffFiles: string[],
@@ -21,6 +23,7 @@ export function specScopeGate(
   parentAfter: string,
   recordsProductAnswer = false,
   specText = "",
+  top: { path: string; before: string; after: string } | null = null,
 ):ScopeResult {
   const specDir = posix.dirname(specPath) + "/";
   parentPath = parentPath === null ? null : posix.normalize(parentPath);
@@ -37,7 +40,9 @@ export function specScopeGate(
     else if (TOP_DESIGNS.includes(f)) {
       if (recordsProductAnswer) continue;
       if (f === parentPath && stripChildren(parentBefore) === stripChildren(parentAfter)) continue;
-      violations.push(f === parentPath ? `${f}: changes outside its Children section` : `${f}: outside spec PR scope`);
+      const viaSubDesign = top !== null && f === top.path && parentPath !== null && parentPath.startsWith(DESIGNS);
+      if (viaSubDesign && stripChildren(top.before) === stripChildren(top.after)) continue;
+      violations.push(f === parentPath || viaSubDesign ? `${f}: changes outside its Children section` : `${f}: outside spec PR scope`);
     } else if (other && other[1] !== specDir) {
       const dir = other[1].slice("specs/".length);
       if (specText.includes(`../${dir}spec.md`) || specText.includes(`specs/${dir}spec.md`)) continue;
