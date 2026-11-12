@@ -83,7 +83,7 @@ describe("paused records", () => {
     const { heldWork: _h, ...without } = initialChainState(7);
     const one = { branch: "issue-7", head: "a".repeat(40) };
     const { writeFileSync } = await import("node:fs");
-    for (const [heldWork, want] of [[undefined, []], [null, []], [one, [one]]] as const) {
+    for (const [heldWork, want] of [[undefined, []], [null, []], [one, [one]], [[{ ...one, carried: "timeout" }], [{ ...one, carried: "timeout" }]]] as const) {
       writeFileSync(join(p.paused, "7.json"), JSON.stringify({ ...rec(), state: { ...without, ...(heldWork === undefined ? {} : { heldWork }) } }));
       const [got] = await listPaused(p);
       expect(got.state.heldWork).toEqual(want);

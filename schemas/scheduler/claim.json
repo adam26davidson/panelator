@@ -306,6 +306,9 @@
               },
               "head": {
                 "type": "string"
+              },
+              "carried": {
+                "type": "string"
               }
             }
           }

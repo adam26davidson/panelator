@@ -1902,6 +1902,74 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     expect(originHas(state.pair!, "issue-7")).toBe(false);
     expect(head(t.claim.worktree)).toBe(git(state.pair!.repo, "rev-parse", "origin/main").trim());
   }, 60_000);
+
+  describe("an implement run stopped before it finished keeps its work (spec 053)", () => {
+    it("saves a held patch, logs held-work with carried and puts the head on the event (AC-1)", async () => {
+      const state: { pair?: ReturnType<typeof repoPair> } = {};
+      let pushed = "";
+      const t = await setup(() => ({
+        implement: [(run: StageRun) => { pushed = commitIn(run.worktree, { "work.txt": "w\n" }); git(run.worktree, "push", "-q", "origin", "issue-7"); return undefined; }],
+      }), prRoutes(state), (p) => { state.pair = p; });
+      const logs = logsOf(t.deps);
+      const c = at(t.claim, { stage: "implement", plan: plan as never });
+      await writeClaim(t.paths, c);
+      const r = await step(t.deps, c);
+      expect(r.claim.state).toMatchObject({ stage: "implement", attempt: 2, heldWork: [{ branch: "issue-7", head: pushed, carried: "exit 1" }] });
+      const saved = readdirSync(t.paths.patches).filter((f) => f.includes("held"));
+      expect(saved).toHaveLength(1);
+      expect(readFileSync(join(t.paths.patches, saved[0]), "utf8")).toContain("work.txt");
+      expect(logs).toContainEqual({ kind: "held-work", issue: 7, stage: "implement", branch: "issue-7", head: pushed, pushed: true, prs: [9], patch: join(t.paths.patches, saved[0]), carried: "exit 1" });
+    }, 60_000);
+
+    it("a stopped run that committed nothing carries nothing and logs nothing (AC-1)", async () => {
+      const t = await setup(() => ({ implement: [undefined] }));
+      const logs = logsOf(t.deps);
+      const c = at(t.claim, { stage: "implement", plan: plan as never });
+      await writeClaim(t.paths, c);
+      const r = await step(t.deps, c);
+      expect(r.claim.state).toMatchObject({ stage: "implement", attempt: 2, heldWork: [] });
+      expect(logs.find((l) => l.kind === "held-work")).toBeUndefined();
+      expect(readdirSync(t.paths.patches).filter((f) => f.includes("held"))).toEqual([]);
+    }, 60_000);
+
+    it("a run that finished with an invalid result is a wrong attempt: nothing is carried (AC-1)", async () => {
+      const t = await setup(() => ({ implement: [(run: StageRun) => { commitIn(run.worktree, { "work.txt": "w\n" }); return {}; }] }));
+      const logs = logsOf(t.deps);
+      const c = at(t.claim, { stage: "implement", plan: plan as never });
+      await writeClaim(t.paths, c);
+      const r = await step(t.deps, c);
+      expect(r.claim.state).toMatchObject({ stage: "implement", attempt: 2, heldWork: [] });
+      expect(logs.find((l) => l.kind === "held-work")).toBeUndefined();
+    }, 60_000);
+
+    it("the retry continues from the carried head, leaves the branch and its PR, and is told (AC-2, AC-4)", async () => {
+      const state: { pair?: ReturnType<typeof repoPair> } = {};
+      let held = "";
+      const t = await setup(() => ({ implement: [] }), prRoutes(state), (p, wt) => {
+        state.pair = p;
+        held = commitIn(wt, { "work.txt": "w\n" });
+        git(wt, "push", "-q", "origin", "issue-7");
+      });
+      const logs = logsOf(t.deps);
+      const c = at(t.claim, { stage: "implement", attempt: 2, implementFailures: 1, plan: plan as never, heldWork: [{ branch: "issue-7", head: held, carried: "max budget reached" }] });
+      await writeClaim(t.paths, c);
+      await step(t.deps, c);
+      expect(t.adapter.heads).toEqual(["issue-7"]);
+      expect(head(t.claim.worktree)).toBe(held);
+      expect(originHas(state.pair!, "issue-7")).toBe(true);
+      expect(writes(t.gh).filter((w) => w.startsWith("PATCH") || w.startsWith("DELETE"))).toEqual([]);
+      expect(logs.find((r) => r.kind === "recovered-commits" || r.kind === "stale-branch-dropped")).toBeUndefined();
+      expect(logs).toContainEqual({ kind: "held-work-kept", issue: 7, branch: "issue-7", head: held });
+      const text = inputOf(t.paths, "7-implement-").held_work!;
+      expect(text).toContain(held);
+      expect(text).toContain("on origin");
+      expect(text).toContain("#9");
+      expect(text).toContain("max budget reached");
+      expect(text).toMatch(/earlier attempt/);
+      expect(text).toMatch(/stopped before it finished/);
+      expect(text).not.toMatch(/before your question/);
+    }, 60_000);
+  });
 });
 
 /** The PR branch issue-7 on origin with one commit of its own, and main moved on since, so the driver's rebase moves HEAD. */
