@@ -91,7 +91,7 @@ describe('Telegram answers and watchdog fallback',()=>{
   const logs:Record<string,unknown>[]=[],waits:number[]=[];const {TelegramPoller}=await import('../src/telegram/poller.ts');
   const poll=new TelegramPoller(deps.telegram!.client,paths.telegramOffset,50,u=>s.handleTelegramUpdate(u),r=>logs.push(r),async ms=>{waits.push(ms);},u=>s.confirmTelegramUpdate(u));
   try{await writePaused(paths,tgRecord());server.push(message(1,'Use the file store.'));poll.start();
-   for(let i=0;i<1500&&!(existsSync(paths.telegramOffset)&&JSON.parse(readFileSync(paths.telegramOffset,'utf8')).next_update_id===2&&server.sent.length>=1);i++)await new Promise(r=>setTimeout(r,10));
+   for(let i=0;i<400&&!(existsSync(paths.telegramOffset)&&JSON.parse(readFileSync(paths.telegramOffset,'utf8')).next_update_id===2&&server.sent.length>=1);i++)await new Promise(r=>setTimeout(r,10));
    expect(logs).toHaveLength(2);expect(logs[0]).toMatchObject({kind:'telegram',status:'connected'});expect(logs[1]).toMatchObject({kind:'telegram-handler-failed',update_id:1});expect(String(logs[1].error)).toContain('mock github comment failure');
    expect(logs.some(l=>l.kind==='telegram-outage'||l.kind==='telegram-recovered')).toBe(false);expect(waits).toEqual([2000]);
    expect(gh.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/comments'))).toHaveLength(2);expect(server.sent).toHaveLength(1);expect((await listPaused(paths))[0].phase).toBe('resuming');
