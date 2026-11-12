@@ -410,8 +410,10 @@ Rules:
   Reflection flags designs with children missing a spec and specs with no
   implementation. *(author's call: findings, not automatic rewrites)*
 
-This document's own children are specs A to G below (F split into F1 and F2); E is expected to become
-a sub-design (design stage, console) when it is written. The existing specs
+This document's own children are specs A to G below (F split into F1 and F2;
+E into spec 029, the design stage, and spec 051, the console, both children
+of this document) *(author's call: the breakdown, like section 11)*
+(maintainer answer, question #6819390363). The existing specs
 001 to 005 get `Parent: docs/delivery-system-design.md` as part of B.
 
 ## 11. Breaking it into specs
@@ -499,7 +501,7 @@ are stale and are corrected as part of B.
 - `specs/023-waiting-claim-is-not-stalled/spec.md`
 - `specs/024-rebase-respects-merged-main/spec.md`
 - `specs/025-filer-results-and-wakes/spec.md`
-- `specs/029-design-stage/spec.md` (row E, issue #38)
+- `specs/029-design-stage/spec.md` (row E, the design stage, issue #38)
 - `specs/030-beyond-github/spec.md` (row F2, issue #39)
 - `specs/031-design-files-children/spec.md`
 - `specs/032-spec-008-lists-advisory-lookup/spec.md`
@@ -523,6 +525,7 @@ are stale and are corrected as part of B.
 - `specs/050-infra-alarm-kind-and-aws-cap-zero/spec.md` (issue #100)
 - `specs/051-console/spec.md` (row E, the console, issue #101)
 - `specs/052-spec-pr-lists-its-new-sub-design/spec.md` (issue #102)
+- `specs/053-design-text-records-row-e-split/spec.md` (issue #103)
 - planned: web-ui-profile
   title: The web-ui profile: implement, fix and review instructions for UI packages
   brief: Spec 001 section 9 names `web-ui` among the v0 profiles and leaves its content to
