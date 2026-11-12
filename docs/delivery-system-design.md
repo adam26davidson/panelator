@@ -410,10 +410,8 @@ Rules:
   Reflection flags designs with children missing a spec and specs with no
   implementation. *(author's call: findings, not automatic rewrites)*
 
-This document's own children are specs A to G below (F split into F1 and F2;
-E into spec 029, the design stage, and spec 051, the console, both children
-of this document) *(author's call: the breakdown, like section 11)*
-(maintainer answer, question #6819390363). The existing specs
+This document's own children are specs A to G below (F split into F1 and F2); E is expected to become
+a sub-design (design stage, console) when it is written. The existing specs
 001 to 005 get `Parent: docs/delivery-system-design.md` as part of B.
 
 ## 11. Breaking it into specs
