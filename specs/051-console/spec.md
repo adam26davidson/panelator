@@ -5,12 +5,16 @@ part: the console of section 9) for issue #101, recovering the console spec
 written as `specs/030-console/spec.md` in commit cfa33fb and left out of PR
 #96 (spec 006 AC-21 allows one spec directory per spec PR; the number 030
 has since been used); specs derived from that design need no maintainer
-approval (design section 11). **Needs specs 022 and 027 on `main`**: the
-plan stage checks, before planning, that `tools/scheduler/src/aws/ledger.ts`
-(spec 022's `reserveSpend`) and `tools/scheduler/src/metrics/` (spec 027's
-`computeMetrics`) exist on `main`, and given either is missing it plans
-nothing and returns `spec_gap` naming the missing spec, so nothing is built
-against code that is not there. Its `design/` is produced by spec 029's
+approval (design section 11). **Needs specs 022 and 027 and the `web-ui`
+profile on `main`**: the plan stage checks, before planning, that
+`tools/scheduler/src/aws/ledger.ts` (spec 022's `reserveSpend`),
+`tools/scheduler/src/metrics/` (spec 027's `computeMetrics`) and
+`agents/profiles/web-ui/profile.yaml` (the planned child `web-ui-profile` of
+the delivery-system design) exist on `main`, and given any is missing it
+plans nothing and returns `spec_gap` naming what is missing, so nothing is
+built against code that is not there and the plan never fails on `profile
+not available: web-ui`. The scope stays as written and the domain stays
+`web-ui` while it waits *(agent's call, section 4 "Prerequisites")*. Its `design/` is produced by spec 029's
 design stage (on `main` since PR #104) when the UI-design gate finds it
 missing, before any plan. Marks no other spec.
 Class: tooling. Domain: web-ui.
@@ -309,6 +313,39 @@ AC-4.
   requests a day, each reading the table every 2 seconds) is the largest
   line. The reservation states 2 USD a month so the ledger holds the console
   to it, and while the cap is 0 the deploy is refused, as it should be.
+- **Prerequisites, and why the scope is not cut.** *(agent's call, answering
+  the plan stage's gaps of 2026-11-12)* The plan found specs 022 and 027
+  missing on `main` and no `agents/profiles/web-ui/`, which fails every plan
+  classified `web-ui` (the I4 check in `tools/scheduler/src/chain/driver.ts`).
+  The spec waits for all three rather than shrinking to fit:
+  - Specs 022 and 027 stay prerequisites. Without spec 022 there is no
+    `reserveSpend` and no `aws` wrapper, and AC-7 cannot be built against a
+    stand-in: design section 6.2 wants the AWS cap enforced in code, so a
+    deploy path written before the ledger exists would be a deploy path that
+    skips it. Dropping AC-7 instead leaves a console that cannot be hosted,
+    which is the whole of row E's second part. Without spec 027 there is no
+    `computeMetrics` and no `metrics-report` schema for AC-2 to carry, and
+    History (one of the six decided screens) would ship empty and be redone.
+    AC-2 already makes every field null when its source file is absent; what
+    is missing here is code to import, not data to read, so "null until spec
+    027 lands" would mean a stub replaced later in the same files.
+  - The `web-ui` profile is its own spec, as spec 001 section 9 says ("the
+    others are filled by their own specs"), and nothing files it today: no
+    open issue names it, and `agents/profiles/` is outside both this spec's
+    files (section 5) and a spec PR's scope. So this PR adds it to the
+    parent design's `## Children` as the planned child `web-ui-profile`,
+    which the scheduler files when the PR merges (spec 031). The console is
+    not reclassified to `backend`: spec 001 section 9 has a domain's review
+    use the same profile as its implement stage "so UI review judges
+    against the design artifacts", and the backend profile carries no such
+    criteria, so the console's screens would be reviewed against nothing.
+    It is not split into a scheduler-side spec and a console spec either:
+    its design (`design/`) is merged against this one spec, the scheduler
+    side (AC-1 to AC-4) has no use until the hosted side exists, and both
+    halves would still wait on spec 022 (AC-7 and the AWS tile).
+  - Given a later plan finds only these prerequisites missing, the spec is
+    right as written and the answer is to keep it; the issue's wait is
+    ordering, not a spec gap (the finding recorded with this answer).
 
 ## 5. Interfaces and files
 

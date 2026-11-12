@@ -522,6 +522,25 @@ are stale and are corrected as part of B.
 - `specs/049-plan-prompt-names-the-directory-scope-entry/spec.md` (issue #84)
 - `specs/050-infra-alarm-kind-and-aws-cap-zero/spec.md` (issue #100)
 - `specs/051-console/spec.md` (row E, the console, issue #101)
+- planned: web-ui-profile
+  title: The web-ui profile: implement, fix and review instructions for UI packages
+  brief: Spec 001 section 9 names `web-ui` among the v0 profiles and leaves its content to
+    its own spec; the plan stage already classifies UI work as `web-ui`, and the chain driver
+    fails any such plan because `agents/profiles/web-ui/` does not exist, which is what stops
+    the console (spec 051, row E). This child adds `agents/profiles/web-ui/`: `profile.yaml`
+    (name `web-ui`, the shell tools of the backend profile, no credential hook,
+    `review_criteria: review-criteria.md`), `instructions.md` (TypeScript and React packages
+    built on the toolchain catalog of spec 029 AC-6; the spec's merged `design/` is the
+    reference the implementation follows, through its tokens and the component mapping in
+    `design/flow.md`; the conditional `pnpm test` sentence of specs 017 and 046; the file-scope
+    and findings rules of the backend profile), `review-criteria.md` (the implementation
+    matches the design's renders at mobile 390x844, tablet 820x1180 and desktop 1440x900,
+    every screen state the spec's UI design section names is built and tested, tap targets at
+    least 44 CSS pixels on mobile, WCAG AA contrast, and the design's tokens used throughout),
+    and an empty or seeded `skills/`; it updates `tools/scheduler/test/profiles.test.ts`,
+    which asserts the profile list. `agents/` and `tools/scheduler/` are sensitive paths, so
+    the security review runs. It leaves the `widget`, `firmware` and `infra` profiles, and the
+    plan prompt's list of offered domains (issue #145), to their own work.
 - planned: test-board
   title: Test board and automatic stable firmware promotion (design spec G)
   brief: Row G of section 11 and the firmware paragraphs of section 5. It covers running
