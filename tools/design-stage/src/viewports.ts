@@ -1,4 +1,4 @@
-export type ViewportName = "mobile" | "tablet" | "desktop";
+type ViewportName = "mobile" | "tablet" | "desktop";
 
 export interface Viewport {
   name: ViewportName;
