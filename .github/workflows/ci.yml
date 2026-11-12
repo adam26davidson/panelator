@@ -12,6 +12,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 26, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      # Chromium and its system libraries, every run; the browser is not cached (spec 054).
       - run: pnpm -F @panelator/design-stage exec playwright-core install --with-deps chromium
       - run: pnpm test
       - run: pnpm -F @panelator/scheduler typecheck
