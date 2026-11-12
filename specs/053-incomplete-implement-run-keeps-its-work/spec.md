@@ -105,7 +105,10 @@ is `ok` and whose result is missing, invalid or rejected is not incomplete.
   head.
 - AC-3. **What clears it.** Given carried work, then it is replaced by a
   later incomplete implement failure's head (AC-2), cleared by an implement
-  failure without `head` (the attempt is then a wrong one, or left nothing),
+  failure without `head` that is not a postponement (the attempt is then a
+  wrong one, or left nothing; a postponed retry or rescue keeps the entry
+  unchanged, as spec 040 AC-3 says, and spec 011 AC-5 covers commits the
+  postponed run made),
   removed when an implement result binds a PR on `issue-<n>` (spec 040
   AC-2), replaced by a question's hold on that branch (spec 011 AC-1), and
   cleared by every transition spec 040 AC-4 lists except the `escalate` to
@@ -138,9 +141,14 @@ is `ok` and whose result is missing, invalid or rejected is not incomplete.
   - attempt 1, attempt 2 and the rescue all end incomplete: the re-plan runs,
     `heldWork` is empty, and the next implement starts at `origin/main` with
     the `stale-branch-dropped` record, as today;
-  - implement ends with a missing result after committing: the retry starts
-    clean, with the `stale-branch-dropped` record (the existing test of spec
-    011 AC-10's last bullet stays as it is);
+  - implement ends with an exit-0 run whose result is missing or invalid
+    after committing: the retry starts clean, with the `stale-branch-dropped`
+    record. The existing test of spec 011 AC-10's last bullet scripts the
+    resumed implement as a non-zero exit, which is an incomplete run, so that
+    test changes: its chain now continues from the held head
+    (`starts == [held.head, held.head]`, `held-work-kept`, no
+    `stale-branch-dropped`, a `held_work` input), and the clean case above is
+    a new test with an exit-0 run and an invalid result;
   - an incomplete run that committed nothing: the retry starts clean and no
     `held-work` record is written.
 - AC-6. **The prompt says what is kept.** Given `agents/stages/implement.md`,
@@ -162,8 +170,10 @@ Each is marked in that spec's text in this PR (spec 039).
 - **Spec 011 AC-8.** The failed-attempt chains still start clean for a
   wrong attempt, a re-plan and a release; an implement retry or rescue after
   an incomplete run continues from its commits (AC-2).
-- **Spec 011 AC-10.** Its last bullet's failure is a run that ended with a
-  missing result, which stays clean; the incomplete case is AC-5's.
+- **Spec 011 AC-10.** Its last bullet's failure, a resumed implement that
+  exits non-zero, is an incomplete run, so that chain now continues from the
+  held head; a run that ends with exit 0 and a missing or invalid result
+  stays clean, and AC-5 tests both.
 - **Spec 040 AC-3.** An incomplete implement failure of the asking stage
   replaces the hold on `issue-<n>` with the carried entry instead of
   dropping it.

@@ -203,7 +203,7 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
 - AC-9. Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) AC-7: a record without `heldWork` normalizes to `[]`, and one with this spec's single object to a one-entry list. **A claim written before this spec loads.** Given a claim or paused
   record without `heldWork`, when it is read, then it normalizes to `null`
   and its chain continues (spec 006 AC-7).
-- AC-10. Amended by [053-incomplete-implement-run-keeps-its-work](../053-incomplete-implement-run-keeps-its-work/spec.md) AC-5: the last bullet's failure is a run that ended with a missing result, and an incomplete run's retry continues from its work. **End to end.** Recorded end-to-end chains (fake adapter, mocked
+- AC-10. Amended by [053-incomplete-implement-run-keeps-its-work](../053-incomplete-implement-run-keeps-its-work/spec.md) AC-5: the last bullet's failure (a resumed implement that exits non-zero) is an incomplete run, so its chain now continues from the held head. **End to end.** Recorded end-to-end chains (fake adapter, mocked
   GitHub) drive and assert:
   - a capability question from implement, which committed on and pushed
     `issue-<n>` before asking: no `recovered-commits` and no
