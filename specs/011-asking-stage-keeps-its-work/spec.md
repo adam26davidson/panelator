@@ -174,7 +174,7 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
   plan then runs with `held_work` in its input and implement continues from
   the branch (AC-3, AC-4). The chain's fresh stage counters (spec 006 AC-4)
   are unchanged.
-- AC-7. Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) AC-2 to AC-4: a bound PR and the asking stage's failure clear the hold on the chain's branch only; the other clears empty the list. **Held work is cleared when the work is bound or discarded, and only
+- AC-7. Amended by [053-incomplete-implement-run-keeps-its-work](../053-incomplete-implement-run-keeps-its-work/spec.md) AC-2 and AC-3: an implement failure of an incomplete run sets a carried hold on `issue-<n>`, and the escalate to its rescue keeps it. Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) AC-2 to AC-4: a bound PR and the asking stage's failure clear the hold on the chain's branch only; the other clears empty the list. **Held work is cleared when the work is bound or discarded, and only
   then.** The machine clears `heldWork` on:
   - a `stage_ok` of implement or spec (`revised`) that binds a PR on the
     held branch: the work is then the PR's, and spec 005 AC-3 applies;
@@ -194,7 +194,7 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
   the held work is carried or cleared. Given the held work is cleared and the
   next stage runs with no PR bound, then the preparation of spec 006 AC-21
   applies in full: patch, stale-branch drop, reset to `origin/main`.
-- AC-8. **Failed attempts, re-plans and releases still start clean.** Given
+- AC-8. Amended by [053-incomplete-implement-run-keeps-its-work](../053-incomplete-implement-run-keeps-its-work/spec.md) AC-2: an implement retry or rescue after an incomplete run continues from its commits; a wrong attempt, a re-plan and a release still start clean. **Failed attempts, re-plans and releases still start clean.** Given
   the failed-attempt chains the recorded end-to-end tests of spec 006 AC-28
   drive (rescue, re-plan, spec revision, abandonment) and the stale-branch
   test of the driver, then their patches, closed PRs and deleted branches are
@@ -203,7 +203,7 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
 - AC-9. Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) AC-7: a record without `heldWork` normalizes to `[]`, and one with this spec's single object to a one-entry list. **A claim written before this spec loads.** Given a claim or paused
   record without `heldWork`, when it is read, then it normalizes to `null`
   and its chain continues (spec 006 AC-7).
-- AC-10. **End to end.** Recorded end-to-end chains (fake adapter, mocked
+- AC-10. Amended by [053-incomplete-implement-run-keeps-its-work](../053-incomplete-implement-run-keeps-its-work/spec.md) AC-5: the last bullet's failure is a run that ended with a missing result, and an incomplete run's retry continues from its work. **End to end.** Recorded end-to-end chains (fake adapter, mocked
   GitHub) drive and assert:
   - a capability question from implement, which committed on and pushed
     `issue-<n>` before asking: no `recovered-commits` and no
