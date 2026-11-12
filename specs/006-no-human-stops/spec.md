@@ -509,7 +509,7 @@ AC-10 second sentence, AC-13)
   `spec-<issue>` is deleted, so the next claim starts the spec work again from
   `origin/main`.
 
-  **A branch left by a failed attempt.** Amended by [011-asking-stage-keeps-its-work](../011-asking-stage-keeps-its-work/spec.md) section 4: applies only when the chain holds no work on the branch; the question check and the stages the question path resumes are not retries. Given a stage is about to run with
+  **A branch left by a failed attempt.** Amended by [053-incomplete-implement-run-keeps-its-work](../053-incomplete-implement-run-keeps-its-work/spec.md) AC-2: an implement retry or rescue that carries an incomplete run's work is not a failed attempt for this rule. Amended by [011-asking-stage-keeps-its-work](../011-asking-stage-keeps-its-work/spec.md) section 4: applies only when the chain holds no work on the branch; the question check and the stages the question path resumes are not retries. Given a stage is about to run with
   no PR bound (on either track: a retry, a rescue, a re-plan, a revision, or
   a claim after a release) and the chain's branch (`issue-<issue>` or
   `spec-<issue>`) exists on origin, then before the stage runs its commits
