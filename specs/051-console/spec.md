@@ -5,18 +5,21 @@ part: the console of section 9) for issue #101, recovering the console spec
 written as `specs/030-console/spec.md` in commit cfa33fb and left out of PR
 #96 (spec 006 AC-21 allows one spec directory per spec PR; the number 030
 has since been used); specs derived from that design need no maintainer
-approval (design section 11). **Needs specs 022 and 027 and the `web-ui`
-profile on `main`**: the plan stage checks, before planning, that
-`tools/scheduler/src/aws/ledger.ts` (spec 022's `reserveSpend`),
-`tools/scheduler/src/metrics/` (spec 027's `computeMetrics`) and
-`agents/profiles/web-ui/profile.yaml` (the planned child `web-ui-profile` of
-the delivery-system design) exist on `main`, and given any is missing it
-plans nothing and returns `spec_gap` naming what is missing, so nothing is
-built against code that is not there and the plan never fails on `profile
-not available: web-ui`. The scope stays as written and the domain stays
-`web-ui` while it waits *(agent's call, section 4 "Prerequisites")*. Its `design/` is produced by spec 029's
-design stage (on `main` since PR #104) when the UI-design gate finds it
-missing, before any plan. Marks no other spec.
+approval (design section 11). Revised 2026-11-12: the wait below is carried
+by the issue's `blocked` label, not by the plan stage. **Needs specs 022 and
+027 implemented and the `web-ui` profile on `main`**:
+`tools/scheduler/src/aws/ledger.ts` (spec 022's `reserveSpend`, issue #37),
+`tools/scheduler/src/metrics/` (spec 027's `computeMetrics`, issue #94) and
+`agents/profiles/web-ui/profile.yaml` (the child `web-ui-profile` of the
+delivery-system design, issue #206). Until all three are on `main` this
+spec's issue carries `blocked`, which the shortlist skips, as spec 029
+section 2 and [ADR 0004](../../docs/decisions/0004-split-metrics-reflection-spec.md)
+record for the console; the label is lifted when the last of the three
+merges. A plan stage that runs while any is missing plans nothing and
+returns `spec_gap` naming what is missing. The scope stays as written and
+the domain stays `web-ui` while it waits *(agent's call, section 4
+"Prerequisites")*. Its `design/` was produced by spec 029's design stage
+(PR #203) and is complete. Marks no other spec.
 Class: tooling. Domain: web-ui.
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
@@ -343,9 +346,23 @@ AC-4.
     its design (`design/`) is merged against this one spec, the scheduler
     side (AC-1 to AC-4) has no use until the hosted side exists, and both
     halves would still wait on spec 022 (AC-7 and the AWS tile).
-  - Given a later plan finds only these prerequisites missing, the spec is
-    right as written and the answer is to keep it; the issue's wait is
-    ordering, not a spec gap (the finding recorded with this answer).
+  - The wait is ordering, not a spec gap, so it is carried by the `blocked`
+    label, the mechanism spec 029 section 2 and ADR 0004 record for exactly
+    this issue, and not by the plan stage. *(agent's call, revising on
+    2026-11-12 after three more rounds of `plan: failed twice: profile not
+    available: web-ui`)* The earlier text had the plan return `spec_gap`
+    while anything was missing, and that cannot wait: the chain driver
+    checks a plan's domain against `agents/profiles/` before it reads the
+    verdict, so a `web-ui` plan fails whatever it returns until the profile
+    exists, and a `spec_gap` that does get through goes to the spec stage
+    once and is a bound hit the second time (spec 006 AC-19). A plan has no
+    result that holds the issue; only the shortlist's `blocked` skip does.
+    The issue was filed without the label because the filer cannot apply it
+    (issue #126), and nothing in the scheduler applies or lifts `blocked` on
+    an issue the children scan did not file, so the label is set on #101 and
+    lifted by hand, as it is on #37 and #94, until that exists. Given a later
+    plan finds only these prerequisites missing, the spec is right as
+    written; the fault is the missing label.
 
 ## 5. Interfaces and files
 
