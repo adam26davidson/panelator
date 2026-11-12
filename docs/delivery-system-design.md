@@ -526,6 +526,7 @@ are stale and are corrected as part of B.
 - `specs/053-incomplete-implement-run-keeps-its-work/spec.md` (issue #106)
 - `specs/054-ci-installs-chromium-with-its-libraries/spec.md` (issue #107)
 - `specs/055-design-stage-lint-runs-in-ci/spec.md` (issue #108)
+- `specs/056-check-failure-history-keeps-the-failing-lines/spec.md` (issue #109)
 - planned: web-ui-profile
   title: The web-ui profile: implement, fix and review instructions for UI packages
   brief: Spec 001 section 9 names `web-ui` among the v0 profiles and leaves its content to
