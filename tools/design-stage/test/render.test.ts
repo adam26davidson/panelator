@@ -25,8 +25,12 @@ describe("design-stage render", () => {
     expect(result[0].stories.length).toBe(2);
     expect(result[0].renders).toHaveLength(6);
     const files = [
-      "sample.png", "sample.mobile.png", "sample.tablet.png",
-      "sample--empty.png", "sample--empty.mobile.png", "sample--empty.tablet.png",
+      "sample.png",
+      "sample.mobile.png",
+      "sample.tablet.png",
+      "sample--empty.png",
+      "sample--empty.mobile.png",
+      "sample--empty.tablet.png",
     ];
     for (const f of files) expect(existsSync(join(dir, "design", f)), f).toBe(true);
     for (const vp of VIEWPORTS) {

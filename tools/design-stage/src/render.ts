@@ -34,9 +34,12 @@ interface IndexEntry {
   name: string;
 }
 
-export function namedScreens(specText: string): string[] {
+function namedScreens(specText: string): string[] {
   const m = /^Screens:\s*(.+)$/m.exec(specText);
-  return (m?.[1] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return (m?.[1] ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 function commit(): string {
@@ -48,8 +51,14 @@ function commit(): string {
 }
 
 const MIME: Record<string, string> = {
-  ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
-  ".json": "application/json", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".png": "image/png",
+  ".html": "text/html",
+  ".js": "text/javascript",
+  ".mjs": "text/javascript",
+  ".css": "text/css",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".woff2": "font/woff2",
+  ".png": "image/png",
 };
 
 function serve(root: string): Promise<{ server: Server; port: number }> {
@@ -73,11 +82,15 @@ function serve(root: string): Promise<{ server: Server; port: number }> {
 async function buildStorybook(designDir: string, outDir: string): Promise<void> {
   const bin = join(dirname(require.resolve("storybook/package.json")), "dist", "bin", "dispatcher.js");
   try {
-    await run(process.execPath, [bin, "build", "--config-dir", join(pkgDir, ".storybook"), "--output-dir", outDir, "--disable-telemetry"], {
-      cwd: pkgDir,
-      env: { ...process.env, PANELATOR_DESIGN_DIR: designDir, STORYBOOK_DISABLE_TELEMETRY: "1" },
-      maxBuffer: 64 * 1024 * 1024,
-    });
+    await run(
+      process.execPath,
+      [bin, "build", "--config-dir", join(pkgDir, ".storybook"), "--output-dir", outDir, "--disable-telemetry"],
+      {
+        cwd: pkgDir,
+        env: { ...process.env, PANELATOR_DESIGN_DIR: designDir, STORYBOOK_DISABLE_TELEMETRY: "1" },
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    );
   } catch (e) {
     const err = e as { stderr?: string; message: string };
     throw new Error(`storybook build failed: ${(err.stderr || err.message).slice(-2000)}`);
@@ -95,13 +108,16 @@ export async function render(opts: RenderOptions): Promise<RenderedScreen[]> {
   if (opts.screen && !screens.includes(opts.screen)) throw new Error(`screen ${opts.screen} is not named in the spec`);
 
   const stories = readdirSync(designDir).filter((f) => f.endsWith(".stories.tsx"));
-  for (const s of wanted) if (!stories.includes(`${s}.stories.tsx`)) throw new Error(`screen ${s} has no story (${s}.stories.tsx)`);
+  for (const s of wanted)
+    if (!stories.includes(`${s}.stories.tsx`)) throw new Error(`screen ${s} has no story (${s}.stories.tsx)`);
 
   const build = mkdtempSync(join(tmpdir(), "panelator-storybook-"));
   let server: Server | undefined;
   try {
     await buildStorybook(designDir, build);
-    const index = JSON.parse(readFileSync(join(build, "index.json"), "utf8")) as { entries: Record<string, IndexEntry> };
+    const index = JSON.parse(readFileSync(join(build, "index.json"), "utf8")) as {
+      entries: Record<string, IndexEntry>;
+    };
     const byScreen = new Map<string, IndexEntry[]>();
     for (const e of Object.values(index.entries)) {
       if (e.type !== "story") continue;
@@ -141,7 +157,13 @@ export async function render(opts: RenderOptions): Promise<RenderedScreen[]> {
   }
 }
 
-async function shoot(browser: Awaited<ReturnType<typeof chromium.launch>>, port: number, id: string, vp: Viewport, sha: string): Promise<Buffer> {
+async function shoot(
+  browser: Awaited<ReturnType<typeof chromium.launch>>,
+  port: number,
+  id: string,
+  vp: Viewport,
+  sha: string,
+): Promise<Buffer> {
   const context = await browser.newContext({
     viewport: { width: vp.width, height: vp.height },
     deviceScaleFactor: vp.deviceScaleFactor,
@@ -150,12 +172,19 @@ async function shoot(browser: Awaited<ReturnType<typeof chromium.launch>>, port:
     const page = await context.newPage();
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
-    await page.goto(`http://127.0.0.1:${port}/iframe.html?id=${encodeURIComponent(id)}&viewMode=story`, { waitUntil: "networkidle" });
+    await page.goto(`http://127.0.0.1:${port}/iframe.html?id=${encodeURIComponent(id)}&viewMode=story`, {
+      waitUntil: "networkidle",
+    });
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     await page.waitForFunction(() => [...document.images].every((i) => i.complete));
     const overlay = await page.evaluate(() => document.body.classList.contains("sb-show-errordisplay"));
     if (overlay || errors.length) {
-      const detail = errors[0] ?? (await page.locator("#error-message").innerText().catch(() => "story error"));
+      const detail =
+        errors[0] ??
+        (await page
+          .locator("#error-message")
+          .textContent()
+          .catch(() => "story error"));
       throw new Error(`story ${id} threw: ${detail}`);
     }
     const png = await page.screenshot({ fullPage: true, type: "png" });

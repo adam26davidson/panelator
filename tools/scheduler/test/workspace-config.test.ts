@@ -112,3 +112,52 @@ describe("CI installs Chromium with its libraries (spec 054)", () => {
     for (const v of variants) expect(checkChromiumSteps(v).length).toBeGreaterThan(0);
   });
 });
+
+describe("CI runs the design package's lint (spec 055)", () => {
+  type LintStep = { run?: string };
+  const LINT_RUN = "pnpm -F @panelator/design-stage lint";
+
+  function checkLint(steps: LintStep[], scripts: Record<string, string>): string[] {
+    const problems: string[] = [];
+    const lintSteps = steps.filter((s) => s.run === LINT_RUN);
+    if (lintSteps.length !== 1) problems.push(`expected exactly one lint step, found ${lintSteps.length}`);
+    const frozen = steps.findIndex((s) => s.run === "pnpm install --frozen-lockfile");
+    if (lintSteps.length === 1 && steps.indexOf(lintSteps[0]) < frozen) {
+      problems.push("the lint step must come after the frozen install");
+    }
+    const lint = scripts.lint;
+    if (lint === undefined) {
+      problems.push("the package has no lint script");
+    } else {
+      let from = 0;
+      for (const word of ["biome", "check", "knip", "--workspace"]) {
+        const at = lint.split(/\s+/).indexOf(word, from);
+        if (at < 0) {
+          problems.push(`the lint script lacks ${word} in order`);
+          break;
+        }
+        from = at + 1;
+      }
+    }
+    return problems;
+  }
+
+  const steps = (parse(readFileSync(join(root, ".github", "workflows", "ci.yml"), "utf8")) as {
+    jobs: { test: { steps: LintStep[] } };
+  }).jobs.test.steps;
+  const scripts = (
+    JSON.parse(readFileSync(join(root, "tools", "design-stage", "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    }
+  ).scripts;
+
+  it("has the lint step after the install and the lint script in the package", () => {
+    expect(checkLint(steps, scripts)).toEqual([]);
+  });
+
+  it("fails when the step or the script is removed", () => {
+    const { lint: _lint, ...withoutScript } = scripts;
+    expect(checkLint(steps.filter((s) => s.run !== LINT_RUN), scripts).length).toBeGreaterThan(0);
+    expect(checkLint(steps, withoutScript).length).toBeGreaterThan(0);
+  });
+});

@@ -1,8 +1,8 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import tailwindcss from "@tailwindcss/vite";
 import type { StorybookConfig } from "@storybook/react-vite";
+import tailwindcss from "@tailwindcss/vite";
 import type { InlineConfig } from "vite";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -19,10 +19,12 @@ const config: StorybookConfig = {
   async viteFinal(base: InlineConfig): Promise<InlineConfig> {
     // A story under a temporary directory cannot resolve bare imports from where it lives.
     // Exact matches: a plain "react" key would also rewrite "react/jsx-runtime".
-    const alias = ["react", "react/jsx-runtime", "react/jsx-dev-runtime", "react-dom", "react-dom/client"].map((id) => ({
-      find: new RegExp(`^${id}$`),
-      replacement: require.resolve(id),
-    }));
+    const alias = ["react", "react/jsx-runtime", "react/jsx-dev-runtime", "react-dom", "react-dom/client"].map(
+      (id) => ({
+        find: new RegExp(`^${id}$`),
+        replacement: require.resolve(id),
+      }),
+    );
     const allow = [join(here, ".."), join(here, "..", "..", "..")];
     if (designDir) allow.push(designDir);
     return {

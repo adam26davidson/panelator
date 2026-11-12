@@ -16,3 +16,4 @@ jobs:
       - run: pnpm -F @panelator/design-stage exec playwright-core install --with-deps chromium
       - run: pnpm test
       - run: pnpm -F @panelator/scheduler typecheck
+      - run: pnpm -F @panelator/design-stage lint
