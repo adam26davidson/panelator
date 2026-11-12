@@ -79,7 +79,8 @@ export interface ChainState {
   pendingSince: string | null;
   checksRerun: boolean;
   /** Spec 011 AC-1, spec 040: the branch and head a stage left when its result carried a question, one entry per branch; an entry is kept until a PR is bound on its branch or the attempt is discarded. */
-  heldWork: { branch: string; head: string }[];
+  /** Spec 053: `carried` is the failure reason of an implement run that stopped before it finished; the entry is that run's work, not a question's hold. */
+  heldWork: { branch: string; head: string; carried?: string }[];
 }
 
 export type ChainEvent =
@@ -95,7 +96,7 @@ export type ChainEvent =
   /** `scope`: the design PR's scope check (spec 029 AC-2), required for `designed`, absent for `question`. */
   | { type: "stage_ok"; stage: "design"; result: DesignResult; scope?: ScopeResult; head?: string }
   | { type: "stage_ok"; stage: "question-check"; result: QuestionCheckResult }
-  | { type: "stage_failed"; stage: AgentStageName; reason: string; postpone?: boolean; /** Spec 013 AC-5: when the quota that postponed it resets. */ until?: string }
+  | { type: "stage_failed"; stage: AgentStageName; reason: string; postpone?: boolean; /** Spec 053: implement only: the commits the stopped run left on its branch. */ head?: string; /** Spec 013 AC-5: when the quota that postponed it resets. */ until?: string }
   /** `at`: when the checks were read; `pending`: the required checks still pending or missing. */
   | { type: "checks"; status: "green" | "failed" | "pending"; log?: string; sensitive: boolean; at: string; pending?: string[] }
   /** `specGate`: on the spec and design tracks, spec-present and the UI-design gate run again on origin/main after the merge (AC-4). */

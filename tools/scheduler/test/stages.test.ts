@@ -285,8 +285,11 @@ describe("renderPrompt", () => {
       const t = read(n);
       expect(t, n).toContain("{{held_work}}");
       expect(renderPrompt(t, { ...input, held_work: "HELD-TEXT" }), n).toContain("HELD-TEXT");
-      expect(renderPrompt(t, { ...input, held_work: undefined }), n).toContain("before your question, if any: (none)");
+      expect(renderPrompt(t, { ...input, held_work: undefined }), n).toContain(n === "implement" ? "stopped before it finished), if any: (none)" : "before your question, if any: (none)");
     }
+    // Spec 053 AC-6: the implement line covers an earlier attempt, and the stage is told to commit after each task.
+    expect(read("implement")).toMatch(/earlier run of this issue \(before your question, or an attempt that stopped before it finished\)/);
+    expect(read("implement")).toMatch(/Commit after each task[^]*only committed work is carried to the next\s+attempt/);
     for (const n of ["implement", "fix", "spec"]) expect(read(n), n).toMatch(/Commit your work before you (escalate|return a question)/);
     expect(read("implement")).toMatch(/push to it and report its number/);
   });

@@ -122,7 +122,7 @@ an entry exists. `branch` and `head` mean what spec 011 AC-1 says. The
   binds a PR on `issue-<n>`, then the `issue-<n>` entry is removed and the
   `spec-<n>` entry stays. A PR bound on a branch no hold names changes
   nothing (as `unholdIfBound` does today for a hold elsewhere).
-- AC-3. **The asking stage's failure drops its branch's hold only.** Given
+- AC-3. Amended by [053-incomplete-implement-run-keeps-its-work](../053-incomplete-implement-run-keeps-its-work/spec.md) AC-2: an incomplete implement run's failure replaces the `issue-<n>` hold with a carried entry instead of dropping it. **The asking stage's failure drops its branch's hold only.** Given
   holds on `issue-<n>` and `spec-<n>` and a chain on the spec track whose
   asking stage is `spec`, when the spec stage fails other than by a quota
   postponement, or returns a question not marked `new_blocker` in decide
@@ -130,7 +130,7 @@ an entry exists. `branch` and `head` mean what spec 011 AC-1 says. The
   `issue-<n>` entry stays. The failure of a stage that is not the asking
   stage, the question check's first failure and its retry, and a quota
   postponement carry every hold unchanged, as spec 011 AC-7 says.
-- AC-4. **Discarding the attempt clears every hold.** Given any holds, when
+- AC-4. Amended by [053-incomplete-implement-run-keeps-its-work](../053-incomplete-implement-run-keeps-its-work/spec.md) AC-2 and AC-3: the escalate to an implement rescue after an incomplete run keeps the carried entry. **Discarding the attempt clears every hold.** Given any holds, when
   an `escalate` transition (rescue, re-plan, spec revision, abandonment, the
   question check's second failure included), `liveness_expired`,
   `chain_error`, any `release`, the `done` of an abandonment or the `done`

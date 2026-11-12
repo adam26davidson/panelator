@@ -1,4 +1,4 @@
-# 053. The delivery-system design's section 10 says row E was split into specs 029 and 051
+# 054. The delivery-system design's section 10 says row E was split into specs 029 and 051
 
 Status: written 2026-11-12 from the delivery-system design for issue #103;
 specs derived from that design need no maintainer approval (design section 11).

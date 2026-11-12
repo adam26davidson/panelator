@@ -525,7 +525,8 @@ are stale and are corrected as part of B.
 - `specs/050-infra-alarm-kind-and-aws-cap-zero/spec.md` (issue #100)
 - `specs/051-console/spec.md` (row E, the console, issue #101)
 - `specs/052-spec-pr-lists-its-new-sub-design/spec.md` (issue #102)
-- `specs/053-design-text-records-row-e-split/spec.md` (issue #103)
+- `specs/053-incomplete-implement-run-keeps-its-work/spec.md` (issue #106)
+- `specs/054-design-text-records-row-e-split/spec.md` (issue #103)
 - planned: web-ui-profile
   title: The web-ui profile: implement, fix and review instructions for UI packages
   brief: Spec 001 section 9 names `web-ui` among the v0 profiles and leaves its content to

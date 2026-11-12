@@ -33,7 +33,7 @@ Earlier attempts at this issue failed for the reasons recorded there; do not rep
 
 The question you asked earlier, if any: {{question}}
 The maintainer's answer, if any: {{answer}}
-Work you did before your question, if any: {{held_work}}
+Work of an earlier run of this issue (before your question, or an attempt that stopped before it finished), if any: {{held_work}}
 When an answer is present it is a decision: implement on it and do not reopen it.
 
 The question check sent this back for you to decide: {{decide_input}}
@@ -42,7 +42,9 @@ the maintainer, for the reasons given: decide it yourself, and do not ask it aga
 the decision is a large one, write it as an ADR in `docs/decisions/` (a new file, with its
 reasoning); an ADR you add is always in the PR's scope.
 
-Implement every task in the plan, test-first, committing as you go. Run `pnpm test` from
+Implement every task in the plan, test-first. Commit after each task: when a run is stopped by
+its bounds (cost, turns, time or a session limit), only committed work is carried to the next
+attempt; uncommitted changes are discarded. Run `pnpm test` from
 the repo root before you finish. Then push the branch and open a pull request with `gh pr create`
 whose body starts with "Closes #<issue>". When the work above names an open pull request from the
 branch, push to it and report its number rather than opening a second one. Write the JSON result to {{result_path}}:

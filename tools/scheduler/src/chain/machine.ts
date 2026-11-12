@@ -89,7 +89,7 @@ function normalizeHeld(raw: unknown): ChainState["heldWork"] {
 }
 
 /** Spec 040: the hold on a branch, or null. */
-export function heldOn(state: Pick<ChainState, "heldWork">, branch: string): { branch: string; head: string } | null {
+export function heldOn(state: Pick<ChainState, "heldWork">, branch: string): ChainState["heldWork"][number] | null {
   return state.heldWork.find((h) => h.branch === branch) ?? null;
 }
 
@@ -189,7 +189,9 @@ function escalate(state: ChainState, stuck: Stuck, reason: string, fixInput: str
     const next = designToSpecRevise(s, reason);
     return next ?? abandon(s, stuck);
   }
-  if (s.rescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { rescues: s.rescues + 1, rescueRun: true });
+  // Spec 053 AC-2: the rescue of an implement run continues from the work the stopped run carried.
+  const carried = stuck === "implement" ? state.heldWork.filter((h) => h.branch === `issue-${state.issue}` && h.carried !== undefined) : [];
+  if (s.rescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { rescues: s.rescues + 1, rescueRun: true, heldWork: carried });
   // The PR is closed: its fix input, conflict and rescue flag go with it, and so do a decide-mode input, an ADR requirement on its
   // run and the answer it was applying (T-minor 3); an answer not yet recorded on main stays in `pendingAnswer` (T4).
   const dropPr: Partial<ChainState> = {
@@ -780,13 +782,21 @@ function baseTransition(state: ChainState, event: ChainEvent, bounds: Bounds): S
   }
   if (event.type === "stage_failed") {
     if (event.stage !== state.stage) invalid(state, event);
+    if (event.head !== undefined && event.stage !== "implement") invalid(state, event);
     // AC-27: before every other failure rule; a postponed rescue stays a rescue and nothing is spent or noted.
     if (event.postpone) {
       if (!POSTPONABLE.includes(state.stage)) invalid(state, event);
       return { state: { ...state, stage: "waiting", resumeStage: event.stage, postponedUntil: null }, actions: [event.until ? { type: "wait", seconds: POSTPONE_WAIT_S, until: event.until } : { type: "wait", seconds: POSTPONE_WAIT_S }] };
     }
     // AC-7: the asking stage failing is a failed attempt; the question check's own failures keep the work.
-    const s = note(event.stage === state.askingStage ? { ...state, heldWork: withoutHeld(state) } : state, `${event.stage} attempt ${state.attempt} failed: ${event.reason}`);
+    let failed = event.stage === state.askingStage ? { ...state, heldWork: withoutHeld(state) } : state;
+    if (event.stage === "implement") {
+      // Spec 053 AC-2, AC-3: the stopped run's commits replace the branch's entry; a failure without them drops a carried one.
+      const issueBranch = `issue-${state.issue}`;
+      const rest = failed.heldWork.filter((h) => !(h.branch === issueBranch && (event.head !== undefined || h.carried !== undefined)));
+      failed = { ...failed, heldWork: event.head === undefined ? rest : [...rest, { branch: issueBranch, head: event.head, carried: event.reason }] };
+    }
+    const s = note(failed, `${event.stage} attempt ${state.attempt} failed: ${event.reason}`);
     if (s.rescueRun && event.stage !== "question-check") return escalate(s, event.stage, `rescue run failed: ${event.reason}`, s.pendingFixInput ?? event.reason);
     switch (s.stage) {
       case "plan":

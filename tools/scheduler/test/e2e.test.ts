@@ -646,7 +646,7 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
       expect(w.mergeRequests).toEqual([9]);
     }, 120_000);
 
-    it("a question whose resumed stage then fails: the retry starts clean, with the stale-branch record", async () => {
+    it("a question whose resumed stage then stops: the retry continues from the held head (spec 011 AC-10 as amended by spec 053)", async () => {
       let w!: ChainWorld;
       const a = agents(() => w);
       const held = { head: "" };
@@ -663,15 +663,18 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
           review: [APPROVE], "question-check": [SEND],
         },
       });
-      const main = git(w.pair.origin, "rev-parse", "main").trim();
       await w.tick();
       w.reply("Added it.");
       await w.tick();
       await expectSettled(w);
 
-      expect(starts).toEqual([held.head, main]);
-      expect(kinds(w, "stale-branch-dropped")).toMatchObject([{ issue: 7, branch: "issue-7" }]);
-      expect(inputsOf(w, "implement")[2].held_work).toBeUndefined();
+      expect(starts).toEqual([held.head, held.head]);
+      const kept = kinds(w, "held-work-kept");
+      expect(kept.length).toBeGreaterThanOrEqual(2);
+      for (const k of kept) expect(k).toMatchObject({ branch: "issue-7", head: held.head });
+      expect(kinds(w, "stale-branch-dropped")).toEqual([]);
+      expect(kinds(w, "recovered-commits")).toEqual([]);
+      expect(inputsOf(w, "implement")[2].held_work).toContain(held.head);
       expect(w.mergeRequests).toEqual([9]);
     }, 120_000);
   });
@@ -1403,4 +1406,128 @@ describe("every event kind is recorded across the recorded chains (spec 026 AC-2
     expect(EVENT_KINDS.filter((k) => !seen.has(k) && !RESERVED.includes(k) && !NOT_YET_PRODUCED.includes(k))).toEqual([]);
     for (const k of ["notification", "question", "reminder"]) expect(contacts.has(k), k).toBe(true);
   });
+});
+
+describe("end to end: an implement run stopped before it finished keeps its work (spec 053)", () => {
+  const rev = (run: StageRun) => git(run.worktree, "rev-parse", "HEAD").trim();
+  const kinds = (w: ChainWorld, kind: string) => w.logs.filter((r) => r.kind === kind);
+  /** A run that commits and pushes, then ends on a non-zero exit (the harness stopped it); `pr` opens PR 9 first. */
+  const stops = (w: () => ChainWorld, heads: string[], tag: string, pr = false) => (run: StageRun) => {
+    const sha = w().push(run, { "a.txt": `${tag}\n` }, tag);
+    if (pr) w().openPr(run, 9, sha);
+    heads.push(sha);
+    return undefined;
+  };
+  const mainOf = (w: ChainWorld) => git(w.pair.origin, "rev-parse", "main").trim();
+
+  it("the retry starts at the pushed head, is told, drops nothing, and its PR merges (AC-5)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    const heads: string[] = [];
+    const starts: string[] = [];
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: [stops(() => w, heads, "one"), a.implement(9, { "a.txt": "pr 9\n" }, (run) => starts.push(rev(run)))], review: [APPROVE] } });
+    await w.tick();
+    await expectSettled(w);
+    expect(w.adapter.ran).toEqual(["plan", "implement", "implement", "review"]);
+    expect(starts).toEqual(heads);
+    expect(kinds(w, "held-work")).toMatchObject([{ stage: "implement", branch: "issue-7", head: heads[0], carried: "exit" }]);
+    expect(kinds(w, "held-work-kept")).toMatchObject([{ branch: "issue-7", head: heads[0] }]);
+    expect(kinds(w, "stale-branch-dropped")).toEqual([]);
+    expect(kinds(w, "recovered-commits")).toEqual([]);
+    const told = inputsOf(w, "implement")[1].held_work as string;
+    expect(told).toContain(heads[0]);
+    expect(told).toContain("exit");
+    expect(inputsOf(w, "implement")[0].held_work).toBeUndefined();
+    expect(w.mergeRequests).toEqual([9]);
+  }, 120_000);
+
+  it("a PR opened before the run stopped is not closed, and the retry reports it (AC-5)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    const heads: string[] = [];
+    const starts: string[] = [];
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: [stops(() => w, heads, "one", true), a.implement(9, { "a.txt": "pr 9\n" }, (run) => starts.push(rev(run)))], review: [APPROVE] } });
+    await w.tick();
+    await expectSettled(w);
+    expect(starts).toEqual(heads);
+    expect(inputsOf(w, "implement")[1].held_work).toContain("#9");
+    expect(w.writes().filter((c) => c.startsWith("PATCH /repos/o/r/pulls/") || c.startsWith("DELETE /repos/o/r/git/refs"))).toEqual([]);
+    expect(kinds(w, "stale-branch-dropped")).toEqual([]);
+    expect(w.mergeRequests).toEqual([9]);
+  }, 120_000);
+
+  it("two stopped attempts: the rescue starts at the second one's head (AC-5)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    const heads: string[] = [];
+    const starts: string[] = [];
+    const startsAt = (run: StageRun) => { starts.push(rev(run)); };
+    const first = stops(() => w, heads, "one");
+    const second = stops(() => w, heads, "two");
+    w = await chainWorld({
+      files: repoFiles(),
+      results: { plan: [PLAN], implement: [first, (run: StageRun) => { startsAt(run); return second(run); }, a.implement(9, { "a.txt": "pr 9\n" }, startsAt)], review: [APPROVE] },
+    });
+    await w.tick();
+    await expectSettled(w);
+    expect(starts).toEqual([heads[0], heads[1]]);
+    expect(runsOf(w, "implement")[2].model).toBe(w.cfg.rescue_model);
+    expect(kinds(w, "stale-branch-dropped")).toEqual([]);
+    expect(w.mergeRequests).toEqual([9]);
+  }, 120_000);
+
+  it("a stopped retry and a stopped rescue: the re-plan starts clean, with the stale-branch record (AC-5)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    const heads: string[] = [];
+    const starts: string[] = [];
+    w = await chainWorld({
+      files: repoFiles(),
+      results: {
+        plan: [PLAN, PLAN],
+        implement: [stops(() => w, heads, "one"), stops(() => w, heads, "two"), stops(() => w, heads, "three"), a.implement(9, { "a.txt": "pr 9\n" }, (run) => starts.push(rev(run)))],
+        review: [APPROVE],
+      },
+    });
+    const main = mainOf(w);
+    await w.tick();
+    await expectSettled(w);
+    expect(w.adapter.ran).toEqual(["plan", "implement", "implement", "implement", "plan", "implement", "review"]);
+    expect(starts).toEqual([main]);
+    expect(inputsOf(w, "implement")[3].held_work).toBeUndefined();
+    expect(kinds(w, "stale-branch-dropped")).toMatchObject([{ issue: 7, branch: "issue-7" }]);
+    expect(w.mergeRequests).toEqual([9]);
+  }, 120_000);
+
+  it("a run that finished with an invalid result after committing is a wrong attempt: the retry starts clean (AC-5)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    const starts: string[] = [];
+    w = await chainWorld({
+      files: repoFiles(),
+      results: { plan: [PLAN], implement: [(run: StageRun) => { w.push(run, { "a.txt": "one\n" }); return {}; }, a.implement(9, { "a.txt": "pr 9\n" }, (run) => starts.push(rev(run)))], review: [APPROVE] },
+    });
+    const main = mainOf(w);
+    await w.tick();
+    await expectSettled(w);
+    expect(starts).toEqual([main]);
+    expect(kinds(w, "held-work")).toEqual([]);
+    expect(kinds(w, "stale-branch-dropped")).toMatchObject([{ issue: 7, branch: "issue-7" }]);
+    expect(inputsOf(w, "implement")[1].held_work).toBeUndefined();
+    expect(w.mergeRequests).toEqual([9]);
+  }, 120_000);
+
+  it("a stopped run that committed nothing: the retry starts clean and no held-work record is written (AC-5)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    const starts: string[] = [];
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: [FAIL, a.implement(9, { "a.txt": "pr 9\n" }, (run) => starts.push(rev(run)))], review: [APPROVE] } });
+    const main = mainOf(w);
+    await w.tick();
+    await expectSettled(w);
+    expect(starts).toEqual([main]);
+    expect(kinds(w, "held-work")).toEqual([]);
+    expect(inputsOf(w, "implement")[1].held_work).toBeUndefined();
+    expect(w.mergeRequests).toEqual([9]);
+  }, 120_000);
 });

@@ -101,6 +101,7 @@ describe("runStage", () => {
     expect(out.outcome).toBe("failed");
     expect(out.reason).toBe("result: invalid");
     expect(out.resultErrors[0]).toMatch(/missing/);
+    expect(out.stopped).toBe(false); // spec 053: the harness finished; only the result check failed
   });
   it("fails with result: invalid and the schema errors when the result does not validate", async () => {
     const { paths, ctx, req } = setup({ result: { verdict: "ready" } });
@@ -108,6 +109,7 @@ describe("runStage", () => {
     const out = await runStage(ctx, req);
     expect(out.outcome).toBe("failed");
     expect(out.resultErrors.join(" ")).toMatch(/domain|tasks/);
+    expect(out.stopped).toBe(false);
     const outcomePath = join(paths.runs, out.runId, "outcome.json");
     expect(existsSync(outcomePath)).toBe(true);
     const outcome = JSON.parse(readFileSync(outcomePath, "utf8"));
@@ -138,7 +140,9 @@ describe("runStage", () => {
   it("records failed on a non-zero exit", async () => {
     const { paths, ctx, req } = setup({ result: goodPlan, exitCode: 1 });
     await ensureStateDirs(paths);
-    expect((await runStage(ctx, req)).outcome).toBe("failed");
+    const out = await runStage(ctx, req);
+    expect(out.outcome).toBe("failed");
+    expect(out.stopped).toBe(true); // spec 053
   });
   it("records timeout and ignores a result written before the kill (review focus 2)", async () => {
     const { paths, ctx, req } = setup({ result: goodPlan, sleepMs: 5000 });
@@ -146,6 +150,7 @@ describe("runStage", () => {
     req.def = { ...req.def, bounds: { ...req.def.bounds, timeout_min: 1 / 60 } }; // 1 second
     const out = await runStage(ctx, req);
     expect(out.outcome).toBe("timeout");
+    expect(out.stopped).toBe(true);
     expect(out.result).toBeNull();
     expect(out.usage.outcome).toBe("timeout");
   }, 20_000);

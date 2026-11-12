@@ -1121,6 +1121,7 @@ describe("chain: every event in every stage (AC-27)", () => {
     { type: "stage_ok", stage: "question-check", result: { verdict: "send", reasoning: "r" } },
     { type: "stage_ok", stage: "question-check", result: { verdict: "decide_yourself", reasoning: "r" } },
     ...EVENTS_FAILED,
+    { type: "stage_failed", stage: "implement", reason: "stopped", head: "d".repeat(40) },
     { type: "checks", status: "green", sensitive: false, at: AT },
     { type: "checks", status: "failed", log: "FAIL", sensitive: false, at: AT },
     { type: "checks", status: "pending", sensitive: false, at: AT, pending: ["ci/test"] },
@@ -1223,7 +1224,8 @@ describe("chain: every event in every stage (AC-27)", () => {
   });
   it("held work is carried, set, replaced or removed per entry by every valid pair, and cleared whole only when something is discarded (spec 040 AC-4)", () => {
     const h = (branch: string) => ({ branch, head: "a".repeat(40) });
-    const heldVariants: ChainState["heldWork"][] = [[], [h("issue-1")], [h("spec-1")], [h("issue-1"), h("spec-1")]];
+    const carriedEntry = { ...h("issue-1"), carried: "max budget reached" };
+    const heldVariants: ChainState["heldWork"][] = [[], [h("issue-1")], [h("spec-1")], [h("issue-1"), h("spec-1")], [carriedEntry], [h("spec-1"), carriedEntry]];
     const ledger = (s: ChainState) => s.rescues + s.specRescues + s.replans + s.specRevisions;
     let carried = 0;
     let cleared = 0;
@@ -1241,6 +1243,16 @@ describe("chain: every event in every stage (AC-27)", () => {
               const r = transition(state, event);
               const after = r.state.heldWork;
               const without = heldWork.filter((x) => x.branch !== own);
+              // Spec 053 AC-2, AC-3: an implement failure that stays in implement (the retry or the rescue) sets the carried entry
+              // (with a head) or removes it (without one); the rescue keeps nothing but that entry; any other end clears below.
+              if (event.type === "stage_failed" && event.stage === "implement" && !event.postpone && r.state.stage === "implement") {
+                const rescue = ledger(r.state) > ledger(state);
+                const kept = heldWork.filter((x) => !(x.branch === own && state.askingStage === "implement") && !(x.branch === "issue-1" && (x.carried !== undefined || event.head !== undefined)));
+                const entry = event.head !== undefined ? [{ branch: "issue-1", head: event.head, carried: "stopped" }] : [];
+                expect(after, label).toEqual(rescue ? entry : [...kept, ...entry]);
+                if (entry.length) set++; else removed++;
+                continue;
+              }
               if (event.type === "stage_ok" && headOf(event) !== undefined && r.state.stage !== "abandoned" && r.state.stage !== "released") {
                 // A question routed from a plan, implement, fix or spec result sets or replaces the chain's branch entry only.
                 if (r.state.stage === "question-check" || r.state.stage === "paused" || (r.state.stage === "spec" && r.state.specMode === "decide")) {
@@ -1267,7 +1279,8 @@ describe("chain: every event in every stage (AC-27)", () => {
                 // An unmarked question in decide mode counts as a failed run.
                 || (event.type === "stage_ok" && headOf(event) !== undefined && state.decideInput !== null && event.stage === state.askingStage);
               expect(bound || askerFailed, label).toBe(true);
-              expect(after, label).toEqual(without);
+              // An implement run counted as failed (an unmarked question in decide mode) also drops a carried entry (spec 053 AC-3).
+              expect(after, label).toEqual(askerFailed && state.askingStage === "implement" && state.stage === "implement" ? without.filter((x) => x.carried === undefined) : without);
               removed++;
             }
           }
@@ -1349,6 +1362,40 @@ describe("chain: every event in every stage (AC-27)", () => {
       expect(transition(qc, { type: "stage_failed", stage: "question-check", reason: "429", postpone: true }).state.heldWork).toEqual(both);
       const other = at("review", { pr: pr3, heldWork: both, askingStage: "implement" });
       expect(transition(other, { type: "stage_failed", stage: "review", reason: "boom" }).state.heldWork).toEqual(both);
+    });
+    it("a stopped implement run's head becomes a carried entry, kept by the retry and the rescue, dropped by the re-plan (spec 053 AC-2, AC-3)", () => {
+      const stopped = (head: string) => ({ type: "stage_failed", stage: "implement", reason: "max budget reached", head } as const);
+      const h1 = "1".repeat(40);
+      const h2 = "2".repeat(40);
+      const one = transition(at("implement", { plan }), stopped(h1));
+      expect(one.state).toMatchObject({ stage: "implement", attempt: 2, implementFailures: 1, heldWork: [{ branch: "issue-1", head: h1, carried: "max budget reached" }] });
+      const two = transition(one.state, stopped(h2));
+      expect(two.state).toMatchObject({ stage: "implement", rescueRun: true, rescues: 1, heldWork: [{ branch: "issue-1", head: h2, carried: "max budget reached" }] });
+      expect(two.state.history.at(-1)).toMatch(/max budget reached/);
+      const three = transition(two.state, stopped("3".repeat(40)));
+      expect(three.state).toMatchObject({ stage: "plan", replans: 1, heldWork: [] });
+    });
+    it("a carried entry replaces a question's hold, leaves other entries on retry, and a rescue keeps only the carried one (spec 053 AC-2)", () => {
+      const q1 = { branch: "issue-1", head: "a".repeat(40) };
+      const r = transition(at("implement", { plan, heldWork: [specHeld, q1], askingStage: "implement" }), { type: "stage_failed", stage: "implement", reason: "x", head: "4".repeat(40) });
+      expect(r.state.heldWork).toEqual([specHeld, { branch: "issue-1", head: "4".repeat(40), carried: "x" }]);
+      const rescue = transition(at("implement", { plan, implementFailures: 1, attempt: 2, heldWork: [specHeld] }), { type: "stage_failed", stage: "implement", reason: "x", head: "4".repeat(40) });
+      expect(rescue.state).toMatchObject({ rescueRun: true, heldWork: [{ branch: "issue-1", head: "4".repeat(40), carried: "x" }] });
+    });
+    it("an implement failure without a head clears the carried entry; a postponement keeps it (spec 053 AC-3)", () => {
+      const c = { branch: "issue-1", head: "a".repeat(40), carried: "timeout" };
+      expect(transition(at("implement", { plan, heldWork: [c, specHeld] }), { type: "stage_failed", stage: "implement", reason: "result: invalid" }).state.heldWork).toEqual([specHeld]);
+      expect(transition(at("implement", { plan, heldWork: [c] }), { type: "stage_failed", stage: "implement", reason: "429", postpone: true }).state.heldWork).toEqual([c]);
+      const rescue = at("implement", { plan, rescueRun: true, rescues: 1, heldWork: [c] });
+      expect(transition(rescue, { type: "stage_failed", stage: "implement", reason: "429", postpone: true }).state).toMatchObject({ stage: "waiting", rescueRun: true, heldWork: [c] });
+      expect(transition(rescue, { type: "stage_failed", stage: "implement", reason: "stopped", head: "5".repeat(40) }).state).toMatchObject({ stage: "plan", heldWork: [] });
+      const bound = transition(at("implement", { plan, heldWork: [c] }), { type: "stage_ok", stage: "implement", result: impl, scope: { ok: true } });
+      expect(bound.state.heldWork).toEqual([]);
+    });
+    it("a head on a stage_failed of any other stage is an invalid event (spec 053 AC-1)", () => {
+      for (const stage of ["plan", "fix", "review", "spec", "design", "question-check"] as const) {
+        expect(() => transition(at(stage, { plan, pr: pr3, track: stage === "spec" ? "spec" : stage === "design" ? "design" : "issue", question: q, askingStage: "plan" }), { type: "stage_failed", stage, reason: "x", head: HEAD } as never), stage).toThrow(/^invalid event /);
+      }
     });
     it("liveness expiry and a chain error clear every hold (spec 040 AC-4; escalations are covered by the table above)", () => {
       const both = [held[0], specHeld];
