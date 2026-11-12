@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  branchOf, HISTORY_ENTRY_MAX, HISTORY_MAX_ENTRIES, initialChainState, ledgerOf, MAX_CHAIN_ERRORS, MAX_DECIDE_RETURNS, MAX_REPLANS, MAX_RESCUES,
+  branchOf, checkFailureEntry, FAILURE_MARKER, HISTORY_ENTRY_MAX, HISTORY_MAX_ENTRIES, initialChainState, ledgerOf, MAX_CHAIN_ERRORS, MAX_DECIDE_RETURNS, MAX_REPLANS, MAX_RESCUES,
   MAX_SPEC_ANSWERS, MAX_SPEC_REVISIONS, normalizeChainState, transition, VERIFY_PENDING_MAX_H, type LedgerCounts,
 } from "../src/chain/machine.ts";
 import type { Action, ChainEvent, ChainStage, ChainState } from "../src/chain/types.ts";
 import { MAX_FIXES } from "../src/gates/index.ts";
+import { realShapeLog } from "./fixtures/real-shape-log.ts";
+import { cleanJobLog } from "../src/github/job-log.ts";
 import { validate } from "../src/schema/validate.ts";
 import { formatQuestion, questionBody, questionMarker } from "../src/chain/question.ts";
 import type { AgentStageName, DesignResult, ImplementResult, PlanResult, Question, ReviewResult, SpecResult } from "../src/types.ts";
@@ -149,6 +151,56 @@ describe("chain: scope (AC-10, AC-1)", () => {
     const r2 = transition(r1.state, { type: "stage_ok", stage: "fix", result: { head_sha: "c".repeat(40), addressed: [0] }, scope: { ok: false, violations: ["web/y.ts: outside plan file scope"] } });
     expect(r2.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining("web/y.ts") }]);
     expect(r2.state).toMatchObject({ stage: "fix", rescues: 1, rescueRun: true, pendingFixInput: expect.stringContaining("web/y.ts") });
+  });
+});
+
+describe("chain: check failure history entry (spec 056)", () => {
+  const excerpt = cleanJobLog(realShapeLog(), 200);
+  const log = `test\n${excerpt}`;
+  const fail = (l: string) => transition(at("verify"), { type: "checks", status: "failed", log: l, sensitive: false, at: AT });
+  it("starts at the first marker, holds the cause and no passing line, and fits uncut", () => {
+    expect(excerpt.length).toBeGreaterThan(HISTORY_ENTRY_MAX);
+    const entry = fail(log).state.history.at(-1) as string;
+    expect(entry.startsWith("A required check failed:\ntest\n⎯⎯⎯")).toBe(true);
+    for (const part of ["test/a.test.ts > Scheduler > does the thing", "AssertionError: expected 1", "Test Files  1 failed", "ELIFECYCLE", "##[error]Process completed"]) expect(entry).toContain(part);
+    expect(entry).not.toContain("✓");
+    expect(entry).not.toContain("omitted");
+    expect(entry.length).toBeLessThanOrEqual(HISTORY_ENTRY_MAX);
+  });
+  it("the fix input and pendingFixInput are the whole log", () => {
+    const r = fail(log);
+    expect(r.actions[0]).toMatchObject({ type: "run_stage", stage: "fix", fixInput: `A required check failed:\n${log}` });
+    expect(r.state.pendingFixInput).toBe(`A required check failed:\n${log}`);
+  });
+  it("an over-long excerpt with a marker keeps its head and ends in the omission line", () => {
+    const ex = `✓ ok\nFAIL a.test.ts\n${"stack line\n".repeat(1000)}`;
+    const entry = checkFailureEntry(`test\n${ex}`);
+    expect(entry.length).toBeLessThanOrEqual(HISTORY_ENTRY_MAX);
+    expect(entry.startsWith("A required check failed:\ntest\nFAIL a.test.ts\nstack line")).toBe(true);
+    const m = /\n\[… (\d+) characters of the excerpt omitted\]$/.exec(entry) as RegExpExecArray;
+    const kept = entry.slice("A required check failed:\ntest\n".length, m.index);
+    expect(Number(m[1])).toBe(ex.length - kept.length);
+  });
+  it("an over-long excerpt without a marker has the omission line first and keeps the tail", () => {
+    const ex = Array.from({ length: 1000 }, (_, i) => `plain ${i}`).join("\n");
+    const entry = checkFailureEntry(`test\n${ex}`);
+    expect(entry.length).toBeLessThanOrEqual(HISTORY_ENTRY_MAX);
+    const lines = entry.split("\n");
+    expect(lines[2]).toMatch(/^\[… \d+ characters of the excerpt omitted\]$/);
+    expect(lines.at(-1)).toBe("plain 999");
+    const kept = lines.slice(3).join("\n");
+    expect(Number(/\d+/.exec(lines[2])?.[0])).toBe(ex.length - kept.length);
+  });
+  it("recognises the listed markers", () => {
+    for (const l of ["FAIL x", "  × y", "✗ y", "✖ y", "⎯⎯⎯ z", "##[error]x", "ELIFECYCLE x", "ERR_PNPM x", "npm ERR! x", "Error: x", "TypeError: x", "src/a.ts(1,2): error TS2322: x"]) expect(FAILURE_MARKER.test(l), l).toBe(true);
+    expect(FAILURE_MARKER.test(" ✓ passing")).toBe(false);
+  });
+  it("the abandonment comment and finding carry the FAIL line, and a ledger keeps the entry as written", () => {
+    const entry = fail(log).state.history.at(-1) as string;
+    const r = transition(at("fix", { rescues: 1, replans: 1, specRevisions: 1, history: [entry] }), { type: "stage_failed", stage: "fix", reason: "boom" });
+    expect((r.actions.find((a) => a.type === "comment") as { text: string }).text).toContain("test/a.test.ts > Scheduler > does the thing");
+    expect((r.actions.find((a) => a.type === "finding") as { finding: { evidence: string } }).finding.evidence).toContain("test/a.test.ts > Scheduler > does the thing");
+    expect(initialChainState(1, null, { ...ledgerOf(initialChainState(1, null)), history: [entry] }).history).toEqual([entry]);
   });
 });
 

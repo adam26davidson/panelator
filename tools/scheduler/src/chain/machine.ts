@@ -114,6 +114,32 @@ function invalid(state: ChainState, event: ChainEvent): never {
   throw new Error(`invalid event ${event.type} in stage ${state.stage} (issue ${state.issue})`);
 }
 
+/** A line that says what failed: the first one of these starts the part of a check's excerpt the history keeps. */
+export const FAILURE_MARKER = /^\s*(FAIL\b|[×✗✖]|⎯{3,}|##\[error\]|ELIFECYCLE|ERR_|npm ERR!|Error:|\w+Error:)|\berror TS\d+:/;
+
+/** The history entry of a failed check from the event's `log` (`<name>\n<excerpt>`): from the first failure marker on, cut to HISTORY_ENTRY_MAX from the end that holds the cause. */
+export function checkFailureEntry(log: string): string {
+  const nl = log.indexOf("\n");
+  const name = nl < 0 ? log : log.slice(0, nl);
+  const excerpt = nl < 0 ? "" : log.slice(nl + 1);
+  const head = `A required check failed:\n${name}`;
+  if (!excerpt) return head.slice(0, HISTORY_ENTRY_MAX);
+  const exLines = excerpt.split("\n");
+  const at = exLines.findIndex((l) => FAILURE_MARKER.test(l));
+  const body = at < 0 ? excerpt : exLines.slice(at).join("\n");
+  const whole = `${head}\n${body}`;
+  if (whole.length <= HISTORY_ENTRY_MAX) return whole;
+  const reserve = (n: number) => `[… ${n} characters of the excerpt omitted]`;
+  const room = HISTORY_ENTRY_MAX - head.length - 2 - reserve(excerpt.length).length;
+  const keep = Math.max(0, room);
+  if (at >= 0) {
+    const kept = body.slice(0, keep);
+    return `${head}\n${kept}\n${reserve(excerpt.length - kept.length)}`;
+  }
+  const kept = keep ? excerpt.slice(-keep) : "";
+  return `${head}\n${reserve(excerpt.length - kept.length)}\n${kept}`;
+}
+
 function note(state: ChainState, entry: string): ChainState {
   return { ...state, history: [...state.history, clip(entry)].slice(-HISTORY_MAX_ENTRIES) };
 }
@@ -564,8 +590,8 @@ function verifyChecks(state: ChainState, event: Extract<ChainEvent, { type: "che
   const moved: ChainState = { ...checked, pendingSince: null, checksRerun: false, answer: null, securityPass: false };
   if (state.track === "issue") Object.assign(moved, { answerQuestionId: null, answerQuestionIds: [], answerKind: null, recordIds: [], recordKind: null });
   if (event.status === "failed") {
-    const text = `A required check failed:\n${event.log ?? "(no log excerpt)"}`;
-    return toFix(note(moved, text), text);
+    const log = event.log ?? "(no log excerpt)";
+    return toFix(note(moved, checkFailureEntry(log)), `A required check failed:\n${log}`);
   }
   return run(moved, "review", reviewProfile(moved));
 }
