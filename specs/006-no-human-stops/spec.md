@@ -516,7 +516,7 @@ AC-10 second sentence, AC-13)
   are saved as a patch, every open PR from it is closed with a comment, and
   the branch is deleted on GitHub, so the stage's push and PR start clean.
 
-  **Scope.** Amended by [039-spec-pr-marks-superseded-text](../039-spec-pr-marks-superseded-text/spec.md) AC-1: the list also allows the spec.md of another spec the new spec links to, for the marks of its AC-5. The scope check of AC-22 holds the spec PR to:
+  **Scope.** Amended by [052-spec-pr-lists-its-new-sub-design](../052-spec-pr-lists-its-new-sub-design/spec.md) AC-1: when the parent is under docs/designs/, the list also allows the Children section of the top design it descends from. Amended by [039-spec-pr-marks-superseded-text](../039-spec-pr-marks-superseded-text/spec.md) AC-1: the list also allows the spec.md of another spec the new spec links to, for the marks of its AC-5. The scope check of AC-22 holds the spec PR to:
   - the spec's directory;
   - `docs/designs/`;
   - `docs/decisions/`;
