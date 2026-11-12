@@ -1,6 +1,7 @@
 import type { Octokit } from "octokit";
 import type { IssueData, LabelEvent } from "../types.ts";
 import type { CheckRun, CheckSummary, IssueComment, PullRequestInfo } from "./types.ts";
+import { cleanJobLog } from "./job-log.ts";
 
 type Rec = Record<string, unknown>;
 const toComment = (c: Rec): IssueComment => ({ id: Number(c.id), author: String(rec(c.user).login ?? ""), at: String(c.created_at), body: String(c.body ?? "") });
@@ -177,7 +178,7 @@ export class GitHubClient {
   async jobLogExcerpt(jobId: number, lines = 200): Promise<string> {
     const res = await this.octokit.request("GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs", { ...this.base, job_id: jobId });
     const text = typeof res.data === "string" ? res.data : res.data instanceof ArrayBuffer ? new TextDecoder().decode(res.data) : String(res.data ?? "");
-    return text.split("\n").filter((l) => l.length).slice(-lines).join("\n");
+    return cleanJobLog(text, lines);
   }
 
   async createIssue(title:string,body:string,labels:string[]):Promise<number> {
