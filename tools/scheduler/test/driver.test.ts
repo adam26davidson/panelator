@@ -3,14 +3,15 @@ import {telegramChannel} from '../src/telegram/channel.ts';
 import {fakeTelegram} from './helpers/fake-telegram.ts';
 import {emptyTelegram,listPaused,type PausedRecord} from '../src/state/paused.ts';
 import {completePause} from '../src/chain/driver.ts';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
 import type { Adapter, StageRun } from "../src/adapters/types.ts";
 import { initialChainState, ledgerOf, transition } from "../src/chain/machine.ts";
 import type { Action, ChainState } from "../src/chain/types.ts";
-import { applyActions, CHARTER_REVERT_LINE, CLOSING_KEYWORD, driveChain, step, type DriverDeps } from "../src/chain/driver.ts";
+import { applyActions, CHARTER_REVERT_LINE, CLOSING_KEYWORD, designTop, driveChain, step, type DriverDeps } from "../src/chain/driver.ts";
 import { agentsDir, defaultConfigPath, loadConfig } from "../src/config.ts";
 import { GitHubClient } from "../src/github/client.ts";
 import { ensureWorktree } from "../src/runner/worktree.ts";
@@ -1368,6 +1369,40 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     await step(deps, r.claim);
     expect(inputOf(paths, "7-fix-").fix_input?.startsWith(`${CHARTER_REVERT_LINE}\n`)).toBe(true);
   }, 60_000);
+
+  it("accepts a spec PR that lists its new sub-design in the top design's Children (spec 052 AC-4)", async () => {
+    let wt = "";
+    const top = "docs/delivery-system-design.md";
+    const files = {
+      ...withTopDesign({ "a.txt": "a\n" }, "specs/010-thing/spec.md"),
+      [top]: "Parent: docs/charter.md\n\n## Children\n\n- `docs/designs/old.md`\n",
+    };
+    const edit = (run: StageRun) => revised(commitIn(run.worktree, {
+      "specs/010-thing/spec.md": spec.replace(/^Parent:.*$/m, "Parent: docs/designs/new.md"),
+      "docs/designs/new.md": "Parent: docs/delivery-system-design.md\n\n## Children\n\n- `specs/010-thing/spec.md`\n- planned: other\n",
+      [top]: "Parent: docs/charter.md\n\n## Children\n\n- `docs/designs/old.md`\n- `docs/designs/new.md`\n",
+    }));
+    const env = await setup(() => ({ spec: [edit], fix: [] }), (sha) => ghRoutes(sha, { prs: { 12: { headRef: "spec-7", head: () => head(wt), body: "Refs #7" } } }), (_p, w) => { wt = w; }, files);
+    const c = at(env.claim, { stage: "spec", track: "spec", specMode: "write" });
+    await writeClaim(env.paths, c);
+    const r = await step(env.deps, c);
+    expect(r.claim.state.stage).not.toBe("fix");
+    expect(r.claim.state.pendingFixInput ?? "").not.toContain(top);
+  }, 60_000);
+
+  it("finds the top design by following Parent: lines, and none on a loop (spec 052 AC-4)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "top-"));
+    mkdirSync(join(dir, "docs", "designs"), { recursive: true });
+    const put = (f: string, t: string) => writeFileSync(join(dir, f), t);
+    put("docs/designs/inner.md", "Parent: docs/designs/outer.md\n");
+    put("docs/designs/outer.md", "Parent: docs/delivery-system-design.md\n");
+    put("docs/designs/a.md", "Parent: docs/designs/b.md\n");
+    put("docs/designs/b.md", "Parent: docs/designs/a.md\n");
+    expect(await designTop(dir, "docs/designs/inner.md")).toBe("docs/delivery-system-design.md");
+    expect(await designTop(dir, "docs/designs/a.md")).toBeNull();
+    expect(await designTop(dir, "docs/designs/missing.md")).toBeNull();
+    expect(await designTop(dir, "docs/product-spec.md")).toBeNull();
+  });
 
   it("appends the Spec: line to an issue body that has none (AC-21)", async () => {
     let wt = "";

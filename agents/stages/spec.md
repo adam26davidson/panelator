@@ -164,6 +164,8 @@ branches.
 - the `## Children` section of the spec's parent design, which is one of the two top
   designs (`docs/product-spec.md`, `docs/delivery-system-design.md`) or a file under
   `docs/designs/`; the charter (`docs/charter.md`) is never a parent and is never edited;
+- when the spec's parent is a file under `docs/designs/`, the `## Children` section of the top
+  design that parent descends from (following `Parent:` lines), to list a new sub-design;
 - the `spec.md` of another spec that the new spec links to, for marks only (below);
 - the top designs in full, only while recording a maintainer's product answer.
 

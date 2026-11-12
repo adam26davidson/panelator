@@ -9,7 +9,8 @@
    what panelator is and promises its users), no large technical decision with real uncertainty, and nothing
    only the maintainer can do. A large decision with one clearly right answer is fine, recorded as an ADR.
 5. The PR edits nothing outside the allowed paths: the spec's directory, `docs/designs/`, `docs/decisions/`,
-   the `## Children` section of the spec's parent design, the `spec.md` of a spec the new spec links to
+   the `## Children` section of the spec's parent design, the `## Children` section of the top design
+   that a sub-design parent descends from, the `spec.md` of a spec the new spec links to
    (spec 039), and the top designs only while recording a maintainer's product answer. Every change to
    another spec's `spec.md` is a mark: text prepended to the smallest unit it applies to (a criterion,
    after its `AC-n.` number and before its text or bold title; a titled paragraph inside a criterion,

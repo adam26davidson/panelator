@@ -1,3 +1,4 @@
+import { checkDesignTree } from "../src/gates/design-tree.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -154,6 +155,47 @@ describe("scopeGate (AC-10) and isSensitive (AC-11)", () => {
   });
   it("isSensitive returns the matching paths", () => {
     expect(isSensitive(["web/a.ts", "tools/scheduler/src/x.ts"], globs)).toEqual(["tools/scheduler/src/x.ts"]);
+  });
+});
+
+describe("specScopeGate: the top design of a sub-design parent (spec 052 AC-1 to AC-3)", () => {
+  const SPEC = "specs/010-a/spec.md";
+  const SUB = "docs/designs/new.md";
+  const TOP = "docs/delivery-system-design.md";
+  const before = "# Top\n\nBody.\n\n## Children\n\n- `docs/designs/old.md`\n";
+  const childrenOnly = before + "- `docs/designs/new.md`\n";
+  const outside = childrenOnly.replace("Body.", "Other.");
+  const diff = [SPEC, SUB, TOP];
+  const topOf = (after: string, path = TOP) => ({ path, before, after });
+  const call = (d: string[], parent: string, top: ReturnType<typeof topOf> | null, product = false) =>
+    specScopeGate(d, SPEC, parent, "", "", product, "", top);
+  it("allows the Children-only change of the top (AC-1)", () => {
+    expect(call(diff, SUB, topOf(childrenOnly))).toEqual({ ok: true });
+  });
+  it("fails a change outside the Children section, the other top, no top, and a top-design parent (AC-2)", () => {
+    expect(call(diff, SUB, topOf(outside))).toEqual({ ok: false, violations: [`${TOP}: changes outside its Children section`] });
+    expect(call([SPEC, SUB, "docs/product-spec.md"], SUB, topOf(childrenOnly))).toEqual({ ok: false, violations: ["docs/product-spec.md: outside spec PR scope"] });
+    expect(call(diff, SUB, null)).toEqual({ ok: false, violations: [`${TOP}: outside spec PR scope`] });
+    expect(call([SPEC, TOP], "docs/product-spec.md", topOf(childrenOnly))).toEqual({ ok: false, violations: [`${TOP}: outside spec PR scope`] });
+  });
+  it("never allows the charter, widens nothing for a non-top path, and allows both tops in full with a product answer (AC-2)", () => {
+    expect(call([SPEC, "docs/charter.md"], SUB, topOf(childrenOnly))).toEqual({ ok: false, violations: ["docs/charter.md: the charter is never changed by a spec PR"] });
+    expect(call([SPEC, "docs/charter.md"], SUB, topOf(childrenOnly, "docs/charter.md"))).toMatchObject({ ok: false });
+    expect(call([SPEC, "docs/other.md"], SUB, topOf(childrenOnly, "docs/other.md"))).toEqual({ ok: false, violations: ["docs/other.md: outside spec PR scope"] });
+    expect(call([SPEC, TOP, "docs/product-spec.md"], SUB, topOf(outside), true)).toEqual({ ok: true });
+  });
+  it("passes both gates on a new sub-design with its spec (AC-3)", () => {
+    const tree = (top: string) => new Map(Object.entries({
+      "docs/charter.md": "# Charter\n",
+      "docs/product-spec.md": "Parent: docs/charter.md\n## Children\n",
+      "docs/delivery-system-design.md": `Parent: docs/charter.md\n## Children\n${top}`,
+      [SUB]: "Parent: docs/delivery-system-design.md\n## Children\n- `specs/010-a/spec.md`\n- planned: b\n  title: T b\n  brief: Brief b.\n",
+      [SPEC]: "Parent: docs/designs/new.md\n",
+    }));
+    expect(checkDesignTree(tree("- `docs/designs/new.md`\n"))).toEqual([]);
+    expect(checkDesignTree(tree("")).join()).toContain("docs/designs/new.md: not listed in the Children of its parent docs/delivery-system-design.md");
+    const top = { path: TOP, before: "Parent: docs/charter.md\n## Children\n", after: "Parent: docs/charter.md\n## Children\n- `docs/designs/new.md`\n" };
+    expect(specScopeGate(diff, SPEC, SUB, "", "", false, "", top)).toEqual({ ok: true });
   });
 });
 
