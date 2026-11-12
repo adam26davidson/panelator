@@ -61,6 +61,8 @@ export interface StageOutcome {
   result: unknown | null;
   resultErrors: string[];
   judgement: Judgement;
+  /** Spec 053: the adapter's judgement was not ok before the result file was read (a bound, a timeout, a harness failure). */
+  stopped: boolean;
   usage: UsageRecord;
   findings: { queued: number; rejected: string[] };
   eventsPath: string;
@@ -182,6 +184,8 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
     if (spawned.killedByEvent && !spawned.timedOut) judgement = { outcome: "bounds", reason: "max_turns", apiErrorStatus: null, finalText: null };
   }
 
+  const stopped = judgement.outcome !== "ok";
+
   // A process that never started, timed out, or was stopped for a bound cannot be trusted to have
   // finished its result, so the file is not read (review focus 2).
   let result: unknown | null = null;
@@ -252,7 +256,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
       return runStage(ctx,{...req,resume:undefined,replyPrompt:undefined,runId:runId+'-fresh',resumeFallback:fallback,resumedSessionId:req.resume.sessionId});
     }
   }
-  return { sessionId:stageRun.sessionId,runId, outcome: judgement.outcome, reason, result, resultErrors, judgement, usage, findings, eventsPath, malformed, ioErrors: ioMessages, limit };
+  return { sessionId:stageRun.sessionId,runId, outcome: judgement.outcome, reason, result, resultErrors, judgement, stopped, usage, findings, eventsPath, malformed, ioErrors: ioMessages, limit };
 }
 
 /**
