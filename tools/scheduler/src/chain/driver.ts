@@ -302,10 +302,14 @@ async function heldWorkText(deps: DriverDeps, claim: Claim): Promise<string | un
   // A failed lookup is "unknown", never "not on origin" or "(none)": the stage must not open a second PR on a guess.
   const where = pushed === null ? "whether it is on origin: unknown (lookup failed)" : pushed ? "it is on origin" : "it is not on origin";
   const open = prs === null ? "unknown (lookup failed)" : prs.length ? prs.map((n) => `#${n}`).join(", ") : "(none)";
+  // Spec 053 AC-4: a carried entry is the work of an earlier attempt that stopped, not of a stage that asked a question.
+  const closing = held.carried !== undefined
+    ? `This is the work of your earlier attempt at this stage, which stopped before it finished (${held.carried}). Check it against the plan and finish the remaining tasks; do not start again.`
+    : "This is your own work from before your question was asked; you continue from it, you do not start again.";
   return [
     `Branch ${held.branch} is at ${held.head}; ${where}.`,
     `Open pull requests from it: ${open}.`,
-    "This is your own work from before your question was asked; you continue from it, you do not start again.",
+    closing,
   ].join("\n");
 }
 
@@ -422,7 +426,7 @@ async function openPrsFrom(deps: DriverDeps, issue: number, branch: string): Pro
  * Spec 011 AC-1: a stage's result carries a question, so the work it left is kept. The commits not on origin/main are
  * saved as a `held` patch first (a lost worktree costs nothing), then logged; the returned head goes on the event.
  */
-async function holdWork(deps: DriverDeps, claim: Claim, stage: Exclude<AgentStageName, "question-check" | "review">): Promise<string> {
+async function holdWork(deps: DriverDeps, claim: Claim, stage: Exclude<AgentStageName, "question-check" | "review">, carried?: string): Promise<string> {
   const head = await worktreeHead(claim.worktree);
   // Spec 015 AC-10: a recorded run checked again after a throw already saved and logged this head's held work.
   if (claim.stageRun?.held?.head === head) return head;
@@ -431,7 +435,7 @@ async function holdWork(deps: DriverDeps, claim: Claim, stage: Exclude<AgentStag
   const patch = commits.trim() ? await savePatch(deps.paths, claim.issue, commits, deps.now(), "held") : null;
   const pushed = await pushedBranch(claim.worktree, branch);
   const prs = await openPrsFrom(deps, claim.issue, branch);
-  deps.log({ kind: "held-work", issue: claim.issue, stage, branch, head, pushed, prs, patch });
+  deps.log({ kind: "held-work", issue: claim.issue, stage, branch, head, pushed, prs, patch, ...(carried === undefined ? {} : { carried }) });
   if (claim.stageRun) {
     claim.stageRun = { ...claim.stageRun, held: { head, patch } };
     await writeClaim(deps.paths, { ...claim, last_activity_at: deps.now().toISOString() });
@@ -771,7 +775,12 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   }
   if (out.outcome !== "ok") {
     await undoRebase();
-    return { type: "stage_failed", stage, reason: out.reason ?? out.outcome };
+    const reason = out.reason ?? out.outcome;
+    // Spec 053 AC-1: a run the harness stopped before its result keeps the commits it left for the retry or the rescue.
+    if (stage === "implement" && out.stopped && state.pr === null && (await commitsPatch(claim.worktree, "origin/main")).trim()) {
+      return { type: "stage_failed", stage, reason, head: await holdWork(deps, claim, stage, reason) };
+    }
+    return { type: "stage_failed", stage, reason };
   }
 
   // Spec 015 AC-10: on disk before the result is checked, so a throw from here on checks it again rather than running again.

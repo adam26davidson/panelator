@@ -118,6 +118,8 @@ describe("result schemas", () => {
     const entry = { branch: "issue-7", head: "a".repeat(40) };
     expect(claim({ ...initialChainState(7), heldWork: [] })).toBe(true);
     expect(claim({ ...initialChainState(7), heldWork: [entry, { branch: "spec-7", head: "b".repeat(40) }] })).toBe(true);
+    expect(claim({ ...initialChainState(7), heldWork: [{ ...entry, carried: "max budget reached" }] })).toBe(true);
+    expect(claim({ ...initialChainState(7), heldWork: [{ ...entry, carried: 1 }] })).toBe(false);
     expect(claim({ ...initialChainState(7), heldWork: null })).toBe(false);
     expect(claim({ ...initialChainState(7), heldWork: entry })).toBe(false);
     expect(claim({ ...initialChainState(7), heldWork: [{ branch: "issue-7" }] })).toBe(false);
