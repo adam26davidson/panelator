@@ -1592,7 +1592,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     const r = await step(t.deps, again);
     expect(head(t.claim.worktree)).toBe(remoteHead);
     expect(logs).toContainEqual({ kind: "held-work-restored", issue: 7, branch: "issue-7", head: remoteHead, source: "origin" });
-    expect(r.claim.state.heldWork).toEqual([{ branch: "issue-7", head: remoteHead }]);
+    expect(r.claim.state.heldWork).toEqual([{ branch: "issue-7", head: remoteHead, carried: "exit 1" }]);
   }, 60_000);
 
   it("logs held-work-lost, clears the held work and prepares as without it when the commit is nowhere (AC-5)", async () => {
@@ -1621,7 +1621,8 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
     expect(head(t.claim.worktree)).toBe(added);
     expect(logs).toContainEqual({ kind: "held-work-advanced", issue: 7, branch: "issue-7", from: held, to: added });
     expect(inputOf(t.paths, "7-implement-").held_work).toContain(added);
-    expect(readdirSync(t.paths.patches)).toEqual([]);
+    // The scripted run then fails: the stopped run saves its work as one held patch (spec 053 AC-1), and nothing else is patched.
+    expect(readdirSync(t.paths.patches).filter((f) => !f.includes("held"))).toEqual([]);
   }, 60_000);
 
   it("leaves main's commits out of the held-diverged patch when the diverged branch sits on a moved main (AC-5)", async () => {
