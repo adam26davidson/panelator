@@ -260,7 +260,7 @@ records as chain stages.
   value, not the file. Given the parameter is locked by the maintainer, then
   a later change to the interval in the agent's file changes the default
   only; the value stays.
-- AC-14. **The shortlist ranks by the work share.** An eligible issue is
+- AC-14. Amended by [063-pipeline-stopping-finding-ranks-first](../063-pipeline-stopping-finding-ranks-first/spec.md) AC-4: after the maintainer's priority label and before the preferred kind, an issue carrying the configured stops-pipeline label ranks first. **The shortlist ranks by the work share.** An eligible issue is
   classified as `system` or `product` work: `product` when its spec (read on
   `origin/main`, as the gates read it) has a `Parent:` chain ending at
   `docs/product-spec.md`, `system` when it ends at
@@ -292,7 +292,7 @@ records as chain stages.
   whether the finding is a symptom of something more fundamental, whether it
   is an issue at all, and whether it fits the design; the filer never acts
   on a finding's own claim without checking it.
-- AC-16. **Every record gets one decision.** `filer-result` is
+- AC-16. Amended by [063-pipeline-stopping-finding-ranks-first](../063-pipeline-stopping-finding-ranks-first/spec.md) AC-3: the decision's issue object may carry stops_pipeline. **Every record gets one decision.** `filer-result` is
   `standing-result` plus `decisions: [{ ref, outcome, reason, ...}]`, one
   per record in the input, with these outcomes:
   - `discard`: `reason` says why it is not an issue;
@@ -327,7 +327,7 @@ records as chain stages.
   is recorded in the parameter history of AC-11 with `actor: maintainer`, not
   in the action log, since no action kind sets a mode (AC-12; spec 038). The commands run on the laptop as the user the
   service runs as; they are the console's stand-in until spec E.
-- AC-18. **A filed issue enters the shortlist.** Given a `file` decision,
+- AC-18. Amended by [063-pipeline-stopping-finding-ranks-first](../063-pipeline-stopping-finding-ranks-first/spec.md) AC-3: a decision with issue.stops_pipeline true also sets the configured stops-pipeline label, on the created issue or on the merge_into target. **A filed issue enters the shortlist.** Given a `file` decision,
   then the scheduler creates the issue as the App with the class label and
   `validated`, and a body that ends with a hidden marker
   `<!-- panelator-finding:<run id>:<ref> -->`, used so a crash does not file

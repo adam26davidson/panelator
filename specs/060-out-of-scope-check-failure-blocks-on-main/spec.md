@@ -204,7 +204,7 @@ is the state of section 3's AC-4.
   runs as today, with the whole excerpt as `fixInput` (spec 056 AC-4) and
   the fix's input gaining, on these two tracks, the paragraph of AC-5. A new
   head (a fix's or a rebase's) clears `checkRerun`.
-- AC-4. **A block is a pause without a question.** Given the machine blocks,
+- AC-4. Amended by [063-pipeline-stopping-finding-ranks-first](../063-pipeline-stopping-finding-ranks-first/spec.md) AC-6: the finding carries stops_pipeline: true. **A block is a pause without a question.** Given the machine blocks,
   then the state's stage is `blocked`, the state carries `blocked: { on:
   <condition>, since, check, main_sha, blocks }` (`blocks` counting this
   issue's blocks, kept in the ledger beside the other counters), and the
