@@ -233,6 +233,11 @@ describe("spec 029 schemas", () => {
     expect(validate("stage-input", { ...base, spec_path: "specs/030-console/spec.md", design_problem: "missing", viewports: "mobile 390x844" }).ok).toBe(true);
     expect(validate("stage-input", { ...base, spec_path: 3 }).ok).toBe(false);
   });
+  it("stage-input accepts reported_actions as a string only (spec 062)", () => {
+    const base = { issue: { number: 1, title: "t", body: "b" }, spec: "s", result_path: "/r", profile_instructions: "p" };
+    expect(validate("stage-input", { ...base, reported_actions: "#1 (capability, answered t): Question: q Answer: a" }).ok).toBe(true);
+    expect(validate("stage-input", { ...base, reported_actions: 3 }).ok).toBe(false);
+  });
   it("claim, paused, question log and ledger accept the design stage, track and counters", () => {
     const claim = (state: unknown) => validate("claim", { issue: 7, state, worktree: "/w", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null }).ok;
     expect(claim({ ...initialChainState(7), stage: "design", track: "design", designProblem: "x", designRevisions: 1, askingStage: "design", resumeStage: "design" })).toBe(true);

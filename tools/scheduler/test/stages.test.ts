@@ -124,6 +124,7 @@ describe("committed stage prompts (AC-1, AC-14, AC-15, AC-17)", () => {
     decide_input: "decide it yourself",
     spec_problem: "missing spec",
     answered_questions: "#99 verified",
+    reported_actions: "#98 (capability, answered t) done",
     result_path: "/tmp/r.json",
     profile_instructions: "Use cargo.",
   };
@@ -207,6 +208,12 @@ describe("committed stage prompts (AC-1, AC-14, AC-15, AC-17)", () => {
     expect(t).toMatch(/already settles the question, return `decide_yourself` and cite it/);
     expect(t).toMatch(/On `send`, also return `question`/);
   });
+  it("question-check.md lists reported actions apart and sends a follow-up when the blocker still stands (spec 062 AC-2)", () => {
+    const t = read("question-check").replace(/\s+/g, " ");
+    expect(t).toContain("{{reported_actions}}");
+    expect(t).toContain("already settles the question, return `decide_yourself` and cite it");
+    for (const p of ["is not a decision", "still stands", "who carries it out"]) expect(t).toContain(p);
+  });
   for (const n of ["plan", "review", "question-check"]) {
     it(`${n}.md says how to return the result without a write tool (T1)`, () => {
       expect(read(n)).toMatch(/If you have no tool that can write files, give the result instead as the last thing in your\s+final message/);
@@ -276,6 +283,8 @@ describe("renderPrompt", () => {
   it("renders the spec 006 placeholders, (none) when absent", () => {
     expect(renderPrompt("{{mode}}|{{history}}|{{answer}}", { ...input, mode: "revise", history: "h" })).toBe("revise|h|(none)");
     expect(renderPrompt("{{question}}{{decide_input}}{{spec_problem}}{{answered_questions}}", input)).toBe("(none)".repeat(4));
+    expect(renderPrompt("{{reported_actions}}", input)).toBe("(none)");
+    expect(renderPrompt("{{reported_actions}}", { ...input, reported_actions: "#1 (capability)" })).toBe("#1 (capability)");
   });
   it("renders held_work, (none) when absent, in the four stages that carry it (spec 011 AC-4)", () => {
     const read = (n: string) => readFileSync(join(agentsDir, "stages", `${n}.md`), "utf8");

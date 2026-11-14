@@ -997,12 +997,34 @@ describe("driver: questions (spec 006 AC-12, AC-13, AC-17)", () => {
     const c = at(claim, { stage: "question-check", question: Q, askingStage: "plan" });
     await writeClaim(paths, c);
     await step(deps, c);
-    expect(inputOf(paths, "7-question-check-").answered_questions).toBe("#501: Question: Where does data live? Answer: keep it local");
-    expect(readFileSync(join(paths.runs, readdirSync(paths.runs).find((d) => d.startsWith("7-question-check-"))!, "prompt.md"), "utf8")).toContain("#501: Question: Where does data live?");
+    expect(inputOf(paths, "7-question-check-").answered_questions).toBe("#501 (technical): Question: Where does data live? Answer: keep it local");
+    expect(inputOf(paths, "7-question-check-").reported_actions).toBe("(none)");
+    expect(readFileSync(join(paths.runs, readdirSync(paths.runs).find((d) => d.startsWith("7-question-check-"))!, "prompt.md"), "utf8")).toContain("#501 (technical): Question: Where does data live?");
     const body = String((gh.calls.find((x) => x.url === "/repos/o/r/issues/7/comments")?.body as { body: string }).body);
     expect(body).toContain("Store a or b? The schema follows.");
     expect(body).not.toContain("Which store?");
     expect(JSON.parse(readFileSync(join(paths.paused, "7.json"), "utf8")).question).toEqual(worded);
+  }, 60_000);
+
+  it("lists decisions and reported actions apart for the question check (spec 062 AC-1)", async () => {
+    const { deps, claim, paths } = await setup(() => ({ "question-check": [{ verdict: "send", reasoning: "x", question: { kind: "technical", question: "q", options: [{ label: "a", cost: "c" }], recommendation: "a" } }] }));
+    const log = (issue: number, id: number, at: string, answer: string, kind?: string) =>
+      appendQuestionLog(paths, { issue, at, event: "answered", asking_stage: "plan", question_comment_id: id, reply_comment_id: id + 1, answer, ...(kind ? { question: { ...Q, kind: kind as never, question: `Q${id}?` } } : {}) });
+    await log(7, 701, "2026-10-20T01:00:00Z", "p", "product");
+    await log(7, 703, "2026-10-20T02:00:00Z", "t", "technical");
+    await log(7, 705, "2026-10-20T03:00:00Z", "reclaim space", "capability");
+    await log(7, 707, "2026-10-20T04:00:00Z", "n");
+    await log(8, 801, "2026-10-20T05:00:00Z", "other", "capability");
+    const c = at(claim, { stage: "question-check", question: Q, askingStage: "plan" });
+    await writeClaim(paths, c);
+    await step(deps, c);
+    const input = inputOf(paths, "7-question-check-");
+    expect(input.answered_questions).toBe(["#701 (product): Question: Q701? Answer: p", "#703 (technical): Question: Q703? Answer: t", "#707 (unknown): Question: (not logged) Answer: n"].join("\n"));
+    expect(input.reported_actions).toBe("#705 (capability, answered 2026-10-20T03:00:00Z): Question: Q705? Answer: reclaim space");
+    const prompt = readFileSync(join(paths.runs, readdirSync(paths.runs).find((d) => d.startsWith("7-question-check-"))!, "prompt.md"), "utf8");
+    expect(prompt).toContain(input.answered_questions);
+    expect(prompt).toContain(input.reported_actions);
+    expect(prompt).not.toContain("#801");
   }, 60_000);
 
   it("logs a follow-up as asked when it pauses without the check (T-minor 5)", async () => {
@@ -1037,6 +1059,7 @@ describe("driver: questions (spec 006 AC-12, AC-13, AC-17)", () => {
     const c = at(claim, { stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } });
     await writeClaim(paths, c);
     await step(deps, c);
+    expect(inputOf(paths, "7-review-").reported_actions).toBeUndefined();
     expect(inputOf(paths, "7-review-").answered_questions).toBe([
       "#101: verified. Question: Which store?. Answer: use a please",
       "#102: NOT verified; treat as no citation",

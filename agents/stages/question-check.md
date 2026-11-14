@@ -121,10 +121,25 @@ Spec:
 
 History of earlier attempts: {{history}}
 
-Questions the maintainer has already answered on this issue (id, question, answer):
+The product and technical answers the maintainer has already given on this issue (id, kind, question, answer):
 {{answered_questions}}
 When one of these already settles the question, return `decide_yourself` and cite it in the
 `reasoning` as `question #<id>`, with what the answer said: the asking agent applies it.
+
+Capability answers on this issue, reported actions (id, when answered, question, answer):
+{{reported_actions}}
+An answer to a capability question is not a decision (spec 006 AC-18): it reports or promises
+an action outside the agents' reach, and it settles a later question only if that action was
+carried out. When the asking stage reports that the blocker named in an earlier capability
+question still stands after its answer, and your own investigation does not show the blocker
+gone, return `send`, whatever the answer said and whoever it named to do the work: an answer
+that tells agents to do what the earlier question said they cannot has not been carried out.
+Never return `decide_yourself` on the ground that a reported action assigned the work to
+agents. Word that `send` as a follow-up on the earlier answer: name the earlier question's id,
+quote the answer, state the asking stage's evidence that the blocker still stands, and ask the
+maintainer to say who does the work. Its options are the action done by the maintainer, with
+the reply that ends the wait (such as `done`), and any other way out the asking stage or you
+can name, each with who carries it out.
 
 **How to judge.** Investigate before you judge: read the spec, the designs and the code the
 question touches. Return `send` only when the question is one of the three kinds above and
@@ -140,7 +155,8 @@ you would put it to the maintainer, a short proposal in the strongest form you c
 (design section 3, "What a question looks like"). `question` states the decision in a
 sentence or two, `options` gives each sensible choice with its cost, and `recommendation`
 says which you would pick and why. The scheduler posts your wording, not the asking agent's,
-and keeps the asking agent's kind. Leave `question` out on `decide_yourself`.
+and keeps the asking agent's kind. Leave `question` out on `decide_yourself`. Every capability question you word gives each
+option who carries it out (the maintainer, or agents and how) and what reply ends the wait.
 
 Write the JSON result to {{result_path}}:
 { "verdict": "send" | "decide_yourself", "reasoning": "...", "question": { "kind": "product" | "technical" | "capability", "question": "...", "options": [{ "label": "...", "cost": "..." }], "recommendation": "..." }, "findings": [] }

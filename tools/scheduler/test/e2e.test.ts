@@ -478,6 +478,45 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     expect(w.labelLog).toEqual(["+in-progress", "+needs-decision", "-in-progress", "+in-progress", "-needs-decision", "-in-progress"]);
   }, 120_000);
 
+  it("an unfulfilled capability answer is followed up and costs the issue nothing (spec 062 AC-3)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    const q1 = ask("capability", "Command execution is refused in this worktree. Can you restore it?");
+    const q2 = ask("capability", "Command execution is still refused after the answer.");
+    const followUp = { kind: "capability", question: "Your answer did not restore command execution; the blocker still stands. Who does the work?", options: [{ label: "You do it, then reply `done`", cost: "the maintainer carries it out" }], recommendation: "You do it" };
+    w = await chainWorld({
+      files: repoFiles(),
+      results: {
+        plan: [PLAN], implement: [{ escalation: q1 }, { escalation: q2 }, a.implement(9)], review: [APPROVE],
+        "question-check": [SEND, { verdict: "send", reasoning: "the blocker still stands", question: followUp }],
+      },
+    });
+    await w.tick();
+    expect(pausedRecord(w)).toMatchObject({ phase: "paused", asking_stage: "implement", question: q1 });
+    w.reply("reclaim space, then resume");
+    await w.tick();
+    const second = pausedRecord(w);
+    expect(second.question).toEqual(followUp);
+    expect(ledgerOf(second.state).decideReturns).toBe(0);
+    expect(second.state.history.join("\n")).not.toContain("decide_yourself");
+    w.reply("done");
+    await w.tick();
+    await expectSettled(w);
+
+    expect(w.adapter.ran).toEqual(["plan", "implement", "question-check", "implement", "question-check", "implement", "review"]);
+    const [first, next] = w.questions();
+    expect(inputsOf(w, "implement")[2].answer).toBe(`Question #${first.id}: reclaim space, then resume\n\nQuestion #${next.id}: done`);
+    expect(readFileSync(w.paths.questionsLog, "utf8").trim().split("\n").map((l) => JSON.parse(l).event)).toEqual(["asked", "checked", "sent", "answered", "asked", "checked", "sent", "answered"]);
+    expect(git(w.pair.origin, "ls-tree", "-r", "--name-only", "main").split("\n").filter((f) => f.startsWith("docs/decisions/"))).toEqual([]);
+    expect(runsOf(w, "fix")).toEqual([]);
+    expect(w.mergeRequests).toEqual([9]);
+    const [firstCheck, secondCheck] = inputsOf(w, "question-check");
+    expect(firstCheck.reported_actions).toBe("(none)");
+    expect(secondCheck.answered_questions).toBe("(none)");
+    expect(secondCheck.reported_actions).toContain(`#${first.id} (capability, answered `);
+    expect(secondCheck.reported_actions).toContain("reclaim space, then resume");
+  }, 120_000);
+
   describe("a stage that asks a question keeps its work (spec 011 AC-10)", () => {
     it("a capability question after a push: no recovered commits, no dropped branch, the resumed run starts at the held head", async () => {
       let w!: ChainWorld;
