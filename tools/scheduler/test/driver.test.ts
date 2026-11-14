@@ -2,7 +2,7 @@ import {TelegramClient} from '../src/telegram/client.ts';
 import {telegramChannel} from '../src/telegram/channel.ts';
 import {fakeTelegram} from './helpers/fake-telegram.ts';
 import {emptyTelegram,listPaused,type PausedRecord} from '../src/state/paused.ts';
-import {completePause} from '../src/chain/driver.ts';
+import {completePause, OUT_OF_SCOPE_PARAGRAPH} from "../src/chain/driver.ts";
 import { tmpdir } from "node:os";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -2275,5 +2275,107 @@ describe("driver: a full volume postpones runs (spec 059)", () => {
     expect(adapter.ran).toHaveLength(1);
     // The usage record was written: the tokens were spent.
     expect(readdirSync(paths.usage)).toHaveLength(1);
+  }, 60_000);
+});
+
+describe("driver: a check failing outside the PR's scope (spec 060)", () => {
+  const failedRun = { id: 41, name: "test", status: "completed", conclusion: "failure" };
+  const logRoute: Route = { method: "GET", path: /^\/repos\/o\/r\/actions\/jobs\/\d+\/logs$/, reply: () => ({ body: "FAIL tools/design-stage/test/render.test.ts\n" }) };
+  /** ghRoutes for spec-7 whose check-runs answer per sha: `byRef(sha)` returns the runs or a status to fail with. */
+  const routesFor = (sha: string, byRef: (ref: string) => unknown[] | number, rerequest = 201): Route[] => [
+    ...ghRoutes(sha, { headRef: "spec-7", prs: { 9: { headRef: "spec-7" } } }).filter((r) => !/check-runs|rerequest/.test(String(r.path))),
+    {
+      method: "GET", path: /^\/repos\/o\/r\/commits\/([0-9a-f]+)\/check-runs$/,
+      reply: (m) => { const r = byRef(m[1]); return typeof r === "number" ? { status: r, body: { message: "boom" } } : { body: { total_count: r.length, check_runs: r } }; },
+    },
+    { method: "POST", path: /^\/repos\/o\/r\/check-runs\/\d+\/rerequest$/, reply: () => ({ status: rerequest, body: {} }) },
+    logRoute,
+  ];
+  const verifyingSpec = (claim: Claim, sha: string, over: Partial<ChainState> = {}): Claim => ({ ...claim, state: { ...claim.state, stage: "verify", track: "spec", pr: { number: 9, head_sha: sha }, ...over } });
+  const mainSha = (pair: ReturnType<typeof repoPair>) => git(pair.repo, "rev-parse", "origin/main").trim();
+
+  it("reads main's checks with the PR's failure; a failure there too blocks with a record, no claim, the worktree and the label kept (AC-1, AC-2, AC-4)", async () => {
+    const { deps, claim, gh, paths, sha, pair } = await setup(() => ({}), (sha) => routesFor(sha, () => [failedRun]), onSpec7);
+    const base = mainSha(pair);
+    const r = await step(deps, verifyingSpec(claim, git(claim.worktree, "rev-parse", "HEAD").trim()));
+    expect(r.status).toBe("ended");
+    expect(gh.calls.some((c) => c.url.startsWith(`/repos/o/r/commits/${base}/check-runs`))).toBe(true);
+    expect(await listClaims(paths)).toEqual([]);
+    const rec = JSON.parse(readFileSync(join(paths.blocked, "7.json"), "utf8"));
+    expect(rec).toMatchObject({ issue: 7, worktree: claim.worktree, condition: { kind: "main_green", check: "test", main_sha: base }, state: { stage: "blocked" } });
+    expect(validate("blocked", rec)).toEqual({ ok: true });
+    expect(existsSync(claim.worktree)).toBe(true);
+    expect(gh.calls.filter((c) => c.method === "DELETE" && c.url.endsWith("/labels/in-progress"))).toEqual([]);
+    expect(gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues/7/comments")).toHaveLength(1);
+    expect(readFileSync(paths.findingsQueue, "utf8").trim().split("\n")).toHaveLength(1);
+    expect(sha).toHaveLength(40);
+  }, 60_000);
+
+  it("a main read that fails is logged and blocks nothing; the first failure is re-run once, a refusal is logged (AC-1, AC-3)", async () => {
+    const { deps, claim, gh, pair } = await setup(() => ({}), (sha) => routesFor(sha, (ref) => (ref === mainSha(pair) ? 422 : [failedRun]), 422), onSpec7);
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (rec) => { logs.push(rec); };
+    deps.gh = new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r", { settleDelaysMs: [0, 0, 0] });
+    const head = git(claim.worktree, "rev-parse", "HEAD").trim();
+    const r = await step(deps, verifyingSpec(claim, head));
+    expect(logs.find((l) => l.kind === "main-checks-unknown")).toMatchObject({ issue: 7, error: expect.any(String) });
+    expect(logs.find((l) => l.kind === "rerun-check-refused")).toMatchObject({ issue: 7, id: 41 });
+    expect(r.status).toBe("waiting");
+    expect(r.claim.state).toMatchObject({ stage: "verify", checkRerun: head, fixes: 0 });
+    expect(gh.calls.filter((c) => c.method === "POST" && c.url.endsWith("/rerequest"))).toHaveLength(1);
+  }, 60_000);
+
+  it("the fix input of a failed check on a spec PR ends with the out-of-scope paragraph (AC-5)", async () => {
+    const { deps, claim, paths, pair } = await setup((sha) => ({ fix: [{ head_sha: sha, addressed: [] }] }), (sha) => routesFor(sha, () => [failedRun]), onSpec7);
+    const head = git(claim.worktree, "rev-parse", "HEAD").trim();
+    const atFix: Claim = { ...verifyingSpec(claim, head), state: { ...verifyingSpec(claim, head).state, stage: "fix", pendingFixInput: `A required check failed:\ntest\nFAIL x`, checkRerun: head } };
+    await step({ ...deps, gh: deps.gh }, atFix).catch(() => {});
+    const fixRun = readdirSync(paths.runs).find((d) => d.startsWith("7-fix-"))!;
+    const input = JSON.parse(readFileSync(join(paths.runs, fixRun, "input.json"), "utf8"));
+    expect(input.fix_input.startsWith("A required check failed:\ntest\nFAIL x")).toBe(true);
+    expect(input.fix_input).toContain(OUT_OF_SCOPE_PARAGRAPH);
+    expect(pair.root).toBeTruthy();
+  }, 60_000);
+
+  const unblocked = (claim: Claim, head: string): Claim => ({
+    ...claim, pendingEvent: { type: "unblocked", main_sha: "0".repeat(40) },
+    state: { ...claim.state, stage: "blocked", track: "spec", pr: { number: 9, head_sha: head }, blocked: { on: null, since: null, check: "test", main_sha: null, blocks: 1 } },
+  });
+
+  it("rebase_push pushes a rebased head with a lease and binds it; an unchanged head pushes nothing (AC-8)", async () => {
+    const { deps, claim, pair } = await setup(() => ({}), (sha) => routesFor(sha, () => [{ id: 41, name: "test", status: "completed", conclusion: "success" }]), onSpec7);
+    const head = git(claim.worktree, "rev-parse", "HEAD").trim();
+    // Nothing moved: no push, the same head.
+    const same = await step(deps, unblocked(claim, head));
+    expect(same.claim.state).toMatchObject({ stage: "verify", pr: { head_sha: head } });
+    expect(git(pair.origin, "rev-parse", "spec-7").trim()).toBe(head);
+    // Main moves with an unrelated file: the PR is rebased and pushed.
+    writeFileSync(join(pair.repo, "other.txt"), "other\n");
+    git(pair.repo, "add", "-A");
+    git(pair.repo, "commit", "-q", "-m", "main moves");
+    git(pair.repo, "push", "-q", "origin", "main");
+    const moved = await step(deps, unblocked(claim, head));
+    const pushed = git(pair.origin, "rev-parse", "spec-7").trim();
+    expect(pushed).not.toBe(head);
+    expect(moved.claim.state.pr?.head_sha).toBe(pushed);
+    expect(git(pair.origin, "merge-base", "--is-ancestor", git(pair.origin, "rev-parse", "main").trim(), "spec-7")).toBe("");
+  }, 60_000);
+
+  it("a conflict on resume goes to the fix as spec 024's rebase_conflict (AC-8)", async () => {
+    const { deps, claim, pair } = await setup(() => ({}), (sha) => routesFor(sha, () => [{ id: 41, name: "test", status: "completed", conclusion: "success" }]), onSpec7);
+    const head = git(claim.worktree, "rev-parse", "HEAD").trim();
+    writeFileSync(join(claim.worktree, "a.txt"), "pr\n");
+    git(claim.worktree, "commit", "-q", "-am", "pr change");
+    git(claim.worktree, "push", "-q", "origin", "spec-7");
+    const prHead = git(claim.worktree, "rev-parse", "HEAD").trim();
+    writeFileSync(join(pair.repo, "a.txt"), "main\n");
+    git(pair.repo, "commit", "-q", "-am", "main change");
+    git(pair.repo, "push", "-q", "origin", "main");
+    const r = await step(deps, unblocked(claim, prHead));
+    expect(r.claim.pendingEvent).toMatchObject({ type: "rebase_conflict" });
+    expect(r.claim.state.pr?.head_sha).toBe(prHead);
+    const next = await step(deps, r.claim);
+    expect(next.claim.state).toMatchObject({ stage: "fix", conflictPending: true });
+    expect(head).toHaveLength(40);
   }, 60_000);
 });

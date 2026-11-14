@@ -3,7 +3,7 @@ import {TelegramClient} from '../src/telegram/client.ts';
 import {telegramChannel} from '../src/telegram/channel.ts';
 import {fakeTelegram} from './helpers/fake-telegram.ts';
 import {emptyTelegram} from '../src/state/paused.ts';
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -11,7 +11,7 @@ import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
 import { agentsDir, defaultConfigPath, loadConfig } from "../src/config.ts";
 import { GitHubClient } from "../src/github/client.ts";
-import { MAX_CHAIN_FAILURES, Scheduler, type SchedulerDeps } from "../src/service/loop.ts";
+import { BLOCK_RECHECK_S, MAX_CHAIN_FAILURES, Scheduler, type SchedulerDeps } from "../src/service/loop.ts";
 import { ServiceLog } from "../src/service/log.ts";
 import { SleepInhibitor } from "../src/service/inhibit.ts";
 import { loadStageDefinitions } from "../src/stages/definition.ts";
@@ -22,6 +22,7 @@ import { HISTORY_ENTRY_MAX, initialChainState, ledgerOf } from "../src/chain/mac
 import { step, completePause } from "../src/chain/driver.ts";
 import { questionMarker } from "../src/chain/question.ts";
 import { writeLedger } from "../src/state/ledger.ts";
+import { listBlocked, writeBlocked, type BlockedRecord } from "../src/state/blocked.ts";
 import { listPaused, writePaused, type PausedRecord } from "../src/state/paused.ts";
 import { appendQuestionLog } from "../src/state/questions.ts";
 import type { Claim } from "../src/state/claims.ts";
@@ -1456,4 +1457,140 @@ describe("Telegram attaches when connected (spec 043)", () => {
       expect(hooked).toBe(0);
     } finally { await p.stop(); await server.close(); }
   }, 30000);
+});
+
+describe("Scheduler.tick: a chain blocked on main (spec 060)", () => {
+  const blockedState = (over: Record<string, unknown> = {}) => ({
+    ...initialChainState(7), stage: "blocked" as const, track: "spec" as const, pr: { number: 8, head_sha: "f".repeat(40) }, blocked: { on: null, since: null, check: "test", main_sha: null, blocks: 1 }, ...over,
+  });
+  const mainHead = (h: Harness) => git(h.pair.repo, "rev-parse", "origin/main").trim();
+  const block = async (h: Harness, condition: BlockedRecord["condition"], over: Partial<BlockedRecord> = {}) =>
+    writeBlocked(h.paths, { issue: 7, state: blockedState(), worktree: join(h.pair.worktrees, "issue-7"), since: "2026-10-12T11:00:00Z", condition, pr: { number: 8, head_sha: "f".repeat(40) }, last_check: null, ...over });
+  /** A commit on origin's main touching `files`, through a scratch clone. */
+  const moveMain = (h: Harness, files: Record<string, string>) => {
+    const dir = join(h.pair.root, `mover-${Math.random().toString(36).slice(2)}`);
+    git(h.pair.root, "clone", "-q", h.pair.origin, dir);
+    for (const [p, c] of Object.entries(files)) {
+      mkdirSync(join(dir, p, ".."), { recursive: true });
+      writeFileSync(join(dir, p), c);
+    }
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "move main");
+    git(dir, "push", "-q", "origin", "main");
+  };
+  const checkRoute = (state: { calls: string[]; conclusion: string | null; status: string }): Route => ({
+    method: "GET", path: /^\/repos\/o\/r\/commits\/([0-9a-f]+)\/check-runs$/,
+    reply: (m) => {
+      state.calls.push(m[1]);
+      return { body: { total_count: 1, check_runs: [{ id: 5, name: "test", status: state.status, conclusion: state.conclusion }] } };
+    },
+  });
+
+  it("a blocked issue holds no slot, is not on the shortlist, and a paths condition resumes only on a named file (AC-4, AC-7)", async () => {
+    const log = grantLog();
+    const h = await setup(routes([waiting(["validated", "class:product", "in-progress"]), issue(8, ["validated", "class:product", "priority"])]), 1, log.drive);
+    const base = mainHead(h);
+    await block(h, { kind: "paths", paths: [".github/workflows/ci.yml", "docs/"], main_sha: base });
+    // The slot is free for other work, but issue 7 is not offered as a new claim.
+    const first = await h.s.tick();
+    await settle();
+    expect(first.held).toBe(0);
+    expect(first.claimed).toEqual([8]);
+    await log.release("chain:8");
+    await rmClaim(h, 8);
+    moveMain(h, { "README.md": "x\n" });
+    expect((await h.s.tick()).claimed).not.toContain(7);
+    await settle();
+    expect(await listBlocked(h.paths)).toHaveLength(1);
+    await log.release("chain:8");
+    await rmClaim(h, 8).catch(() => {});
+    moveMain(h, { ".github/workflows/ci.yml": "x\n" });
+    const t = await h.s.tick();
+    await settle();
+    expect(t.claimed).toContain(7);
+    expect(log.grants).toContain("chain:7");
+    expect(await listBlocked(h.paths)).toEqual([]);
+    const claim = (await readClaim(h.paths, 7))!;
+    expect(claim.pendingEvent).toEqual({ type: "unblocked", main_sha: mainHead(h) });
+    expect(serviceRecords(h.paths).find((r) => r.kind === "unblocked")).toMatchObject({ issue: 7, condition: { kind: "paths" } });
+    await log.release("chain:7");
+  }, 30_000);
+
+  it("a directory path covers files under it; a plain path does not (AC-7)", async () => {
+    const h = await setup(routes([waiting(["validated", "class:product", "in-progress"])]), 1, holdingDrive().drive);
+    await block(h, { kind: "paths", paths: ["docs/designs"], main_sha: mainHead(h) });
+    moveMain(h, { "docs/designs/x.md": "x\n" });
+    await h.s.tick();
+    expect(await listBlocked(h.paths)).toHaveLength(1);
+  }, 30_000);
+
+  it("a main_green condition reads main's check at most once per BLOCK_RECHECK_S and resumes when it is green (AC-7)", async () => {
+    const world = { calls: [] as string[], conclusion: "failure" as string | null, status: "completed" };
+    const h = await setup([...routes([waiting(["validated", "class:product", "in-progress"])]), checkRoute(world)], 1, holdingDrive().drive);
+    h.deps.cfg.required_checks = ["test"];
+    await block(h, { kind: "main_green", check: "test", main_sha: mainHead(h) });
+    await h.s.tick();
+    expect(world.calls).toHaveLength(1);
+    expect((await listBlocked(h.paths))[0].last_check).toBe("2026-10-12T12:00:00.000Z");
+    // Nothing moved and the interval has not passed: no second read.
+    h.setNow(new Date(Date.parse("2026-10-12T12:00:00Z") + (BLOCK_RECHECK_S - 1) * 1000));
+    await h.s.tick();
+    expect(world.calls).toHaveLength(1);
+    // The interval passed and the check is still red: one more read, still blocked.
+    h.setNow(new Date(Date.parse("2026-10-12T12:00:00Z") + BLOCK_RECHECK_S * 1000));
+    await h.s.tick();
+    expect(world.calls).toHaveLength(2);
+    expect(await listBlocked(h.paths)).toHaveLength(1);
+    // Main moves and is green there: resumed at once.
+    moveMain(h, { "fix.txt": "x\n" });
+    world.conclusion = "success";
+    const t = await h.s.tick();
+    expect(t.claimed).toEqual([7]);
+    expect(await listBlocked(h.paths)).toEqual([]);
+  }, 30_000);
+
+  it("a pending check on main does not resume (AC-7)", async () => {
+    const world = { calls: [] as string[], conclusion: null as string | null, status: "in_progress" };
+    const h = await setup([...routes([waiting(["validated", "class:product", "in-progress"])]), checkRoute(world)], 1, holdingDrive().drive);
+    h.deps.cfg.required_checks = ["test"];
+    await block(h, { kind: "main_green", check: "test", main_sha: "0".repeat(40) });
+    await h.s.tick();
+    expect(await listBlocked(h.paths)).toHaveLength(1);
+  }, 30_000);
+
+  it("takes a free slot only: a full slot leaves the record, and answered resumes come first (AC-4, AC-7)", async () => {
+    const log = grantLog();
+    const h = await setup(answeredRoutes([issue(3, ["validated", "class:product", "in-progress"])]), 1, log.drive);
+    await block(h, { kind: "paths", paths: ["a.txt"], main_sha: "0".repeat(40) }, { issue: 3, state: blockedState({ issue: 3 }) });
+    await writePaused(h.paths, record());
+    const t = await h.s.tick();
+    await settle();
+    expect(t.claimed).toEqual([7]);
+    expect(log.grants).toEqual(["chain:7"]);
+    expect(await listBlocked(h.paths)).toHaveLength(1);
+    await rmClaim(h, 7);
+    await log.release("chain:7");
+    const t2 = await h.s.tick();
+    await settle();
+    expect(t2.claimed).toEqual([3]);
+    expect(log.grants).toEqual(["chain:7", "chain:3"]);
+    await log.release("chain:3");
+  }, 30_000);
+
+  it("removes a claim a crash left next to a blocked record (AC-4)", async () => {
+    const h = await setup(routes([waiting(["validated", "class:product", "in-progress"])]), 1, holdingDrive().drive);
+    await block(h, { kind: "paths", paths: ["a.txt"], main_sha: mainHead(h) });
+    await readyClaim(h, 7);
+    await h.s.tick();
+    expect(await readClaim(h.paths, 7)).toBeNull();
+    expect(await listBlocked(h.paths)).toHaveLength(1);
+  }, 30_000);
+
+  it("drops the record of a closed issue", async () => {
+    const h = await setup(routes([issue(9)]), 1, holdingDrive().drive);
+    await block(h, { kind: "paths", paths: ["a.txt"], main_sha: mainHead(h) });
+    await h.s.tick();
+    expect(await listBlocked(h.paths)).toEqual([]);
+    expect(serviceRecords(h.paths).find((r) => r.kind === "blocked-dropped")).toMatchObject({ issue: 7 });
+  }, 30_000);
 });

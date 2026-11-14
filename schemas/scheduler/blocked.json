@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "blocked.json",
+  "type": "object",
+  "required": ["issue", "state", "worktree", "since", "condition", "pr"],
+  "additionalProperties": false,
+  "properties": {
+    "issue": { "type": "integer", "minimum": 1 },
+    "state": { "type": "object" },
+    "worktree": { "type": "string" },
+    "since": { "type": "string" },
+    "condition": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["kind", "check", "main_sha"],
+              "additionalProperties": false,
+              "properties": { "kind": { "const": "main_green" }, "check": { "type": "string" }, "main_sha": { "type": "string" } }
+            },
+            {
+              "type": "object",
+              "required": ["kind", "paths", "main_sha"],
+              "additionalProperties": false,
+              "properties": { "kind": { "const": "paths" }, "paths": { "type": "array", "minItems": 1, "items": { "type": "string" } }, "main_sha": { "type": "string" } }
+            }
+          ]
+        },
+    "pr": {
+      "type": "object",
+      "required": ["number", "head_sha"],
+      "additionalProperties": false,
+      "properties": { "number": { "type": "integer", "minimum": 1 }, "head_sha": { "type": "string" } }
+    },
+    "checked_sha": { "type": ["string", "null"] },
+    "last_check": { "type": ["string", "null"], "description": "When main's checks were last read for a main_green condition." }
+  }
+}

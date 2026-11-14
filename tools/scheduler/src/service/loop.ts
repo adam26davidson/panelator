@@ -25,6 +25,8 @@ import { selectEligible } from "../shortlist/select.ts";
 import { listClaims, readClaim, removeClaim, writeClaim, type Claim, type Outage } from "../state/claims.ts";
 import { CEILING_MIN_FAILURES, CEILING_MIN_SPAN_MS, DISK_FULL, forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, PAST_CEILING, transientCause } from "../chain/transient.ts";
 import { readLedger, writeLedger } from "../state/ledger.ts";
+import { listBlocked, removeBlocked, writeBlocked, type BlockedRecord } from "../state/blocked.ts";
+import { recordChecks } from "../events/ci.ts";
 import { listPaused, pausedDecision, removePaused, writePaused, type PausedRecord } from "../state/paused.ts";
 import { answeredEntry, appendQuestionLog } from "../state/questions.ts";
 import { recentMerges } from "../state/merges.ts";
@@ -55,6 +57,9 @@ export interface SchedulerDeps extends DriverDeps {
   /** Spec 031 AC-3: the children scan; defaults to fileDesignChildren over the designs of the checked-out main. */
   scanChildren?: () => Promise<unknown>;
 }
+
+/** Spec 060 AC-7: main's checks are read for a blocked record at most this often while main's head stays the same. */
+export const BLOCK_RECHECK_S = 1800;
 
 /** I3: a token this close to expiry is refreshed at the start of a tick. */
 export const TOKEN_REFRESH_MARGIN_MS = 5 * 60_000;
@@ -493,6 +498,80 @@ export class Scheduler {
     this.#start(claim);
   }
 
+  /**
+   * Spec 060 AC-7: a blocked record whose condition holds on origin/main becomes a claim again, with an `unblocked` event
+   * for the chain's first step. It takes a free slot only (a blocked chain holds none), so nothing is read while the slots are full.
+   */
+  async #handleBlocked(slots: number, open: Set<number> | null, info: TickInfo): Promise<void> {
+    const d = this.#deps;
+    for (const rec of await listBlocked(d.paths)) {
+      if (this.#active.has(rec.issue) || this.#stopping) continue;
+      try {
+        const existing = await readClaim(d.paths, rec.issue);
+        // A crash between the resume's claim write and the record's removal: the resume is complete.
+        if (existing?.pendingEvent?.type === "unblocked") {
+          await removeBlocked(d.paths, rec.issue);
+          continue;
+        }
+        if (open && !open.has(rec.issue)) {
+          await removeBlocked(d.paths, rec.issue);
+          if (existing) await removeClaim(d.paths, rec.issue);
+          d.serviceLog.write({ kind: "blocked-dropped", issue: rec.issue });
+          continue;
+        }
+        const heldNow = new Set([...(await listClaims(d.paths)).map((c) => c.issue), ...this.#active.keys()]).size + this.#activeStanding.size;
+        if (heldNow >= slots) continue;
+        const head = execFileSync("git", ["rev-parse", "origin/main"], { cwd: d.repoDir, encoding: "utf8" }).trim();
+        const { holds, rec: next } = await this.#blockHolds(rec, head);
+        if (next !== rec) await writeBlocked(d.paths, next);
+        if (!holds) continue;
+        const now = d.now().toISOString();
+        const claim: Claim = {
+          issue: rec.issue, state: rec.state, worktree: rec.worktree, started_at: now, last_activity_at: now, run_id: null,
+          pendingEvent: { type: "unblocked", main_sha: head },
+        };
+        await writeClaim(d.paths, claim);
+        await removeBlocked(d.paths, rec.issue);
+        d.serviceLog.write({ kind: "unblocked", issue: rec.issue, condition: rec.condition, main_sha: head });
+        await record(d.paths, "block.ended", d.now(), { kind: rec.condition.kind, main_sha: head }, { issue: rec.issue });
+        await record(d.paths, "issue.claimed", d.now(), { slot: this.active + 1 }, { issue: rec.issue });
+        info.claimed.push(rec.issue);
+        this.#start(claim);
+      } catch (e) {
+        info.errors.push(`blocked ${rec.issue}: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  /** Whether a record's condition holds on main's head; the record comes back changed when a read was made. */
+  async #blockHolds(rec: BlockedRecord, head: string): Promise<{ holds: boolean; rec: BlockedRecord }> {
+    const d = this.#deps;
+    const c = rec.condition;
+    if (c.kind === "paths") {
+      if (head === c.main_sha) return { holds: false, rec };
+      if (!c.main_sha) return { holds: true, rec };
+      let changed: string[];
+      try {
+        changed = execFileSync("git", ["diff", "--name-only", c.main_sha, head], { cwd: d.repoDir, encoding: "utf8" }).split("\n").filter(Boolean);
+      } catch (e) {
+        // A base the checkout no longer has: the chain verifies again rather than wait for ever.
+        d.serviceLog.write({ kind: "blocked-diff-failed", issue: rec.issue, error: (e as Error).message });
+        return { holds: true, rec };
+      }
+      return { holds: changed.some((f) => c.paths.some((p) => f === p || (p.endsWith("/") && f.startsWith(p)))), rec };
+    }
+    const now = d.now();
+    const moved = head !== (rec.checked_sha ?? c.main_sha);
+    const stale = rec.last_check == null || now.getTime() - Date.parse(rec.last_check) >= BLOCK_RECHECK_S * 1000;
+    if (!moved && !stale) return { holds: false, rec };
+    const summary = await d.gh.checks(head, d.cfg.required_checks);
+    await recordChecks(d.paths, now, { sha: head }, summary);
+    const run = summary.runs.find((r) => r.name === c.check);
+    const failed = summary.failed.some((f) => f.name === c.check);
+    const pending = !run || run.status !== "completed";
+    return { holds: !failed && !pending, rec: { ...rec, last_check: now.toISOString(), checked_sha: pending ? rec.checked_sha : head } };
+  }
+
   async tick(): Promise<TickInfo> {
     if (this.#ticking) return { eligible: 0, claimed: [], released: [], held: 0, standing: [], errors: ["tick already in progress"], restartPending: this.#restartPending };
     this.#ticking = true;
@@ -548,6 +627,11 @@ export class Scheduler {
       if(d.telegram)await this.#serializeQuestions(async()=>this.telegramAnswers.auditLateIssueReplies((await listClaims(d.paths)).map(c=>c.issue))).catch(()=>d.log({kind:'telegram-issue-audit-failed'}));
       // Step 2 owns the claims of paused issues (a crash mid-pause or mid-resume); a claim carrying pending work is the driver's.
       const pausedIssues = new Set((await listPaused(d.paths)).map((r) => r.issue));
+      // Spec 060 AC-4: a crash between the blocked record and the claim's removal leaves a claim the record supersedes (a claim carrying `unblocked` is the resume's).
+      for (const rec of await listBlocked(d.paths)) {
+        const claim = await readClaim(d.paths, rec.issue);
+        if (claim && !this.#active.has(rec.issue) && claim.pendingEvent?.type !== "unblocked") await removeClaim(d.paths, rec.issue);
+      }
       for (const claim of await listClaims(d.paths)) {
         if (this.#active.has(claim.issue) || pausedIssues.has(claim.issue) || carriesPending(claim)) continue;
         if (await this.#liveness(claim, info.errors)) info.released.push(claim.issue);
@@ -609,10 +693,17 @@ export class Scheduler {
       // Like an answered paused issue, outside the turns below.
       for (const claim of answeredClaims) if (this.active < slots && !this.#stopping) this.#start(claim);
 
+      // Spec 060 AC-7: after answered resumes, before standing agents and new claims.
+      if (fresh && (await listBlocked(d.paths)).length) {
+        const open = await openIssues();
+        await this.#handleBlocked(slots, open ? new Set(open.map((i) => i.number)) : null, info);
+      }
+
       // Spec 009: every claim on disk of an issue not paused holds a slot against new claims, and so does a chain
       // still running in this process after a pause removed its claim file.
       const stillPaused = new Set((await listPaused(d.paths)).map((r) => r.issue));
-      let held = new Set([...(await listClaims(d.paths)).filter((c) => !stillPaused.has(c.issue)).map((c) => c.issue), ...this.#active.keys()]).size;
+      const blockedIssues = (await listBlocked(d.paths)).map((r) => r.issue);
+      let held = new Set([...(await listClaims(d.paths)).filter((c) => !stillPaused.has(c.issue) && !blockedIssues.includes(c.issue)).map((c) => c.issue), ...this.#active.keys()]).size;
       info.held = held;
 
       const dueStanding: { def: StandingDefinition; state: NonNullable<Awaited<ReturnType<typeof readAgentState>>> }[] = [];
@@ -652,7 +743,7 @@ export class Scheduler {
         if (ranked) return ranked;
         if (!(await openIssues())) return (ranked = []);
         // AC-13: the shortlist treats an issue with a paused record as claimed.
-        const claimed = new Set([...(await listClaims(d.paths)).map((c) => c.issue), ...(await listPaused(d.paths)).map((r) => r.issue)]);
+        const claimed = new Set([...(await listClaims(d.paths)).map((c) => c.issue), ...(await listPaused(d.paths)).map((r) => r.issue), ...(await listBlocked(d.paths)).map((r) => r.issue)]);
         const ctx = buildSelectContext(d.repoDir, d.cfg, claimed, d.botLogin);
         // Spec 029 AC-8: an issue parked with needs-design-stage goes back to the shortlist, once.
         const done = new Set(await readRelabelled(d.paths));

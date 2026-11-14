@@ -35,6 +35,11 @@ export const BOT = "panelator-pipeline[bot]";
 
 /** A scripted result: a value, `undefined` for a failed run, `RATE_LIMITED` for a 429, `NETWORK_DOWN` for an unreachable API, or a function of the run that does the agent's git work first. */
 export type Scripted = unknown | ((run: StageRun) => unknown);
+
+/** Spec 060 AC-10: a fix result that returns the head unchanged and says the failure's cause lies outside the PR's scope. */
+export const OUT_OF_SCOPE = (paths: string[] = [".github/workflows/ci.yml"], cause = "CI's runner has no Chromium, so tools/design-stage/test/render.test.ts fails on every PR") => (run: StageRun) => ({
+  head_sha: git(run.worktree, "rev-parse", "HEAD").trim(), addressed: [], out_of_scope: { cause, paths }, findings: [],
+});
 /** A scripted run the vendor rate-limited: the fake harness exits 2 and `judge` reports a 429. */
 export const RATE_LIMITED = Symbol("rate-limited");
 /** A scripted run whose harness could not reach the API (spec 045): the fake harness exits 3 and `judge` reports the live reason with no status. */
@@ -144,6 +149,9 @@ export async function chainWorld(opts: {
   const labels = new Set(opts.labels ?? ["validated", "class:product"]);
   const labelLog: string[] = [];
   const comments: MockComment[] = [];
+  /** Spec 060: what a commit's required `test` check reports; green unless a test sets it. */
+  let checkFor: (sha: string) => { status: string; conclusion: string | null } = () => ({ status: "completed", conclusion: "success" });
+  const rerequested: number[] = [];
   const prComments: { pr: number; body: string }[] = [];
   const prs = new Map<number, MockPr>();
   const mergeRequests: number[] = [];
@@ -265,7 +273,12 @@ export async function chainWorld(opts: {
         return { status: 204, body: null };
       },
     },
-    { method: "GET", path: /^\/repos\/o\/r\/commits\/[0-9a-f]+\/check-runs$/, reply: () => ({ body: { total_count: 1, check_runs: [{ id: 1, name: "test", status: "completed", conclusion: "success" }] } }) },
+    {
+      method: "GET", path: /^\/repos\/o\/r\/commits\/([0-9a-f]+)\/check-runs$/,
+      reply: (m) => ({ body: { total_count: 1, check_runs: [{ id: 41, name: "test", ...checkFor(m[1]) }] } }),
+    },
+    { method: "POST", path: /^\/repos\/o\/r\/check-runs\/(\d+)\/rerequest$/, reply: (m) => { rerequested.push(Number(m[1])); return { status: 201, body: {} }; } },
+    { method: "GET", path: /^\/repos\/o\/r\/actions\/jobs\/\d+\/logs$/, reply: () => ({ body: "FAIL tools/design-stage/test/render.test.ts\nError: browserType.launch: Executable doesn't exist\n" }) },
   ];
   const gh = mockGitHub(routes);
   const adapter = scripted(opts.results);
@@ -291,6 +304,22 @@ export async function chainWorld(opts: {
 
   return {
     deps,scheduler,pair, paths, cfg, gh, filed, adapter, notifications, logs, labels, labelLog, comments, prComments, prs, mergeRequests,
+    rerequested,
+    /** Spec 060: what each commit's `test` check reports from now on. */
+    setChecks(fn: (sha: string) => { status: string; conclusion: string | null }) { checkFor = fn; },
+    /** Spec 060: a commit on origin's main (as a merge of another PR would be) touching `files`; the new head. */
+    moveMain(files: Record<string, string>): string {
+      git(side, "fetch", "-q", "origin");
+      git(side, "checkout", "-q", "-B", "main", "origin/main");
+      for (const [p, c] of Object.entries(files)) {
+        mkdirSync(join(side, p, ".."), { recursive: true });
+        writeFileSync(join(side, p), c);
+      }
+      git(side, "add", "-A");
+      git(side, "commit", "-q", "-m", "main moves");
+      git(side, "push", "-q", "origin", "main");
+      return git(side, "rev-parse", "HEAD").trim();
+    },
     get issueOpen() { return issueOpen; },
     get issueBody() { return issueBody; },
     /** One tick, then wait for the chains it started to stop (ended, paused or waiting). */

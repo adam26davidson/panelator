@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   branchOf, checkFailureEntry, FAILURE_MARKER, HISTORY_ENTRY_MAX, HISTORY_MAX_ENTRIES, initialChainState, ledgerOf, MAX_CHAIN_ERRORS, MAX_DECIDE_RETURNS, MAX_REPLANS, MAX_RESCUES,
-  MAX_SPEC_ANSWERS, MAX_SPEC_REVISIONS, normalizeChainState, transition, VERIFY_PENDING_MAX_H, type LedgerCounts,
+  MAX_BLOCKS, MAX_SPEC_ANSWERS, MAX_SPEC_REVISIONS, normalizeChainState, transition, VERIFY_PENDING_MAX_H, type LedgerCounts,
 } from "../src/chain/machine.ts";
 import type { Action, ChainEvent, ChainStage, ChainState } from "../src/chain/types.ts";
 import { MAX_FIXES } from "../src/gates/index.ts";
@@ -379,7 +379,7 @@ describe("chain: escalation path (AC-1 to AC-6)", () => {
     expect(r2.state).toMatchObject({ replans: 0, specRevisions: 0 });
   });
   it("the escalation bounds (AC-6)", () => {
-    expect([MAX_RESCUES, MAX_REPLANS, MAX_SPEC_REVISIONS, MAX_SPEC_ANSWERS, MAX_DECIDE_RETURNS, VERIFY_PENDING_MAX_H, MAX_FIXES]).toEqual([1, 1, 1, 1, 1, 6, 2]);
+    expect([MAX_RESCUES, MAX_REPLANS, MAX_SPEC_REVISIONS, MAX_SPEC_ANSWERS, MAX_DECIDE_RETURNS, VERIFY_PENDING_MAX_H, MAX_FIXES, MAX_BLOCKS]).toEqual([1, 1, 1, 1, 1, 6, 2, 3]);
     expect([HISTORY_ENTRY_MAX, HISTORY_MAX_ENTRIES]).toEqual([4000, 20]);
   });
 });
@@ -1142,10 +1142,10 @@ const headOf = (e: ChainEvent) => (e as { head?: string }).head;
 
 describe("chain: every event in every stage (AC-27)", () => {
   const STAGES: ChainStage[] = [
-    "claimed", "plan", "implement", "verify", "review", "fix", "merge", "spec", "design", "question-check", "done", "released", "waiting", "paused", "abandoned",
+    "claimed", "plan", "implement", "verify", "review", "fix", "merge", "spec", "design", "question-check", "done", "released", "waiting", "paused", "blocked", "abandoned",
   ];
   const AGENT: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "design", "question-check"];
-  const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused"];
+  const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused", "blocked"];
   const EVENTS_FAILED: ChainEvent[] = AGENT.flatMap((stage): ChainEvent[] => [
     { type: "stage_failed", stage, reason: "boom" },
     { type: "stage_failed", stage, reason: "429", postpone: true },
@@ -1186,6 +1186,7 @@ describe("chain: every event in every stage (AC-27)", () => {
     { type: "rebase_conflict", detail: "CONFLICT a.ts" },
     { type: "conflict_gone" },
     answered(),
+    { type: "unblocked", main_sha: "9".repeat(40) },
     { type: "liveness_expired" },
     { type: "chain_error", error: "boom" },
   ];
@@ -1203,6 +1204,7 @@ describe("chain: every event in every stage (AC-27)", () => {
       // Needs `conflictPending`, which no fixture here sets; spec 024's tests cover the valid case.
       case "conflict_gone": return false;
       case "answered": return stage === "paused";
+      case "unblocked": return stage === "blocked";
       case "liveness_expired":
       case "chain_error": return !ENDED.includes(stage);
     }
@@ -1652,5 +1654,120 @@ describe("chain: the design track (spec 029)", () => {
     expect(ledgerOf({ ...old, designRevisions: undefined } as never)).not.toHaveProperty("designRevisions");
     expect(ledgerOf({ ...old, designRevisions: 2 } as never).designRevisions).toBe(2);
     expect(initialChainState(3, null, ledgerOf({ ...old, designRevisions: 2 } as never)).designRevisions).toBe(2);
+  });
+});
+
+describe("spec 060: a failed check outside the PR's scope waits for main", () => {
+  const sha = "9".repeat(40);
+  const failedLog = "test\nFAIL tools/design-stage/test/render.test.ts\nError: no chromium";
+  const verifying = (track: "issue" | "spec" | "design", over: Partial<ChainState> = {}) => at("verify", { track, pr: pr8, ...over });
+  const failedEvent = (over: Partial<Extract<ChainEvent, { type: "checks" }>> = {}): ChainEvent => ({ type: "checks", status: "failed", log: failedLog, sensitive: false, at: AT, failedId: 41, ...over });
+
+  it("AC-2: main red on the same check blocks a spec or design PR without a fix, with finding, comment, notify and block in order", () => {
+    for (const track of ["spec", "design"] as const) {
+      const r = transition(verifying(track), failedEvent({ main: { sha, failed: ["test"] } }));
+      expect(r.state).toMatchObject({ stage: "blocked", fixes: 0, specRescues: 0, rescues: 0, blocked: { on: { kind: "main_green", check: "test", main_sha: sha }, check: "test", blocks: 1 } });
+      expect(types(r.actions)).toEqual(["finding", "comment", "notify", "block"]);
+      expect(r.actions[0]).toMatchObject({ type: "finding", finding: { what: `required check test fails on a ${track} PR for a cause outside its scope`, where: `origin/main ${sha}`, noticed_how: `verify of PR #8 on the ${track} track` } });
+      expect(r.actions[1]).toMatchObject({ text: expect.not.stringContaining("@") });
+      expect(r.actions[2]).toMatchObject({ gate: "infra" });
+      expect(r.actions[3]).toEqual({ type: "block", condition: { kind: "main_green", check: "test", main_sha: sha } });
+      expect(r.state.history.slice(-2)).toEqual([expect.stringContaining("A required check failed:\ntest\nFAIL"), `check test also fails on origin/main ${sha}; blocked until main is green on it`]);
+    }
+  });
+
+  it("AC-2: the issue track fixes and ignores main", () => {
+    const r = transition(verifying("issue", { pr: pr3 }), failedEvent({ main: { sha, failed: ["test"] } }));
+    expect(r.state.stage).toBe("fix");
+    expect(r.actions[0]).toMatchObject({ type: "run_stage", stage: "fix" });
+  });
+
+  it("AC-3: the first failure on a head re-requests the check once, the second goes to the fix with the whole excerpt, a new head clears it", () => {
+    const first = transition(verifying("spec"), failedEvent({ main: { sha, failed: [] } }));
+    expect(first.state).toMatchObject({ stage: "verify", checkRerun: pr8.head_sha, fixes: 0 });
+    expect(first.actions).toEqual([{ type: "rerun_check", id: 41 }, { type: "wait", seconds: 60 }]);
+    expect(first.state.history.at(-1)).toBe("check test failed; re-run requested once");
+    const second = transition(first.state, failedEvent({ main: { sha, failed: [] } }));
+    expect(second.state.stage).toBe("fix");
+    expect(second.actions[0]).toMatchObject({ type: "run_stage", stage: "fix", fixInput: `A required check failed:\n${failedLog}` });
+    const pushed = transition(second.state, fixOk("c".repeat(40)));
+    expect(pushed.state.checkRerun).toBeNull();
+  });
+
+  it("AC-3: without a failed run id (or on the issue track) there is no re-run", () => {
+    expect(transition(verifying("spec"), failedEvent({ failedId: undefined })).state.stage).toBe("fix");
+    expect(transition(verifying("issue", { pr: pr3 }), failedEvent()).state.stage).toBe("fix");
+  });
+
+  const verdict = (over: Partial<{ head_sha: string; paths: string[] }> = {}, extra: Partial<Extract<ChainEvent, { type: "stage_ok" }>> = {}): ChainEvent => ({
+    type: "stage_ok", stage: "fix", scope: { ok: true }, mainSha: sha, outOfScope: { ok: true },
+    result: { head_sha: over.head_sha ?? pr8.head_sha, addressed: [], out_of_scope: { cause: "chromium is missing on the runner", paths: over.paths ?? [".github/workflows/ci.yml"] } },
+    ...extra,
+  } as ChainEvent);
+  const fixing = (track: "issue" | "spec" | "design", over: Partial<ChainState> = {}) => at("fix", { track, pr: track === "issue" ? pr3 : pr8, fixes: 1, rescueRun: true, pendingFixInput: "A required check failed:\ntest\nFAIL x", ...over });
+
+  it("AC-6: a valid verdict blocks with the counters untouched and the rescue flag cleared", () => {
+    const r = transition(fixing("spec", { specRescues: 1 }), verdict());
+    expect(r.state).toMatchObject({ stage: "blocked", fixes: 1, specRescues: 1, rescueRun: false, blocked: { on: { kind: "paths", paths: [".github/workflows/ci.yml"], main_sha: sha }, blocks: 1 } });
+    expect(r.state.history.at(-1)).toBe("fix: cause outside the PR's scope: chromium is missing on the runner (paths: .github/workflows/ci.yml)");
+    expect(types(r.actions)).toEqual(["finding", "comment", "notify", "block"]);
+    expect(r.actions[0]).toMatchObject({ finding: { where: ".github/workflows/ci.yml", evidence: expect.stringContaining("chromium is missing") } });
+  });
+
+  it("AC-6: the verdict is ignored on the issue track, on a changed head and for an in-scope path, and applied as a fix", () => {
+    const issue = transition(fixing("issue"), verdict({ head_sha: "a".repeat(40) }, { outOfScope: { ok: false, reason: "the issue track's fix may change any file in the plan's scope" } }));
+    expect(issue.state).toMatchObject({ stage: "verify", fixes: 2 });
+    expect(issue.state.history.some((h) => h.startsWith("out_of_scope ignored: "))).toBe(true);
+    const changed = transition(fixing("spec"), verdict({ head_sha: "a".repeat(40) }));
+    expect(changed.state).toMatchObject({ stage: "verify", fixes: 2, pr: { head_sha: "a".repeat(40) } });
+    expect(changed.state.history.at(-1)).toBe("out_of_scope ignored: the fix changed the head");
+    const inside = transition(fixing("spec"), verdict({}, { outOfScope: { ok: false, reason: "specs/010-x/spec.md is inside the PR's scope" } }));
+    expect(inside.state).toMatchObject({ stage: "verify", fixes: 2 });
+    expect(inside.state.history.at(-1)).toBe("out_of_scope ignored: specs/010-x/spec.md is inside the PR's scope");
+  });
+
+  it("AC-6: the verdict is ignored when the unchanged head violates the scope or the fix is not for a failed check", () => {
+    const bad = transition(fixing("spec"), verdict({}, { scope: { ok: false, violations: ["docs/charter.md"] } }));
+    expect(bad.state.stage).not.toBe("blocked");
+    expect(bad.state.history).toContain("out_of_scope ignored: the unchanged head's diff violates the scope");
+    const other = transition(fixing("spec", { pendingFixInput: "Diff touches files outside the plan's file scope:\n- x" }), verdict());
+    expect(other.state.stage).not.toBe("blocked");
+    expect(other.state.history).toContain("out_of_scope ignored: the fix is not for a failed required check");
+  });
+
+  it("AC-6: at MAX_BLOCKS the verdict is a fix that changed nothing", () => {
+    const r = transition(fixing("spec", { blocked: { on: null, since: null, check: null, main_sha: null, blocks: MAX_BLOCKS } }), verdict());
+    expect(r.state).toMatchObject({ stage: "verify", fixes: 2 });
+    expect(r.state.history.at(-1)).toBe("block bound reached");
+  });
+
+  it("AC-8, AC-9: unblocked verifies again after a rebase push, keeping the counters and the block count", () => {
+    const blocked = transition(fixing("spec", { specRescues: 1 }), verdict()).state;
+    const r = transition(blocked, { type: "unblocked", main_sha: "8".repeat(40) });
+    expect(r.state).toMatchObject({ stage: "verify", checkRerun: null, fixes: 1, specRescues: 1, rescues: 0, replans: 0, specRevisions: 0, attempt: 1, pr: pr8, blocked: { on: null, blocks: 1 } });
+    expect(r.actions).toEqual([{ type: "rebase_push" }, { type: "verify" }]);
+    // The next failure takes the same steps again: a re-run first.
+    expect(transition(r.state, failedEvent()).actions[0]).toEqual({ type: "rerun_check", id: 41 });
+  });
+
+  it("a blocked chain leaves only by unblocked, and its block count is in the ledger", () => {
+    const blocked = transition(verifying("spec"), failedEvent({ main: { sha, failed: ["test"] } })).state;
+    expect(() => transition(blocked, { type: "liveness_expired" })).toThrow(/invalid event/);
+    expect(() => transition(blocked, { type: "checks", status: "green", sensitive: false, at: AT })).toThrow(/invalid event/);
+    expect(ledgerOf(blocked)).toMatchObject({ blocks: 1 });
+    expect(ledgerOf(verifying("spec"))).not.toHaveProperty("blocks");
+    const seeded = initialChainState(1, null, ledgerOf(blocked));
+    expect(seeded.blocked).toEqual({ on: null, since: null, check: null, main_sha: null, blocks: 1 });
+    expect(initialChainState(1).blocked).toBeNull();
+    expect(normalizeChainState({ issue: 1 })).toMatchObject({ checkRerun: null, blocked: null });
+  });
+
+  it("the state with a block validates against the claim and ledger schemas", () => {
+    const blocked = transition(fixing("spec"), verdict()).state;
+    const claim = { issue: 1, state: blocked, worktree: "/w", started_at: AT, last_activity_at: AT, run_id: null };
+    expect(validate("claim", claim)).toEqual({ ok: true });
+    expect(validate("claim", { ...claim, pendingEvent: { type: "unblocked", main_sha: sha } })).toEqual({ ok: true });
+    expect(validate("claim", { ...claim, pendingEvent: { type: "rebase_conflict", detail: "CONFLICT" } })).toEqual({ ok: true });
+    expect(validate("escalation-ledger", ledgerOf(blocked))).toEqual({ ok: true });
   });
 });

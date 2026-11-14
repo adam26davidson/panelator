@@ -33,6 +33,7 @@ import { classifyWork } from '../shortlist/rank.ts';
 import { appendMerge } from "../state/merges.ts";
 import { record } from "../events/store.ts";
 import { recordChecks } from "../events/ci.ts";
+import { writeBlocked } from "../state/blocked.ts";
 import { emptyTelegram, writePaused, type PausedRecord } from "../state/paused.ts";
 import { savePatch } from "../state/patches.ts";
 import type { StatePaths } from "../state/paths.ts";
@@ -78,7 +79,7 @@ export interface DriverDeps {
 
 export type StepStatus = "continue" | "waiting" | "ended";
 const AGENT_STAGES: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "design", "question-check"];
-const ENDED: ChainState["stage"][] = ["done", "released", "abandoned", "paused"];
+const ENDED: ChainState["stage"][] = ["done", "released", "abandoned", "paused", "blocked"];
 /** C1: prepended to the fix input when the fix stage has to resolve a conflict itself. Spec 024: names no method; the input says which. */
 export const CONFLICT_FIX_LINE = "Bring this branch up to date with origin/main and resolve the conflicts before addressing the items below.";
 /** AC-10: prepended to a fix input that names the charter (a security finding or a scope violation). */
@@ -94,6 +95,9 @@ const answerMark = (id: number) => `(maintainer answer, question #${id})`;
 /** Run-record paths listed in an abandonment comment, newest last. */
 const ABANDON_RUNS_MAX = 200;
 const stageUnit = (runId: string) => `panelator-stage-${runId}`;
+
+/** Spec 060 AC-5: added to the fix input of a failed required check on a spec or design PR. */
+export const OUT_OF_SCOPE_PARAGRAPH = "If the failing test or job fails for a cause that no file inside this PR's scope can change, do not widen the diff: return your head unchanged with `out_of_scope: { cause, paths }` in your result. `cause` is one paragraph naming the failing test or step and why it is main's; `paths` are the repository files, outside this PR's scope, whose change would clear it (at least one). The chain then waits for main to change one of them instead of counting this as a fix.";
 
 export { defaultAdapterFor };
 
@@ -324,6 +328,9 @@ async function buildInput(
   const pr = s.pr ? { number: s.pr.number, head_sha: s.pr.head_sha, url: `https://github.com/${deps.cfg.repo}/pull/${s.pr.number}` } : undefined;
   let fixInput = s.pendingFixInput === null ? undefined : s.conflictPending ? `${CONFLICT_FIX_LINE}\n${s.pendingFixInput}` : s.pendingFixInput;
   if (fixInput?.includes(ROOT)) fixInput = `${CHARTER_REVERT_LINE}\n${fixInput}`;
+  if (fixInput !== undefined && s.stage === "fix" && (s.track === "spec" || s.track === "design") && fixInput.includes("A required check failed:")) {
+    fixInput = `${fixInput}\n\n${OUT_OF_SCOPE_PARAGRAPH}`;
+  }
   // The question a resumed stage answers: on the state while it is asked, from the log's answered entry once it is answered (AC-15).
   let question = s.question;
   if (!question && s.answer !== null && s.answerQuestionId !== null) question = (await answeredEntry(deps.paths, s.answerQuestionId))?.question ?? null;
@@ -682,6 +689,8 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
 
   // TI1: where this run starts; a recording run's marks must be in what it adds after this commit.
   const start = await worktreeHead(claim.worktree);
+  // Spec 060 AC-6: where main stood before the run, for a fix's out-of-scope verdict.
+  const mainSha = stage === "fix" ? await originMain(deps) : undefined;
   /**
    * Spec 015 AC-1: a run that ends without a result and left the rebased head as it was (no commit, a clean tree) gets the
    * rebase undone: it was never pushed, and the next preparation's sync would otherwise drop it as diverged work.
@@ -809,10 +818,10 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
       reviewer_model: out.usage.model, security,
     }, { issue: claim.issue, run_id: out.runId });
   }
-  return stageEvent(deps, claim, stage, out.result, { issueBody: issue.body, specText, sensitiveGlobs, start, security, sensitive });
+  return stageEvent(deps, claim, stage, out.result, { issueBody: issue.body, specText, sensitiveGlobs, start, security, sensitive, mainSha });
 }
 
-interface StageContext { issueBody: string; specText: string; sensitiveGlobs: string[]; start: string; security: boolean; sensitive: boolean }
+interface StageContext { mainSha?: string; issueBody: string; specText: string; sensitiveGlobs: string[]; start: string; security: boolean; sensitive: boolean }
 
 /** The event of a stage run that ended `ok`, after the checks on its result (the PR binding, the scope gates). */
 async function stageEvent(deps: DriverDeps, claim: Claim, stage: AgentStageName, result: unknown, ctx: StageContext): Promise<ChainEvent> {
@@ -839,13 +848,13 @@ async function stageEvent(deps: DriverDeps, claim: Claim, stage: AgentStageName,
       return designEvent(deps, claim, issueBody, specText, result as DesignResult);
     case "implement":
     case "fix":
-      return codeEvent(deps, claim, stage, result as ImplementOutcome | FixOutcome, issueBody, specText, sensitiveGlobs, start);
+      return codeEvent(deps, claim, stage, result as ImplementOutcome | FixOutcome, issueBody, specText, sensitiveGlobs, start, ctx.mainSha);
   }
 }
 
 async function codeEvent(
   deps: DriverDeps, claim: Claim, stage: "implement" | "fix", result: ImplementOutcome | FixOutcome, issueBody: string, specText: string, sensitiveGlobs: string[],
-  start: string,
+  start: string, mainSha?: string,
 ): Promise<ChainEvent> {
   const state = claim.state;
   // AC-17: a result that escalates has no PR or scope to check.
@@ -876,7 +885,29 @@ async function codeEvent(
     const extra = [...(stage === "fix" && state.recordAnswer ? [DECISIONS] : []), ...newAdrs, ...(await verifiedDecisionFiles(deps, claim.issue, claim.worktree))];
     scope = scopeGate(diff, state.plan, parseSpec(specText), sensitiveGlobs, extra);
   }
-  return stage === "implement" ? { type: "stage_ok", stage, result: result as ImplementOutcome, scope } : { type: "stage_ok", stage, result: result as FixOutcome, scope };
+  if (stage === "implement") return { type: "stage_ok", stage, result: result as ImplementOutcome, scope };
+  const fix = result as FixOutcome;
+  const verdict = "out_of_scope" in fix ? fix.out_of_scope : undefined;
+  if (!verdict) return { type: "stage_ok", stage, result: fix, scope };
+  return { type: "stage_ok", stage, result: fix, scope, mainSha: mainSha ?? (await originMain(deps)), outOfScope: await judgeOutOfScope(deps, claim, issueBody, r.head_sha, verdict.paths) };
+}
+
+/** `git rev-parse origin/main` in the scheduler's checkout. */
+async function originMain(deps: DriverDeps): Promise<string> {
+  return (await gitOut(deps.repoDir, "rev-parse", "origin/main")).trim();
+}
+
+/** Spec 060 AC-6: an out-of-scope verdict holds only with the head unchanged and every path, judged alone, outside the PR's scope. */
+async function judgeOutOfScope(deps: DriverDeps, claim: Claim, issueBody: string, head: string, paths: string[]): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const state = claim.state;
+  if (state.track === "issue") return { ok: false, reason: "the issue track's fix may change any file in the plan's scope" };
+  if (head !== state.pr?.head_sha) return { ok: false, reason: "the fix changed the head" };
+  const specPath = specPathFromIssueBody(issueBody);
+  for (const path of paths) {
+    const alone = state.track === "spec" ? await specTrackScope(deps, claim, [path], specPath) : designScopeGate([path], specPath ?? "");
+    if (alone.ok) return { ok: false, reason: `${path} is inside the PR's scope` };
+  }
+  return { ok: true };
 }
 
 /** AC-18, AC-21, AC-22: the checks on a spec stage result, in order, then the spec PR's scope. */
@@ -920,6 +951,19 @@ async function designEvent(deps: DriverDeps, claim: Claim, issueBody: string, sp
   return { type: "stage_ok", stage: "design", result: r, scope };
 }
 
+/** Spec 060 AC-1: the required checks failed on origin/main's head; a read that fails is logged and blocks nothing. */
+async function mainChecks(deps: DriverDeps, issue: number): Promise<{ sha: string; failed: string[] }> {
+  const sha = await originMain(deps);
+  try {
+    const summary = await deps.gh.checks(sha, deps.cfg.required_checks);
+    await recordChecks(deps.paths, deps.now(), { sha }, summary);
+    return { sha, failed: summary.failed.map((f) => f.name) };
+  } catch (e) {
+    deps.log({ kind: "main-checks-unknown", issue, error: (e as Error).message });
+    return { sha, failed: [] };
+  }
+}
+
 async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> {
   const pr = claim.state.pr;
   if (!pr) throw new Error(`verify without a PR (issue ${claim.issue})`);
@@ -931,7 +975,9 @@ async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> 
   if (summary.status === "failed") {
     const first = summary.failed[0];
     const log = await deps.gh.jobLogExcerpt(first.id).catch(() => `(no log for ${first.name})`);
-    return { type: "checks", status: "failed", log: `${first.name}\n${log}`, sensitive, at: deps.now().toISOString() };
+    const failed = { type: "checks" as const, status: "failed" as const, log: `${first.name}\n${log}`, sensitive, at: deps.now().toISOString(), failedId: first.id };
+    if (claim.state.track === "issue") return failed;
+    return { ...failed, main: await mainChecks(deps, claim.issue) };
   }
   if (summary.status === "pending") {
     const required = deps.cfg.required_checks;
@@ -1061,6 +1107,52 @@ export async function sendPausedQuestion(deps:DriverDeps,rec:PausedRecord):Promi
  return rec;
 }
 
+/** Spec 060 AC-3: re-request one failed check run; a refusal or an error is logged, never thrown. */
+async function rerunCheck(deps: DriverDeps, claim: Claim, id: number): Promise<void> {
+  const sha = claim.state.pr?.head_sha;
+  try {
+    const ok = await deps.gh.rerequestCheckRun(id);
+    deps.log({ kind: ok ? "rerun-check" : "rerun-check-refused", issue: claim.issue, sha, id });
+  } catch (e) {
+    deps.log({ kind: "rerun-check-error", issue: claim.issue, sha, id, error: (e as Error).message });
+  }
+}
+
+/** Spec 060 AC-4: the record, then the claim goes; the worktree and the in-progress label stay. A crash between the two is completed by the loop. */
+async function blockIssue(deps: DriverDeps, claim: Claim, a: Extract<Action, { type: "block" }>): Promise<void> {
+  const pr = claim.state.pr;
+  if (!pr) throw new Error(`block without a PR (issue ${claim.issue})`);
+  const since = deps.now().toISOString();
+  const state = { ...claim.state, blocked: claim.state.blocked && { ...claim.state.blocked, since } };
+  await writeBlocked(deps.paths, { issue: claim.issue, state, worktree: claim.worktree, since, condition: a.condition, pr: { number: pr.number, head_sha: pr.head_sha }, last_check: null });
+  await record(deps.paths, "block.started", deps.now(), { kind: a.condition.kind }, { issue: claim.issue });
+  await removeClaim(deps.paths, claim.issue);
+  await record(deps.paths, "issue.released", deps.now(), { reason: "blocked" }, { issue: claim.issue });
+}
+
+/**
+ * Spec 060 AC-8: after a block, the worktree is put at the PR's remote head and rebased onto origin/main; a moved head is
+ * pushed with a lease and becomes the PR's head. A conflict goes to the machine as spec 024's `rebase_conflict`.
+ */
+async function rebasePush(deps: DriverDeps, claim: Claim): Promise<void> {
+  const pr = claim.state.pr;
+  if (!pr) throw new Error(`rebase_push without a PR (issue ${claim.issue})`);
+  await syncWorktree(deps, claim);
+  const before = await worktreeHead(claim.worktree);
+  const rebase = await rebaseOntoMain(claim.worktree, "origin/main", botIdentity(deps));
+  if (!rebase.ok) {
+    deps.log({ kind: "rebase-conflict-on-resume", issue: claim.issue, detail: rebase.conflict });
+    claim.pendingEvent = { type: "rebase_conflict", detail: rebase.conflict };
+    return;
+  }
+  if (!rebase.moved) return;
+  const after = await worktreeHead(claim.worktree);
+  const branch = branchOf(claim.state);
+  await gitOut(claim.worktree, "push", `--force-with-lease=${branch}:${before}`, "origin", `HEAD:refs/heads/${branch}`);
+  claim.state = { ...claim.state, pr: { ...pr, head_sha: after } };
+  deps.log({ kind: "rebase-pushed", issue: claim.issue, from: before, to: after });
+}
+
 /** AC-17: re-run, once, each pending required check that has a run; a refusal or a missing run is logged (the fix input names them). */
 async function rerunChecks(deps: DriverDeps, claim: Claim, sha: string): Promise<void> {
   const summary = await deps.gh.checks(sha, deps.cfg.required_checks);
@@ -1174,6 +1266,16 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         break;
       case "rerun_checks":
         await rerunChecks(deps, claim, a.sha);
+        break;
+      case "rerun_check":
+        await rerunCheck(deps, claim, a.id);
+        break;
+      case "rebase_push":
+        await rebasePush(deps, claim);
+        break;
+      case "block":
+        await blockIssue(deps, claim, a);
+        status = "ended";
         break;
       case "finding":
         await appendFindings(deps.paths, { issue: claim.issue, stage: a.stage, run_id: "escalation", timestamp: deps.now().toISOString() }, [a.finding]);

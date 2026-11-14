@@ -1,6 +1,6 @@
 import { fixLoopGate, readyGate, type ScopeResult } from "../gates/index.ts";
 import type { AgentStageName, AskingStage, ImplementResult, PendingAnswer, PlanResult, Question, SpecMode } from "../types.ts";
-import type { Action, ChainEvent, ChainStage, ChainState } from "./types.ts";
+import type { Action, BlockCondition, ChainEvent, ChainStage, ChainState } from "./types.ts";
 
 export const CLAIM_LABEL = "in-progress";
 export const ABANDONED_LABEL = "abandoned";
@@ -14,6 +14,8 @@ export const MAX_REPLANS = 1;
 export const MAX_SPEC_REVISIONS = 1;
 export const MAX_SPEC_ANSWERS = 1;
 export const MAX_DECIDE_RETURNS = 1;
+/** Spec 060 AC-6: blocks on main per issue; past it a failed check on a spec or design PR runs the fix loop as before. */
+export const MAX_BLOCKS = 3;
 /** Spec 029 AC-4: the configured bound (`bounds.design_revisions`) is passed to `transition`; this is its default. */
 export interface Bounds { designRevisions: number }
 export const DEFAULT_BOUNDS: Bounds = { designRevisions: 2 };
@@ -29,22 +31,27 @@ const ABANDON_COMMENT_HISTORY_MAX = 50_000;
 const KIND_OTHER_REASONING = "kind other is not a question for the maintainer";
 /** The ended stages (AC-27): nothing runs and liveness does not apply. */
 /** Stages a chain does not leave by itself; `liveness_expired` is invalid in them. */
-export const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused"];
+export const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused", "blocked"];
 
 export type LedgerCounts = Pick<
   ChainState, "rescues" | "specRescues" | "replans" | "specRevisions" | "specAnswers" | "decideReturns" | "history" | "pendingAnswer" | "chainFailures" | "chainErrors"
 > & {
   /** Spec 029: written only once non-zero, so a ledger of a chain that never needed a design revision keeps its earlier shape. */
   designRevisions?: number;
+  /** Spec 060: written only once non-zero, like `designRevisions`. */
+  blocks?: number;
 };
+type LedgerSource = Omit<LedgerCounts, "pendingAnswer" | "chainFailures" | "chainErrors"> & Partial<LedgerCounts> & { blocked?: ChainState["blocked"] };
 
 /** The ledger's fields of a state; a ledger written before T4 and C7 lacks the last three, which default. */
-export function ledgerOf(state: Omit<LedgerCounts, "pendingAnswer" | "chainFailures" | "chainErrors"> & Partial<LedgerCounts>): LedgerCounts {
+export function ledgerOf(state: LedgerSource): LedgerCounts {
+  const blocks = state.blocked?.blocks ?? state.blocks ?? 0;
   return {
     rescues: state.rescues, specRescues: state.specRescues, replans: state.replans, specRevisions: state.specRevisions,
     specAnswers: state.specAnswers, decideReturns: state.decideReturns, history: [...state.history],
     pendingAnswer: state.pendingAnswer ?? null, chainFailures: state.chainFailures ?? null, chainErrors: state.chainErrors ?? 0,
     ...(state.designRevisions ? { designRevisions: state.designRevisions } : {}),
+    ...(blocks ? { blocks } : {}),
   };
 }
 
@@ -54,15 +61,23 @@ const clip = (text: string): string => text.slice(0, HISTORY_ENTRY_MAX);
  * A new chain; `ledger` seeds the escalation counts and history of an issue claimed before (AC-7), trimmed like any
  * history, and an answer a release left unrecorded (T4).
  */
-export function initialChainState(issue: number, specProblem: string | null = null, ledger: Parameters<typeof ledgerOf>[0] | null = null, designProblem: string | null = null): ChainState {
+export function initialChainState(issue: number, specProblem: string | null = null, ledger: LedgerSource | null = null, designProblem: string | null = null): ChainState {
   return {
     issue, stage: "claimed", attempt: 1, fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0,
     sensitive: false, pr: null, plan: null, pendingFixInput: null, postponedUntil: null, resumeStage: null, conflictPending: false,
     track: "issue", rescues: 0, specRescues: 0, replans: 0, specRevisions: 0, designRevisions: 0, specAnswers: 0, decideReturns: 0, history: [],
     rescueRun: false, specMode: null, specProblem, designProblem, question: null, askingStage: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
     pendingAnswer: null, recordIds: [], recordKind: null, recordAnswer: false, decideInput: null, decidedQuestion: null, parkedPr: null, pendingSince: null, checksRerun: false, securityPass: false,
-    chainFailures: null, chainErrors: 0, heldWork: [],
-    ...(ledger ? { ...ledgerOf(ledger), history: ledger.history.slice(-HISTORY_MAX_ENTRIES).map(clip) } : {}),
+    chainFailures: null, chainErrors: 0, heldWork: [], checkRerun: null, blocked: null,
+    ...(ledger ? seedFromLedger(ledger) : {}),
+  };
+}
+
+function seedFromLedger(ledger: LedgerSource): Partial<ChainState> {
+  const { blocks, ...counts } = ledgerOf(ledger);
+  return {
+    ...counts, history: ledger.history.slice(-HISTORY_MAX_ENTRIES).map(clip),
+    ...(blocks ? { blocked: { on: null, since: null, check: null, main_sha: null, blocks } } : {}),
   };
 }
 
@@ -249,7 +264,7 @@ function designToSpecRevise(s: ChainState, reason: string): Step | null {
 }
 
 function boundsText(s: ChainState): string {
-  return `design revision ${s.designRevisions}, rescue ${s.rescues}/${MAX_RESCUES}, spec-track rescue ${s.specRescues}/${MAX_RESCUES}, re-plan ${s.replans}/${MAX_REPLANS}, spec revision ${s.specRevisions}/${MAX_SPEC_REVISIONS}, chain-error release ${s.chainErrors}/${MAX_CHAIN_ERRORS}`;
+  return `design revision ${s.designRevisions}, rescue ${s.rescues}/${MAX_RESCUES}, spec-track rescue ${s.specRescues}/${MAX_RESCUES}, re-plan ${s.replans}/${MAX_REPLANS}, spec revision ${s.specRevisions}/${MAX_SPEC_REVISIONS}, chain-error release ${s.chainErrors}/${MAX_CHAIN_ERRORS}, block ${s.blocked?.blocks ?? 0}/${MAX_BLOCKS}`;
 }
 
 /** Informational only: no @ anywhere (AC-5, C11), the newest history entries that fit. The driver appends the run-record paths. */
@@ -454,6 +469,24 @@ function conflictGone(state: ChainState): Step {
   return { state: { ...s, stage: "verify", rescueRun: false, pendingFixInput: null }, actions: [{ type: "verify" }] };
 }
 
+/**
+ * Spec 060 AC-6: a fix verdict that the failure's cause lies outside the PR's scope. Honoured only on a spec or design PR,
+ * with the head unchanged and every path outside the scope (the driver's `outOfScope`), while blocks remain; otherwise
+ * the note says why and the result is applied as a fix.
+ */
+function outOfScopeVerdict(
+  state: ChainState, event: Extract<StageOk, { stage: "fix" }>, head: string, verdict: { cause: string; paths: string[] },
+): Step | { note: string } {
+  if (state.track === "issue") return { note: "out_of_scope ignored: the issue track's fix may change any file in the plan's scope" };
+  if (head !== state.pr?.head_sha) return { note: "out_of_scope ignored: the fix changed the head" };
+  if (event.outOfScope && !event.outOfScope.ok) return { note: `out_of_scope ignored: ${event.outOfScope.reason}` };
+  if (!state.pendingFixInput?.startsWith("A required check failed:")) return { note: "out_of_scope ignored: the fix is not for a failed required check" };
+  if (event.scope && !event.scope.ok) return { note: "out_of_scope ignored: the unchanged head's diff violates the scope" };
+  if ((state.blocked?.blocks ?? 0) >= MAX_BLOCKS) return { note: "block bound reached" };
+  const noted = note({ ...state, rescueRun: false }, `fix: cause outside the PR's scope: ${verdict.cause} (paths: ${verdict.paths.join(", ")})`);
+  return block(noted, { kind: "paths", paths: verdict.paths, main_sha: event.mainSha ?? "" }, verdict.cause);
+}
+
 function stageOk(state: ChainState, event: StageOk): Step {
   switch (event.stage) {
     case "plan": {
@@ -469,14 +502,19 @@ function stageOk(state: ChainState, event: StageOk): Step {
     case "implement":
     case "fix": {
       if (event.result.escalation) return ask(state, event.stage, event.result.escalation, event.head);
-      const result = event.result as ImplementResult | { head_sha: string };
+      const result = event.result as ImplementResult | { head_sha: string; out_of_scope?: { cause: string; paths: string[] } };
       if (event.stage === "fix" && state.conflictPending && result.head_sha === state.pr?.head_sha) return conflictUnresolved(state, result.head_sha);
+      if (event.stage === "fix" && "out_of_scope" in result && result.out_of_scope !== undefined) {
+        const verdict = outOfScopeVerdict(state, event, result.head_sha, result.out_of_scope);
+        if ("actions" in verdict) return verdict;
+        state = note(state, verdict.note);
+      }
       const scope = scopeOf(state, event);
       const pr = event.stage === "implement"
         ? { number: (result as ImplementResult).pr_number, head_sha: result.head_sha }
         : state.pr ? { ...state.pr, head_sha: result.head_sha } : null;
       const fixes = event.stage === "fix" ? state.fixes + 1 : state.fixes;
-      const done = { ...unholdIfBound(settle(state, event.stage)), pr, fixes, conflictPending: false };
+      const done = { ...unholdIfBound(settle(state, event.stage)), pr, fixes, conflictPending: false, checkRerun: null };
       if (!scope.ok) {
         const text = `Diff touches files outside the plan's file scope:\n${violationList(scope.violations)}`;
         const noted = note(done, text);
@@ -518,7 +556,7 @@ function stageOk(state: ChainState, event: StageOk): Step {
       const scope = scopeOf(state, event);
       const done: ChainState = {
         ...unholdIfBound(settle(state, "spec")), pr: { number: r.pr_number, head_sha: r.head_sha }, fixes: 0, scopeViolations: 0, specMode: null,
-        pendingFixInput: null, conflictPending: false,
+        pendingFixInput: null, conflictPending: false, checkRerun: null,
       };
       if (scope.ok) return { state: { ...done, stage: "verify" }, actions: [{ type: "verify" }] };
       // AC-22: handled like implement's first violation; the fix's second violation follows the spec-track rule.
@@ -537,7 +575,7 @@ function stageOk(state: ChainState, event: StageOk): Step {
       const scope = scopeOf(state, event);
       const done: ChainState = {
         ...unholdIfBound(settle(state, "design")), pr: { number: r.pr_number, head_sha: r.head_sha }, fixes: 0, scopeViolations: 0,
-        pendingFixInput: null, conflictPending: false,
+        pendingFixInput: null, conflictPending: false, checkRerun: null,
       };
       if (scope.ok) return { state: { ...done, stage: "verify" }, actions: [{ type: "verify" }] };
       const text = `Diff touches files outside the design PR's scope:\n${violationList(scope.violations)}`;
@@ -554,6 +592,46 @@ function stageOk(state: ChainState, event: StageOk): Step {
       return decideYourself(state, askingStage, event.result.reasoning);
     }
   }
+}
+
+/** The name and entry of the latest failed-check history entry (spec 056 AC-2), or nulls. */
+function lastCheckFailure(s: ChainState): { name: string | null; entry: string } {
+  const entry = [...s.history].reverse().find((h) => h.startsWith("A required check failed:\n")) ?? "";
+  return { name: entry ? entry.split("\n")[1] ?? null : null, entry };
+}
+
+/**
+ * Spec 060 AC-4: a pause without a question. The state is `blocked` (the claim goes, the worktree stays), one finding
+ * carries the cause to the filer, the issue is told, and the driver writes the record. The driver fills `since`.
+ */
+function block(state: ChainState, condition: BlockCondition, cause?: string): Step {
+  const { name, entry } = lastCheckFailure(state);
+  const check = condition.kind === "main_green" ? condition.check : name;
+  const track = state.track;
+  const where = condition.kind === "paths" ? condition.paths.join(", ") : `origin/main ${condition.main_sha}`;
+  const why = condition.kind === "paths"
+    ? `a change to ${condition.paths.join(", ")} on main (${condition.paths.length > 1 ? "any of them" : "it"})`
+    : `check ${condition.check} to be green on origin/main`;
+  const text = `The required check${check ? ` \`${check}\`` : ""} fails on this ${track} PR for a cause outside its scope, so the chain spends no fix on it. The PR stays open on its branch; the chain waits for ${why}, then rebases the PR and verifies again. The cause has been filed as a finding.`;
+  return {
+    state: {
+      ...state, stage: "blocked", pendingFixInput: null, pendingSince: null,
+      blocked: { on: condition, since: null, check, main_sha: condition.main_sha, blocks: (state.blocked?.blocks ?? 0) + 1 },
+    },
+    actions: [
+      {
+        type: "finding", stage: "fix",
+        finding: {
+          what: `required check ${check ?? "(unnamed)"} fails on a ${track} PR for a cause outside its scope`, where,
+          evidence: [entry, cause].filter(Boolean).join("\n\n") || state.history.slice(-1).join("\n"),
+          noticed_how: `verify of PR #${state.pr?.number ?? "?"} on the ${track} track`,
+        },
+      },
+      { type: "comment", text: text.replaceAll("@", "(at)") },
+      { type: "notify", gate: "infra", label: "", text: `Issue #${state.issue}: the ${track} PR waits for main (${where}).` },
+      { type: "block", condition },
+    ],
+  };
 }
 
 /** AC-17: the question the verify bound raises after the re-run and the investigating fix. */
@@ -591,6 +669,23 @@ function verifyChecks(state: ChainState, event: Extract<ChainEvent, { type: "che
   if (state.track === "issue") Object.assign(moved, { answerQuestionId: null, answerQuestionIds: [], answerKind: null, recordIds: [], recordKind: null });
   if (event.status === "failed") {
     const log = event.log ?? "(no log excerpt)";
+    if (state.track === "spec" || state.track === "design") {
+      const name = log.split("\n")[0];
+      const failed = note(moved, checkFailureEntry(log));
+      // Spec 060 AC-2: failed on main too, so the PR cannot clear it.
+      if (event.main?.failed.includes(name)) {
+        return block(note(failed, `check ${name} also fails on origin/main ${event.main.sha}; blocked until main is green on it`), { kind: "main_green", check: name, main_sha: event.main.sha });
+      }
+      // AC-3: one re-run per head before the fix.
+      const head = state.pr?.head_sha ?? null;
+      if (head !== null && state.checkRerun !== head && event.failedId !== undefined) {
+        return {
+          state: note({ ...moved, checkRerun: head }, `check ${name} failed; re-run requested once`),
+          actions: [{ type: "rerun_check", id: event.failedId }, { type: "wait", seconds: PENDING_WAIT_S }],
+        };
+      }
+      return toFix(failed, `A required check failed:\n${log}`);
+    }
     return toFix(note(moved, checkFailureEntry(log)), `A required check failed:\n${log}`);
   }
   return run(moved, "review", reviewProfile(moved));
@@ -600,7 +695,7 @@ type PostMergeGate = NonNullable<Extract<ChainEvent, { type: "merge_result" }>["
 
 /** The counters a merged spec or design PR starts the next stage with. */
 const FRESH: Partial<ChainState> = {
-  fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, conflictPending: false, pendingFixInput: null, pendingSince: null, checksRerun: false,
+  fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, conflictPending: false, pendingFixInput: null, pendingSince: null, checksRerun: false, checkRerun: null,
   rescueRun: false, specProblem: null, specMode: null, decideInput: null, decidedQuestion: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
   recordIds: [], recordKind: null,
   recordAnswer: false, securityPass: false,
@@ -889,10 +984,19 @@ function baseTransition(state: ChainState, event: ChainEvent, bounds: Bounds): S
         }
         return toFix(state, `PR not mergeable:\n${event.detail ?? ""}`);
       }
-      if (event.type === "head_moved") return { state: { ...state, stage: "verify", pr: { ...state.pr!, head_sha: event.head_sha } }, actions: [{ type: "verify" }] };
+      if (event.type === "head_moved") return { state: { ...state, stage: "verify", checkRerun: null, pr: { ...state.pr!, head_sha: event.head_sha } }, actions: [{ type: "verify" }] };
       break;
     case "paused":
       if (event.type === "answered") return answered(state, event);
+      break;
+    case "blocked":
+      // Spec 060 AC-8: the loop found the condition true; the PR is rebased and pushed, then verified again. Nothing is counted.
+      if (event.type === "unblocked") {
+        return {
+          state: { ...state, stage: "verify", attempt: 1, blocked: state.blocked && { ...state.blocked, on: null, since: null }, checkRerun: null, pendingSince: null },
+          actions: [{ type: "rebase_push" }, { type: "verify" }],
+        };
+      }
       break;
     default:
       break;

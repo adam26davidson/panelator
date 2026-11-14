@@ -19,6 +19,7 @@ export type SchemaName =
   | "design-result"
   | "question-check-result"
   | "paused"
+  | "blocked"
   | "escalation-ledger"
   | "question-log-entry"
   | "standing-definition" | "standing-result" | "action" | "action-log-entry"
@@ -41,6 +42,7 @@ const NAMES: SchemaName[] = [
   "design-result",
   "question-check-result",
   "paused",
+  "blocked",
   "escalation-ledger",
   "question-log-entry",
 ];

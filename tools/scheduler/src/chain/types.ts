@@ -6,7 +6,12 @@ import type {
 
 export type ChainStage =
   | "claimed" | "plan" | "implement" | "verify" | "review" | "fix" | "merge" | "spec" | "design" | "question-check"
-  | "done" | "released" | "waiting" | "paused" | "abandoned";
+  | "done" | "released" | "waiting" | "paused" | "blocked" | "abandoned";
+
+/** Spec 060 AC-4: what a blocked chain waits for on origin/main. */
+export type BlockCondition =
+  | { kind: "main_green"; check: string; main_sha: string }
+  | { kind: "paths"; paths: string[]; main_sha: string };
 
 export interface ChainState {
   resumeSession?:import('../state/paused.ts').AskingSession|null;
@@ -78,6 +83,10 @@ export interface ChainState {
   parkedPr: { number: number; head_sha: string } | null;
   pendingSince: string | null;
   checksRerun: boolean;
+  /** Spec 060 AC-3: the PR head whose failed check was re-run once; a new head clears it. */
+  checkRerun: string | null;
+  /** Spec 060 AC-4: the block's condition while blocked; `blocks` counts this issue's blocks and is kept in the ledger. */
+  blocked: { on: BlockCondition | null; since: string | null; check: string | null; main_sha: string | null; blocks: number } | null;
   /** Spec 011 AC-1, spec 040: the branch and head a stage left when its result carried a question, one entry per branch; an entry is kept until a PR is bound on its branch or the attempt is discarded. */
   /** Spec 053: `carried` is the failure reason of an implement run that stopped before it finished; the entry is that run's work, not a question's hold. */
   heldWork: { branch: string; head: string; carried?: string }[];
@@ -88,7 +97,8 @@ export type ChainEvent =
   /** C14: a result with an `escalation` need not carry the stage's other fields, and its event carries no `scope` (AC-17). */
   | { type: "stage_ok"; stage: "plan"; result: PlanOutcome; head?: string }
   | { type: "stage_ok"; stage: "implement"; result: ImplementOutcome; scope?: ScopeResult; head?: string }
-  | { type: "stage_ok"; stage: "fix"; result: FixOutcome; scope?: ScopeResult; head?: string }
+  /** Spec 060: `mainSha` is origin/main before the run; `outOfScope` the driver's judgement of a result's `out_of_scope` verdict. */
+  | { type: "stage_ok"; stage: "fix"; result: FixOutcome; scope?: ScopeResult; head?: string; mainSha?: string; outOfScope?: { ok: true } | { ok: false; reason: string } }
   /** `security`: this run was the security review; `sensitive`: the reviewed diff touches a sensitive path (C5). */
   | { type: "stage_ok"; stage: "review"; result: ReviewResult; security: boolean; sensitive?: boolean }
   /** `scope`: the spec PR's scope check (AC-22), required for `revised`, absent for `question`. */
@@ -98,7 +108,9 @@ export type ChainEvent =
   | { type: "stage_ok"; stage: "question-check"; result: QuestionCheckResult }
   | { type: "stage_failed"; stage: AgentStageName; reason: string; postpone?: boolean; /** Spec 053: implement only: the commits the stopped run left on its branch. */ head?: string; /** Spec 013 AC-5: when the quota that postponed it resets. */ until?: string }
   /** `at`: when the checks were read; `pending`: the required checks still pending or missing. */
-  | { type: "checks"; status: "green" | "failed" | "pending"; log?: string; sensitive: boolean; at: string; pending?: string[] }
+  | { type: "checks"; status: "green" | "failed" | "pending"; log?: string; sensitive: boolean; at: string; pending?: string[];
+      /** Spec 060 AC-1: on a spec or design PR, main's head and the required checks failed on it; `failedId` is the failed check run's id. */
+      main?: { sha: string; failed: string[] }; failedId?: number }
   /** `specGate`: on the spec and design tracks, spec-present and the UI-design gate run again on origin/main after the merge (AC-4). */
   | { type: "merge_result"; status: "merged" | "not_mergeable"; detail?: string; specGate?: { ok: true } | { ok: false; gate: "spec-present" | "ui-design"; reason: string; /** Spec 031 AC-9: the spec directory holds a README.md on main. */ specDirReadme?: boolean; /** Spec 031 AC-9: the merged diff changed a design under docs/designs/ listing at least two children; its path is in `design`. */ designTouched?: boolean; design?: string } }
   | { type: "rebase_conflict"; detail: string }
@@ -106,6 +118,8 @@ export type ChainEvent =
   | { type: "conflict_gone" }
   /** The PR head moved after verify and review; valid only in stage merge, which goes back to verify. */
   | { type: "head_moved"; head_sha: string }
+  /** Spec 060 AC-8: the loop found the block's condition true on origin/main. */
+  | { type: "unblocked"; main_sha: string }
   | { type: "answered"; answer: string; questionId: number }
   | { type: "liveness_expired" }
   /** C7: the driver failed MAX_CHAIN_FAILURES times in a row on this chain; `error` is the last error. */
@@ -129,4 +143,8 @@ export type Action =
   | { type: "close_issue"; comment: string }
   | { type: "finding"; stage: AgentStageName; finding: Finding }
   | { type: "pause"; question: Question; asking: AskingStage }
-  | { type: "rerun_checks"; sha: string };
+  | { type: "rerun_checks"; sha: string }
+  /** Spec 060: re-request one failed check run, and the block and resume of a chain waiting on main. */
+  | { type: "rerun_check"; id: number }
+  | { type: "block"; condition: BlockCondition }
+  | { type: "rebase_push" };

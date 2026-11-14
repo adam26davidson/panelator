@@ -19,7 +19,7 @@ export interface Claim {
    * Spec 006: an event routed to the machine but not yet applied (a resume's `answered`, or C7's `chain_error`), and the
    * actions it produced, kept so a crash resumes them.
    */
-  pendingEvent?: Extract<ChainEvent, { type: "answered" } | { type: "chain_error" }>;
+  pendingEvent?: Extract<ChainEvent, { type: "answered" } | { type: "chain_error" } | { type: "unblocked" } | { type: "rebase_conflict" }>;
   pendingActions?: Action[];
   /**
    * Spec 015 AC-10: a stage run that ended `ok`, recorded before its result is checked, so a step that throws after the

@@ -16,6 +16,8 @@ export interface StatePaths {
   serviceLog: string;
   worktrees: string;
   paused: string;
+  /** Spec 060: records of chains waiting for main. */
+  blocked: string;
   escalations: string;
   questionsLog: string;
   parameters: string;
@@ -66,6 +68,7 @@ export function statePaths(root: string): StatePaths {
     serviceLog: join(root, "log", "service.jsonl"),
     worktrees: join(root, "worktrees"),
     paused: join(root, "paused"),
+    blocked: join(root, "blocked"),
     escalations: join(root, "escalations"),
     questionsLog: join(root, "questions", "log.jsonl"),
     quota: join(root, "quota.json"),
@@ -75,5 +78,5 @@ export function statePaths(root: string): StatePaths {
 }
 
 export async function ensureStateDirs(p: StatePaths): Promise<void> {
-  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), p.agents, p.events, dirname(p.eligibleMarks)]) await mkdir(d, { recursive: true });
+  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.blocked, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), p.agents, p.events, dirname(p.eligibleMarks)]) await mkdir(d, { recursive: true });
 }
