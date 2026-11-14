@@ -44,7 +44,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  if(moved)d.log({kind:'quota-fallback',agent:def.name,from:def.model,to:moved.model,key:launch.note?.key});
  let postponedUntil:string|null=null;
  const postpone=async(reason:string)=>{postponedUntil=await waitAfterLimit(d.paths,def.harness,def.model,d.now());throw new Error(`${reason}; postponed until ${postponedUntil}`);};
- const filer:FilerDeps={paths:d.paths,gh:d.gh,botLogin:d.botLogin,now:d.now,classes:[...d.cfg.labels.feature_classes,...d.cfg.labels.debt_classes],notify:(text,key)=>d.notifier.notify({issue:0,gate:'standing',label:`${def.name}:${key??text}`,text}),log:d.log};
+ const filer:FilerDeps={paths:d.paths,gh:d.gh,botLogin:d.botLogin,now:d.now,classes:[...d.cfg.labels.feature_classes,...d.cfg.labels.debt_classes],stopsPipelineLabel:d.cfg.labels.stops_pipeline,notify:(text,key)=>d.notifier.notify({issue:0,gate:'standing',label:`${def.name}:${key??text}`,text}),log:d.log};
  let worktree=d.repoDir,created=false;
  let summary='',outcome='failed',error='standing run failed',actionCount=0,findingCount=0;
  // Spec 045 AC-1: the outage cause label of a transient attempt; `judged` marks an error thrown for the run's own judgement, already classified.

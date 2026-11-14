@@ -8,7 +8,7 @@ import type { IssueData } from "../src/types.ts";
 
 const BOT = "panelator-pipeline[bot]";
 const ME = "adam26davidson";
-const labels = { priority: "priority", feature_classes: ["class:product"], debt_classes: ["class:bug", "class:tooling", "class:dependency"] };
+const labels = { priority: "priority", stops_pipeline: "stops-pipeline", feature_classes: ["class:product"], debt_classes: ["class:bug", "class:tooling", "class:dependency"] };
 const good = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
 
 function issue(n: number, over: Partial<IssueData> = {}): IssueData {
@@ -35,6 +35,9 @@ describe("rankIssues", () => {
     const d = issue(4, { labels: ["validated", "class:product"] });
     expect(rankIssues([a, b, c, d], labels, { feature: 2, debt: 0, system:0, product:0 }).map((i) => i.number)).toEqual([3, 1, 2, 4]);
     expect(rankIssues([a, b, c, d], labels, { feature: 0, debt: 0, system:4, product:0 }).map((i) => i.number)).toEqual([3, 2, 4, 1]);
+    const e = issue(5, { labels: ["validated", "class:product", "stops-pipeline"] });
+    const f = issue(6, { labels: ["validated", "class:product", "stops-pipeline", "priority"] });
+    expect(rankIssues([a, b, c, d, e, f], labels, { feature: 0, debt: 0, system: 4, product: 0 }).map((i) => i.number)).toEqual([3, 6, 5, 2, 4, 1]);
     for(const share of [0,0.5,0.75,1]) {
       const ranked=rankIssues([a,b],labels,{feature:0,debt:0,system:1,product:0},share);
       expect(ranked[0].number).toBe(share>0.5?1:2);

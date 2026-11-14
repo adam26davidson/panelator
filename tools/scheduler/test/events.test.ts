@@ -38,6 +38,13 @@ describe("recordEvent (spec 026 AC-1)", () => {
     expect(readdirSync(p.events)).toEqual([]);
   });
 
+  it("requires stops_pipeline in an issue.eligible payload (spec 063 AC-5)", async () => {
+    const p = await fresh();
+    const payload = { rank: 0, work: "system", cls: "none", validated_at: null, created_at: "2026-10-01T00:00:00Z" };
+    await expect(recordEvent(p, ev({ kind: "issue.eligible", payload }))).rejects.toThrow(/invalid issue.eligible event/);
+    await recordEvent(p, ev({ kind: "issue.eligible", payload: { ...payload, stops_pipeline: false } }));
+  });
+
   it("keeps the schema's kind list equal to the code's", () => {
     const schema = JSON.parse(readFileSync(join(import.meta.dirname, "..", "..", "..", "schemas", "scheduler", "event.json"), "utf8"));
     expect(schema.$defs.envelope.properties.kind.enum).toEqual([...EVENT_KINDS]);

@@ -1595,7 +1595,7 @@ describe("end to end: a check failing outside the PR's scope waits for main (spe
     const rec = blockedRecord(w)!;
     expect(rec).toMatchObject({ issue: 7, pr: { number: 12 }, condition: { kind: "main_green", check: "test" }, state: { stage: "blocked", fixes: 0, specRescues: 0 } });
     expect(queued(w)).toHaveLength(1);
-    expect(queued(w)[0].finding).toMatchObject({ what: "required check test fails on a spec PR for a cause outside its scope", where: expect.stringContaining("origin/main") });
+    expect(queued(w)[0].finding).toMatchObject({ what: "required check test fails on a spec PR for a cause outside its scope", where: expect.stringContaining("origin/main"), stops_pipeline: true });
     expect(w.comments.filter((c) => c.body.includes("outside its scope"))).toHaveLength(1);
     expect(w.comments[0].body).not.toContain("@");
     expect(w.notifications.map((n) => n.gate)).toEqual(["infra"]);

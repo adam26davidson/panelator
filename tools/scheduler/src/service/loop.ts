@@ -176,7 +176,7 @@ export class Scheduler {
       if (next.includes(issue.number) || claimed.has(issue.number)) continue;
       const validated = issue.labelEvents.find((e) => e.label === "validated" && e.action === "labeled");
       await record(d.paths, "issue.eligible", d.now(), {
-        rank, work: classify(issue), cls: classOf(issue, d.cfg.labels), validated_at: validated?.at ?? null, created_at: issue.createdAt,
+        rank, work: classify(issue), cls: classOf(issue, d.cfg.labels), stops_pipeline: issue.labels.includes(d.cfg.labels.stops_pipeline), validated_at: validated?.at ?? null, created_at: issue.createdAt,
       }, { issue: issue.number });
       next.push(issue.number);
     }
@@ -319,6 +319,7 @@ export class Scheduler {
     await appendFindings(d.paths, { issue, stage: stuckStage(claim.state), run_id: "transient-outage", timestamp: now.toISOString() }, [{
       what: disk ? "disk space blocks the chain" : "network outage blocks the chain", where: `issue #${issue}, stage ${claim.state.stage}`,
       evidence: `${count} transient failures since ${since} (${cause}); last: ${outage.last}`, noticed_how: "scheduler transient error",
+      ...(disk ? { stops_pipeline: true } : {}),
     }]);
     await d.notifier.notify({ issue, gate: "infra", label: "", text: disk
       ? `Issue #${issue}: the host's disk space blocks the chain (${cause}); no run is launched until it is freed, and the scheduler keeps retrying. Last error: ${outage.last}`

@@ -17,13 +17,17 @@
       "items": {
         "type": "string"
       }
+    },
+    "stops_pipeline_label": {
+      "type": "string"
     }
   },
   "required": [
     "records",
     "abandoned",
     "open_issues",
-    "issue_classes"
+    "issue_classes",
+    "stops_pipeline_label"
   ],
   "additionalProperties": true
 }

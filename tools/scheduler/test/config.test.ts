@@ -19,6 +19,16 @@ describe("loadConfig", () => {
     expect(c.state_dir.startsWith("/")).toBe(true);
     expect(c.required_checks).toEqual(["test"]);
     expect(c.rescue_model).toBe("claude-fable-5-1");
+    expect(c.labels.stops_pipeline).toBe("stops-pipeline");
+  });
+  it("defaults labels.stops_pipeline when absent and reads it when set (spec 063 AC-4)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cfg-"));
+    const p = join(dir, "s.yaml");
+    const base = "repo: a/b\nmaintainer: a\napp: {bot_login: bot}\n";
+    writeFileSync(p, base);
+    expect(loadConfig(p).labels.stops_pipeline).toBe("stops-pipeline");
+    writeFileSync(p, base + "labels: {stops_pipeline: halts}\n");
+    expect(loadConfig(p).labels.stops_pipeline).toBe("halts");
   });
   it("reads bounds.design_revisions, default 2, a positive integer (spec 029 AC-4)", () => {
     const dir = mkdtempSync(join(tmpdir(), "cfg-"));

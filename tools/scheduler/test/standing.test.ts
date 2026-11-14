@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -12,6 +12,7 @@ import {buildAuditInput} from '../src/standing/audit-input.ts';
 import {registryActionsCheck} from '../src/actions/index.ts';
 import type {GitHubClient} from '../src/github/client.ts';
 import { loadRegistry, parseDuration, renderStandingPrompt } from '../src/standing/registry.ts';
+import { agentsDir } from '../src/config.ts';
 const text = `---
 name: test
 kind: standing
@@ -28,6 +29,10 @@ output: standing-result
 ---
 Hello {{agent}}
 `;
+it('the filer prompt carries the stops_pipeline rule and input name (spec 063 AC-3)',()=>{
+ const text=readFileSync(join(agentsDir,'standing','findings-filer.md'),'utf8');
+ expect(text).toContain('issue.stops_pipeline');expect(text).toContain('stops every run or every PR');expect(text).toContain('stops_pipeline_label');
+});
 describe('standing registry', () => {
   function load(s = text) { const dir = mkdtempSync(join(tmpdir(), 'registry-')); writeFileSync(join(dir, 'test.md'), s); return loadRegistry(dir, ['merge'], []); }
   it('loads and renders', () => {

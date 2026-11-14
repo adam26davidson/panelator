@@ -22,6 +22,15 @@ describe("appendFindings (AC-28)", () => {
     expect(rejected).toEqual(["7-implement-1-x-1.json"]);
     expect(JSON.parse(readFileSync(join(p.findingsRejected, rejected[0]), "utf8"))).toMatchObject({ envelope: env, errors: expect.any(Array) });
   });
+  it("keeps stops_pipeline on a queued record and rejects a wrong type (spec 063 AC-1)", async () => {
+    const p = statePaths(mkdtempSync(join(tmpdir(), "f-")));
+    await ensureStateDirs(p);
+    const r = await appendFindings(p, env, [{ ...good, stops_pipeline: true }, { ...good, stops_pipeline: "yes" }]);
+    expect(r.queued).toBe(1);
+    expect(r.rejected).toHaveLength(1);
+    const lines = readFileSync(p.findingsQueue, "utf8").trim().split("\n");
+    expect(JSON.parse(lines[0]).finding.stops_pipeline).toBe(true);
+  });
   it("is a no-op for an empty list and does not create the queue file", async () => {
     const p = statePaths(mkdtempSync(join(tmpdir(), "f-")));
     await ensureStateDirs(p);

@@ -34,7 +34,7 @@ There must be one decision per records[].ref and abandoned[].ref. Every decision
 ```json
 {"ref":"12","outcome":"discard","reason":"Not an issue: spec 014 AC-2 requires this behaviour."}
 {"ref":"13","outcome":"discard","reason":"PR #73 removes this code path.","rests_on_pr":73}
-{"ref":"14","outcome":"file","reason":"Reproduced from the code.","issue":{"title":"Short title","body":"What, where, evidence, how noticed, what you verified.","class":"class:bug"}}
+{"ref":"14","outcome":"file","reason":"Reproduced from the code.","issue":{"title":"Short title","body":"What, where, evidence, how noticed, what you verified.","class":"class:bug","stops_pipeline":true}}
 {"ref":"15","outcome":"merge_into","reason":"Same cause as #58.","issue_number":58,"issue":{"title":"Filed instead if #58 has closed","body":"What, where, evidence, how noticed, what you verified.","class":"class:bug"}}
 {"ref":"16","outcome":"escalate","reason":"The design and spec 008 disagree.","issue":{"title":"Short title","body":"What, where, evidence, how noticed, what you verified.","class":"class:bug"},"question":{"kind":"technical","question":"Which is right?","options":[{"label":"Change the spec","cost":"one PR"}],"recommendation":"Change the spec"}}
 {"ref":"17","outcome":"security","reason":"Exposes a token.","advisory":{"title":"Short title","description":"Details.","severity":"high"}}
@@ -53,6 +53,13 @@ afresh on what is in the code now. An issue body must carry what, where,
 evidence, how noticed and what you verified, with no Spec: line. Set class to one of the
 labels in input.issue_classes, copied exactly with its prefix (for example class:bug, never
 bug). Keep security findings private; never merge them into public issues.
+A record's `stops_pipeline` is the worker's claim. Set `issue.stops_pipeline: true` on a file,
+merge_into, escalate or rewrite decision only when your own investigation shows that the
+condition's recurrence stops every run or every PR (the harness refusing every command, a
+required check failing on `main`'s head for every PR, the scheduler or a standing agent failing
+on every tick), whether or not the record claimed it, and leave it off otherwise; a condition
+that fails one issue's work is not one. The scheduler then applies the label named in
+input.stops_pipeline_label, which puts the issue ahead of ordinary work.
 For abandoned issues use retry (reason includes what to do differently; maximum twice),
 rewrite (new issue supersedes it), close (why not worth doing or done elsewhere), escalate
 (possible design flaw as above) or defer (reason; offered again after seven days).

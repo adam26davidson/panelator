@@ -13,10 +13,10 @@ const finding={what:'A verified bug',where:'file.ts',evidence:'reproduced',notic
 const issue={title:'Bug',body:'Verified details\nSpec: no-smuggled-spec',class:'class:bug'};
 async function setup(){
  const paths=statePaths(await mkdtemp(join(tmpdir(),'filer-')));await ensureStateDirs(paths);
- const gh={listOpenIssuesByLabel:vi.fn(async()=>[]),listOpenIssuesByAuthor:vi.fn(async()=>[]),searchOpenIssuesByMarker:vi.fn(async()=>[]),listComments:vi.fn(async()=>[]),createIssue:vi.fn(async(_title:string,_body:string,_labels:string[])=>42),comment:vi.fn(async()=>({id:1})),removeLabel:vi.fn(async()=>{}),closeIssue:vi.fn(async()=>{}),findDraftSecurityAdvisory:vi.fn(async():Promise<string|null>=>null),createDraftSecurityAdvisory:vi.fn(async()=> 'GHSA-private')};
+ const gh={listOpenIssuesByLabel:vi.fn(async()=>[]),listOpenIssuesByAuthor:vi.fn(async()=>[]),searchOpenIssuesByMarker:vi.fn(async()=>[]),listComments:vi.fn(async()=>[]),createIssue:vi.fn(async(_title:string,_body:string,_labels:string[])=>42),comment:vi.fn(async()=>({id:1})),removeLabel:vi.fn(async()=>{}),closeIssue:vi.fn(async()=>{}),addLabels:vi.fn(async(_n:number,_l:string[])=>{}),findDraftSecurityAdvisory:vi.fn(async():Promise<string|null>=>null),createDraftSecurityAdvisory:vi.fn(async()=> 'GHSA-private')};
  const notify=vi.fn(async()=>{}),now=()=>new Date('2026-10-27T00:00:00Z');
- const d:FilerDeps={paths,gh:gh as unknown as GitHubClient,botLogin:'bot',classes:['class:bug'],notify,now};
- const input:FilerInput={records:[{ref:'1',finding}],abandoned:[],open_issues:[],cursor:0,issue_classes:['class:bug']};
+ const d:FilerDeps={paths,gh:gh as unknown as GitHubClient,botLogin:'bot',classes:['class:bug'],stopsPipelineLabel:'stops-pipeline',notify,now};
+ const input:FilerInput={records:[{ref:'1',finding}],abandoned:[],open_issues:[],cursor:0,issue_classes:['class:bug'],stops_pipeline_label:'stops-pipeline'};
  return {paths,gh,d,input,notify};
 }
 it('bounds and orders batches, records decisions before cursor; rejects incomplete or extra decisions',async()=>{
@@ -52,6 +52,30 @@ it('merge_into comments on a bot issue, or files a fallback for missing targets'
  const {d,input,gh}=await setup();await applyFilerResult(d,'run',input,{summary:'merge',decisions:[{ref:'1',outcome:'merge_into',reason:'same issue',issue_number:4}]});expect(gh.createIssue).toHaveBeenCalledTimes(1);
  const x=await setup();x.gh.listOpenIssuesByAuthor.mockResolvedValue([{number:4}] as never);
  await applyFilerResult(x.d,'run',x.input,{summary:'merge',decisions:[{ref:'1',outcome:'merge_into',reason:'same issue',issue_number:4}]});expect(x.gh.comment).toHaveBeenCalledTimes(1);expect(x.gh.createIssue).not.toHaveBeenCalled();
+});
+const stopper={...issue,stops_pipeline:true};
+it('labels a created issue stops-pipeline only when the decision says so (spec 063 AC-3)',async()=>{
+ for(const outcome of ['file','escalate'] as const){
+  const {d,input,gh,paths}=await setup();
+  await applyFilerResult(d,'run',input,{summary:'f',decisions:[{ref:'1',outcome,reason:'v',issue:stopper,question:{kind:'technical',question:'q?',options:[{label:'a',cost:'c'}],recommendation:'a'}}]});
+  expect(gh.createIssue).toHaveBeenCalledWith('Bug',expect.any(String),['class:bug','validated','stops-pipeline']);
+  expect((await readJsonLines<TriageEntry>(paths.findingsTriage))[0].stops_pipeline).toBe(true);
+ }
+ for(const flag of [false,undefined]){
+  const {d,input,gh,paths}=await setup();
+  await applyFilerResult(d,'run',input,{summary:'f',decisions:[{ref:'1',outcome:'file',reason:'v',issue:{...issue,stops_pipeline:flag}}]});
+  expect(gh.createIssue).toHaveBeenCalledWith('Bug',expect.any(String),['class:bug','validated']);
+  expect(gh.addLabels).not.toHaveBeenCalled();
+  expect((await readJsonLines<TriageEntry>(paths.findingsTriage))[0].stops_pipeline).toBeUndefined();
+ }
+});
+it('merge_into adds the label to an open target, or files the fallback with it (spec 063 AC-3)',async()=>{
+ const x=await setup();x.gh.listOpenIssuesByAuthor.mockResolvedValue([{number:4}] as never);
+ await applyFilerResult(x.d,'run',x.input,{summary:'m',decisions:[{ref:'1',outcome:'merge_into',reason:'same',issue_number:4,issue:stopper}]});
+ expect(x.gh.comment).toHaveBeenCalledTimes(1);expect(x.gh.addLabels).toHaveBeenCalledWith(4,['stops-pipeline']);expect(x.gh.createIssue).not.toHaveBeenCalled();
+ const y=await setup();
+ await applyFilerResult(y.d,'run',y.input,{summary:'m',decisions:[{ref:'1',outcome:'merge_into',reason:'same',issue_number:4,issue:stopper}]});
+ expect(y.gh.createIssue).toHaveBeenCalledWith('Bug',expect.any(String),['class:bug','validated','stops-pipeline']);expect(y.gh.addLabels).not.toHaveBeenCalled();
 });
 it('uses stable source markers after a crash between issue creation and triage',async()=>{
  const {d,input,gh}=await setup();gh.listOpenIssuesByAuthor.mockResolvedValue([{number:9,author:'bot',body:'<!-- panelator-finding:old-run:1 -->'}] as never);
@@ -504,7 +528,7 @@ it('AC-6: the capability lookup and a file share one listing',async()=>{
  const {d,gh,paths,run}=await securitySetup([secret]);d.classes=['class:bug','class:tooling'];
  gh.createDraftSecurityAdvisory.mockRejectedValue(denied());for(let i=0;i<2;i++)await run(i);
  gh.listOpenIssuesByAuthor.mockClear();gh.listOpenIssuesByAuthor.mockResolvedValue([{...capIssue,labels:[]}] as never);
- const input:FilerInput={records:[{ref:'1',finding:secret},{ref:'2',finding:{...finding,what:'plain'}}],abandoned:[],open_issues:[],cursor:0,issue_classes:['class:bug']};
+ const input:FilerInput={records:[{ref:'1',finding:secret},{ref:'2',finding:{...finding,what:'plain'}}],abandoned:[],open_issues:[],cursor:0,issue_classes:['class:bug'],stops_pipeline_label:'stops-pipeline'};
  const before=listings(gh);
  await applyFilerResult(d,'run-3',input,{summary:'s',decisions:[{ref:'1',outcome:'security',reason:'p',advisory},filed('2')]});
  expect(listings(gh)-before).toBe(1);expect(gh.createIssue).toHaveBeenCalledTimes(1);expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).find(t=>t.ref==='1'&&t.held)).toMatchObject({held:true,capability_issue:42});expect(gh.searchOpenIssuesByMarker).not.toHaveBeenCalled();
