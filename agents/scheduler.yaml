@@ -21,6 +21,7 @@ required_checks: [test]
 state_dir: ~/.local/state/panelator-scheduler
 labels:
   priority: priority
+  stops_pipeline: stops-pipeline   # agent-set: recurrence stops every run or every PR (spec 063)
   feature_classes: [class:product]
   debt_classes: [class:bug, class:tooling, class:dependency]
 systemd:

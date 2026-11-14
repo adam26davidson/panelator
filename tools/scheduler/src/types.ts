@@ -194,6 +194,7 @@ export interface Finding {
   suspected_cause?: string;
   noticed_how: string;
   security?: boolean;
+  stops_pipeline?: boolean;
 }
 
 export interface Profile {

@@ -13,6 +13,13 @@ const finding = {
   noticed_how: "while adding the checks call",
 };
 
+describe("finding stops_pipeline (spec 063 AC-1)", () => {
+  it("accepts a boolean and rejects other types", () => {
+    expect(validate("finding", { ...finding, stops_pipeline: true }).ok).toBe(true);
+    expect(validate("finding", { ...finding, stops_pipeline: "yes" }).ok).toBe(false);
+  });
+});
+
 describe("result schemas", () => {
   it('accepts settled conversation turns only with a non-empty decision on every asking stage',()=>{
     for(const name of ['plan-result','implement-result','review-result','fix-result','spec-result','design-result'] as const){

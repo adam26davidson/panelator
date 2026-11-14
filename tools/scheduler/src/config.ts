@@ -22,6 +22,7 @@ export interface Config {
   state_dir: string;
   labels: {
     priority: string;
+    stops_pipeline: string;
     feature_classes: string[];
     debt_classes: string[];
   };
@@ -87,6 +88,7 @@ export function loadConfig(path: string): Config {
     state_dir: expandHome(String(raw.state_dir ?? "~/.local/state/panelator-scheduler")),
     labels: {
       priority: String(labels.priority ?? "priority"),
+      stops_pipeline: String(labels.stops_pipeline ?? "stops-pipeline"),
       feature_classes: (labels.feature_classes as string[]) ?? ["class:product"],
       debt_classes: (labels.debt_classes as string[]) ?? ["class:bug", "class:tooling", "class:dependency"],
     },
