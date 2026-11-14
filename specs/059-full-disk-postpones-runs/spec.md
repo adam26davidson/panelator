@@ -189,7 +189,7 @@ root only).
   before `git worktree add` (and before the run for `worktree: none`), so a
   refused standing launch takes spec 045 AC-1's path for an error thrown
   around the run: postponed, counted toward nothing.
-- AC-4. **A host-refused run is postponed, not counted, and alarms at
+- AC-4. Amended by [063-pipeline-stopping-finding-ranks-first](../063-pipeline-stopping-finding-ranks-first/spec.md) AC-6: the "disk space blocks the chain" finding carries stops_pipeline: true. **A host-refused run is postponed, not counted, and alarms at
   once.** Given a stage run that spawned and whose `StageOutcome.hostRefusal`
   is not `null`, whatever its outcome and result, then the driver undoes its
   own rebase (spec 015 AC-1), logs `{ kind: "stage-host-refused", issue,
