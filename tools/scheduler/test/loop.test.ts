@@ -1396,7 +1396,7 @@ describe('Scheduler.tick: main check watcher (spec 036)',()=>{
   const {initializeAgents,readAgentState}=await import('../src/standing/state.ts');
   const loaded=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,registryActionsCheck(join(agentsDir,'actions.yaml')));
   // The checked-in infra health agent subscribes to `ci_failure_main` (spec 064); these tests need a registry without a subscriber.
-  const all={...loaded,'infra-health':{...loaded['infra-health'],trigger:{...loaded['infra-health'].trigger,events:['infra_alarm']}}};
+  const all:typeof loaded={...loaded,'infra-health':{...loaded['infra-health'],trigger:{...loaded['infra-health'].trigger,events:['infra_alarm']}}};
   const a=all['action-audit'];
   const subscribed={...all,'action-audit':{...a,trigger:{...a.trigger,events:[...(a.trigger.events??[]),'ci_failure_main']}}};
   h.deps.cfg.required_checks=['test'];
