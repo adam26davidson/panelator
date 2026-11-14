@@ -480,6 +480,8 @@ function outOfScopeVerdict(
   if (state.track === "issue") return { note: "out_of_scope ignored: the issue track's fix may change any file in the plan's scope" };
   if (head !== state.pr?.head_sha) return { note: "out_of_scope ignored: the fix changed the head" };
   if (event.outOfScope && !event.outOfScope.ok) return { note: `out_of_scope ignored: ${event.outOfScope.reason}` };
+  if (!state.pendingFixInput?.startsWith("A required check failed:")) return { note: "out_of_scope ignored: the fix is not for a failed required check" };
+  if (event.scope && !event.scope.ok) return { note: "out_of_scope ignored: the unchanged head's diff violates the scope" };
   if ((state.blocked?.blocks ?? 0) >= MAX_BLOCKS) return { note: "block bound reached" };
   const noted = note({ ...state, rescueRun: false }, `fix: cause outside the PR's scope: ${verdict.cause} (paths: ${verdict.paths.join(", ")})`);
   return block(noted, { kind: "paths", paths: verdict.paths, main_sha: event.mainSha ?? "" }, verdict.cause);

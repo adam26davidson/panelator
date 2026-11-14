@@ -1704,7 +1704,7 @@ describe("spec 060: a failed check outside the PR's scope waits for main", () =>
     result: { head_sha: over.head_sha ?? pr8.head_sha, addressed: [], out_of_scope: { cause: "chromium is missing on the runner", paths: over.paths ?? [".github/workflows/ci.yml"] } },
     ...extra,
   } as ChainEvent);
-  const fixing = (track: "issue" | "spec" | "design", over: Partial<ChainState> = {}) => at("fix", { track, pr: track === "issue" ? pr3 : pr8, fixes: 1, rescueRun: true, ...over });
+  const fixing = (track: "issue" | "spec" | "design", over: Partial<ChainState> = {}) => at("fix", { track, pr: track === "issue" ? pr3 : pr8, fixes: 1, rescueRun: true, pendingFixInput: "A required check failed:\ntest\nFAIL x", ...over });
 
   it("AC-6: a valid verdict blocks with the counters untouched and the rescue flag cleared", () => {
     const r = transition(fixing("spec", { specRescues: 1 }), verdict());
@@ -1724,6 +1724,15 @@ describe("spec 060: a failed check outside the PR's scope waits for main", () =>
     const inside = transition(fixing("spec"), verdict({}, { outOfScope: { ok: false, reason: "specs/010-x/spec.md is inside the PR's scope" } }));
     expect(inside.state).toMatchObject({ stage: "verify", fixes: 2 });
     expect(inside.state.history.at(-1)).toBe("out_of_scope ignored: specs/010-x/spec.md is inside the PR's scope");
+  });
+
+  it("AC-6: the verdict is ignored when the unchanged head violates the scope or the fix is not for a failed check", () => {
+    const bad = transition(fixing("spec"), verdict({}, { scope: { ok: false, violations: ["docs/charter.md"] } }));
+    expect(bad.state.stage).not.toBe("blocked");
+    expect(bad.state.history).toContain("out_of_scope ignored: the unchanged head's diff violates the scope");
+    const other = transition(fixing("spec", { pendingFixInput: "Diff touches files outside the plan's file scope:\n- x" }), verdict());
+    expect(other.state.stage).not.toBe("blocked");
+    expect(other.state.history).toContain("out_of_scope ignored: the fix is not for a failed required check");
   });
 
   it("AC-6: at MAX_BLOCKS the verdict is a fix that changed nothing", () => {
