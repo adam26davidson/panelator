@@ -305,6 +305,8 @@ says.
 
 ## 6. Verification
 
+> Amended by [057-design-stage-e2e-run-carries-held-work](../057-design-stage-e2e-run-carries-held-work/spec.md) AC-1: the "plan runs with held work" part of the `request_changes` run is recorded by a run that starts with an implement question answered through the spec track; the run without a question stays as the record of AC-1 and AC-3.
+
 - `pnpm test` passes and `pnpm -F @panelator/scheduler typecheck` is clean,
   including recorded end-to-end runs (fake adapter, mocked GitHub) for:
   - a UI spec without `design/`, shortlisted: the design stage runs on
