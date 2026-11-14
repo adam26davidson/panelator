@@ -790,6 +790,44 @@ describe("Scheduler.tick: transient failures (spec 015)", () => {
     expect(t.notifications.filter((n) => n.gate === "chain_error")).toEqual([]);
   }, 60_000);
 
+  const diskFull = () => Object.assign(new Error("host space low: /tmp has 100 MiB free and 5000 free inodes (floor 512 MiB, 1000 inodes)"), { code: "ENOSPC" });
+
+  it("alarms on the first ENOSPC failure under kind disk_full, and raises nothing more for the same outage (spec 059 AC-4)", async () => {
+    const t = await outageSetup(async () => { throw diskFull(); });
+    for (let i = 0; i < 3; i++) {
+      await t.s.tick();
+      await settle();
+      t.advance(600);
+    }
+    const c = await t.claim();
+    expect(c.outage).toMatchObject({ count: 3, alarmed: true });
+    expect(c.state.chainFailures).toBeNull();
+    expect(existsSync(join(t.paths.escalations, "7.json"))).toBe(false);
+    expect(serviceRecords(t.paths).filter((r) => r.kind === "transient-outage")).toEqual([expect.objectContaining({ issue: 7, cause: "ENOSPC" })]);
+    expect(serviceRecords(t.paths).filter((r) => r.kind === "transient-outage-alarm")).toHaveLength(1);
+    expect(t.notifications.filter((n) => n.gate === "infra")).toHaveLength(1);
+    expect(t.notifications.find((n) => n.gate === "infra")?.text).toContain("/tmp has 100 MiB free");
+    const findings = readFileSync(t.paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(findings).toHaveLength(1);
+    expect(findings[0].finding).toMatchObject({ what: "disk space blocks the chain", where: expect.stringContaining("issue #7, stage"), noticed_how: "scheduler transient error" });
+    expect(t.events.filter((e) => e.event === "infra_alarm")).toEqual([{ event: "infra_alarm", payload: expect.objectContaining({ kind: "disk_full", issue: 7, cause: "ENOSPC", failures: 1 }) }]);
+  }, 60_000);
+
+  it("continues a young network outage when ENOSPC follows, and alarms at once under disk_full (spec 059 AC-5)", async () => {
+    const script: Error[] = [dns(), diskFull()];
+    const t = await outageSetup(async () => { throw script.shift() ?? diskFull(); });
+    for (let i = 0; i < 2; i++) {
+      await t.s.tick();
+      await settle();
+      if (i === 0) expect((await t.claim()).outage).toMatchObject({ count: 1, alarmed: false });
+      t.advance(600);
+    }
+    const c = await t.claim();
+    expect(c.outage).toMatchObject({ count: 2, alarmed: true });
+    expect(serviceRecords(t.paths).filter((r) => r.kind === "transient-outage")).toEqual([expect.objectContaining({ cause: "EAI_AGAIN" })]);
+    expect(t.events.filter((e) => e.event === "infra_alarm")).toEqual([{ event: "infra_alarm", payload: expect.objectContaining({ kind: "disk_full", failures: 2, cause: "ENOSPC" }) }]);
+  }, 60_000);
+
   it("counts the failures of an outage past its 24-hour ceiling as genuine, with one finding, and then releases with chain_error (AC-13)", async () => {
     let open = false;
     const t = await outageSetup(async () => { throw dns(); }, () => (open ? [issue(7)] : []));

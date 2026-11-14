@@ -23,7 +23,7 @@ import { rankIssues, classifyWork, classOf } from "../shortlist/rank.ts";
 import type { IssueData } from "../types.ts";
 import { selectEligible } from "../shortlist/select.ts";
 import { listClaims, readClaim, removeClaim, writeClaim, type Claim, type Outage } from "../state/claims.ts";
-import { CEILING_MIN_FAILURES, CEILING_MIN_SPAN_MS, forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, PAST_CEILING, transientCause } from "../chain/transient.ts";
+import { CEILING_MIN_FAILURES, CEILING_MIN_SPAN_MS, DISK_FULL, forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, PAST_CEILING, transientCause } from "../chain/transient.ts";
 import { readLedger, writeLedger } from "../state/ledger.ts";
 import { listPaused, pausedDecision, removePaused, writePaused, type PausedRecord } from "../state/paused.ts";
 import { answeredEntry, appendQuestionLog } from "../state/questions.ts";
@@ -268,7 +268,7 @@ export class Scheduler {
     if (!prev) d.serviceLog.write({ kind: "transient-outage", issue, cause, error });
     const count = (prev?.count ?? 0) + 1;
     const since = prev?.since ?? now.toISOString();
-    const alarm = !prev?.alarmed && now.getTime() - Date.parse(since) >= OUTAGE_ALARM_MS;
+    const alarm = !prev?.alarmed && (cause === DISK_FULL || now.getTime() - Date.parse(since) >= OUTAGE_ALARM_MS);
     const outage: Outage = {
       since, count, last: error.slice(0, HISTORY_ENTRY_MAX), retry_at: new Date(now.getTime() + outageBackoffS(count) * 1000).toISOString(), alarmed: Boolean(prev?.alarmed) || alarm,
     };
@@ -308,13 +308,17 @@ export class Scheduler {
     await writeClaim(d.paths, { ...claim, outage, last_activity_at: now.toISOString() });
     if (!alarm) return;
     const hours = Math.floor((now.getTime() - Date.parse(since)) / 3600_000);
+    // Spec 059 AC-4: a full disk does not clear itself, so it alarms on its first failure, under a kind of its own.
+    const disk = cause === DISK_FULL;
     d.serviceLog.write({ kind: "transient-outage-alarm", issue, since, failures: count, cause });
     await appendFindings(d.paths, { issue, stage: stuckStage(claim.state), run_id: "transient-outage", timestamp: now.toISOString() }, [{
-      what: "network outage blocks the chain", where: `issue #${issue}, stage ${claim.state.stage}`,
+      what: disk ? "disk space blocks the chain" : "network outage blocks the chain", where: `issue #${issue}, stage ${claim.state.stage}`,
       evidence: `${count} transient failures since ${since} (${cause}); last: ${outage.last}`, noticed_how: "scheduler transient error",
     }]);
-    await d.notifier.notify({ issue, gate: "infra", label: "", text: `Issue #${issue}: the scheduler has failed on a transient network error for ${hours} h (${cause}); it keeps retrying. Last error: ${outage.last}` });
-    await d.emitEvent?.("infra_alarm", { kind: "network_outage", issue, since, failures: count, cause });
+    await d.notifier.notify({ issue, gate: "infra", label: "", text: disk
+      ? `Issue #${issue}: the host's disk space blocks the chain (${cause}); no run is launched until it is freed, and the scheduler keeps retrying. Last error: ${outage.last}`
+      : `Issue #${issue}: the scheduler has failed on a transient network error for ${hours} h (${cause}); it keeps retrying. Last error: ${outage.last}` });
+    await d.emitEvent?.("infra_alarm", { kind: disk ? "disk_full" : "network_outage", issue, since, failures: count, cause });
   }
 
   /** C7: the chain's `chain_error` event, written into the claim first so a crash finishes it, then applied by the driver. */

@@ -18,6 +18,7 @@ import {appendFindings} from '../state/findings.ts';
 import {buildFilerInput,type FilerDeps} from '../filer/input.ts';
 import {applyFilerResult,type FilerResult} from '../filer/apply.ts';
 import {transientCause,transientRun,outageBackoffS,OUTAGE_ALARM_MS,OUTAGE_CEILING_MS,CEILING_MIN_FAILURES,CEILING_MIN_SPAN_MS,PAST_CEILING} from '../chain/transient.ts';
+import {checkHostSpace} from '../runner/host-space.ts';
 import {HISTORY_ENTRY_MAX} from '../chain/machine.ts';
 import {buildAuditInput} from './audit-input.ts';
 import {updateAgentState,type AgentState} from './state.ts';
@@ -50,11 +51,15 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  let transient:string|null=null,judged=false;
  try {
   await updateAgentState(d.paths,def.name,s=>{const next={...s,running:{run_id:moved?runId+'-fallback':runId,started_at:now.toISOString()}};delete next.postponed_until;return next;});
+  // Spec 059 AC-3: no run is launched into a full volume; the error is classified below like any thrown around the run.
+  if(def.worktree!=='fresh')await checkHostSpace(d.paths,null,{freeSpace:d.freeSpace,log:d.log});
   if(def.worktree==='fresh') {
    worktree=join(d.paths.worktrees,`standing-${def.name}`);
    // A run never inherits the previous run's changes, including after an interrupted run.
    await removeWorktree(d.repoDir,worktree).catch(()=>{});
    await mkdir(d.paths.worktrees,{recursive:true});
+   // The agent's own worktree does not exist yet: its parent is on the same volume.
+   await checkHostSpace(d.paths,d.paths.worktrees,{freeSpace:d.freeSpace,log:d.log});
    await exec('git',['worktree','add','--detach',worktree,'origin/main'],{cwd:d.repoDir});created=true;
   }
   const input=def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):null;

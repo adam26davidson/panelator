@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Octokit } from "octokit";
+import { claudeHostRefusal } from "../../src/adapters/claude.ts";
+import type { FreeSpace } from "../../src/runner/host-space.ts";
 import type { Adapter, StageRun } from "../../src/adapters/types.ts";
 import { agentsDir, defaultConfigPath, loadConfig } from "../../src/config.ts";
 import { GitHubClient } from "../../src/github/client.ts";
@@ -37,6 +39,12 @@ export type Scripted = unknown | ((run: StageRun) => unknown);
 export const RATE_LIMITED = Symbol("rate-limited");
 /** A scripted run whose harness could not reach the API (spec 045): the fake harness exits 3 and `judge` reports the live reason with no status. */
 export const NETWORK_DOWN = Symbol("network-down");
+/** A scripted run whose every shell command the host refused for a full disk (spec 059): the recorded refusal events and a capability escalation. */
+export const HOST_REFUSED = Symbol("host-refused");
+const refusedEvents = join(import.meta.dirname, "..", "fixtures", "enospc-events.jsonl");
+const refusedResult = { escalation: { kind: "capability", question: "The disk is full; please free the volume.", options: [{ label: "freed", cost: "none" }], recommendation: "freed" }, findings: [] };
+/** Free space of every path: ample, so no recorded world depends on the host's disk. */
+export const AMPLE_SPACE = async (): Promise<FreeSpace> => ({ bytes: 20 * 2 ** 30, inodes: 1_000_000 });
 export const UNREACHABLE_REASON = "API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)";
 
 export interface RunSeen {
@@ -66,16 +74,18 @@ export function scripted(results: Record<string, Scripted[]>): Adapter & { ran: 
       });
       const next = results[run.stage]?.shift();
       const r = typeof next === "function" ? (next as (run: StageRun) => unknown)(run) : next;
-      const argv = [process.execPath, script, events, run.resultPath, r === RATE_LIMITED ? "2" : r === NETWORK_DOWN ? "3" : r === undefined ? "1" : "0", "0"];
-      if (r !== undefined && r !== RATE_LIMITED && r !== NETWORK_DOWN) argv.push(JSON.stringify(r));
+      const refused = r === HOST_REFUSED;
+      const argv = [process.execPath, script, refused ? refusedEvents : events, run.resultPath, r === RATE_LIMITED ? "2" : r === NETWORK_DOWN ? "3" : r === undefined ? "1" : "0", "0"];
+      if (r !== undefined && r !== RATE_LIMITED && r !== NETWORK_DOWN) argv.push(JSON.stringify(refused ? refusedResult : r));
       return { argv, env: {} };
     },
     judge: (_e, exit, t) => t ? { outcome: "timeout", reason: "t", apiErrorStatus: null, finalText: null } : exit === 0 ? { outcome: "ok", reason: null, apiErrorStatus: null, finalText: "x" } : exit === 2 ? { outcome: "failed", reason: "429", apiErrorStatus: 429, finalText: null } : exit === 3 ? { outcome: "failed", reason: UNREACHABLE_REASON, apiErrorStatus: null, finalText: null } : { outcome: "failed", reason: "exit", apiErrorStatus: null, finalText: null },
+    hostRefusal: claudeHostRefusal,
     usage: () => ({ cost_usd: 0.1, input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0 }),
   };
 }
 
-export async function standingWorld(results:Record<string,Scripted[]>) {
+export async function standingWorld(results:Record<string,Scripted[]>,freeSpace:(path:string)=>Promise<FreeSpace>=AMPLE_SPACE) {
   const pair=repoPair({'README.md':'standing fixture'}),paths=statePaths(join(pair.root,'state'));await ensureStateDirs(paths);worldPaths.push(paths);
   const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,registryActionsCheck(join(agentsDir,'actions.yaml')));
   registry.operator={...registry['action-audit'],name:'operator',trigger:{schedule:'1h'},actions:['set_parameter','rerun_workflow'],input:'audit-input'};
@@ -99,7 +109,7 @@ export async function standingWorld(results:Record<string,Scripted[]>) {
     {method:'GET',path:/^\/repos\/o\/r\/commits\/[^/]+\/check-runs$/,reply:()=>({body:{total_count:1,check_runs:[{id:1,name:'test',status:'completed',conclusion:'success'}]}})},
   ];
   const mock=mockGitHub(routes),gh=new GitHubClient(new Octokit({auth:'x',request:{fetch:mock.fetch}}),'o/r'),adapter=scripted(results),notifications:Notification[]=[];
-  const deps:SchedulerDeps={cfg,paths,registry,parameters,gh,botLogin:BOT,notifier:recordedNotifier({notify:async n=>{notifications.push(n);}},paths),stages:loadStageDefinitions(join(agentsDir,'stages')),agentsDir,repoDir:pair.repo,binDir:join(pair.root,'bin'),adapterFor:()=>adapter,systemdScope:false,now:()=>now,log:()=>{},fetchOrigin:async()=>{},unitActive:async()=>false,stopUnit:async()=>{},serviceLog:new ServiceLog(paths.serviceLog),inhibitor:new SleepInhibitor({enabled:false}),fastForward:async()=>({moved:false,changedPaths:[]}),sleep:async()=>{},monotonic:()=>0,requestRestart:()=>{}};
+  const deps:SchedulerDeps={cfg,paths,registry,parameters,gh,botLogin:BOT,notifier:recordedNotifier({notify:async n=>{notifications.push(n);}},paths),stages:loadStageDefinitions(join(agentsDir,'stages')),agentsDir,repoDir:pair.repo,binDir:join(pair.root,'bin'),adapterFor:()=>adapter,systemdScope:false,now:()=>now,log:()=>{},freeSpace:(path)=>freeSpace(path),fetchOrigin:async()=>{},unitActive:async()=>false,stopUnit:async()=>{},serviceLog:new ServiceLog(paths.serviceLog),inhibitor:new SleepInhibitor({enabled:false}),fastForward:async()=>({moved:false,changedPaths:[]}),sleep:async()=>{},monotonic:()=>0,requestRestart:()=>{}};
   const scheduler=new Scheduler(deps);
   return {pair,paths,registry,parameters,deps,scheduler,adapter,mock,gh,issues,comments,notifications,setNow:(value:Date)=>{now=value;}};
 }
@@ -118,6 +128,8 @@ export async function chainWorld(opts: {
   results: Record<string, Scripted[]>;
   /** Spec 031: issue #7 does not exist until the children scan files it (the first created issue becomes #7). */
   issueFromScan?: boolean;
+  /** Spec 059: the free-space reader of the pre-flight check; ample when unset. */
+  freeSpace?: (path: string) => Promise<FreeSpace>;
 }) {
   const pair = repoPair(opts.files);
   const paths: StatePaths = statePaths(join(pair.root, "state"));
@@ -271,7 +283,7 @@ export async function chainWorld(opts: {
     stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: pair.repo, binDir: join(pair.root, "bin"),
     adapterFor: () => adapter, systemdScope: false, now: () => new Date(), log: (rec) => { logs.push(rec); },
     fetchOrigin: async () => { git(pair.repo, "fetch", "-q", "origin"); },
-    unitActive: async () => false, stopUnit: async () => {},
+    unitActive: async () => false, stopUnit: async () => {}, freeSpace: (path) => (opts.freeSpace ?? AMPLE_SPACE)(path),
     botLogin: BOT, serviceLog: new ServiceLog(paths.serviceLog), inhibitor: new SleepInhibitor({ enabled: false }),
     fastForward: async () => ({ moved: false, changedPaths: [] }), sleep: async () => {}, monotonic: () => 0, requestRestart: () => {},
   };
