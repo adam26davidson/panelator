@@ -1,6 +1,6 @@
 import { dirname } from "node:path";
 import { DISK_FULL } from "../chain/transient.ts";
-import type { Adapter, Command, Judgement, StageRun, Usage } from "./types.ts";
+import type { Adapter, ApiRetries, Command, Judgement, StageRun, Usage } from "./types.ts";
 
 type Rec = Record<string, unknown>;
 const rec = (e: unknown): Rec => (typeof e === "object" && e !== null ? (e as Rec) : {});
@@ -48,9 +48,36 @@ function buildCommand(run: ClaudeStageRun): Command {
   return { argv, env: { CI: "true", CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(run.bounds.timeout_min * 60_000) } };
 }
 
+const isRetry = (e: Rec): boolean => e.type === "system" && e.subtype === "api_retry";
+const isObject = (v: unknown): v is Rec => typeof v === "object" && v !== null;
+const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
+
+/** Spec 061 AC-2: the count of `api_retry` records, how many had `no_response`, and what the last one said; undefined with none. */
+export function claudeApiRetries(events: unknown[]): ApiRetries | undefined {
+  const retries = events.map(rec).filter(isRetry);
+  if (!retries.length) return undefined;
+  const last = retries[retries.length - 1];
+  const nr = isObject(last.no_response) ? last.no_response : null;
+  return {
+    count: retries.length,
+    noResponses: retries.filter((r) => isObject(r.no_response)).length,
+    last: {
+      status: num(last.error_status),
+      error: typeof last.error === "string" ? last.error : null,
+      noResponse: nr ? { waitedMs: num(nr.waited_ms), retryWaitMs: num(nr.retry_wait_ms) } : null,
+    },
+  };
+}
+
 function judge(events: unknown[], exitCode: number | null, timedOut: boolean): Judgement {
+  const j = judgeOutcome(events, exitCode, timedOut);
+  const apiRetries = claudeApiRetries(events);
+  return apiRetries ? { ...j, apiRetries } : j;
+}
+
+function judgeOutcome(events: unknown[], exitCode: number | null, timedOut: boolean): Judgement {
   const result = claudeResult(events);
-  const retries = events.map(rec).filter((e) => e.type === "system" && e.subtype === "api_retry");
+  const retries = events.map(rec).filter(isRetry);
   const lastRetryStatus = retries.length ? retries[retries.length - 1].error_status : null;
   const retryStatus = typeof lastRetryStatus === "number" ? lastRetryStatus : null;
   const apiErrorStatus = (result && typeof result.api_error_status === "number" ? result.api_error_status : null) ?? retryStatus;
