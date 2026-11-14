@@ -232,6 +232,16 @@ const inputsOf = (w: ChainWorld, stage: string) => w.adapter.runs.filter((r) => 
 const runsOf = (w: ChainWorld, stage: string) => w.adapter.runs.filter((r) => r.stage === stage);
 const patchesOf = (w: ChainWorld, kind: string) => readdirSync(w.paths.patches).filter((f) => f.startsWith("7-") && f.includes(`-${kind}`));
 const pausedRecord = (w: ChainWorld): PausedRecord => JSON.parse(readFileSync(join(w.paths.paused, "7.json"), "utf8"));
+const rev = (run: StageRun) => git(run.worktree, "rev-parse", "HEAD").trim();
+/** Implement commits and pushes `issue-7` (and opens PR 9 when `pr`), then asks; `held` records the head it left. */
+function asksAfterPushing(w: () => ChainWorld, q: Question, held: { head: string }, pr = false) {
+  return (run: StageRun) => {
+    held.head = w().push(run, { "a.txt": "held work\n" }, "held");
+    if (pr) w().openPr(run, 9, held.head);
+    return { escalation: q };
+  };
+}
+const kinds = (w: ChainWorld, kind: string) => w.logs.filter((r) => r.kind === kind);
 const QUESTION_MARKER = /\n\n<!-- panelator-question:([0-9a-f-]{36}) -->$/;
 
 describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
@@ -466,17 +476,6 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
   }, 120_000);
 
   describe("a stage that asks a question keeps its work (spec 011 AC-10)", () => {
-    const rev = (run: StageRun) => git(run.worktree, "rev-parse", "HEAD").trim();
-    /** Implement commits and pushes `issue-7` (and opens PR 9 when `pr`), then asks; `held` records the head it left. */
-    function asksAfterPushing(w: () => ChainWorld, q: Question, held: { head: string }, pr = false) {
-      return (run: StageRun) => {
-        held.head = w().push(run, { "a.txt": "held work\n" }, "held");
-        if (pr) w().openPr(run, 9, held.head);
-        return { escalation: q };
-      };
-    }
-    const kinds = (w: ChainWorld, kind: string) => w.logs.filter((r) => r.kind === kind);
-
     it("a capability question after a push: no recovered commits, no dropped branch, the resumed run starts at the held head", async () => {
       let w!: ChainWorld;
       const a = agents(() => w);
@@ -1276,13 +1275,14 @@ describe("end to end: the design stage (spec 029)", () => {
     return design ? withDesign(files, "specs/010-thing/spec.md", SCREENS) : files;
   };
   /** A design run's git work: a story and the renders (all three sizes unless `drop` names one), the PR, and the result. */
-  const design = (w: () => ChainWorld, n: number, o: { drop?: string; tag?: string; renders?: number } = {}) => (run: StageRun) => {
+  const design = (w: () => ChainWorld, n: number, o: { drop?: string; tag?: string; renders?: number; screens?: string[] } = {}) => (run: StageRun) => {
+    const screens = o.screens ?? SCREENS;
     const files: Record<string, string> = { [`${DESIGN}editor.stories.tsx`]: `export default {}; // ${o.tag ?? "a"}\n` };
-    for (const s of SCREENS) for (const suffix of ["", ".mobile", ".tablet"]) if (`${s}${suffix}.png` !== o.drop) files[`${DESIGN}${s}${suffix}.png`] = `png ${o.tag ?? "a"}\n`;
+    for (const s of screens) for (const suffix of ["", ".mobile", ".tablet"]) if (`${s}${suffix}.png` !== o.drop) files[`${DESIGN}${s}${suffix}.png`] = `png ${o.tag ?? "a"}\n`;
     const sha = w().push(run, files, "design");
     w().openPr(run, n, sha, `Refs #7\n\n![editor-empty](${DESIGN}editor-empty.png)`);
     const renders = ["x.png", "x.mobile.png", "x.tablet.png"].slice(0, o.renders ?? 3);
-    return { verdict: "designed", spec_path: "specs/010-thing/spec.md", pr_number: n, head_sha: sha, screens: SCREENS.map((name) => ({ name, stories: [`${name}--default`], renders })) };
+    return { verdict: "designed", spec_path: "specs/010-thing/spec.md", pr_number: n, head_sha: sha, screens: screens.map((name) => ({ name, stories: [`${name}--default`], renders })) };
   };
   const newMerge = (w: ChainWorld) => w.mergeRequests;
 
@@ -1320,6 +1320,64 @@ describe("end to end: the design stage (spec 029)", () => {
     expect(w.labelLog).toEqual(["+in-progress", "-in-progress"]);
     expect(w.comments).toEqual([]);
   }, 180_000);
+
+  it("an implement question recorded through the spec track changes the UI design section: the design stage runs, its PR is fixed and merged, then plan runs with the held work (spec 057 AC-1, AC-2; spec 029 AC-4)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    const held = { head: "" };
+    const starts: string[] = [];
+    const THIRD = "editor-saving";
+    const record = (run: StageRun) => {
+      const mark = `(maintainer answer, question #${w.questions()[0].id})`;
+      const text = uiSpec().replace("Screens: editor-empty, editor-populated", `Screens: editor-empty, editor-populated, ${THIRD}`).replace("Flow: open -> edit -> save.", `Flow: open -> edit -> save ${mark}.`);
+      return a.spec(12, { "specs/010-thing/spec.md": text })(run);
+    };
+    w = await chainWorld({
+      files: uiFiles(true),
+      results: {
+        plan: [PLAN, PLAN],
+        implement: [asksAfterPushing(() => w, ask("technical", "Does saving need its own screen?"), held), a.implement(13, { "a.txt": "pr 13\n" }, (run) => starts.push(rev(run)))],
+        "question-check": [SEND], spec: [record],
+        review: [APPROVE, CHANGES, APPROVE, APPROVE],
+        design: [design(() => w, 14, { screens: [...SCREENS, THIRD] })],
+        fix: [a.fix({ [`${DESIGN}editor-empty.png`]: "re-rendered\n" })],
+      },
+    });
+    await w.tick();
+    w.reply("Yes, a third screen.");
+    await w.tick();
+    await expectSettled(w);
+
+    // AC-1: the whole path, in order.
+    expect(w.adapter.ran).toEqual(["plan", "implement", "question-check", "spec", "review", "design", "review", "fix", "review", "plan", "implement", "review"]);
+    expect(w.mergeRequests).toEqual([12, 14, 13]);
+    expect(runsOf(w, "spec")[0]).toMatchObject({ branch: "spec-7" });
+    expect(runsOf(w, "spec")[0].input.mode).toBe("record");
+    const [d] = runsOf(w, "design");
+    expect(d).toMatchObject({ branch: "design-7", profile: "design" });
+    for (const f of [`${THIRD}.png`, `${THIRD}.mobile.png`, `${THIRD}.tablet.png`]) expect(d.input.design_problem).toContain(f);
+    expect(d.input.design_problem).not.toMatch(/editor-empty|editor-populated/);
+    expect(runsOf(w, "review").map((r) => [r.branch, r.profile])).toEqual([["spec-7", "spec"], ["design-7", "design"], ["design-7", "design"], ["issue-7", "backend"]]);
+    expect(runsOf(w, "fix")[0]).toMatchObject({ branch: "design-7", profile: "design" });
+    expect(w.onMain(`${DESIGN}${THIRD}.tablet.png`)).not.toBeNull();
+    expect(w.labelLog).toEqual(["+in-progress", "+needs-decision", "-in-progress", "+in-progress", "-needs-decision", "-in-progress"]);
+
+    // AC-2: held work crosses both merges.
+    expect(inputsOf(w, "plan")[1].held_work).toContain(held.head);
+    expect(inputsOf(w, "plan")[1].held_work).toContain("issue-7");
+    expect(starts).toEqual([held.head]);
+    expect(runsOf(w, "implement")[1].branch).toBe("issue-7");
+    for (const stage of ["design", "spec", "question-check", "plan"]) expect(inputsOf(w, stage)[0].held_work).toBeUndefined();
+    expect(kinds(w, "held-work")).toMatchObject([{ issue: 7, stage: "implement", branch: "issue-7", head: held.head, pushed: true }]);
+    expect(kinds(w, "held-work-kept").length).toBeGreaterThanOrEqual(2);
+    for (const e of kinds(w, "held-work-kept")) expect(e).toMatchObject({ issue: 7, branch: "issue-7", head: held.head });
+    for (const k of ["stale-branch-dropped", "recovered-commits", "held-work-lost"]) expect(kinds(w, k)).toEqual([]);
+    expect(w.writes()).toContain("DELETE /repos/o/r/git/refs/heads/spec-7");
+    expect(w.writes()).toContain("DELETE /repos/o/r/git/refs/heads/design-7");
+    expect(w.writes()).not.toContain("DELETE /repos/o/r/git/refs/heads/issue-7");
+    expect(inputsOf(w, "plan")[1].history).toContain("spec merged, UI-design gate failed:");
+    expect(inputsOf(w, "plan")[1].history).toContain(`${THIRD}.mobile.png`);
+  }, 240_000);
 
   it("fails a design result with a screen of fewer than three renders as an invalid result, then accepts the retry (AC-2)", async () => {
     let w!: ChainWorld;
