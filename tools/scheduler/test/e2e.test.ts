@@ -34,7 +34,8 @@ import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
 import { openIndex } from "../src/events/index.ts";
 import { EVENT_KINDS } from "../src/events/kinds.ts";
 import { validate } from "../src/schema/validate.ts";
-import { chainWorld, standingWorld, scripted, RATE_LIMITED, NETWORK_DOWN, UNREACHABLE_REASON, worldPaths, type ChainWorld } from "./helpers/e2e-routes.ts";
+import { chainWorld, standingWorld, scripted, HOST_REFUSED, RATE_LIMITED, NETWORK_DOWN, UNREACHABLE_REASON, worldPaths, type ChainWorld } from "./helpers/e2e-routes.ts";
+import { checkedPaths } from "../src/runner/host-space.ts";
 import { git, repoPair, withDesign, withTopDesign } from "./helpers/repo-pair.ts";
 import { fileDesignChildren } from "../src/children/scan.ts";
 import { loadDesignTree } from "../src/gates/design-tree.ts";
@@ -770,6 +771,85 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------
+// Spec 059 AC-6: a full volume postpones runs; it is not the work's failure.
+
+describe("end to end: a full volume postpones runs (spec 059 AC-6)", () => {
+  const LOW = async (_path: string) => ({ bytes: 100 * 2 ** 20, inodes: 1_000_000 });
+  const ROOMY = async (_path: string) => ({ bytes: 20 * 2 ** 30, inodes: 1_000_000 });
+  /** A clock the test moves past each retry_at. */
+  const clock = (w: ChainWorld) => {
+    const c = { offset: 0 };
+    w.deps.now = () => new Date(Date.now() + c.offset);
+    return c;
+  };
+
+  it("a spec-track chain waits three ticks on a full temp volume, then runs with its bounds untouched", async () => {
+    let w!: ChainWorld;
+    let reader = LOW;
+    const a = agents(() => w);
+    const events: { event: string; payload: unknown }[] = [];
+    w = await chainWorld({
+      files: repoFiles({ spec: null }), freeSpace: (path) => reader(path),
+      results: { spec: [a.spec(12, { "specs/010-thing/spec.md": specOf() })], review: [APPROVE] },
+    });
+    w.deps.emitEvent = async (event, payload) => { events.push({ event, payload }); };
+    const c = clock(w);
+    for (let i = 0; i < 3; i++) {
+      await w.tick();
+      c.offset += 1000_000;
+    }
+    const during = (await listClaims(w.paths))[0];
+    expect(during.outage).toMatchObject({ count: 3, alarmed: true });
+    expect(during.outage?.retry_at).toBeTruthy();
+    expect(w.adapter.ran).toEqual([]);
+    const records = serviceRecords(w);
+    expect(records.filter((r) => r.kind === "transient-outage")).toEqual([expect.objectContaining({ issue: 7, cause: "ENOSPC" })]);
+    expect(records.filter((r) => r.kind === "transient-outage-alarm")).toHaveLength(1);
+    expect(w.notifications.filter((n) => n.gate === "infra")).toHaveLength(1);
+    expect(w.notifications.find((n) => n.gate === "infra")?.text).toContain(checkedPaths(w.paths, during.worktree)[0]);
+    expect(events.filter((e) => e.event === "infra_alarm")).toEqual([{ event: "infra_alarm", payload: expect.objectContaining({ kind: "disk_full", issue: 7, cause: "ENOSPC" }) }]);
+    expect(kinds(w, "stage")).toEqual([]);
+    expect(records.filter((r) => r.kind === "chain-error")).toEqual([]);
+    const before = ledgerOf(during.state);
+    expect(before).toMatchObject({ specRescues: 0, history: [] });
+
+    reader = ROOMY;
+    await w.tick();
+    expect(w.adapter.ran.slice(0, 2)).toEqual(["spec", "review"]);
+    expect(kinds(w, "stage")[0]).toMatchObject({ stage: "spec", outcome: "ok" });
+    expect(kinds(w, "stage-host-refused")).toEqual([]);
+    expect(serviceRecords(w).filter((r) => r.kind === "transient-outage-over")).toHaveLength(1);
+  }, 180_000);
+
+  it("a rescue fix whose every shell command was refused is not the rescue: it runs again after the wait", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({
+      files: repoFiles(),
+      results: { plan: [PLAN], implement: [a.implement(9)], review: [CHANGES, APPROVE], fix: [FAIL, HOST_REFUSED, a.fix({ "a.txt": "fixed\n" })], "question-check": [SEND] },
+    });
+    const c = clock(w);
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["plan", "implement", "review", "fix", "fix"]);
+    const claim = (await listClaims(w.paths))[0];
+    expect(claim.state).toMatchObject({ stage: "fix", rescueRun: true, rescues: 1 });
+    expect(claim.state.history.filter((h) => /^fix attempt \d+ failed/.test(h))).toHaveLength(1);
+    expect(w.adapter.ran).not.toContain("question-check");
+    expect(await listPaused(w.paths)).toEqual([]);
+    expect(kinds(w, "stage-host-refused")).toEqual([expect.objectContaining({ issue: 7, stage: "fix", cause: "ENOSPC" })]);
+    expect(serviceRecords(w).filter((r) => r.kind === "transient-outage")).toEqual([expect.objectContaining({ cause: "ENOSPC" })]);
+
+    c.offset += 1000_000;
+    await w.tick();
+    await expectSettled(w);
+    expect(w.adapter.ran).toEqual(["plan", "implement", "review", "fix", "fix", "fix", "review"]);
+    expect(runsOf(w, "fix").at(-1)!.model).toBe(w.cfg.rescue_model);
+    expect(w.mergeRequests).toEqual([9]);
+  }, 180_000);
+});
+
+
+// ---------------------------------------------------------------------------------------------------------------
 // Spec 031: a merged design files issues for its children.
 
 describe("end to end: a design's planned children (spec 031)", () => {
@@ -1082,6 +1162,19 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   expect(await readAgentState(w.paths,'findings-filer')).toMatchObject({failures:0,postponed_until:'2026-10-01T00:01:00.000Z',outage:{count:1}});
   expect(log.kinds('findings-filer','standing-outage')).toMatchObject([{cause:'EHOSTUNREACH'}]);
   expect(w.adapter.ran).toEqual([]);expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(0);expect(w.notifications).toHaveLength(0);
+  await tickAt(w,'2026-10-01T00:02:00.000Z');
+  const st=(await readAgentState(w.paths,'findings-filer'))!;
+  expect(st.outage).toBeUndefined();expect(st.last_run?.outcome).toBe('ok');expect(w.adapter.ran).toEqual(['findings-filer']);
+ },60000);
+ it('postpones a standing agent when the state volume is low, and runs it after the wait (spec 059 AC-3, AC-6)',async()=>{
+  let low=true;
+  const w=await standingWorld({'findings-filer':[{summary:'triaged',decisions:[]}]},async()=>({bytes:low?100*2**20:20*2**30,inodes:1_000_000}));
+  const log=capture(w);await dueNow(w,'findings-filer');
+  await tickAt(w,T0);
+  expect(await readAgentState(w.paths,'findings-filer')).toMatchObject({failures:0,postponed_until:'2026-10-01T00:01:00.000Z',outage:{count:1,alarmed:false}});
+  expect(log.kinds('findings-filer','standing-outage')).toMatchObject([{cause:'ENOSPC'}]);
+  expect(w.adapter.ran).toEqual([]);expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(0);expect(w.notifications).toHaveLength(0);
+  low=false;
   await tickAt(w,'2026-10-01T00:02:00.000Z');
   const st=(await readAgentState(w.paths,'findings-filer'))!;
   expect(st.outage).toBeUndefined();expect(st.last_run?.outcome).toBe('ok');expect(w.adapter.ran).toEqual(['findings-filer']);

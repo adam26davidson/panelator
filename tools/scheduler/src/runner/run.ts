@@ -72,6 +72,8 @@ export interface StageOutcome {
   ioErrors: string[];
   /** Spec 013 AC-4: the limit a 429 recorded in the quota book. */
   limit?: Limit | null;
+  /** Spec 059 AC-2: the label (`ENOSPC`) when the harness refused every shell command of the run, else null. */
+  hostRefusal: string | null;
 }
 
 const rec = (e: unknown): Record<string, unknown> => (typeof e === "object" && e !== null ? (e as Record<string, unknown>) : {});
@@ -185,6 +187,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   }
 
   const stopped = judgement.outcome !== "ok";
+  const hostRefusal = spawned === null ? null : ctx.adapter.hostRefusal?.(events) ?? null;
 
   // A process that never started, timed out, or was stopped for a bound cannot be trusted to have
   // finished its result, so the file is not read (review focus 2).
@@ -240,7 +243,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   if (ioMessages.length) reason = reason === null ? `io: ${ioMessages.join("; ")}` : `${reason}; io: ${ioMessages.join("; ")}`;
   // AC-21/AC-22: the reason and errors behind the outcome are kept with the run, not only returned.
   const persisted = {
-    outcome: judgement.outcome, reason, apiErrorStatus: judgement.apiErrorStatus, resultErrors, malformed, findings, spawnError, ioErrors: ioMessages,
+    outcome: judgement.outcome, reason, apiErrorStatus: judgement.apiErrorStatus, resultErrors, malformed, findings, spawnError, ioErrors: ioMessages, hostRefusal,
     ...(normalised.length ? { normalised } : {}),
   };
   await writeFile(join(dir, "outcome.json"), JSON.stringify(persisted, null, 2));
@@ -256,7 +259,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
       return runStage(ctx,{...req,resume:undefined,replyPrompt:undefined,runId:runId+'-fresh',resumeFallback:fallback,resumedSessionId:req.resume.sessionId});
     }
   }
-  return { sessionId:stageRun.sessionId,runId, outcome: judgement.outcome, reason, result, resultErrors, judgement, stopped, usage, findings, eventsPath, malformed, ioErrors: ioMessages, limit };
+  return { sessionId:stageRun.sessionId,runId, outcome: judgement.outcome, reason, result, resultErrors, judgement, stopped, usage, findings, eventsPath, malformed, ioErrors: ioMessages, limit, hostRefusal };
 }
 
 /**

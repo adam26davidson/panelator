@@ -134,3 +134,22 @@ describe("transientRun (spec 045 AC-1)", () => {
     expect(transientRun(j("stage timeout", null, "timeout"))).toBeNull();
   });
 });
+
+describe("ENOSPC (spec 059 AC-1)", () => {
+  it("labels Node's error code, git's stderr and the pre-flight error", () => {
+    expect(transientCause(Object.assign(new Error("write failed"), { code: "ENOSPC" }))).toBe("ENOSPC");
+    expect(transientCause(Object.assign(new Error("Command failed: git commit"), { stderr: "fatal: unable to write: No space left on device" }))).toBe("ENOSPC");
+    expect(transientCause(Object.assign(new Error("host space low: /tmp has 100 MiB free and 5000 free inodes (floor 512 MiB, 1000 inodes)"), { code: "ENOSPC" }))).toBe("ENOSPC");
+    expect(transientCause(new Error("enospc: no space left on device"))).toBe("ENOSPC");
+    expect(transientCause({ message: "wrapped", cause: { code: "ENOSPC" } })).toBe("ENOSPC");
+  });
+  it("keeps a GitHub 422 naming ENOSPC genuine", () => {
+    expect(transientCause(Object.assign(new Error("Validation failed: ENOSPC"), { status: 422 }))).toBeNull();
+  });
+  it("forgives a chain error entry recorded before this spec", () => {
+    const ledger = { ...ledgerOf(initialChainState(13)), chainErrors: 1, history: ["chain error in implement: ENOSPC: no space left on device, mkdir '/x'"] };
+    const r = forgiveTransientChainErrors(ledger);
+    expect(r.forgiven).toBe(1);
+    expect(r.ledger.chainErrors).toBe(0);
+  });
+});

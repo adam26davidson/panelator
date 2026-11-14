@@ -17,6 +17,8 @@ import { afterFallback, harnessForModel, retryDecision } from "../runner/retry.t
 import type { ParameterStore } from "../parameters/store.ts";
 import { modelLimitFallback, planLaunch, quotaParams, readBook, waitAfterLimit } from "../quota/book.ts";
 import { runStage, type StageOutcome } from "../runner/run.ts";
+import { checkHostSpace, type FreeSpace } from "../runner/host-space.ts";
+import { DISK_FULL } from "./transient.ts";
 import {
   checkoutBranch, commitsPatch, deleteLocalBranch, diffFilesAgainstBase, discardUncommitted, onlyRebased, rebaseOntoMain, removeWorktree, syncToRemote, uncommittedPatch,
 } from "../runner/worktree.ts";
@@ -70,6 +72,8 @@ export interface DriverDeps {
   now: () => Date;
   log: (rec: Record<string, unknown>) => void;
   fetchOrigin: () => Promise<void>;
+  /** Spec 059 test seam: reads free space for the pre-flight check; production leaves it unset (statfs). */
+  freeSpace?: (path: string) => Promise<FreeSpace>;
 }
 
 export type StepStatus = "continue" | "waiting" | "ended";
@@ -650,6 +654,8 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
     return { type: "stage_failed", stage, reason, postpone: true, until };
   };
 
+  // Spec 059 AC-3: no run is launched into a full volume; the error is transient, so the loop postpones the claim.
+  await checkHostSpace(deps.paths, claim.worktree, { freeSpace: deps.freeSpace, log: deps.log });
   if(!state.conversation&&!state.resumeSession)await syncWorktree(deps, claim);
   // Spec 015 AC-1: the head before the driver's own rebase, to go back to when the run ends without a result.
   let beforeRebase: string | null = null;
@@ -739,9 +745,17 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
 
   // AC-1: a rescue runs on the rescue model; the state is the only source of that.
   // Spec 013 AC-9: a launch the quota book moved to another model runs there, as a fallback run.
+  /** Spec 059 AC-4: a run whose every shell command the host refused is no result of the work: undo, log, reject. */
+  const rejectHostRefused = async (r: StageOutcome): Promise<void> => {
+    if (r.hostRefusal === null) return;
+    await undoRebase();
+    deps.log({ kind: "stage-host-refused", issue: claim.issue, stage, attempt, run_id: r.runId, cause: r.hostRefusal });
+    throw Object.assign(new Error(`host refused every shell command in run ${r.runId}`), { code: DISK_FULL });
+  };
   let out = firstRun ? await exec(firstRun.model, firstRun.harness, state.rescueRun ? "rescue-fallback" : "fallback")
     : state.rescueRun ? await exec(deps.cfg.rescue_model, harnessForModel(deps.cfg.rescue_model), "rescue") : await exec();
   deps.log({ kind: "stage", issue: claim.issue, stage, attempt, outcome: out.outcome, reason: out.reason, run_id: out.runId, rescue: state.rescueRun || undefined, ...(firstRun ? { fallback: firstRun.model } : {}) });
+  await rejectHostRefused(out);
   if (out.limit) deps.log({ kind: "quota-limit", issue: claim.issue, stage, run_id: out.runId, key: out.limit.key, scope: out.limit.scope, resets_at: out.limit.resets_at, source: out.limit.source });
   if(state.conversation){
     if((await worktreeHead(claim.worktree))!==start||(await uncommittedPatch(claim.worktree))!==beforePatch||(await gitOut(claim.worktree,'diff','--cached','--binary'))!==beforeIndex){
@@ -767,6 +781,7 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
         if (retry.model === toModel) deps.log({ kind: "quota-fallback", issue: claim.issue, stage, from: primaryModel, to: toModel, key: out.limit?.key });
         out = await exec(retry.model, retry.harness, "fallback");
         deps.log({ kind: "stage", issue: claim.issue, stage, attempt, outcome: out.outcome, reason: out.reason, run_id: out.runId, fallback: retry.model });
+        await rejectHostRefused(out);
         if (out.limit) deps.log({ kind: "quota-limit", issue: claim.issue, stage, run_id: out.runId, key: out.limit.key, scope: out.limit.scope, resets_at: out.limit.resets_at, source: out.limit.source });
         // Only afterFallback judges the fallback run (AC-26).
         if (out.outcome !== "ok" && afterFallback(retryDef, out.judgement).kind === "postpone") return postponed(out.reason ?? out.outcome);
