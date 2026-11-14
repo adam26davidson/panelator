@@ -109,6 +109,11 @@ describe("the design stage (spec 029)", () => {
 
 describe("committed stage prompts (AC-1, AC-14, AC-15, AC-17)", () => {
   const read = (n: string) => readFileSync(join(agentsDir, "stages", `${n}.md`), "utf8");
+  it.each(["plan", "implement", "fix", "review", "spec", "design", "question-check"])("%s lists stops_pipeline and its rule (spec 063 AC-2)", (n) => {
+    const text = read(n);
+    expect(text).toContain('"security": false, "stops_pipeline": false }');
+    expect(text).toContain("stops every run or every PR");
+  });
   const full = {
     issue: { number: 7, title: "Add thing", body: "Spec: specs/010-thing/spec.md" },
     spec: "# spec",

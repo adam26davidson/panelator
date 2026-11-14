@@ -110,7 +110,11 @@ one an agent may make.
 
 `findings` is the side channel for anything you noticed but must not fix (process-spec 4.2).
 Every entry is an object, never a string, with exactly these fields:
-{ "what": "...", "where": "<file:line or component>", "evidence": "...", "noticed_how": "...", "suspected_cause": "...", "security": false }
-where `suspected_cause` and `security` are optional and the other four are required. Leave it `[]`
-when there is nothing to record. The result must contain only the fields shown above; any other
+{ "what": "...", "where": "<file:line or component>", "evidence": "...", "noticed_how": "...", "suspected_cause": "...", "security": false, "stops_pipeline": false }
+where `suspected_cause`, `security` and `stops_pipeline` are optional and the other four are required.
+Set `stops_pipeline` true only when the condition's recurrence stops every run or every PR (the
+harness refusing every command, a required check failing on `main`'s head for every PR, the
+scheduler or a standing agent failing on every tick); a condition that fails one issue's work is
+not one.
+Leave it `[]` when there is nothing to record. The result must contain only the fields shown above; any other
 property makes it invalid and fails the stage.
