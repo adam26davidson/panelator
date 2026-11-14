@@ -130,7 +130,7 @@ an entry exists. `branch` and `head` mean what spec 011 AC-1 says. The
   `issue-<n>` entry stays. The failure of a stage that is not the asking
   stage, the question check's first failure and its retry, and a quota
   postponement carry every hold unchanged, as spec 011 AC-7 says.
-- AC-4. Amended by [053-incomplete-implement-run-keeps-its-work](../053-incomplete-implement-run-keeps-its-work/spec.md) AC-2 and AC-3: the escalate to an implement rescue after an incomplete run keeps the carried entry. **Discarding the attempt clears every hold.** Given any holds, when
+- AC-4. Amended by [061-retried-chain-starts-from-closed-pr](../061-retried-chain-starts-from-closed-pr/spec.md) AC-5: the escalate to a spec-track rescue of the spec or design stage keeps a closed-PR hold on the chain's branch. Amended by [053-incomplete-implement-run-keeps-its-work](../053-incomplete-implement-run-keeps-its-work/spec.md) AC-2 and AC-3: the escalate to an implement rescue after an incomplete run keeps the carried entry. **Discarding the attempt clears every hold.** Given any holds, when
   an `escalate` transition (rescue, re-plan, spec revision, abandonment, the
   question check's second failure included), `liveness_expired`,
   `chain_error`, any `release`, the `done` of an abandonment or the `done`
