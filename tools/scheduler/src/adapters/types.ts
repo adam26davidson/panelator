@@ -28,11 +28,25 @@ export interface Usage {
   tool_calls: number;
 }
 
+/** Spec 061 AC-2: the stream's `api_retry` records, summarised; the full records stay in events.jsonl. */
+export interface ApiRetries {
+  count: number;
+  /** How many of the retries carried a `no_response` object. */
+  noResponses: number;
+  last: {
+    status: number | null;
+    error: string | null;
+    noResponse: { waitedMs: number | null; retryWaitMs: number | null } | null;
+  };
+}
+
 export interface Judgement {
   outcome: RunOutcome;
   reason: string | null;
   apiErrorStatus: number | null;
   finalText: string | null;
+  /** Spec 061 AC-2: present only when the stream holds an `api_retry` record. */
+  apiRetries?: ApiRetries;
 }
 
 export interface Command {

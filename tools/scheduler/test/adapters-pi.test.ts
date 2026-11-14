@@ -90,6 +90,7 @@ describe("piAdapter.judge (AC-20)", () => {
   });
   it("failed with apiErrorStatus 429 on a rate-limit error (AC-26)", async () => {
     expect(piAdapter.judge(await fx("pi-429.jsonl"), 0, false)).toMatchObject({ outcome: "failed", apiErrorStatus: 429 });
+    expect(piAdapter.judge(await fx("pi-429.jsonl"), 0, false)).not.toHaveProperty("apiRetries");
   });
   it("failed without agent_end", async () => {
     const ev = (await fx("pi-success.jsonl")).slice(0, 5);

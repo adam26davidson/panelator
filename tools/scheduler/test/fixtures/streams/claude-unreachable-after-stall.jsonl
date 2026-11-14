@@ -1,0 +1,13 @@
+{"type":"system","subtype":"init","cwd":"/w","session_id":"s","model":"claude-fable-5-1","permissionMode":"dontAsk","claude_code_version":"2.1.287","plugins":[],"mcp_servers":[],"uuid":"u1"}
+{"type":"system","subtype":"api_retry","attempt":1,"max_retries":1,"retry_delay_ms":0,"error_status":null,"error":"unknown","no_response":{"waited_ms":181000,"retry_wait_ms":599000},"session_id":"s","uuid":"u2"}
+{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":539,"error_status":null,"error":"unknown","session_id":"s","uuid":"r1"}
+{"type":"system","subtype":"api_retry","attempt":2,"max_retries":10,"retry_delay_ms":1194,"error_status":null,"error":"unknown","session_id":"s","uuid":"r2"}
+{"type":"system","subtype":"api_retry","attempt":3,"max_retries":10,"retry_delay_ms":2235,"error_status":null,"error":"unknown","session_id":"s","uuid":"r3"}
+{"type":"system","subtype":"api_retry","attempt":4,"max_retries":10,"retry_delay_ms":4973,"error_status":null,"error":"unknown","session_id":"s","uuid":"r4"}
+{"type":"system","subtype":"api_retry","attempt":5,"max_retries":10,"retry_delay_ms":8776,"error_status":null,"error":"unknown","session_id":"s","uuid":"r5"}
+{"type":"system","subtype":"api_retry","attempt":6,"max_retries":10,"retry_delay_ms":19952,"error_status":null,"error":"unknown","session_id":"s","uuid":"r6"}
+{"type":"system","subtype":"api_retry","attempt":7,"max_retries":10,"retry_delay_ms":34764,"error_status":null,"error":"unknown","session_id":"s","uuid":"r7"}
+{"type":"system","subtype":"api_retry","attempt":8,"max_retries":10,"retry_delay_ms":39015,"error_status":null,"error":"unknown","session_id":"s","uuid":"r8"}
+{"type":"system","subtype":"api_retry","attempt":9,"max_retries":10,"retry_delay_ms":36752,"error_status":null,"error":"unknown","session_id":"s","uuid":"r9"}
+{"type":"system","subtype":"api_retry","attempt":10,"max_retries":10,"retry_delay_ms":34872,"error_status":null,"error":"unknown","session_id":"s","uuid":"r10"}
+{"type":"result","subtype":"success","is_error":true,"duration_ms":900000,"duration_api_ms":0,"num_turns":0,"result":"API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)","stop_reason":null,"session_id":"s","total_cost_usd":0,"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0},"api_error_status":null,"uuid":"u9"}

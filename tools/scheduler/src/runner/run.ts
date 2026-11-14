@@ -243,7 +243,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   if (ioMessages.length) reason = reason === null ? `io: ${ioMessages.join("; ")}` : `${reason}; io: ${ioMessages.join("; ")}`;
   // AC-21/AC-22: the reason and errors behind the outcome are kept with the run, not only returned.
   const persisted = {
-    outcome: judgement.outcome, reason, apiErrorStatus: judgement.apiErrorStatus, resultErrors, malformed, findings, spawnError, ioErrors: ioMessages, hostRefusal,
+    outcome: judgement.outcome, reason, apiErrorStatus: judgement.apiErrorStatus, apiRetries: judgement.apiRetries ?? null, resultErrors, malformed, findings, spawnError, ioErrors: ioMessages, hostRefusal,
     ...(normalised.length ? { normalised } : {}),
   };
   await writeFile(join(dir, "outcome.json"), JSON.stringify(persisted, null, 2));
