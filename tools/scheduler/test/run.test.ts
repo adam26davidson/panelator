@@ -92,7 +92,17 @@ describe("runStage", () => {
     expect(out.findings).toEqual({ queued: 1, rejected: [expect.stringContaining("rejected")] });
     expect(out.ioErrors).toEqual([]);
     const outcome = JSON.parse(readFileSync(join(dir, "outcome.json"), "utf8"));
-    expect(outcome).toMatchObject({ outcome: "ok", reason: null, spawnError: null, ioErrors: [], findings: out.findings });
+    expect(outcome).toMatchObject({ outcome: "ok", reason: null, spawnError: null, ioErrors: [], findings: out.findings, apiRetries: null });
+  });
+  it("writes the judgement's apiRetries into outcome.json (spec 061 AC-3)", async () => {
+    const { paths, ctx, req } = setup({ result: goodPlan });
+    await ensureStateDirs(paths);
+    const apiRetries = { count: 1, noResponses: 1, last: { status: null, error: "unknown", noResponse: { waitedMs: 181000, retryWaitMs: 599000 } } };
+    const a = ctx.adapter;
+    const out = await runStage({ ...ctx, adapter: { ...a, judge: (e, x, t) => ({ ...a.judge(e, x, t), apiRetries }) } }, req);
+    const outcome = JSON.parse(readFileSync(join(paths.runs, out.runId, "outcome.json"), "utf8"));
+    expect(outcome).toMatchObject({ apiErrorStatus: null, apiRetries });
+    expect(out.usage).not.toHaveProperty("apiRetries");
   });
   it("fails with result: invalid when the result file is missing", async () => {
     const { paths, ctx, req } = setup({});

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { claudeAdapter, claudeHostRefusal } from "../src/adapters/claude.ts";
+import { claudeAdapter, claudeApiRetries, claudeHostRefusal } from "../src/adapters/claude.ts";
 import { readJsonlFile } from "../src/adapters/jsonl.ts";
 import { transientRun } from "../src/chain/transient.ts";
 import type { StageRun } from "../src/adapters/types.ts";
@@ -103,6 +103,44 @@ describe("claudeAdapter.judge (AC-21)", () => {
   });
   it("failed with 'no result event' on a partial stream", async () => {
     expect(claudeAdapter.judge(await fx("claude-partial-tail.jsonl"), 0, false)).toMatchObject({ outcome: "failed", reason: "no result event" });
+  });
+});
+
+describe("claudeAdapter api retries (spec 061)", () => {
+  const stall = { count: 11, noResponses: 1, last: { status: null, error: "unknown", noResponse: null } };
+  const noResp = { count: 1, noResponses: 1, last: { status: null, error: "unknown", noResponse: { waitedMs: 181000, retryWaitMs: 599000 } } };
+  it("summarises a no-response retry before a successful run (AC-1, AC-2, AC-4)", async () => {
+    const j = claudeAdapter.judge(await fx("claude-no-response-then-ok.jsonl"), 0, false);
+    expect(j).toMatchObject({ outcome: "ok", apiErrorStatus: null });
+    expect(j.apiRetries).toEqual(noResp);
+  });
+  it("summarises eleven retries before an unreachable failure (AC-4)", async () => {
+    const j = claudeAdapter.judge(await fx("claude-unreachable-after-stall.jsonl"), 1, false);
+    expect(j).toMatchObject({ outcome: "failed", reason: "API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)", apiErrorStatus: null });
+    expect(j.apiRetries).toEqual(stall);
+    expect(transientRun(j)).toBe("EAI_AGAIN");
+  });
+  it("reads 429 from the result and from the retries (AC-1, AC-4)", async () => {
+    const events = await fx("claude-429.jsonl");
+    const j = claudeAdapter.judge(events, 1, false);
+    expect(j.apiErrorStatus).toBe(429);
+    expect(j.apiRetries).toEqual({ count: 2, noResponses: 0, last: { status: 429, error: "rate_limit", noResponse: null } });
+    const noResult = events.map((r) => ((r as { type?: string }).type === "result" ? { ...(r as object), api_error_status: null } : r));
+    expect(claudeAdapter.judge(noResult, 1, false).apiErrorStatus).toBe(429);
+  });
+  it("has no apiRetries without an api_retry record (AC-2)", async () => {
+    for (const f of ["claude-success.jsonl", "claude-partial-tail.jsonl"]) {
+      const events = await fx(f);
+      expect(claudeAdapter.judge(events, 0, false)).not.toHaveProperty("apiRetries");
+      expect(claudeApiRetries(events)).toBeUndefined();
+    }
+  });
+  it("carries apiRetries on every outcome (AC-2)", async () => {
+    const events = await fx("claude-no-response-then-ok.jsonl");
+    expect(claudeAdapter.judge(events, null, true)).toMatchObject({ outcome: "timeout", apiRetries: noResp });
+    expect(claudeAdapter.judge(events, 2, false)).toMatchObject({ outcome: "failed", apiRetries: noResp });
+    const cut = (await fx("claude-unreachable-after-stall.jsonl")).filter((r) => (r as { type?: string }).type !== "result");
+    expect(claudeAdapter.judge(cut, 1, false)).toMatchObject({ outcome: "failed", reason: "no result event", apiRetries: stall });
   });
 });
 
