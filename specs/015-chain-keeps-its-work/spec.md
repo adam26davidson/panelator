@@ -118,7 +118,7 @@ claim is the record of its consecutive transient failures.
 
 ### Postponed runs and rebased heads (#35)
 
-- AC-1. **A run without a result undoes the driver's rebase.** Given a
+- AC-1. Amended by [059-full-disk-postpones-runs](../059-full-disk-postpones-runs/spec.md) AC-4: the rebase is also undone for a host-refused run, whatever its outcome. **A run without a result undoes the driver's rebase.** Given a
   claim with a PR bound whose remote head is behind a moved `origin/main`,
   when a review, fix or implement run is prepared (the rebase moves `HEAD`)
   and the run ends without an `ok` outcome (postponed on a rate limit, or
@@ -187,7 +187,7 @@ claim is the record of its consecutive transient failures.
 - AC-9. **Liveness waits for the outage.** Given a claim with an outage
   whose last transient failure was within `liveness_hours`, the liveness
   check does not expire it (AC-5 keeps `last_activity_at` fresh).
-- AC-10. **A finished run is not run again.** Given a stage run that ends
+- AC-10. Amended by [059-full-disk-postpones-runs](../059-full-disk-postpones-runs/spec.md) AC-4: a host-refused run that ended `ok` does not record `stageRun`. **A finished run is not run again.** Given a stage run that ends
   `ok`, then before its result is checked the claim records `stageRun: {
   stage, attempt, run_id, result, start, security, sensitive }` on disk.
   Given the step then throws (a transient error in the PR binding check),

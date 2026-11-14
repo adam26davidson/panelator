@@ -12,7 +12,7 @@ layers": a bug spec hangs directly off a top design);
 [015-chain-keeps-its-work](../015-chain-keeps-its-work/spec.md), whose
 reading that the bounds count failures of the work and not of the
 infrastructure, and whose transient-outage machinery (AC-4 to AC-9, AC-13)
-this spec applies to a full disk, amending AC-4 and AC-8 (marked as section 4
+this spec applies to a full disk, amending AC-1, AC-4, AC-8 and AC-10 (marked as section 4
 records); [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md),
 whose AC-1 this spec amends (marked as section 4 records) and whose AC-3
 lists the alarm kinds this spec extends;
@@ -249,6 +249,14 @@ root only).
   run has a `hostRefusal` unless its script says `HOST_REFUSED`.
 
 ## 4. Amendments to earlier specs
+
+- Spec 015 AC-1 is marked `Amended by
+  [059-full-disk-postpones-runs](../059-full-disk-postpones-runs/spec.md)
+  AC-4: the rebase is also undone for a host-refused run, whatever its
+  outcome.`
+- Spec 015 AC-10 is marked `Amended by
+  [059-full-disk-postpones-runs](../059-full-disk-postpones-runs/spec.md)
+  AC-4: a host-refused run that ended ok does not record stageRun.`
 
 - Spec 015 AC-4 is marked `Amended by
   [059-full-disk-postpones-runs](../059-full-disk-postpones-runs/spec.md)
