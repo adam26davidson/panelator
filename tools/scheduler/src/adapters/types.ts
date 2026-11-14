@@ -53,6 +53,11 @@ export interface Adapter {
    * True for a stage whose run has no tool that writes files on this harness: when its result file is missing, the
    * runner takes the result from the last JSON object in the final assistant text instead (final review T1).
    */
+  /**
+   * Spec 059 AC-2: a label (`ENOSPC`) when the harness refused every shell command of the run for a host resource, else
+   * null. Not defined for a harness whose refusal message is not known.
+   */
+  hostRefusal?(events: unknown[]): string | null;
   resultInText?(stage: AgentStageName): boolean;
 }
 

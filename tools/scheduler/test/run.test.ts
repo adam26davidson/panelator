@@ -266,4 +266,15 @@ describe("lastJsonObject (final review T1)", () => {
     expect(lastJsonObject("[1, 2]")).toBeNull();
     expect(lastJsonObject('a { broken } then {"ok": true}\n```')).toBe('{"ok": true}');
   });
+  it("returns and persists the adapter's host refusal label, and null when the adapter has none (spec 059 AC-2)", async () => {
+    const { paths, ctx, req } = setup({ result: goodPlan });
+    await ensureStateDirs(paths);
+    const none = await runStage(ctx, req);
+    expect(none.hostRefusal).toBeNull();
+    expect(JSON.parse(readFileSync(join(paths.runs, none.runId, "outcome.json"), "utf8")).hostRefusal).toBeNull();
+    ctx.adapter = { ...ctx.adapter, hostRefusal: () => "ENOSPC" };
+    const out = await runStage(ctx, { ...req, runId: "refused-1" });
+    expect(out.hostRefusal).toBe("ENOSPC");
+    expect(JSON.parse(readFileSync(join(paths.runs, out.runId, "outcome.json"), "utf8")).hostRefusal).toBe("ENOSPC");
+  });
 });

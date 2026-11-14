@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import { DISK_FULL } from "../chain/transient.ts";
 import type { Adapter, Command, Judgement, StageRun, Usage } from "./types.ts";
 
 type Rec = Record<string, unknown>;
@@ -101,4 +102,35 @@ function usage(events: unknown[]): Usage {
   return { cost_usd: null, ...sum, turns: assistants.length, tool_calls };
 }
 
-export const claudeAdapter: Adapter = { harness: "claude", buildCommand, judge, usage };
+const REFUSAL_PREFIX = "The command was not started:";
+
+function resultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((c) => (typeof c === "string" ? c : String(rec(c).text ?? ""))).join("");
+}
+
+/**
+ * Spec 059 AC-2: `ENOSPC` when the run has a Bash call and every one was answered with the harness's "not started"
+ * refusal for a full disk; null otherwise (no Bash call, a Bash call that ran, or one with no result).
+ */
+export function claudeHostRefusal(events: unknown[]): string | null {
+  const calls: string[] = [];
+  const results = new Map<string, string>();
+  for (const e of events.map(rec)) {
+    const content = rec(e.message).content;
+    if (!Array.isArray(content)) continue;
+    for (const b of content.map(rec)) {
+      if (e.type === "assistant" && b.type === "tool_use" && b.name === "Bash" && typeof b.id === "string") calls.push(b.id);
+      else if (e.type === "user" && b.type === "tool_result" && typeof b.tool_use_id === "string") results.set(b.tool_use_id, resultText(b.content));
+    }
+  }
+  if (!calls.length) return null;
+  for (const id of calls) {
+    const text = results.get(id);
+    if (text === undefined || !text.startsWith(REFUSAL_PREFIX) || !text.includes("ENOSPC")) return null;
+  }
+  return DISK_FULL;
+}
+
+export const claudeAdapter: Adapter = { harness: "claude", buildCommand, judge, usage, hostRefusal: claudeHostRefusal };

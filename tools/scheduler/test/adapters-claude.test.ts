@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { claudeAdapter } from "../src/adapters/claude.ts";
+import { claudeAdapter, claudeHostRefusal } from "../src/adapters/claude.ts";
 import { readJsonlFile } from "../src/adapters/jsonl.ts";
 import { transientRun } from "../src/chain/transient.ts";
 import type { StageRun } from "../src/adapters/types.ts";
@@ -116,5 +116,23 @@ describe("claudeAdapter.usage (AC-24)", () => {
     expect(claudeAdapter.usage(await fx("claude-partial-tail.jsonl"))).toEqual({
       cost_usd: null, input_tokens: 5, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0,
     });
+  });
+});
+
+describe("claudeHostRefusal (spec 059 AC-2)", () => {
+  const refused = async () => (await readJsonlFile(join(import.meta.dirname, "fixtures", "enospc-events.jsonl"))).records;
+  it("labels a run whose every Bash call was refused for a full disk", async () => {
+    const events = await refused();
+    expect(events.filter((e) => JSON.stringify(e).includes('"name":"Bash"'))).toHaveLength(3);
+    expect(claudeHostRefusal(events)).toBe("ENOSPC");
+    expect(claudeAdapter.hostRefusal?.(events)).toBe("ENOSPC");
+  });
+  it("is null when one Bash call ran, has no result, or there is no Bash call", async () => {
+    const events = (await refused()) as { type: string; message: { content: { content?: string }[] } }[];
+    const ran = events.map((e) => (e === events[3] ? { ...e, message: { content: [{ ...e.message.content[0], content: "file.txt\n" }] } } : e));
+    expect(claudeHostRefusal(ran)).toBeNull();
+    expect(claudeHostRefusal(events.slice(0, 5))).toBeNull();
+    expect(claudeHostRefusal(await fx("claude-success.jsonl"))).toBeNull();
+    expect(claudeHostRefusal([])).toBeNull();
   });
 });
