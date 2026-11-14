@@ -16,3 +16,6 @@ rerun_workflow:
 undo:
   level: 1
   description: Reverse a recorded reversible action.
+sweep_volume:
+  level: 1
+  description: "Remove stale leftovers the system created on a checked volume: leaked test roots and orphaned worktrees."
