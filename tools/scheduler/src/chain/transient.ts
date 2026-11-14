@@ -7,9 +7,12 @@ import { POSTPONE_WAIT_S, type LedgerCounts } from "./machine.ts";
  * error is genuine.
  */
 
+/** Spec 059 AC-1: the label of a full disk, shared by the loop, the driver and the adapter. */
+export const DISK_FULL = "ENOSPC";
+
 const CODES = new Set([
   "EAI_AGAIN", "ENOTFOUND", "ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "ETIMEDOUT", "EPIPE", "ENETUNREACH", "ENETDOWN", "EHOSTUNREACH",
-  "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT",
+  "ENOSPC", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT",
 ]);
 /** A request its signal aborted or timed out (fetch's `AbortError`, `AbortSignal.timeout`'s `TimeoutError`). */
 const ABORT_NAMES = new Set(["AbortError", "TimeoutError"]);
@@ -50,6 +53,7 @@ function labelOf(text: string): string | null {
   const code = CODE_IN_MESSAGE.exec(text);
   if (code) return code[1];
   const lower = text.toLowerCase();
+  if (lower.includes("enospc") || lower.includes("no space left on device")) return DISK_FULL;
   for (const m of GIT_MESSAGES) if (lower.includes(m.toLowerCase())) return m;
   if (CLAUDE_UNREACHABLE.test(text)) return "Can't reach the API server";
   return GIT_HTTP_5XX.test(text) ? "HTTP 5xx" : null;
