@@ -35,5 +35,6 @@ export function classifyWork(issue:IssueData,readSpec:(path:string)=>string|null
 /** Priority, then the stops-pipeline label, then the kind behind its configured share, then oldest. */
 export function rankIssues(issues:IssueData[],labels:Config['labels'],recent:RecentMerges,share=0.75,work:(issue:IssueData)=>Work=i=>i.labels.includes('class:product')?'product':'system'):IssueData[] {
   const preferred:Work=(recent.system??0)<share*((recent.system??0)+(recent.product??0)+1)?'system':'product';
-  return [...issues].sort((a,b)=>Number(b.labels.includes(labels.priority))-Number(a.labels.includes(labels.priority)) || Number(b.labels.includes(labels.stops_pipeline))-Number(a.labels.includes(labels.stops_pipeline)) || Number(work(b)===preferred)-Number(work(a)===preferred) || a.createdAt.localeCompare(b.createdAt) || a.number-b.number);
+  const tier=(i:IssueData)=>i.labels.includes(labels.priority)?2:i.labels.includes(labels.stops_pipeline)?1:0;
+  return [...issues].sort((a,b)=>tier(b)-tier(a) || Number(work(b)===preferred)-Number(work(a)===preferred) || a.createdAt.localeCompare(b.createdAt) || a.number-b.number);
 }
