@@ -156,7 +156,7 @@ describe("Scheduler.tick", () => {
     expect(t.held).toBe(0);
     // No class/spec is system work, preferred at the initial 0.75 work share.
     expect(t.claimed).toEqual([3]);
-    await new Promise((r) => setTimeout(r, 50));
+    for (let w = 0; w < 200 && (started.length === 0 || s.active > 0); w++) await new Promise((r) => setTimeout(r, 25));
     expect(started).toEqual([3]);
     expect((await listClaims(paths)).map((c) => c.issue)).toEqual([3]);
     expect(gh.calls.find((c) => c.method === "POST" && c.url === "/repos/o/r/issues/3/labels")?.body).toEqual({ labels: ["in-progress"] });
@@ -294,7 +294,7 @@ describe("Scheduler.tick", () => {
     const { s, deps, paths, pair, started } = await setup(routes([]));
     await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
     await s.tick();
-    await new Promise((r) => setTimeout(r, 50));
+    for (let w = 0; w < 200 && (started.length === 0 || s.active > 0); w++) await new Promise((r) => setTimeout(r, 25));
     expect(started).toEqual([7]);
   }, 30_000);
 
