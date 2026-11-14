@@ -285,3 +285,21 @@ describe("standing definition schema", () => {
     if (!r.ok) expect(r.errors.some(e => e.startsWith(msg))).toBe(true);
   });
 });
+
+describe("spec 060 schemas", () => {
+  const fix = { head_sha: "a".repeat(40), addressed: [] };
+  it("fix-result accepts out_of_scope with a cause and at least one path, and rejects an empty list or a missing cause", () => {
+    const ok = { ...fix, out_of_scope: { cause: "chromium is missing", paths: [".github/workflows/ci.yml"] } };
+    expect(validate("fix-result", ok)).toEqual({ ok: true });
+    expect(validate("fix-result", { ...fix, out_of_scope: { cause: "x", paths: [] } }).ok).toBe(false);
+    expect(validate("fix-result", { ...fix, out_of_scope: { cause: "", paths: ["a"] } }).ok).toBe(false);
+    expect(validate("fix-result", { ...fix, out_of_scope: { paths: ["a"] } }).ok).toBe(false);
+  });
+  it("blocked accepts both conditions and rejects an unknown kind", () => {
+    const base = { issue: 7, state: {}, worktree: "/w", since: "2026-11-14T00:00:00Z", pr: { number: 8, head_sha: "f".repeat(40) } };
+    expect(validate("blocked", { ...base, condition: { kind: "main_green", check: "test", main_sha: "a" } })).toEqual({ ok: true });
+    expect(validate("blocked", { ...base, condition: { kind: "paths", paths: ["a"], main_sha: "a" }, last_check: null })).toEqual({ ok: true });
+    expect(validate("blocked", { ...base, condition: { kind: "other" } }).ok).toBe(false);
+    expect(validate("blocked", { ...base, condition: { kind: "paths", paths: [], main_sha: "a" } }).ok).toBe(false);
+  });
+});

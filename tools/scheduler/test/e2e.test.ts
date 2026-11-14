@@ -15,7 +15,9 @@ import { SleepInhibitor } from "../src/service/inhibit.ts";
 import { loadStageDefinitions } from "../src/stages/definition.ts";
 import type { StageRun } from "../src/adapters/types.ts";
 import { CHARTER_REVERT_LINE } from "../src/chain/driver.ts";
-import { ledgerOf } from "../src/chain/machine.ts";
+import { initialChainState, ledgerOf, MAX_BLOCKS } from "../src/chain/machine.ts";
+import type { BlockedRecord } from "../src/state/blocked.ts";
+import { writeLedger } from "../src/state/ledger.ts";
 import { listClaims } from "../src/state/claims.ts";
 import { writePaused,listPaused, type PausedRecord } from "../src/state/paused.ts";
 import type { Question } from "../src/types.ts";
@@ -34,7 +36,7 @@ import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
 import { openIndex } from "../src/events/index.ts";
 import { EVENT_KINDS } from "../src/events/kinds.ts";
 import { validate } from "../src/schema/validate.ts";
-import { chainWorld, standingWorld, scripted, HOST_REFUSED, RATE_LIMITED, NETWORK_DOWN, UNREACHABLE_REASON, worldPaths, type ChainWorld } from "./helpers/e2e-routes.ts";
+import { OUT_OF_SCOPE, chainWorld, standingWorld, scripted, HOST_REFUSED, RATE_LIMITED, NETWORK_DOWN, UNREACHABLE_REASON, worldPaths, type ChainWorld } from "./helpers/e2e-routes.ts";
 import { checkedPaths } from "../src/runner/host-space.ts";
 import { git, repoPair, withDesign, withTopDesign } from "./helpers/repo-pair.ts";
 import { fileDesignChildren } from "../src/children/scan.ts";
@@ -1531,6 +1533,134 @@ describe("end to end: the design stage (spec 029)", () => {
     expect(w.labelLog).toEqual([]);
     expect(w.comments).toHaveLength(1);
     expect(w.adapter.ran).toEqual([]);
+  }, 120_000);
+});
+
+describe("end to end: a check failing outside the PR's scope waits for main (spec 060 AC-10)", () => {
+  const FAILED = { status: "completed", conclusion: "failure" };
+  const GREEN = { status: "completed", conclusion: "success" };
+  const blockedRecord = (w: ChainWorld): BlockedRecord | null => (existsSync(join(w.paths.blocked, "7.json")) ? JSON.parse(readFileSync(join(w.paths.blocked, "7.json"), "utf8")) : null);
+  const queued = (w: ChainWorld) => (existsSync(w.paths.findingsQueue) ? readFileSync(w.paths.findingsQueue, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
+  const specFiles = { "specs/010-thing/spec.md": specOf() };
+  const rest = () => ({ plan: [PLAN], review: [APPROVE, APPROVE] });
+
+  it("main red on the same check: no fix, one finding, one comment, a record and no claim; after main is green the chain rebases, pushes and reaches review with nothing counted", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({ files: repoFiles({ spec: null }), results: { ...rest(), spec: [a.spec(12, specFiles)], implement: [a.implement(13, { "a.txt": "pr 13\n" })] } });
+    w.setChecks(() => FAILED);
+    await w.tick();
+
+    expect(w.adapter.ran).toEqual(["spec"]);
+    expect(await listClaims(w.paths)).toEqual([]);
+    const rec = blockedRecord(w)!;
+    expect(rec).toMatchObject({ issue: 7, pr: { number: 12 }, condition: { kind: "main_green", check: "test" }, state: { stage: "blocked", fixes: 0, specRescues: 0 } });
+    expect(queued(w)).toHaveLength(1);
+    expect(queued(w)[0].finding).toMatchObject({ what: "required check test fails on a spec PR for a cause outside its scope", where: expect.stringContaining("origin/main") });
+    expect(w.comments.filter((c) => c.body.includes("outside its scope"))).toHaveLength(1);
+    expect(w.comments[0].body).not.toContain("@");
+    expect(w.notifications.map((n) => n.gate)).toEqual(["infra"]);
+    expect(w.labels.has("in-progress")).toBe(true);
+    expect(w.prs.get(12)!.state).toBe("open");
+    expect(w.rerequested).toEqual([]);
+
+    // Main moves and the check is green there; the PR's old head is still red until it is rebased and pushed.
+    const oldHead = rec.pr.head_sha;
+    const main = w.moveMain({ "fix.txt": "main is fixed\n" });
+    w.setChecks((sha) => (sha === oldHead ? FAILED : GREEN));
+    await w.tick();
+
+    expect(w.logs.filter((r) => r.kind === "error")).toEqual([]);
+    expect(w.adapter.ran).toEqual(["spec", "review", "plan", "implement", "review"]);
+    expect(blockedRecord(w)).toBeNull();
+    expect(w.mergeRequests).toEqual([12, 13]);
+    expect(w.onMain("fix.txt")).toBe("main is fixed\n");
+    // The review saw a head other than the one that failed: the PR was rebased onto main and pushed.
+    expect(runsOf(w, "review")[0].input.pr?.head_sha).not.toBe(oldHead);
+    expect(main).toHaveLength(40);
+    const ledger = JSON.parse(readFileSync(join(w.paths.escalations, "7.json"), "utf8"));
+    expect(ledger).toMatchObject({ blocks: 1, specRescues: 0, rescues: 0 });
+  }, 120_000);
+
+  it("main green: one re-run, then the fix says the cause is outside the PR and the chain blocks on the named path until main changes it", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    let bad = "";
+    const spec = a.spec(12, specFiles);
+    w = await chainWorld({
+      files: repoFiles({ spec: null }),
+      results: { ...rest(), spec: [(run: StageRun) => { const r = spec(run); bad = r.head_sha; return r; }], fix: [OUT_OF_SCOPE()], implement: [a.implement(13, { "a.txt": "pr 13\n" })] },
+    });
+    w.setChecks((sha) => (sha === bad ? FAILED : GREEN));
+    await w.tick();
+    // The re-requested check reports as pending first; the chain waits for the next poll and reads it again.
+    expect(w.adapter.ran).toEqual(["spec"]);
+    expect(w.rerequested).toEqual([41]);
+    await w.tick();
+
+    expect(w.adapter.ran).toEqual(["spec", "fix"]);
+    expect(w.rerequested).toEqual([41]);
+    expect(runsOf(w, "fix")[0].input.fix_input).toContain("out_of_scope");
+    expect(runsOf(w, "fix")[0].input.fix_input).toContain("A required check failed:\ntest\nFAIL tools/design-stage/test/render.test.ts");
+    expect(blockedRecord(w)).toMatchObject({ condition: { kind: "paths", paths: [".github/workflows/ci.yml"] }, state: { fixes: 0, specRescues: 0, rescues: 0 } });
+    expect(queued(w)).toHaveLength(1);
+    expect(queued(w)[0].finding).toMatchObject({ where: ".github/workflows/ci.yml", evidence: expect.stringContaining("no Chromium") });
+    expect(await listClaims(w.paths)).toEqual([]);
+
+    // A main move that touches README.md does not resume it; one that touches the named file does.
+    w.moveMain({ "README.md": "x\n" });
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["spec", "fix"]);
+    expect(blockedRecord(w)).not.toBeNull();
+    w.moveMain({ ".github/workflows/ci.yml": "name: ci\n" });
+    await w.tick();
+    expect(w.logs.filter((r) => r.kind === "error")).toEqual([]);
+    expect(w.adapter.ran).toEqual(["spec", "fix", "review", "plan", "implement", "review"]);
+    expect(blockedRecord(w)).toBeNull();
+    expect(w.mergeRequests).toEqual([12, 13]);
+    expect(w.onMain(".github/workflows/ci.yml")).toBe("name: ci\n");
+    expect(JSON.parse(readFileSync(join(w.paths.escalations, "7.json"), "utf8"))).toMatchObject({ blocks: 1, specRescues: 0 });
+  }, 120_000);
+
+  it("with the block bound spent in the ledger, the verdict is counted as a fix and the fix loop runs as today", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    let bad = "";
+    const spec = a.spec(12, specFiles);
+    w = await chainWorld({
+      files: repoFiles({ spec: null }),
+      results: { spec: [(run: StageRun) => { const r = spec(run); bad = r.head_sha; return r; }], fix: [OUT_OF_SCOPE(), OUT_OF_SCOPE(), OUT_OF_SCOPE()] },
+    });
+    await writeLedger(w.paths, 7, { ...ledgerOf(initialChainState(7)), blocks: MAX_BLOCKS });
+    w.setChecks((sha) => (sha === bad ? FAILED : GREEN));
+    await w.tick();
+    await w.tick();
+    // Each failed read of an unchanged head now goes to the fix.
+    for (let i = 0; i < 8 && !w.labelLog.includes("+abandoned"); i++) await w.tick();
+
+    expect(w.adapter.ran).toEqual(["spec", "fix", "fix", "fix"]);
+    expect(blockedRecord(w)).toBeNull();
+    expect(w.labelLog).toContain("+abandoned");
+    expect(w.comments.at(-1)!.body).toContain("block bound reached");
+  }, 120_000);
+
+  it("an issue-track fix that returns out_of_scope is ignored: counted as a fix, verify runs", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    let bad = "";
+    const implement = a.implement(9);
+    w = await chainWorld({
+      files: repoFiles(),
+      results: { plan: [PLAN], implement: [(run: StageRun) => { const r = implement(run); bad = r.head_sha; return r; }], review: [APPROVE], fix: [OUT_OF_SCOPE(), a.fix({ "a.txt": "fixed\n" })] },
+    });
+    w.setChecks((sha) => (sha === bad ? FAILED : GREEN));
+    await w.tick();
+
+    expect(w.adapter.ran).toEqual(["plan", "implement", "fix", "fix", "review"]);
+    expect(w.rerequested).toEqual([]);
+    expect(blockedRecord(w)).toBeNull();
+    expect(w.mergeRequests).toEqual([9]);
+    expect(JSON.parse(readFileSync(join(w.paths.escalations, "7.json"), "utf8")).history.some((h: string) => h.startsWith("out_of_scope ignored: "))).toBe(true);
   }, 120_000);
 });
 
