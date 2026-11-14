@@ -290,7 +290,7 @@ AC-10 second sentence, AC-13)
 
 **Questions for the maintainer**
 
-- AC-12. **Every question is checked first.** Given a stage produces a question
+- AC-12. Amended by [062-capability-answer-settles-nothing](../062-capability-answer-settles-nothing/spec.md) AC-1: the check's answered questions are the issue's product and technical answers; capability answers are listed apart as reported actions and settle a question only if their action was carried out (AC-2). **Every question is checked first.** Given a stage produces a question
   (a review escalation, the spec stage's `question` verdict, an escalation on a
   plan, implement or fix result, or the verify bound of AC-17), other than a
   follow-up (AC-15), then the question check stage runs first, in a fresh
