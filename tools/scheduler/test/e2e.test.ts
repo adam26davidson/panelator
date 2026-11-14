@@ -774,8 +774,8 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
 // Spec 059 AC-6: a full volume postpones runs; it is not the work's failure.
 
 describe("end to end: a full volume postpones runs (spec 059 AC-6)", () => {
-  const LOW = async () => ({ bytes: 100 * 2 ** 20, inodes: 1_000_000 });
-  const ROOMY = async () => ({ bytes: 20 * 2 ** 30, inodes: 1_000_000 });
+  const LOW = async (_path: string) => ({ bytes: 100 * 2 ** 20, inodes: 1_000_000 });
+  const ROOMY = async (_path: string) => ({ bytes: 20 * 2 ** 30, inodes: 1_000_000 });
   /** A clock the test moves past each retry_at. */
   const clock = (w: ChainWorld) => {
     const c = { offset: 0 };
