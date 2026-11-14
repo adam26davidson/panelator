@@ -96,6 +96,9 @@
     "answered_questions": {
       "type": "string"
     },
+    "reported_actions": {
+      "type": "string"
+    },
     "held_work": {
       "type": "string"
     },

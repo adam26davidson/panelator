@@ -240,11 +240,21 @@ async function recordsAnswer(worktree: string, questionIds: number[], start: str
   return adrs.size > 0 && marksAll(lines, questionIds);
 }
 
-/** C8: the issue's answered questions, for the question check: one already answered may settle the new one. */
-async function issueAnswers(deps: DriverDeps, issue: number): Promise<string> {
+/**
+ * C8, spec 062 AC-1: the issue's answered questions for the question check, split by the logged question's kind: decisions
+ * (product, technical, or not logged) may settle the new question; capability answers are reported actions, which settle
+ * one only if the action was carried out.
+ */
+async function issueAnswers(deps: DriverDeps, issue: number): Promise<{ answered: string; reported: string }> {
   const entries = await answeredForIssue(deps.paths, issue);
-  if (!entries.length) return "(none)";
-  return entries.map((e) => `#${e.question_comment_id}: Question: ${oneLine(e.question?.question ?? "(not logged)")} Answer: ${oneLine(e.answer ?? "")}`).join("\n");
+  const text = (e: (typeof entries)[number]) => `Question: ${oneLine(e.question?.question ?? "(not logged)")} Answer: ${oneLine(e.answer ?? "")}`;
+  const reported = entries.filter((e) => e.question?.kind === "capability");
+  const decisions = entries.filter((e) => e.question?.kind !== "capability");
+  const kindOf = (e: (typeof entries)[number]) => (e.question?.kind === "product" || e.question?.kind === "technical" ? e.question.kind : "unknown");
+  return {
+    answered: decisions.length ? decisions.map((e) => `#${e.question_comment_id} (${kindOf(e)}): ${text(e)}`).join("\n") : "(none)",
+    reported: reported.length ? reported.map((e) => `#${e.question_comment_id} (capability, answered ${e.at}): ${text(e)}`).join("\n") : "(none)",
+  };
 }
 
 /** The Parent: of the sub-design a split spec PR adds (a README.md beside the missing spec.md, a design under docs/designs/ with two children); null otherwise. */
@@ -322,7 +332,7 @@ async function heldWorkText(deps: DriverDeps, claim: Claim): Promise<string | un
 }
 
 async function buildInput(
-  deps: DriverDeps, claim: Claim, issueTitle: string, issueBody: string, specText: string, ci: string | undefined, answered: string | undefined,
+  deps: DriverDeps, claim: Claim, issueTitle: string, issueBody: string, specText: string, ci: string | undefined, answered: string | undefined, reported?: string,
 ): Promise<StageInput> {
   const s = claim.state;
   const pr = s.pr ? { number: s.pr.number, head_sha: s.pr.head_sha, url: `https://github.com/${deps.cfg.repo}/pull/${s.pr.number}` } : undefined;
@@ -353,6 +363,7 @@ async function buildInput(
     design_problem: s.designProblem ?? undefined,
     viewports: DESIGN_VIEWPORTS,
     answered_questions: answered,
+    reported_actions: reported,
     held_work: claim.state.stage === "question-check" ? undefined : await heldWorkText(deps, claim),
     result_path: "", profile_instructions: "",
   };
@@ -711,8 +722,9 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   const profile = pickProfile(deps, def, state, security);
   const ci = stage === "review" && state.pr ? await ciSummary(deps, state.pr.head_sha, state.pr.number) : undefined;
   // AC-10: review gets the diff's cited answers; C8: the question check gets the issue's answered questions.
-  const answered = stage === "review" ? await answeredQuestions(deps, claim.issue, claim.worktree) : stage === "question-check" ? await issueAnswers(deps, claim.issue) : undefined;
-  const input = await buildInput(deps, claim, issue.title, issue.body, specText, ci, answered);
+  const checkAnswers = stage === "question-check" ? await issueAnswers(deps, claim.issue) : undefined;
+  const answered = stage === "review" ? await answeredQuestions(deps, claim.issue, claim.worktree) : checkAnswers?.answered;
+  const input = await buildInput(deps, claim, issue.title, issue.body, specText, ci, answered, checkAnswers?.reported);
 
   input.decision=state.decision??undefined;
   const beforePatch=state.conversation?await uncommittedPatch(claim.worktree):'';

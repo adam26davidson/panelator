@@ -19,6 +19,7 @@ export interface StageInput {
   design_problem?: string;
   viewports?: string;
   answered_questions?: string;
+  reported_actions?: string;
   held_work?: string;
   result_path: string;
   profile_instructions: string;
@@ -49,6 +50,7 @@ export function renderPrompt(template: string, input: StageInput): string {
     design_problem: input.design_problem ?? NONE,
     viewports: input.viewports ?? NONE,
     answered_questions: input.answered_questions ?? NONE,
+    reported_actions: input.reported_actions ?? NONE,
     held_work: input.held_work ?? NONE,
     result_path: input.result_path,
     profile_instructions: input.profile_instructions,
