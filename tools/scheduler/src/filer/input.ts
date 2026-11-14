@@ -11,8 +11,8 @@ import type {Finding,IssueData} from '../types.ts';
 export interface QueueRecord {ref:string; finding:Finding; repeat?:string; advisory_failed?:boolean; advisory_attempts?:number; duplicate_refs?:string[]; rests_on_pr_closed?:number; [key:string]:unknown}
 export interface AbandonedRecord {ref:string;issue:IssueData;comments:unknown[];ledgers:unknown[];retries:number}
 /** `issue_classes`: the exact class labels an issue decision may carry, so the model need not guess them (spec 018 AC-1). */
-export interface FilerInput {records:QueueRecord[];abandoned:AbandonedRecord[];open_issues:{number:number;title:string}[];cursor:number;issue_classes:string[]}
-export interface TriageEntry {ref:string;outcome:string;reason:string;run_id:string;at:string;issue?:number;advisory?:string;failed?:boolean;finding?:Finding;attempt?:number;failure?:AdvisoryFailure;held?:boolean;capability_issue?:number;rests_on_pr?:number;rests_on_pr_state?:'merged'|'reoffer_limit';reoffered?:boolean}
+export interface FilerInput {records:QueueRecord[];abandoned:AbandonedRecord[];open_issues:{number:number;title:string}[];cursor:number;issue_classes:string[];stops_pipeline_label:string}
+export interface TriageEntry {ref:string;outcome:string;reason:string;run_id:string;at:string;issue?:number;advisory?:string;failed?:boolean;finding?:Finding;attempt?:number;failure?:AdvisoryFailure;held?:boolean;capability_issue?:number;rests_on_pr?:number;stops_pipeline?:boolean;rests_on_pr_state?:'merged'|'reoffer_limit';reoffered?:boolean}
 /** `permission`: GitHub refused the App (403, the missing capability); `error`: anything else (spec 014 AC-5). */
 export type AdvisoryFailure='permission'|'error';
 /** Spec 014: a failed advisory is retried this many times in a row (per failure kind), then held. */
@@ -51,7 +51,7 @@ export async function readJsonLines<T>(path:string):Promise<T[]> {
  let text:string;try{text=await readFile(path,'utf8');}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return [];throw e;}
  return text.split('\n').filter(Boolean).map(l=>JSON.parse(l) as T);
 }
-export interface FilerDeps {paths:StatePaths;gh:GitHubClient;botLogin:string;now:()=>Date;classes:string[];notify:(text:string,key?:string)=>Promise<void>;log?:(entry:Record<string,unknown>)=>void}
+export interface FilerDeps {paths:StatePaths;gh:GitHubClient;botLogin:string;now:()=>Date;classes:string[];stopsPipelineLabel:string;notify:(text:string,key?:string)=>Promise<void>;log?:(entry:Record<string,unknown>)=>void}
 /** A PR's state, or null when GitHub could not say. A number that is no PR leaves the discard resting on nothing, so it counts as closed. */
 async function restingPrState(d:FilerDeps,pr:number):Promise<'open'|'merged'|'closed'|null> {
  try{const p=await d.gh.pullRequest(pr);return p.merged?'merged':p.state==='closed'?'closed':'open';}
@@ -125,5 +125,5 @@ export async function buildFilerInput(d:FilerDeps):Promise<FilerInput> {
   const ledgers=[];for(const f of await readdir(d.paths.escalations))if(f.startsWith(`${issue.number}.abandoned-`))ledgers.push(JSON.parse(await readFile(join(d.paths.escalations,f),'utf8')));
   abandoned.push({ref,issue,comments:await d.gh.listComments(issue.number),ledgers,retries:history.filter(t=>t.outcome==='retry').length});
  }
- return {records,abandoned,open_issues:openBot.map(i=>({number:i.number,title:i.title})),cursor,issue_classes:[...d.classes]};
+ return {records,abandoned,open_issues:openBot.map(i=>({number:i.number,title:i.title})),cursor,issue_classes:[...d.classes],stops_pipeline_label:d.stopsPipelineLabel};
 }

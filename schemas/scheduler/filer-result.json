@@ -48,6 +48,9 @@
                   "class": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "stops_pipeline": {
+                    "type": "boolean"
                   }
                 },
                 "required": [

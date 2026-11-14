@@ -26,7 +26,7 @@ async function setup(){
  const gh={listOpenIssuesByLabel:vi.fn(async()=>[]),listOpenIssuesByAuthor:vi.fn(async()=>[]),searchOpenIssuesByMarker:vi.fn(async()=>[]),listComments:vi.fn(async()=>[]),createIssue:vi.fn(async(_t:string,_b:string,_l:string[])=>42),comment:vi.fn(async()=>({id:1})),removeLabel:vi.fn(async()=>{}),closeIssue:vi.fn(async()=>{}),findDraftSecurityAdvisory:vi.fn(async():Promise<string|null>=>null),createDraftSecurityAdvisory:vi.fn(async()=>'GHSA-private'),
   pullRequest:vi.fn(async(n:number)=>{const p=prs.get(n);if(!p)throw Object.assign(new Error('Not Found'),{status:404});return p;})};
  const log=vi.fn();
- const d:FilerDeps={paths,gh:gh as unknown as GitHubClient,botLogin:'bot',classes:['class:bug'],notify:vi.fn(async()=>{}),now:()=>new Date('2026-10-27T00:00:00Z'),log};
+ const d:FilerDeps={paths,gh:gh as unknown as GitHubClient,botLogin:'bot',classes:['class:bug'],stopsPipelineLabel:'stops-pipeline',notify:vi.fn(async()=>{}),now:()=>new Date('2026-10-27T00:00:00Z'),log};
  const open=(n:number)=>prs.set(n,{number:n,state:'open',merged:false}),merged=(n:number)=>prs.set(n,{number:n,state:'closed',merged:true}),closed=(n:number)=>prs.set(n,{number:n,state:'closed',merged:false});
  const queue=async(n:number,what=(i:number)=>`finding ${i}`)=>{for(let i=0;i<n;i++)await appendFile(paths.findingsQueue,JSON.stringify({run_id:`r${i}`,timestamp:'t',finding:{...finding,what:what(i)}})+'\n');};
  const discard=async(input:FilerInput,pr:(ref:string)=>number|undefined)=>applyFilerResult(d,'run-1',input,{summary:'x',decisions:input.records.map(r=>({ref:r.ref,outcome:'discard' as const,reason:'covered by the PR',...(pr(r.ref)!==undefined?{rests_on_pr:pr(r.ref)}:{})}))});
@@ -85,7 +85,7 @@ describe('normalizeFilerResult (spec 025 AC-2)',()=>{
  it.each([[null],['text'],[{summary:'x'}],[{summary:'x',decisions:'none'}],[{summary:'x',decisions:[null,3]}]])('passes %j through unchanged',raw=>{expect(normalizeFilerResult(raw)).toEqual({result:raw,notes:[]});});
  it('a normalised batch passes batch validation, and merge_into with a closed target files the moved issue',async()=>{
   const {d,gh,paths}=await setup();
-  const input:FilerInput={records:[{ref:'1',finding},{ref:'2',finding:{...finding,what:'other'}}],abandoned:[],open_issues:[],cursor:0,issue_classes:['class:bug']};
+  const input:FilerInput={records:[{ref:'1',finding},{ref:'2',finding:{...finding,what:'other'}}],abandoned:[],open_issues:[],cursor:0,issue_classes:['class:bug'],stops_pipeline_label:'stops-pipeline'};
   const {result}=normalizeFilerResult({summary:'x',decisions:[{ref:'1',outcome:'file',title:'Flat',body:'Flat body',class:'class:bug'},{ref:'2',outcome:'merge_into',reason:'same',issue_number:99,fallback:{title:'Moved',body:'Moved body',class:'class:bug'}}]});
   await applyFilerResult(d,'run',input,result as never);
   expect(gh.createIssue.mock.calls.map(c=>c[0])).toEqual(['Flat','Moved']);

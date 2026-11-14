@@ -4,7 +4,7 @@ import {validate} from '../schema/validate.ts';
 import {record as recordEvt} from '../events/store.ts';
 import {createIssueRecorded} from '../events/filed.ts';
 import {readJsonLines,recordKey,settledCursor,advisoryAttempts,isRestingDiscard,isCapabilityIssue,stripCapabilityMarkers,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,CAPABILITY_TITLE,CAPABILITY_CLOSED_MARKER,type AdvisoryFailure,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
-export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'};rests_on_pr?:number}
+export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string;stops_pipeline?:boolean};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'};rests_on_pr?:number}
 export interface FilerResult {summary:string;decisions:Decision[]}
 export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput,result:FilerResult):Promise<void> {
  const valid=validate('filer-result',result);if(!valid.ok)throw new Error(valid.errors.join('; '));
@@ -78,7 +78,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   const prior=triage.filter(t=>t.ref===dec.ref).at(-1);
   if(prior&&!prior.failed&&!record?.rests_on_pr_closed&&(!abandoned||Date.parse(prior.at)>d.now().getTime()-7*86400000))continue;
   if(prior?.held&&prior.capability_issue!==undefined)touchedHeld=true;
-  const row:TriageEntry={ref:dec.ref,outcome:dec.outcome,reason:dec.reason,run_id:runId,at:d.now().toISOString(),...(record?{finding:record.finding}:{}),...(record?.rests_on_pr_closed?{reoffered:true}:{}),...(dec.outcome==='discard'&&dec.rests_on_pr!==undefined?{rests_on_pr:dec.rests_on_pr}:{})};
+  const row:TriageEntry={ref:dec.ref,outcome:dec.outcome,reason:dec.reason,run_id:runId,at:d.now().toISOString(),...(record?{finding:record.finding}:{}),...(record?.rests_on_pr_closed?{reoffered:true}:{}),...(dec.issue?.stops_pipeline?{stops_pipeline:true}:{}),...(dec.outcome==='discard'&&dec.rests_on_pr!==undefined?{rests_on_pr:dec.rests_on_pr}:{})};
   const marker=`<!-- panelator-finding:${runId}:${dec.ref} -->`;
   // Set when an issue is created with the default label because the model's class could not be resolved (spec 018 AC-3).
   const applied:{fallback?:{class:string;used:string}}={};
@@ -94,7 +94,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
    // Nor can it carry the capability issue's marker (spec 014 AC-6).
    let body=stripCapabilityMarkers(issue.body.replace(/^\s*Spec:.*$/gm,''));
    if(dec.outcome==='escalate')body=`Possible design flaw\n\n${body}\n\nQuestion for the spec stage:\n${JSON.stringify(dec.question,null,2)}`;
-   const title=stripCapabilityMarkers(issue.title),text=stripCapabilityMarkers(`${body}\n\nFiler verification: ${dec.reason}`)+`\n\n${marker}`,labels=[issue.class,'validated'];
+   const title=stripCapabilityMarkers(issue.title),text=stripCapabilityMarkers(`${body}\n\nFiler verification: ${dec.reason}`)+`\n\n${marker}`,labels=[issue.class,'validated',...(issue.stops_pipeline?[d.stopsPipelineLabel]:[])];
    return created(await createIssueRecorded(d.gh,d.paths,{title,body:text,labels,by:d.botLogin,class:issue.class,marker}),title,text,labels);
   };
   // A security flag overrides every public outcome; a discard is private and stays a discard (AC-19). A record
@@ -131,7 +131,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
    case 'merge_into': {
     const target=(await openBotIssues()).find(i=>i.number===dec.issue_number);
     if(!target){row.outcome='file';row.reason+=' (merge target closed or not bot-authored)';row.issue=await file();}
-    else {const comments=await d.gh.listComments(target.number);if(!comments.some(c=>c.body.includes(`:${dec.ref} -->`)))await d.gh.comment(target.number,stripCapabilityMarkers(`${JSON.stringify(record?.finding,null,2)}\n\n${dec.reason}`)+`\n\n${marker}`);row.issue=target.number;}break;
+    else {const comments=await d.gh.listComments(target.number);if(!comments.some(c=>c.body.includes(`:${dec.ref} -->`)))await d.gh.comment(target.number,stripCapabilityMarkers(`${JSON.stringify(record?.finding,null,2)}\n\n${dec.reason}`)+`\n\n${marker}`);if(dec.issue?.stops_pipeline)await d.gh.addLabels(target.number,[d.stopsPipelineLabel]);row.issue=target.number;}break;
    }
    case 'retry':
     if(triage.filter(t=>t.ref===dec.ref&&t.outcome==='retry').length>=2){row.outcome='defer';row.reason='retry limit of two exhausted';break;}
