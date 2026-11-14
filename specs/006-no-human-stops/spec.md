@@ -141,11 +141,11 @@ AC-10 second sentence, AC-13)
   tick finishes it from the first step not yet done; no step is repeated other
   than the one in flight when it stopped.
 
-  **Spec track.** A bound hit by the spec stage itself, or on a spec PR (its
+  **Spec track.** Amended by [060-out-of-scope-check-failure-blocks-on-main](../060-out-of-scope-check-failure-blocks-on-main/spec.md) AC-6: a fix verdict that the failure's cause is outside the PR's scope is not a bound hit while the block bound holds; the chain blocks and waits for main. A bound hit by the spec stage itself, or on a spec PR (its
   fix loop, its scope, its review), runs one rescue of the stuck stage if the
   issue's spec-track rescue is unused; otherwise the issue is abandoned as
   above. Re-plan and spec revision do not apply on the spec track.
-- AC-6. **The escalation bounds are fixed in code.** The bounds are named
+- AC-6. Amended by [060-out-of-scope-check-failure-blocks-on-main](../060-out-of-scope-check-failure-blocks-on-main/spec.md) AC-6: MAX_BLOCKS (3) is a bound of the same kind. **The escalation bounds are fixed in code.** The bounds are named
   constants of the chain module (`MAX_FIXES` stays in the fix-loop gate):
   - one rescue on the issue track and one on the spec track;
   - one re-plan;

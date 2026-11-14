@@ -530,6 +530,7 @@ are stale and are corrected as part of B.
 - `specs/057-design-stage-e2e-run-carries-held-work/spec.md` (issue #110)
 - `specs/058-loop-test-polls-for-the-started-chain/spec.md` (issue #111)
 - `specs/059-full-disk-postpones-runs/spec.md` (issue #114)
+- `specs/060-out-of-scope-check-failure-blocks-on-main/spec.md` (issue #115)
 - planned: web-ui-profile
   title: The web-ui profile: implement, fix and review instructions for UI packages
   brief: Spec 001 section 9 names `web-ui` among the v0 profiles and leaves its content to
