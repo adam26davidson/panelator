@@ -439,7 +439,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
 
 **Infra health agent** (design sections 6.1 and 6.2; process-spec 4.4)
 
-- AC-15. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-3: the outage alarm is the payload of kind `network_outage`, and a payload without `kind` is filed as unknown. **Infra health is a standing agent.** `agents/standing/infra-health.md`:
+- AC-15. Superseded by [064-disk-sweep-and-infra-health](../064-disk-sweep-and-infra-health/spec.md) AC-5: Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-3: the outage alarm is the payload of kind `network_outage`, and a payload without `kind` is filed as unknown. **Infra health is a standing agent.** `agents/standing/infra-health.md`:
   standard tier, Claude, `worktree: none`, schedule `6h`, events
   `infra_alarm` and `ci_failure_main`, credentials none, actions
   `rerun_workflow`, `run_agent`, `pause_agent`, output `standing-result`.
@@ -467,7 +467,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   leaves `agents/actions.yaml` with `renew_credential` as its one new kind.
   The number is kept so that the follow-up's criterion and the plan stage's
   references to it do not move.
-- AC-17. **The scheduler's own service is a resource too.** `restart_service`
+- AC-17. Superseded by [064-disk-sweep-and-infra-health](../064-disk-sweep-and-infra-health/spec.md) AC-6: **The scheduler's own service is a resource too.** `restart_service`
   is not an action kind: the scheduler is the only service and restarts
   itself after merges (spec 008 AC-2). Infra health files a finding when the
   tick summaries show the service restarting more than three times in 24
@@ -623,6 +623,8 @@ list, the security criteria, or what routes a sensitive diff to the security
 review.
 
 ## 6. Verification
+
+> Amended by [064-disk-sweep-and-infra-health](../064-disk-sweep-and-infra-health/spec.md) AC-7: the infra health runs (the `ci_failure_main` re-run, the pause and the unknown-kind finding) are verified by spec 064.
 
 - `pnpm test` passes and `pnpm -F @panelator/scheduler typecheck` is clean,
   including:
