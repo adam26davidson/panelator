@@ -124,7 +124,7 @@ AC-10 second sentence, AC-13)
 - AC-5. **After a revision, the next bound ends in abandonment.** Given a spec
   revision has merged for the issue, when a bound from AC-1 is hit again,
   then:
-  - the issue's PR (and a parked issue PR, AC-18) is closed, its branch saved
+  - Amended by [061-retried-chain-starts-from-closed-pr](../061-retried-chain-starts-from-closed-pr/spec.md) AC-1: the closed PR's number, branch, head and patch are recorded in the fresh ledger for the retried chain, and the comment names them. the issue's PR (and a parked issue PR, AC-18) is closed, its branch saved
     as a patch and deleted;
   - the issue receives the `abandoned` label before `in-progress` is removed,
     and an informational comment that names the bounds hit and links the run
@@ -160,7 +160,7 @@ AC-10 second sentence, AC-13)
 
   All are counted per issue. A test asserts their values. No stage definition
   or prompt can change them.
-- AC-7. **Escalation state is per issue and survives a release.** Given an
+- AC-7. Amended by [061-retried-chain-starts-from-closed-pr](../061-retried-chain-starts-from-closed-pr/spec.md) AC-2: the fresh ledger written at abandonment carries the closed PRs' pointers beside an unrecorded answer, and the retried chain starts with fresh counts and a hold on the first stage's branch from them. **Escalation state is per issue and survives a release.** Given an
   issue whose chain has used any escalation bound and was then released (for
   example by liveness) and claimed again, then the new chain starts with the
   same counters and history. They are kept in `escalations/<issue>.json` in
