@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "infra-health-input.json",
+  "type": "object",
+  "properties": {
+    "since": { "type": ["string", "null"] },
+    "events": { "type": "array" },
+    "disk_sweep": { "type": ["object", "null"] },
+    "free_space": { "type": "array" },
+    "agents": { "type": "object" },
+    "service_log": { "type": "array" },
+    "actions": { "type": "array" }
+  },
+  "required": ["since", "events", "disk_sweep", "free_space", "agents", "service_log", "actions"],
+  "additionalProperties": true
+}

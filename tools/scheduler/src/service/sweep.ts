@@ -11,8 +11,6 @@ import { listWorktrees } from "../runner/worktree.ts";
 import { readAgentState } from "../standing/state.ts";
 import { readClaim } from "../state/claims.ts";
 import { appendFindings } from "../state/findings.ts";
-import { listBlocked } from "../state/blocked.ts";
-import { listPaused } from "../state/paused.ts";
 import type { StatePaths } from "../state/paths.ts";
 
 /**
@@ -99,8 +97,12 @@ export async function staleLeftovers(volume: string, age: SweepAge, deps: ListDe
   }
   if (volume === paths.root) {
     const protectedIssues = new Set<number>(deps.activeIssues?.() ?? []);
-    for (const r of await listPaused(paths)) protectedIssues.add(r.issue);
-    for (const r of await listBlocked(paths)) protectedIssues.add(r.issue);
+    // By file name: a record that does not parse still protects its issue.
+    for (const dir of [paths.paused, paths.blocked])
+      for (const n of await entries(dir)) {
+        const m = /^(\d+)\.json$/.exec(n);
+        if (m) protectedIssues.add(Number(m[1]));
+      }
     for (const name of await entries(paths.worktrees)) {
       const path = join(paths.worktrees, name);
       const issue = /^issue-(\d+)$/.exec(name);

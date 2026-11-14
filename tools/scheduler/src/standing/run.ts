@@ -21,6 +21,7 @@ import {transientCause,transientRun,outageBackoffS,OUTAGE_ALARM_MS,OUTAGE_CEILIN
 import {checkHostSpace} from '../runner/host-space.ts';
 import {HISTORY_ENTRY_MAX} from '../chain/machine.ts';
 import {buildAuditInput} from './audit-input.ts';
+import {buildInfraHealthInput} from './infra-health-input.ts';
 import {updateAgentState,type AgentState} from './state.ts';
 import {parseDuration} from './registry.ts';
 import {record} from '../events/store.ts';
@@ -62,7 +63,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
    await checkHostSpace(d.paths,d.paths.worktrees,{freeSpace:d.freeSpace,log:d.log});
    await exec('git',['worktree','add','--detach',worktree,'origin/main'],{cwd:d.repoDir});created=true;
   }
-  const input=def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):null;
+  const input=def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):def.input==='infra-health-input'?await buildInfraHealthInput({paths:d.paths,freeSpace:d.freeSpace},received,state.last_run?.at??null,now):null;
   const parameters=await d.parameters.all();
   const inputCheck=validate(def.input as SchemaName,input??{events:received,since:state.last_run?.at??null,parameters});
   if(!inputCheck.ok)throw new Error(`standing input: ${inputCheck.errors.join('; ')}`);

@@ -57,7 +57,7 @@ export const sweepVolumeKind: ActionKind = {
     }
     if (prune) await pruneWorktrees(c.repoDir).catch((e) => failed.push(`prune: ${(e as Error).message}`));
     c.onSweep?.({ removed, freed_inodes: freed, patches });
-    c.serviceLog?.({ kind: "disk-sweep", path, age, agent: c.actor, removed, freed_inodes: freed, patches, ...(failed.length ? { failed } : {}) });
+    if (removed.length || failed.length) c.serviceLog?.({ kind: "disk-sweep", path, age, agent: c.actor, removed, freed_inodes: freed, patches, ...(failed.length ? { failed } : {}) });
     if (failed.length) throw new Error(`could not remove ${failed.join("; ")}`);
     return { undo: null };
   },
