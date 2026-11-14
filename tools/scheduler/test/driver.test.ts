@@ -110,6 +110,7 @@ async function setup(
     stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: pair.repo, binDir: join(pair.root, "bin"),
     adapterFor: () => adapter, systemdScope: false, now: () => new Date(), log: () => {}, fetchOrigin: async () => { git(pair.repo, "fetch", "-q", "origin"); },
     unitActive: async () => false, stopUnit: async () => {},
+    freeSpace: async () => ({ bytes: 20 * 2 ** 30, inodes: 1e6 }),
   };
   const claim: Claim = { issue: 7, state: initialChainState(7), worktree: wt.path, started_at: new Date().toISOString(), last_activity_at: new Date().toISOString(), run_id: null };
   await writeClaim(paths, claim);
@@ -2230,5 +2231,49 @@ describe("driver: a rebase respects merged main (spec 024)", () => {
     expect(adapter.ran).toEqual(["fix:claude-sonnet-5-5"]);
     expect(git(claim.worktree, "status", "--porcelain").trim()).toBe("");
     expect(head(claim.worktree)).toBe(sha);
+  }, 60_000);
+});
+
+describe("driver: a full volume postpones runs (spec 059)", () => {
+  it("refuses the launch before the worktree is synced: no run, no claim run_id, ENOSPC with the exact message (AC-3)", async () => {
+    const { deps, claim, paths, pair } = await setup(() => ({}));
+    const planning = (await step(deps, claim)).claim;
+    expect(planning.state.stage).toBe("plan");
+    // A marker commit on origin that syncWorktree would fetch and reset to.
+    git(pair.repo, "commit", "--allow-empty", "-q", "-m", "marker");
+    git(pair.repo, "push", "-q", "origin", "HEAD:main");
+    const before = head(claim.worktree);
+    const adapter = scriptedAdapter({});
+    deps.adapterFor = () => adapter;
+    deps.freeSpace = async (path) => ({ bytes: path === paths.root ? 100 * 2 ** 20 : 20 * 2 ** 30, inodes: 5000 });
+    await expect(step(deps, planning)).rejects.toMatchObject({
+      code: "ENOSPC",
+      message: `host space low: ${paths.root} has 100 MiB free and 5000 free inodes (floor 512 MiB, 1000 inodes)`,
+    });
+    expect(adapter.ran).toEqual([]);
+    expect(readdirSync(paths.runs)).toEqual([]);
+    expect(head(claim.worktree)).toBe(before);
+    expect((await readClaim(paths, 7))?.run_id).toBeNull();
+  }, 60_000);
+
+  it("rejects a host-refused run that ended ok: no stageRun, no result applied, the rebase undone (AC-4)", async () => {
+    const { deps, claim, paths, sha } = await setup(() => ({}), undefined, prBehindMain);
+    const base = rateLimited({ review: [approve] });
+    const adapter = { ...base, hostRefusal: () => "ENOSPC" };
+    deps.adapterFor = () => adapter;
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (r) => { logs.push(r); };
+    const c = at(claim, { stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } });
+    await writeClaim(paths, c);
+    await expect(step(deps, c)).rejects.toMatchObject({ code: "ENOSPC", message: expect.stringMatching(/^host refused every shell command in run 7-review-1-/) });
+    expect(logs.find((l) => l.kind === "stage-host-refused")).toMatchObject({ issue: 7, stage: "review", attempt: 1, cause: "ENOSPC" });
+    expect(logs.find((l) => l.kind === "rebase-undone")).toMatchObject({ stage: "review", to: sha });
+    expect(head(claim.worktree)).toBe(sha);
+    const saved = await readClaim(paths, 7);
+    expect(saved?.stageRun).toBeUndefined();
+    expect(saved?.run_id).toBeNull();
+    expect(adapter.ran).toHaveLength(1);
+    // The usage record was written: the tokens were spent.
+    expect(readdirSync(paths.usage)).toHaveLength(1);
   }, 60_000);
 });
