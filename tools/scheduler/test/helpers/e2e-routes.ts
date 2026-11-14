@@ -97,6 +97,8 @@ export async function standingWorld(results:Record<string,Scripted[]>,freeSpace:
   const cfg={...loadConfig(defaultConfigPath),repo:'o/r',required_checks:['test'],slots:1};
   const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),cfg,registry));
   let now=new Date('2026-10-01T00:00:00Z');await initializeAgents(paths,registry,parameters,now);
+  // The infra health agent (spec 064) is due every six hours and would take the one slot these worlds script; tests that run it unpause it.
+  await writeAgentState(paths,'infra-health',{...(await readAgentState(paths,'infra-health'))!,paused:true,paused_by:'maintainer'});
   const issues:{number:number;title:string;body:string;user:{login:string};labels:{name:string}[];created_at:string}[]=[];
   const comments=new Map<number,unknown[]>();
   const routes:Route[]=[
@@ -290,6 +292,8 @@ export async function chainWorld(opts: {
   // AC-7: the recorded issue chains are unchanged when no standing agent can run.
   // Keep the filer paused here; separate recorded runs below exercise its event delivery.
   await writeAgentState(paths,'findings-filer',{...(await readAgentState(paths,'findings-filer'))!,paused:true,paused_by:'maintainer'});
+  // The infra health agent (spec 064) wakes on the alarms these worlds raise; it keeps its events and does not run.
+  await writeAgentState(paths,'infra-health',{...(await readAgentState(paths,'infra-health'))!,paused:true,paused_by:'maintainer'});
   const deps: SchedulerDeps = {
     cfg, paths, registry, parameters, gh: new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r"),
     notifier: recordedNotifier({ notify: async (n) => { notifications.push(n); } }, paths),

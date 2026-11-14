@@ -78,7 +78,7 @@ const older = (mtimeMs: number, age: SweepAge, now: Date): boolean => now.getTim
 
 async function entries(dir: string): Promise<string[]> {
   return readdir(dir).catch((e) => {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if (["ENOENT", "ENOTDIR"].includes((e as NodeJS.ErrnoException).code ?? "")) return [];
     throw e;
   });
 }
