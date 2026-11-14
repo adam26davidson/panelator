@@ -112,7 +112,7 @@ fake harness and a mocked GitHub API unless marked (real).
 - AC-13. Superseded by spec 006: Given review returns `changes_requested` for the third time on one
   issue, when the result is processed, then the issue receives `needs-human`
   and no fix stage starts.
-- AC-14. Given a PR whose required checks are not all green on the head SHA,
+- AC-14. Amended by [060-out-of-scope-check-failure-blocks-on-main](../060-out-of-scope-check-failure-blocks-on-main/spec.md) AC-2: on the spec and design tracks a check failed on main too, or one not yet re-run for this head, does not start the fix at once. Given a PR whose required checks are not all green on the head SHA,
   when verify runs, then review does not start; given a check failed, then a
   fix stage starts with the failing check's log excerpt as input; given
   checks are pending, then the chain waits and re-polls.
