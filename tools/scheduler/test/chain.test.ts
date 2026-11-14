@@ -1668,7 +1668,7 @@ describe("spec 060: a failed check outside the PR's scope waits for main", () =>
       const r = transition(verifying(track), failedEvent({ main: { sha, failed: ["test"] } }));
       expect(r.state).toMatchObject({ stage: "blocked", fixes: 0, specRescues: 0, rescues: 0, blocked: { on: { kind: "main_green", check: "test", main_sha: sha }, check: "test", blocks: 1 } });
       expect(types(r.actions)).toEqual(["finding", "comment", "notify", "block"]);
-      expect(r.actions[0]).toMatchObject({ type: "finding", finding: { what: `required check test fails on a ${track} PR for a cause outside its scope`, where: `origin/main ${sha}`, noticed_how: `verify of PR #8 on the ${track} track` } });
+      expect(r.actions[0]).toMatchObject({ type: "finding", finding: { what: `required check test fails on a ${track} PR for a cause outside its scope`, where: `origin/main ${sha}`, noticed_how: `verify of PR #8 on the ${track} track`, stops_pipeline: true } });
       expect(r.actions[1]).toMatchObject({ text: expect.not.stringContaining("@") });
       expect(r.actions[2]).toMatchObject({ gate: "infra" });
       expect(r.actions[3]).toEqual({ type: "block", condition: { kind: "main_green", check: "test", main_sha: sha } });

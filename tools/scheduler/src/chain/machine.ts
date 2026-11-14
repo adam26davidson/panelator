@@ -625,6 +625,7 @@ function block(state: ChainState, condition: BlockCondition, cause?: string): St
           what: `required check ${check ?? "(unnamed)"} fails on a ${track} PR for a cause outside its scope`, where,
           evidence: [entry, cause].filter(Boolean).join("\n\n") || state.history.slice(-1).join("\n"),
           noticed_how: `verify of PR #${state.pr?.number ?? "?"} on the ${track} track`,
+          stops_pipeline: true,
         },
       },
       { type: "comment", text: text.replaceAll("@", "(at)") },

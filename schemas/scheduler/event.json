@@ -108,6 +108,9 @@
           "cls": {
             "type": "string"
           },
+          "stops_pipeline": {
+            "type": "boolean"
+          },
           "validated_at": {
             "type": [
               "string",
@@ -122,6 +125,7 @@
           "rank",
           "work",
           "cls",
+          "stops_pipeline",
           "validated_at",
           "created_at"
         ]

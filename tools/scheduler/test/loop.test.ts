@@ -165,6 +165,18 @@ describe("Scheduler.tick", () => {
     expect(t2.claimed).toEqual([]);
   }, 30_000);
 
+  it("records issue.eligible with stops_pipeline for an issue with and without the label (spec 063 AC-5)", async () => {
+    const { s, paths } = await setup(routes([issue(2), issue(1, ["validated", "class:product", "stops-pipeline"])]));
+    await s.tick();
+    const db = openIndex(paths);
+    const rows = db.prepare("SELECT issue, payload FROM events WHERE kind = 'issue.eligible' ORDER BY issue").all() as { issue: number; payload: string }[];
+    db.close();
+    expect(rows.map((r) => [r.issue, JSON.parse(r.payload)])).toEqual([
+      [1, expect.objectContaining({ rank: 0, stops_pipeline: true, created_at: "2026-10-01T00:00:00Z" })],
+      [2, expect.objectContaining({ rank: 1, stops_pipeline: false, created_at: "2026-10-02T00:00:00Z" })],
+    ]);
+  }, 30_000);
+
   it("writes a new claim with no slot field (spec 034 AC-1)", async () => {
     const { s, paths } = await setup(routes([issue(3, ["validated"])]));
     expect((await s.tick()).claimed).toEqual([3]);
@@ -787,6 +799,7 @@ describe("Scheduler.tick: transient failures (spec 015)", () => {
     const findings = readFileSync(t.paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(findings).toHaveLength(1);
     expect(findings[0].finding).toMatchObject({ what: "network outage blocks the chain", noticed_how: "scheduler transient error" });
+    expect(findings[0].finding).not.toHaveProperty("stops_pipeline");
     expect(t.events.filter((e) => e.event === "infra_alarm")).toEqual([{ event: "infra_alarm", payload: expect.objectContaining({ kind: "network_outage", issue: 7, since: "2026-10-12T12:00:00.000Z", cause: "EAI_AGAIN" }) }]);
     expect(t.notifications.filter((n) => n.gate === "chain_error")).toEqual([]);
   }, 60_000);
@@ -810,7 +823,7 @@ describe("Scheduler.tick: transient failures (spec 015)", () => {
     expect(t.notifications.find((n) => n.gate === "infra")?.text).toContain("/tmp has 100 MiB free");
     const findings = readFileSync(t.paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(findings).toHaveLength(1);
-    expect(findings[0].finding).toMatchObject({ what: "disk space blocks the chain", where: expect.stringContaining("issue #7, stage"), noticed_how: "scheduler transient error" });
+    expect(findings[0].finding).toMatchObject({ what: "disk space blocks the chain", where: expect.stringContaining("issue #7, stage"), noticed_how: "scheduler transient error", stops_pipeline: true });
     expect(t.events.filter((e) => e.event === "infra_alarm")).toEqual([{ event: "infra_alarm", payload: expect.objectContaining({ kind: "disk_full", issue: 7, cause: "ENOSPC", failures: 1 }) }]);
   }, 60_000);
 
