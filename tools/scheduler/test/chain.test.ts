@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   branchOf, checkFailureEntry, FAILURE_MARKER, HISTORY_ENTRY_MAX, HISTORY_MAX_ENTRIES, initialChainState, ledgerOf, MAX_CHAIN_ERRORS, MAX_DECIDE_RETURNS, MAX_REPLANS, MAX_RESCUES,
-  MAX_SPEC_ANSWERS, MAX_SPEC_REVISIONS, normalizeChainState, transition, VERIFY_PENDING_MAX_H, type LedgerCounts,
+  MAX_BLOCKS, MAX_SPEC_ANSWERS, MAX_SPEC_REVISIONS, normalizeChainState, transition, VERIFY_PENDING_MAX_H, type LedgerCounts,
 } from "../src/chain/machine.ts";
 import type { Action, ChainEvent, ChainStage, ChainState } from "../src/chain/types.ts";
 import { MAX_FIXES } from "../src/gates/index.ts";
@@ -379,7 +379,7 @@ describe("chain: escalation path (AC-1 to AC-6)", () => {
     expect(r2.state).toMatchObject({ replans: 0, specRevisions: 0 });
   });
   it("the escalation bounds (AC-6)", () => {
-    expect([MAX_RESCUES, MAX_REPLANS, MAX_SPEC_REVISIONS, MAX_SPEC_ANSWERS, MAX_DECIDE_RETURNS, VERIFY_PENDING_MAX_H, MAX_FIXES]).toEqual([1, 1, 1, 1, 1, 6, 2]);
+    expect([MAX_RESCUES, MAX_REPLANS, MAX_SPEC_REVISIONS, MAX_SPEC_ANSWERS, MAX_DECIDE_RETURNS, VERIFY_PENDING_MAX_H, MAX_FIXES, MAX_BLOCKS]).toEqual([1, 1, 1, 1, 1, 6, 2, 3]);
     expect([HISTORY_ENTRY_MAX, HISTORY_MAX_ENTRIES]).toEqual([4000, 20]);
   });
 });
@@ -1142,10 +1142,10 @@ const headOf = (e: ChainEvent) => (e as { head?: string }).head;
 
 describe("chain: every event in every stage (AC-27)", () => {
   const STAGES: ChainStage[] = [
-    "claimed", "plan", "implement", "verify", "review", "fix", "merge", "spec", "design", "question-check", "done", "released", "waiting", "paused", "abandoned",
+    "claimed", "plan", "implement", "verify", "review", "fix", "merge", "spec", "design", "question-check", "done", "released", "waiting", "paused", "blocked", "abandoned",
   ];
   const AGENT: AgentStageName[] = ["plan", "implement", "review", "fix", "spec", "design", "question-check"];
-  const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused"];
+  const ENDED: ChainStage[] = ["done", "released", "abandoned", "paused", "blocked"];
   const EVENTS_FAILED: ChainEvent[] = AGENT.flatMap((stage): ChainEvent[] => [
     { type: "stage_failed", stage, reason: "boom" },
     { type: "stage_failed", stage, reason: "429", postpone: true },
@@ -1186,6 +1186,7 @@ describe("chain: every event in every stage (AC-27)", () => {
     { type: "rebase_conflict", detail: "CONFLICT a.ts" },
     { type: "conflict_gone" },
     answered(),
+    { type: "unblocked", main_sha: "9".repeat(40) },
     { type: "liveness_expired" },
     { type: "chain_error", error: "boom" },
   ];
@@ -1203,6 +1204,7 @@ describe("chain: every event in every stage (AC-27)", () => {
       // Needs `conflictPending`, which no fixture here sets; spec 024's tests cover the valid case.
       case "conflict_gone": return false;
       case "answered": return stage === "paused";
+      case "unblocked": return stage === "blocked";
       case "liveness_expired":
       case "chain_error": return !ENDED.includes(stage);
     }

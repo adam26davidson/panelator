@@ -33,6 +33,11 @@
       "type": "integer",
       "minimum": 0
     },
+    "blocks": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Spec 060: blocks on main for this issue."
+    },
     "specAnswers": {
       "type": "integer",
       "minimum": 0

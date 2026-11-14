@@ -57,6 +57,7 @@
             "released",
             "waiting",
             "paused",
+            "blocked",
             "abandoned"
           ]
         },
@@ -291,6 +292,42 @@
         "checksRerun": {
           "type": "boolean"
         },
+        "checkRerun": {
+          "type": ["string", "null"]
+        },
+        "blocked": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["on", "since", "check", "main_sha", "blocks"],
+              "additionalProperties": false,
+              "properties": {
+                "on": { "oneOf": [ { "type": "null" }, {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["kind", "check", "main_sha"],
+              "additionalProperties": false,
+              "properties": { "kind": { "const": "main_green" }, "check": { "type": "string" }, "main_sha": { "type": "string" } }
+            },
+            {
+              "type": "object",
+              "required": ["kind", "paths", "main_sha"],
+              "additionalProperties": false,
+              "properties": { "kind": { "const": "paths" }, "paths": { "type": "array", "minItems": 1, "items": { "type": "string" } }, "main_sha": { "type": "string" } }
+            }
+          ]
+        } ] },
+                "since": { "type": ["string", "null"] },
+                "check": { "type": ["string", "null"] },
+                "main_sha": { "type": ["string", "null"] },
+                "blocks": { "type": "integer", "minimum": 0 }
+              }
+            }
+          ],
+          "description": "Spec 060: the block's condition while blocked, and this issue's count of blocks."
+        },
         "heldWork": {
           "type": "array",
           "items": {
@@ -496,6 +533,18 @@
               "minimum": 1
             }
           }
+        },
+        {
+          "type": "object",
+          "required": ["type", "main_sha"],
+          "additionalProperties": false,
+          "properties": { "type": { "const": "unblocked" }, "main_sha": { "type": "string" } }
+        },
+        {
+          "type": "object",
+          "required": ["type", "detail"],
+          "additionalProperties": false,
+          "properties": { "type": { "const": "rebase_conflict" }, "detail": { "type": "string" } }
         },
         {
           "type": "object",

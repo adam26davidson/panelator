@@ -87,6 +87,14 @@ sent back and its reasoning beside it, and returns it to you if it is the same q
 second return is a bound on the issue. A question not marked `new_blocker` counts as a
 failed run.
 
+**Out of scope.** On a spec or design pull request whose fix input is a failed required check, when
+the failing test or job fails for a cause that no file inside this PR's scope can change, do not
+widen the diff: return the head unchanged and add `"out_of_scope": { "cause": "...", "paths": ["..."] }`
+beside `head_sha` and `addressed`. `cause` is one paragraph naming the failing test or step and why it
+is main's; `paths` are the repository files, outside the scope, whose change would clear it (at least
+one). The chain then waits for main to change one of them. On the issue track the field is recorded
+and treated as a fix that changed nothing.
+
 **Follow-up.** When the maintainer's answer is present but the reply asks for more detail
 or asks something back, do not guess: return an `escalation` holding the follow-up
 question, with `"follow_up": true` and `"reply_quote"` set to the words of the reply you

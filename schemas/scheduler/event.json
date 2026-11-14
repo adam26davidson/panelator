@@ -30,6 +30,8 @@
             "question",
             "pause.started",
             "pause.ended",
+            "block.started",
+            "block.ended",
             "slots.sample",
             "maintainer.contact",
             "parameter.changed",
@@ -144,6 +146,7 @@
               "abandoned",
               "postponed",
               "paused",
+              "blocked",
               "error",
               "stopped"
             ]
