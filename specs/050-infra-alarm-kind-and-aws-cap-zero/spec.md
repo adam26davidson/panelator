@@ -114,7 +114,7 @@ spec 022's own test setup (the fake `aws` command of its section 6).
 
 **One shape for `infra_alarm`**
 
-- AC-1. **The chain's outage alarm carries `kind`.** Given an outage of a
+- AC-1. Amended by [059-full-disk-postpones-runs](../059-full-disk-postpones-runs/spec.md) AC-4: the payload's kind is `disk_full` when the outage's cause is `ENOSPC`. **The chain's outage alarm carries `kind`.** Given an outage of a
   claim two hours old with `alarmed` false (spec 015 AC-8), when the loop
   raises the alarm, then the one `infra_alarm` event it emits has payload
   `{ kind: "network_outage", issue, since, failures, cause }`; the log line,

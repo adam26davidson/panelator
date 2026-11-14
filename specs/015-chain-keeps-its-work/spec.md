@@ -118,7 +118,7 @@ claim is the record of its consecutive transient failures.
 
 ### Postponed runs and rebased heads (#35)
 
-- AC-1. **A run without a result undoes the driver's rebase.** Given a
+- AC-1. Amended by [059-full-disk-postpones-runs](../059-full-disk-postpones-runs/spec.md) AC-4: the rebase is also undone for a host-refused run, whatever its outcome. **A run without a result undoes the driver's rebase.** Given a
   claim with a PR bound whose remote head is behind a moved `origin/main`,
   when a review, fix or implement run is prepared (the rebase moves `HEAD`)
   and the run ends without an `ok` outcome (postponed on a rate limit, or
@@ -144,7 +144,7 @@ claim is the record of its consecutive transient failures.
 
 ### Transient infrastructure failures (#29)
 
-- AC-4. **Classification.** `transientCause(error)` returns a short label
+- AC-4. Amended by [059-full-disk-postpones-runs](../059-full-disk-postpones-runs/spec.md) AC-1: the code `ENOSPC` and the message "No space left on device" are transient causes too. **Classification.** `transientCause(error)` returns a short label
   for a transient error (the code, `HTTP <status>` or the matched git
   message) and `null` for a genuine one, looking through `cause` up to five
   levels deep. Tests cover each class with a mocked error: Node's DNS error
@@ -176,7 +176,7 @@ claim is the record of its consecutive transient failures.
   `MAX_CHAIN_FAILURES` genuine failures in a row the `chain_error` event is
   raised as spec 006 AC-7 ("Repeated chain errors") says. Transient failures between genuine ones
   neither count nor reset the count.
-- AC-8. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-1: the `infra_alarm` payload gains `kind: "network_outage"`. **A long outage raises one alarm.** Given an outage whose `since`
+- AC-8. Amended by [059-full-disk-postpones-runs](../059-full-disk-postpones-runs/spec.md) AC-4: an outage whose cause is `ENOSPC` alarms on its first failure, with kind `disk_full`. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-1: the `infra_alarm` payload gains `kind: "network_outage"`. **A long outage raises one alarm.** Given an outage whose `since`
   is two hours or more before a transient failure and `alarmed` false, then
   the loop sets `alarmed`, logs `{ kind: "transient-outage-alarm", issue,
   since, failures, cause }`, appends one finding (`what: "network outage
@@ -187,7 +187,7 @@ claim is the record of its consecutive transient failures.
 - AC-9. **Liveness waits for the outage.** Given a claim with an outage
   whose last transient failure was within `liveness_hours`, the liveness
   check does not expire it (AC-5 keeps `last_activity_at` fresh).
-- AC-10. **A finished run is not run again.** Given a stage run that ends
+- AC-10. Amended by [059-full-disk-postpones-runs](../059-full-disk-postpones-runs/spec.md) AC-4: a host-refused run that ended `ok` does not record `stageRun`. **A finished run is not run again.** Given a stage run that ends
   `ok`, then before its result is checked the claim records `stageRun: {
   stage, attempt, run_id, result, start, security, sensitive }` on disk.
   Given the step then throws (a transient error in the PR binding check),
