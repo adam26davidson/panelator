@@ -26,7 +26,7 @@ async function githubApp(ctx: CheckContext): Promise<CheckResult> {
     return failed("key does not parse");
   }
   try {
-    const me = await createAppClient(ctx.app, key, ctx.fetch ?? fetch).appIdentity();
+    const me = await createAppClient(ctx.app, key, ctx.fetch ?? fetch, { retry: false }).appIdentity();
     if (me.id === ctx.app.id) return { status: "ok" };
     return failed(`key belongs to App ${me.id}, configured App is ${ctx.app.id}`);
   } catch (e) {

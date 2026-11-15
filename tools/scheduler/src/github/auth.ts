@@ -17,8 +17,10 @@ export const TOKEN_REFRESH_MS = 50 * 60_000;
 export const TOKEN_RETRY_MS = 60_000;
 export const TOKEN_RETRY_ATTEMPTS = 3;
 
-export function createAppClient(cfg: Config["app"], privateKey: string, fetchFn: typeof fetch = fetch): AppClient {
-  const app = new App({ appId: cfg.id, privateKey, Octokit: Octokit.defaults({ request: { fetch: fetchFn } }) });
+export function createAppClient(cfg: Config["app"], privateKey: string, fetchFn: typeof fetch = fetch, opts: { retry?: boolean } = {}): AppClient {
+  // A probe (spec 069 AC-2) turns retries off so a 5xx is reported at once.
+  const defaults = opts.retry === false ? { retry: { enabled: false }, request: { fetch: fetchFn } } : { request: { fetch: fetchFn } };
+  const app = new App({ appId: cfg.id, privateKey, Octokit: Octokit.defaults(defaults) });
   let installation: Octokit | null = null;
 
   const client: AppClient = {
