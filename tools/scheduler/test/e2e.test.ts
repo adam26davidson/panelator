@@ -518,6 +518,90 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     expect(secondCheck.reported_actions).toContain("reclaim space, then resume");
   }, 120_000);
 
+  describe("an incomplete request is sent back for completion (spec 067 AC-5)", () => {
+    const request = { type: "credential" as const, name: "FLASH_TOKEN", provider: "vendor", access: ["flash:write"], setup: ["1. Open the vendor console", "2. Create a token"] };
+    const noSetup = { ...request, setup: [] as string[] };
+    const withRequest = (r: Question["request"]): Question => ({ ...ask("capability", "The flashing tool needs a token this worktree lacks. Can you create one?"), request: r });
+    const reason = "a credential request must give setup";
+    const logOf = (w: ChainWorld) => readFileSync(w.paths.questionsLog, "utf8").trim().split("\n").map((l) => JSON.parse(l) as { event: string; verdict?: string; reasoning?: string; issue: number }).filter((e) => e.issue === 7);
+
+    it("the code finds the missing field: the stage runs again holding its work, and the completed request is sent", async () => {
+      let w!: ChainWorld;
+      const a = agents(() => w);
+      const held = { head: "" };
+      const starts: string[] = [];
+      w = await chainWorld({
+        files: repoFiles(),
+        results: {
+          plan: [PLAN],
+          implement: [
+            asksAfterPushing(() => w, withRequest(noSetup), held),
+            (run: StageRun) => { starts.push(rev(run)); return { escalation: withRequest(request) }; },
+            a.implement(9),
+          ],
+          review: [APPROVE], "question-check": [SEND],
+        },
+      });
+      await w.tick();
+      expect(pausedRecord(w)).toMatchObject({ phase: "paused", asking_stage: "implement", question: withRequest(request) });
+      expect(ledgerOf(pausedRecord(w).state)).toMatchObject({ incompleteRequests: 1, decideReturns: 0 });
+      w.reply("Created it.");
+      await w.tick();
+      await expectSettled(w);
+
+      expect(w.adapter.ran).toEqual(["plan", "implement", "implement", "question-check", "implement", "review"]);
+      expect(inputsOf(w, "implement")[1].history).toContain(`incomplete request: ${reason}`);
+      expect(inputsOf(w, "implement")[1].held_work).toContain(held.head);
+      expect(inputsOf(w, "implement")[1].decide_input).toBeUndefined();
+      expect(starts).toEqual([held.head]);
+      expect(kinds(w, "stale-branch-dropped")).toEqual([]);
+      expect(logOf(w).map((e) => e.event)).toEqual(["asked", "checked", "sent", "answered"]);
+      expect(w.mergeRequests).toEqual([9]);
+    }, 120_000);
+
+    it("the check finds the missing request: it returns incomplete and the stage asks again with one", async () => {
+      let w!: ChainWorld;
+      const a = agents(() => w);
+      const held = { head: "" };
+      w = await chainWorld({
+        files: repoFiles(),
+        results: {
+          plan: [PLAN],
+          implement: [asksAfterPushing(() => w, ask("capability", "The flashing tool needs a token. Can you create one?"), held), { escalation: withRequest(request) }, a.implement(9)],
+          review: [APPROVE],
+          "question-check": [{ verdict: "incomplete", reasoning: "a credential request must give name, provider, access, setup", findings: [] }, SEND],
+        },
+      });
+      await w.tick();
+      w.reply("Created it.");
+      await w.tick();
+      await expectSettled(w);
+
+      expect(w.adapter.ran).toEqual(["plan", "implement", "question-check", "implement", "question-check", "implement", "review"]);
+      expect(inputsOf(w, "implement")[1].history).toContain("incomplete request: a credential request must give name, provider, access, setup");
+      expect(inputsOf(w, "implement")[1].decide_input).toBeUndefined();
+      expect(logOf(w).map((e) => (e.event === "checked" ? `checked ${e.verdict}` : e.event))).toEqual(["asked", "checked incomplete", "asked", "checked send", "sent", "answered"]);
+      expect(w.mergeRequests).toEqual([9]);
+    }, 120_000);
+
+    it("a second incomplete request is a failed implement attempt, retried under spec 006's rule", async () => {
+      let w!: ChainWorld;
+      const a = agents(() => w);
+      w = await chainWorld({
+        files: repoFiles(),
+        results: { plan: [PLAN], implement: [{ escalation: withRequest(noSetup) }, { escalation: withRequest(noSetup) }, a.implement(9)], review: [APPROVE] },
+      });
+      await w.tick();
+      await expectSettled(w);
+
+      expect(w.adapter.ran).toEqual(["plan", "implement", "implement", "implement", "review"]);
+      // The rerun of the first incomplete request restarts the stage's attempt count, so the failed attempt is 1 here.
+      expect(inputsOf(w, "implement")[2].history).toContain(`implement attempt 1 failed: result: invalid: ${reason}`);
+      expect(w.adapter.ran).not.toContain("question-check");
+      expect(w.mergeRequests).toEqual([9]);
+    }, 120_000);
+  });
+
   describe("a stage that asks a question keeps its work (spec 011 AC-10)", () => {
     it("a capability question after a push: no recovered commits, no dropped branch, the resumed run starts at the held head", async () => {
       let w!: ChainWorld;
