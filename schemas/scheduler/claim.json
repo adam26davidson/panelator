@@ -172,6 +172,10 @@
           "type": "integer",
           "minimum": 0
         },
+        "incompleteRequests": {
+          "type": "integer",
+          "minimum": 0
+        },
         "history": {
           "type": "array",
           "maxItems": 20,

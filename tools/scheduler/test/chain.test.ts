@@ -1771,3 +1771,88 @@ describe("spec 060: a failed check outside the PR's scope waits for main", () =>
     expect(validate("escalation-ledger", ledgerOf(blocked))).toEqual({ ok: true });
   });
 });
+
+describe("an incomplete request is sent back for completion (spec 067)", () => {
+  const H = "c".repeat(40);
+  const noSetup = { type: "credential" as const, name: "n", provider: "p", access: ["repo"], setup: [] };
+  const credQ: Question = { ...qCapability, request: noSetup };
+  const fundsQ: Question = { ...qCapability, request: { type: "funds", amount_usd: 0, purpose: "p", charter_goal: "g" } };
+  const asks = (stage: "plan" | "implement" | "fix", question: Question) => ({ type: "stage_ok" as const, stage, result: { escalation: question }, head: H }) as ChainEvent;
+  const reason = "a credential request must give setup";
+
+  it("reruns plan from plain state, holding its work, with no check and no decide mode (AC-2)", () => {
+    const r = transition(at("plan"), asks("plan", credQ));
+    expect(r.state).toMatchObject({ stage: "plan", incompleteRequests: 1, decideInput: null, decideReturns: 0, question: null });
+    expect(r.state.history).toEqual([`plan attempt 1: incomplete request: ${reason}`]);
+    expect(r.state.heldWork).toEqual([{ branch: branchOf(r.state), head: H }]);
+    expect(types(r.actions)).toEqual(["run_stage"]);
+    expect(r.actions[0]).toMatchObject({ stage: "plan" });
+  });
+
+  it("keeps decide mode, the sent-back question and the decide count (AC-2)", () => {
+    const r = transition(at("plan", { decideInput: "d", decidedQuestion: q, decideReturns: 1 }), asks("plan", { ...credQ, new_blocker: true }));
+    expect(r.state).toMatchObject({ stage: "plan", incompleteRequests: 1, decideInput: "d", decidedQuestion: q, decideReturns: 1 });
+    expect(types(r.actions)).toEqual(["run_stage"]);
+  });
+
+  it("still fails a decide-mode question without new_blocker", () => {
+    const r = transition(at("plan", { decideInput: "d", decidedQuestion: q }), asks("plan", credQ));
+    expect(r.state.history.join("\n")).toContain("escalated in decide mode");
+    expect(r.state.incompleteRequests).toBe(0);
+  });
+
+  it("reruns implement for a funds request with amount 0, its head held (AC-2)", () => {
+    const r = transition(at("implement", { plan }), asks("implement", fundsQ));
+    expect(r.state).toMatchObject({ stage: "implement", incompleteRequests: 1, heldWork: [{ branch: "issue-1", head: H }] });
+    expect(r.state.history).toEqual(["implement attempt 1: incomplete request: a funds request must give amount_usd"]);
+  });
+
+  it("a second incomplete request is a failed run under the stage's own rule (AC-2)", () => {
+    const r = transition(at("implement", { plan, incompleteRequests: 1, heldWork: [{ branch: "issue-1", head: "a".repeat(40) }] }), asks("implement", fundsQ));
+    expect(r.state).toMatchObject({ stage: "implement", implementFailures: 1, incompleteRequests: 2, heldWork: [] });
+    expect(r.state.history).toEqual(["implement attempt 1 failed: result: invalid: a funds request must give amount_usd"]);
+    const f = transition(at("fix", { pr: pr3, fixes: 1, pendingFixInput: "fix it", incompleteRequests: 1 }), asks("fix", credQ));
+    expect(f.state.history.join("\n")).toContain(`fix attempt 1 failed: result: invalid: ${reason}`);
+    expect(f.state.rescueRun).toBe(true);
+  });
+
+  it("routes a complete request and a question without one to the check as before", () => {
+    const complete: Question = { ...qCapability, request: { type: "first_contact", party: "p", channel: "c", why: "w", message: "m" } };
+    for (const question of [complete, qCapability]) {
+      const r = transition(at("implement", { plan }), asks("implement", question));
+      expect(r.state).toMatchObject({ stage: "question-check", incompleteRequests: 0 });
+    }
+  });
+
+  it("routes a spec question with a complete first_contact request to the check (AC-2)", () => {
+    const complete: Question = { ...qCapability, request: { type: "first_contact", party: "p", channel: "c", why: "w", message: "m" } };
+    const r = transition(at("spec", { track: "spec", specMode: "write" }), specOk({ verdict: "question", question: complete }));
+    expect(r.state).toMatchObject({ stage: "question-check", askingStage: "spec", question: complete, incompleteRequests: 0 });
+  });
+
+  it("the check's incomplete reruns the asker from plain state and from decide mode (AC-3)", () => {
+    const verdict = (reasoning: string) => ({ type: "stage_ok" as const, stage: "question-check" as const, result: { verdict: "incomplete" as const, reasoning } });
+    const heldWork = [{ branch: "issue-1", head: H }];
+    const plain = transition(at("question-check", { question: qCapability, askingStage: "implement", plan, heldWork }), verdict(reason));
+    expect(plain.state).toMatchObject({ stage: "implement", decideInput: null, decideReturns: 0, incompleteRequests: 1, heldWork });
+    expect(plain.state.history).toEqual([`implement attempt 1: incomplete request: ${reason}`]);
+    const decide = transition(at("question-check", { question: qCapability, askingStage: "implement", plan, heldWork, decideInput: "d", decidedQuestion: q, decideReturns: 1 }), verdict(reason));
+    expect(decide.state).toMatchObject({ stage: "implement", decideInput: "d", decidedQuestion: q, decideReturns: 1 });
+    const again = transition(at("question-check", { question: qCapability, askingStage: "implement", plan, heldWork, incompleteRequests: 1 }), verdict(reason));
+    expect(again.state.history).toEqual([`implement attempt 1 failed: result: invalid: ${reason}`]);
+    expect(again.state.incompleteRequests).toBe(2);
+  });
+
+  it("the check's incomplete on verify's question is a fix rescue", () => {
+    const r = transition(at("question-check", { question: qCapability, askingStage: "verify", pr: pr3 }), { type: "stage_ok", stage: "question-check", result: { verdict: "incomplete", reasoning: reason } });
+    expect(r.state.stage).toBe("fix");
+    expect(r.state.rescueRun).toBe(true);
+  });
+
+  it("the ledger writes the count only once non-zero and the bounds text prints it", () => {
+    expect(ledgerOf(initialChainState(1))).not.toHaveProperty("incompleteRequests");
+    const ledger = ledgerOf({ ...initialChainState(1), incompleteRequests: 1 });
+    expect(ledger.incompleteRequests).toBe(1);
+    expect(initialChainState(1, null, ledger).incompleteRequests).toBe(1);
+  });
+});

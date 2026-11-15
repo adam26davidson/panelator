@@ -80,7 +80,15 @@ export interface Question {
   reply_quote?: string;
   /** C3: in decide mode, a blocker other than the one sent back to decide. */
   new_blocker?: boolean;
+  /** Spec 030 AC-6, spec 067: the request of a credential, funds or first-contact question; every field but `type` may be missing. */
+  request?: Request;
 }
+
+/** Spec 030 AC-6: the fields of each type are optional here so that an incomplete request is representable (spec 067 AC-1). */
+export type Request =
+  | { type: "credential"; name?: string; provider?: string; access?: string[]; setup?: string[] }
+  | { type: "funds"; amount_usd?: number; purpose?: string; charter_goal?: string }
+  | { type: "first_contact"; party?: string; channel?: string; why?: string; message?: string };
 
 /** T4: a product or technical answer not yet on main, kept in the escalation ledger until it is recorded there. */
 export interface PendingAnswer {
@@ -127,7 +135,7 @@ export interface DesignResult {
 }
 
 export interface QuestionCheckResult {
-  verdict: "send" | "decide_yourself";
+  verdict: "send" | "decide_yourself" | "incomplete";
   reasoning: string;
   /** C10: on `send`, the question as the strong-tier check words it for the maintainer. */
   question?: Question;

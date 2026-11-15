@@ -46,6 +46,8 @@ export interface ChainState {
   designRevisions: number;
   specAnswers: number;
   decideReturns: number;
+  /** Spec 067 AC-2: incomplete credential, funds or first-contact requests sent back for completion; never reset within a claim. */
+  incompleteRequests: number;
   history: string[];
   /** The current run is a rescue (AC-1): a failure escalates at once; any stage_ok clears it. */
   rescueRun: boolean;

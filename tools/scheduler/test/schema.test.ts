@@ -193,6 +193,29 @@ describe("spec 006 schemas", () => {
     expect(validate("question-check-result", { verdict: "send" }).ok).toBe(false);
   });
 
+  it("question-check-result accepts incomplete without a question (spec 067 AC-3)", () => {
+    expect(validate("question-check-result", { verdict: "incomplete", reasoning: "a credential request must give name, provider, access, setup" }).ok).toBe(true);
+  });
+
+  it("question carries an optional request whose completeness is not the schema's (spec 067 AC-1)", () => {
+    const withRequest = (request: unknown) => validate("question", { ...q, kind: "capability", request }).ok;
+    expect(withRequest({ type: "credential", name: "n", provider: "p", access: ["a"], setup: ["1. do"] })).toBe(true);
+    expect(withRequest({ type: "funds", amount_usd: 5, purpose: "p", charter_goal: "g" })).toBe(true);
+    expect(withRequest({ type: "first_contact", party: "p", channel: "c", why: "w", message: "m" })).toBe(true);
+    expect(withRequest({ type: "credential" })).toBe(true);
+    expect(withRequest({ type: "bribe" })).toBe(false);
+    expect(withRequest({ type: "funds", extra: 1 })).toBe(false);
+    expect(withRequest({ name: "n" })).toBe(false);
+    expect(validate("question", q).ok).toBe(true);
+  });
+
+  it("claim and ledger accept incompleteRequests (spec 067 AC-2)", () => {
+    const claim = (state: unknown) => validate("claim", { issue: 7, state, worktree: "/w", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null }).ok;
+    expect(claim({ ...initialChainState(7), incompleteRequests: 1 })).toBe(true);
+    expect(validate("escalation-ledger", { ...ledgerOf(initialChainState(7)), incompleteRequests: 1 }).ok).toBe(true);
+    expect(validate("escalation-ledger", { ...ledgerOf(initialChainState(7)), incompleteRequests: -1 }).ok).toBe(false);
+  });
+
   it("question options need label and cost", () => {
     expect(validate("question", q).ok).toBe(true);
     expect(validate("question", { ...q, options: [{ label: "x" }] }).ok).toBe(false);

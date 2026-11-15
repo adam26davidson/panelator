@@ -46,6 +46,11 @@
       "type": "integer",
       "minimum": 0
     },
+    "incompleteRequests": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Spec 067: incomplete requests sent back for completion on this issue."
+    },
     "history": {
       "type": "array",
       "items": {

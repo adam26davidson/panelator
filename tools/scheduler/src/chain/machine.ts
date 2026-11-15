@@ -1,5 +1,6 @@
 import { fixLoopGate, readyGate, type ScopeResult } from "../gates/index.ts";
 import type { AgentStageName, AskingStage, ImplementResult, PendingAnswer, PlanResult, Question, SpecMode } from "../types.ts";
+import { checkRequest } from "./question.ts";
 import type { Action, BlockCondition, ChainEvent, ChainStage, ChainState } from "./types.ts";
 
 export const CLAIM_LABEL = "in-progress";
@@ -14,6 +15,8 @@ export const MAX_REPLANS = 1;
 export const MAX_SPEC_REVISIONS = 1;
 export const MAX_SPEC_ANSWERS = 1;
 export const MAX_DECIDE_RETURNS = 1;
+/** Spec 067 AC-2: incomplete requests sent back for completion per claim; the next is a failed run of the asking stage. */
+export const MAX_INCOMPLETE_REQUESTS = 1;
 /** Spec 060 AC-6: blocks on main per issue; past it a failed check on a spec or design PR runs the fix loop as before. */
 export const MAX_BLOCKS = 3;
 /** Spec 029 AC-4: the configured bound (`bounds.design_revisions`) is passed to `transition`; this is its default. */
@@ -40,6 +43,8 @@ export type LedgerCounts = Pick<
   designRevisions?: number;
   /** Spec 060: written only once non-zero, like `designRevisions`. */
   blocks?: number;
+  /** Spec 067: written only once non-zero, like `designRevisions`. */
+  incompleteRequests?: number;
 };
 type LedgerSource = Omit<LedgerCounts, "pendingAnswer" | "chainFailures" | "chainErrors"> & Partial<LedgerCounts> & { blocked?: ChainState["blocked"] };
 
@@ -52,6 +57,7 @@ export function ledgerOf(state: LedgerSource): LedgerCounts {
     pendingAnswer: state.pendingAnswer ?? null, chainFailures: state.chainFailures ?? null, chainErrors: state.chainErrors ?? 0,
     ...(state.designRevisions ? { designRevisions: state.designRevisions } : {}),
     ...(blocks ? { blocks } : {}),
+    ...(state.incompleteRequests ? { incompleteRequests: state.incompleteRequests } : {}),
   };
 }
 
@@ -65,7 +71,7 @@ export function initialChainState(issue: number, specProblem: string | null = nu
   return {
     issue, stage: "claimed", attempt: 1, fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0,
     sensitive: false, pr: null, plan: null, pendingFixInput: null, postponedUntil: null, resumeStage: null, conflictPending: false,
-    track: "issue", rescues: 0, specRescues: 0, replans: 0, specRevisions: 0, designRevisions: 0, specAnswers: 0, decideReturns: 0, history: [],
+    track: "issue", rescues: 0, specRescues: 0, replans: 0, specRevisions: 0, designRevisions: 0, specAnswers: 0, decideReturns: 0, incompleteRequests: 0, history: [],
     rescueRun: false, specMode: null, specProblem, designProblem, question: null, askingStage: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
     pendingAnswer: null, recordIds: [], recordKind: null, recordAnswer: false, decideInput: null, decidedQuestion: null, parkedPr: null, pendingSince: null, checksRerun: false, securityPass: false,
     chainFailures: null, chainErrors: 0, heldWork: [], checkRerun: null, blocked: null, reserved: { spec: null, adr: null },
@@ -264,7 +270,7 @@ function designToSpecRevise(s: ChainState, reason: string): Step | null {
 }
 
 function boundsText(s: ChainState): string {
-  return `design revision ${s.designRevisions}, rescue ${s.rescues}/${MAX_RESCUES}, spec-track rescue ${s.specRescues}/${MAX_RESCUES}, re-plan ${s.replans}/${MAX_REPLANS}, spec revision ${s.specRevisions}/${MAX_SPEC_REVISIONS}, chain-error release ${s.chainErrors}/${MAX_CHAIN_ERRORS}, block ${s.blocked?.blocks ?? 0}/${MAX_BLOCKS}`;
+  return `design revision ${s.designRevisions}, rescue ${s.rescues}/${MAX_RESCUES}, spec-track rescue ${s.specRescues}/${MAX_RESCUES}, re-plan ${s.replans}/${MAX_REPLANS}, spec revision ${s.specRevisions}/${MAX_SPEC_REVISIONS}, chain-error release ${s.chainErrors}/${MAX_CHAIN_ERRORS}, block ${s.blocked?.blocks ?? 0}/${MAX_BLOCKS}, incomplete request ${s.incompleteRequests}/${MAX_INCOMPLETE_REQUESTS}`;
 }
 
 /** Informational only: no @ anywhere (AC-5, C11), the newest history entries that fit. The driver appends the run-record paths. */
@@ -365,6 +371,22 @@ function decideYourself(state: ChainState, asking: AskingStage, reasoning: strin
   return resume(s, asking, { decideInput: reasoning, decidedQuestion: sentBack }, "decide");
 }
 
+/**
+ * Spec 067 AC-2, AC-3: a request that is missing a field (or that the check could not find) is an invalid result, not a decision.
+ * The first on a claim runs the asking stage again with the reason in its history, holding its work and leaving decide mode
+ * as it was; the next is a failed run of the asking stage under that stage's own rule. Verify's question carries no request.
+ */
+function incompleteRequest(state: ChainState, asking: AskingStage, reason: string, held: Partial<ChainState> = {}): Step {
+  const n = state.incompleteRequests;
+  if (asking === "verify") return escalateAsker({ ...state, question: null }, "verify", `incomplete: ${reason}`, state.question);
+  if (n < MAX_INCOMPLETE_REQUESTS) {
+    const s = note({ ...state, incompleteRequests: n + 1, question: null, rescueRun: false, ...held }, `${asking} attempt ${state.attempt}: incomplete request: ${reason}`);
+    return resume(s, asking);
+  }
+  const failing: ChainState = { ...state, stage: asking, askingStage: asking, question: null, incompleteRequests: n + 1, ...held };
+  return baseTransition(failing, { type: "stage_failed", stage: asking, reason: `result: invalid: ${reason}` }, DEFAULT_BOUNDS);
+}
+
 const squash = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
 
 /** Tm1: the shortest quote of the reply a follow-up may rest on, after whitespace is collapsed. */
@@ -398,8 +420,12 @@ function isFollowUp(state: ChainState, q: Question): boolean {
 function ask(state: ChainState, stage: Stuck, question: Question, head?: string): Step {
   if (state.decideInput !== null) {
     if (question.new_blocker !== true) return failedInDecideMode(state, stage);
+    const incomplete = checkRequest(question);
+    if (incomplete !== null) return incompleteRequest(state, stage, incomplete, heldPatch(state, stage, head));
     return run({ ...state, rescueRun: false }, "question-check", {}, { question, askingStage: stage, ...heldPatch(state, stage, head) });
   }
+  const incomplete = checkRequest(question);
+  if (incomplete !== null) return incompleteRequest(state, stage, incomplete, heldPatch(state, stage, head));
   if (isFollowUp(state, question)) return pause({ ...state, rescueRun: false, ...heldPatch(state, stage, head) }, question, stage);
   return run({ ...state, rescueRun: false }, "question-check", {}, { question, askingStage: stage, ...heldPatch(state, stage, head) });
 }
@@ -584,6 +610,7 @@ function stageOk(state: ChainState, event: StageOk): Step {
     case "question-check": {
       const { question, askingStage } = state;
       if (!question || !askingStage) throw new Error(`question check without a question (issue ${state.issue})`);
+      if (event.result.verdict === "incomplete") return incompleteRequest(state, askingStage, event.result.reasoning);
       if (event.result.verdict === "send") {
         // C10: the strong-tier check's wording is what the maintainer reads; the kind stays the asking stage's, which routes the answer.
         const worded = event.result.question;
