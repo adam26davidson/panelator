@@ -99,7 +99,7 @@ export async function appPrivateKey(cfg: Pick<Config, "app">, store: CredentialS
     try {
       return await store.readSecret("github-app-key");
     } catch (e) {
-      throw new Error(`cannot read the stored GitHub App key (github-app-key): ${(e as Error).message}; run panelator-scheduler cred set github-app-key`);
+      throw new Error(`cannot read the stored GitHub App key: ${(e as Error).message}`);
     }
   }
   try {

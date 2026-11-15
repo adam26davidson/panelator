@@ -9,6 +9,8 @@ export interface AppClient {
   refreshTokenFile(paths: StatePaths): Promise<TokenFile>;
   startTokenRefresh(paths: StatePaths, intervalMs?: number, retryMs?: number): () => void;
   botLogin(): Promise<string>;
+  /** `GET /app` with the App JWT; it mints no installation token (spec 069 AC-2). */
+  appIdentity(): Promise<{ id: number; slug: string }>;
 }
 
 export const TOKEN_REFRESH_MS = 50 * 60_000;
@@ -78,6 +80,10 @@ export function createAppClient(cfg: Config["app"], privateKey: string, fetchFn:
     async botLogin() {
       const { data } = await app.octokit.request("GET /app");
       return `${(data as { slug: string }).slug}[bot]`;
+    },
+    async appIdentity() {
+      const { data } = await app.octokit.request("GET /app");
+      return data as { id: number; slug: string };
     },
   };
   return client;
