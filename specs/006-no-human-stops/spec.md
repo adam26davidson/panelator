@@ -290,7 +290,7 @@ AC-10 second sentence, AC-13)
 
 **Questions for the maintainer**
 
-- AC-12. Amended by [062-capability-answer-settles-nothing](../062-capability-answer-settles-nothing/spec.md) AC-1: the check's answered questions are the issue's product and technical answers; capability answers are listed apart as reported actions and settle a question only if their action was carried out (AC-2). **Every question is checked first.** Given a stage produces a question
+- AC-12. Amended by [067-incomplete-request-is-sent-back-for-completion](../067-incomplete-request-is-sent-back-for-completion/spec.md) AC-3: the check also returns incomplete, with the fields named, when a credential, funds or first-contact question carries no request of its type; the asking stage then runs again to complete it. Amended by [062-capability-answer-settles-nothing](../062-capability-answer-settles-nothing/spec.md) AC-1: the check's answered questions are the issue's product and technical answers; capability answers are listed apart as reported actions and settle a question only if their action was carried out (AC-2). **Every question is checked first.** Given a stage produces a question
   (a review escalation, the spec stage's `question` verdict, an escalation on a
   plan, implement or fix result, or the verify bound of AC-17), other than a
   follow-up (AC-15), then the question check stage runs first, in a fresh
@@ -335,7 +335,7 @@ AC-10 second sentence, AC-13)
   completed on the next tick from the record, without a second question
   comment: recovery adopts a bot comment only when it carries the record's
   nonce, never an earlier question's comment.
-- AC-14. **Anything else is sent back to decide.** Given `decide_yourself`, then
+- AC-14. Amended by [067-incomplete-request-is-sent-back-for-completion](../067-incomplete-request-is-sent-back-for-completion/spec.md) AC-2: a new_blocker question whose request is incomplete is sent back for completion before the check, and the stage stays in decide mode with the same sent-back question. **Anything else is sent back to decide.** Given `decide_yourself`, then
   the stage that asked runs again with the check's reasoning as input, and
   must decide the question it was sent back with:
   - a spec stage in `decide` mode must return `revised`;
