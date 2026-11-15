@@ -7,6 +7,17 @@ export function questionMarker(nonce: string): string {
   return `<!-- panelator-question:${nonce} -->`;
 }
 
+/** Spec 067 AC-3: the request, field by field, so the question check (which sees only this body) can find it. Empty for a question without one. */
+function requestLines(q: Question): string[] {
+  if (q.request === undefined) return [];
+  const fields = Object.entries(q.request as Record<string, unknown>).filter(([k]) => k !== "type");
+  return [
+    `Request (${String(q.request.type)}):`,
+    ...fields.map(([k, v]) => `- ${k}: ${Array.isArray(v) ? v.map(String).join("; ") : String(v)}`),
+    "",
+  ];
+}
+
 /** The question comment without its marker: also the question as a stage prompt shows it. */
 export function questionBody(q: Question, maintainer: string): string {
   return [
@@ -15,6 +26,7 @@ export function questionBody(q: Question, maintainer: string): string {
     "",
     q.question,
     "",
+    ...requestLines(q),
     ...q.options.map((o, i) => `${i + 1}. ${o.label} — ${o.cost}`),
     "",
     `Recommendation: ${q.recommendation}`,

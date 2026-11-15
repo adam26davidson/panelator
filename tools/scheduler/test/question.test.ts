@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkRequest } from "../src/chain/question.ts";
+import { checkRequest, questionBody } from "../src/chain/question.ts";
 import type { Question } from "../src/types.ts";
 
 const base: Question = { kind: "capability", question: "q", options: [{ label: "a", cost: "b" }], recommendation: "a" };
@@ -35,5 +35,19 @@ describe("checkRequest (spec 067 AC-1)", () => {
 
   it("rejects an unknown type", () => {
     expect(checkRequest(q({ type: "bribe" }))).toBe("a request's type must be credential, funds or first_contact");
+  });
+});
+
+describe("questionBody shows the request to the question check (spec 067 AC-3)", () => {
+  it("renders the type and every field, joining arrays", () => {
+    const body = questionBody(q(complete.credential), "m");
+    expect(body).toContain("Request (credential):");
+    expect(body).toContain("- name: n");
+    expect(body).toContain("- access: repo");
+    expect(body).toContain("- setup: 1. open");
+  });
+  it("renders a funds amount and leaves a question without a request unchanged", () => {
+    expect(questionBody(q(complete.funds), "m")).toContain("- amount_usd: 5");
+    expect(questionBody(base, "m")).not.toContain("Request (");
   });
 });

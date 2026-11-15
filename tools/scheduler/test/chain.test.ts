@@ -1824,6 +1824,12 @@ describe("an incomplete request is sent back for completion (spec 067)", () => {
     }
   });
 
+  it("routes a spec question with a complete first_contact request to the check (AC-2)", () => {
+    const complete: Question = { ...qCapability, request: { type: "first_contact", party: "p", channel: "c", why: "w", message: "m" } };
+    const r = transition(at("spec", { track: "spec", specMode: "write" }), specOk({ verdict: "question", question: complete }));
+    expect(r.state).toMatchObject({ stage: "question-check", askingStage: "spec", question: complete, incompleteRequests: 0 });
+  });
+
   it("the check's incomplete reruns the asker from plain state and from decide mode (AC-3)", () => {
     const verdict = (reasoning: string) => ({ type: "stage_ok" as const, stage: "question-check" as const, result: { verdict: "incomplete" as const, reasoning } });
     const heldWork = [{ branch: "issue-1", head: H }];
