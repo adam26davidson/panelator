@@ -1,11 +1,14 @@
 import { generateKeyPairSync } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { agentsDir, defaultConfigPath, loadConfig, type Config } from "../src/config.ts";
-import { loadCatalogue, loadCatalogueFor, type CatalogueEntry } from "../src/credentials/catalogue.ts";
+import { loadCatalogue, loadCatalogueFor } from "../src/credentials/catalogue.ts";
+import { credCommand, type CredContext } from "../src/credentials/commands.ts";
+import { ActionLog } from "../src/actions/log.ts";
+import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import { runCheck } from "../src/credentials/check.ts";
 import { CredentialStore, appPrivateKey } from "../src/credentials/store.ts";
 import { createAppClient } from "../src/github/auth.ts";
@@ -217,4 +220,101 @@ describe("telegram-get-me probe (spec 069 AC-4)", () => {
   });
 });
 
-void chmodSync; void mkdirSync; void filesUnder; void ({} as CatalogueEntry);
+describe("cred commands (spec 069 AC-3, AC-10)", () => {
+  async function world(key = testKey.privateKey, gh = route()) {
+    const w = setup();
+    const paths = statePaths(join(w.root, "state"));
+    await ensureStateDirs(paths);
+    const actionLog = new ActionLog(paths.actionsLog, paths);
+    const ctx = (stdin = key): CredContext => ({ cfg: w.cfg, store: w.store, catalogue: loadCatalogueFor(agentsDir), actionLog, stdin: async () => stdin, fetch: gh.fetch });
+    return { ...w, paths, actionLog, ctx, gh };
+  }
+  const secretsIn = (dir: string, text: string) => filesUnder(dir).filter((f) => !f.includes("/store/") && readFileSync(f, "utf8").includes(text));
+
+  it("set with the test key stores, checks ok and exits 0", async () => {
+    const w = await world();
+    const out = await credCommand(["set", "github-app-key"], w.ctx(testKey.privateKey + "\n"));
+    expect(out).toEqual({ exitCode: 0, lines: ["github-app-key: check ok"] });
+    expect((await w.store.readIndex())[0]).toMatchObject({ name: "github-app-key", set_by: "maintainer", last_check: "ok" });
+    expect((await w.store.readIndex())[0].last_checked_at).not.toBeNull();
+    expect(w.gh.calls.map((c) => c.url)).toEqual(["/app"]);
+  });
+  it("set with a key GitHub refuses still stores it, prints the failure and the setup steps, and exits 1", async () => {
+    const w = await world();
+    const out = await credCommand(["set", "github-app-key"], w.ctx(otherKey.privateKey));
+    expect(out.exitCode).toBe(1);
+    expect(out.lines[0]).toBe("github-app-key: check failed: GitHub refused the JWT (401)");
+    expect(out.lines.join("\n")).toMatch(/1\. In GitHub/);
+    expect(await w.store.readSecret("github-app-key")).toBe(otherKey.privateKey.trimEnd());
+    expect((await w.store.readIndex())[0].last_check).toBe("failed: GitHub refused the JWT (401)");
+  });
+  it("set rejects an unknown name and an empty stdin", async () => {
+    const w = await world();
+    expect((await credCommand(["set", "nope"], w.ctx())).lines[0]).toBe("unknown credential nope");
+    expect((await credCommand(["set", "github-app-key"], w.ctx("\n"))).exitCode).toBe(1);
+    expect(await w.store.readIndex()).toEqual([]);
+  });
+  it("check exits 1 only when a check failed; skipped does not count; list never shows the secret", async () => {
+    const w = await world();
+    await credCommand(["set", "github-app-key"], w.ctx());
+    await credCommand(["set", "aws-sso"], w.ctx("panelator-delivery"));
+    const all = await credCommand(["check"], w.ctx());
+    expect(all.exitCode).toBe(0);
+    expect(all.lines).toContain("aws-sso: check skipped: wrapper not built");
+    expect(all.lines).toContain("telegram-bot: check skipped: not set");
+    await w.store.writeSecret("github-app-key", otherKey.privateKey, "maintainer");
+    expect((await credCommand(["check", "github-app-key"], w.ctx())).exitCode).toBe(1);
+    expect((await credCommand(["check"], w.ctx())).exitCode).toBe(1);
+    const list = await credCommand(["list"], w.ctx());
+    expect(list.lines).toHaveLength(3);
+    expect(list.lines[0]).toMatch(/^github-app-key: set \(by maintainer.*last check failed: GitHub refused/);
+    expect(list.lines.join("\n")).not.toContain("PRIVATE KEY");
+    expect((await credCommand(["check", "nope"], w.ctx())).exitCode).toBe(1);
+  });
+  it("import stores the two files with set_by import, tolerates a missing one and says what to delete", async () => {
+    const w = await world();
+    const tgFile = join(w.root, "telegram.json");
+    w.cfg.telegram = { credentials_path: tgFile, long_poll_timeout_s: 50 };
+    writeFileSync(w.cfg.app.private_key_path, testKey.privateKey);
+    let out = await credCommand(["import"], w.ctx());
+    expect(out.exitCode).toBe(0);
+    expect(out.lines[0]).toMatch(/^github-app-key: imported from .*check ok$/);
+    expect(out.lines[1]).toMatch(/^telegram-bot: not imported, cannot read .*ENOENT/);
+    expect(out.lines.join("\n")).toMatch(/safe to delete after the service has restarted/);
+    expect(out.lines.join("\n")).toMatch(/poller still reads it/);
+    expect((await w.store.readIndex()).map((e) => [e.name, e.set_by])).toEqual([["github-app-key", "import"]]);
+    const tg = await fakeTelegram();
+    try {
+      writeFileSync(tgFile, JSON.stringify({ bot_token: "1:TOKEN-ABCDEFGH", chat_id: 5 }));
+      const c = w.ctx();
+      c.telegramBaseUrl = tg.url;
+      out = await credCommand(["import"], c);
+      expect(out.lines[1]).toMatch(/^telegram-bot: imported from .*check ok$/);
+    } finally {
+      await tg.close();
+    }
+  });
+  it("remove deletes the blob and the entry, and a name not set exits 1", async () => {
+    const w = await world();
+    await credCommand(["set", "github-app-key"], w.ctx());
+    expect(await credCommand(["remove", "github-app-key"], w.ctx())).toEqual({ exitCode: 0, lines: ["github-app-key: removed"] });
+    expect(filesUnder(w.cfg.credentials.dir).filter((f) => f.endsWith(".cred"))).toEqual([]);
+    expect((await credCommand(["remove", "github-app-key"], w.ctx())).exitCode).toBe(1);
+  });
+  it("logs one action-log row per command with the name only, and leaks the secret nowhere under the state directory", async () => {
+    const w = await world();
+    await credCommand(["set", "github-app-key"], w.ctx());
+    await credCommand(["set", "github-app-key"], w.ctx(otherKey.privateKey));
+    await credCommand(["list"], w.ctx());
+    await credCommand(["check", "github-app-key"], w.ctx());
+    await credCommand(["remove", "github-app-key"], w.ctx());
+    const rows = await w.actionLog.list();
+    expect(rows.map((r) => r.kind)).toEqual(["cred_set", "cred_set", "cred_list", "cred_check", "cred_remove"]);
+    expect(rows.every((r) => r.agent === "maintainer" && r.run_id === "command" && r.undo === null && r.status !== "pending")).toBe(true);
+    expect(rows.map((r) => r.args)).toEqual([{ name: "github-app-key" }, { name: "github-app-key" }, {}, { name: "github-app-key" }, { name: "github-app-key" }]);
+    expect(rows[1].status).toBe("failed");
+    const body = testKey.privateKey.split("\n")[1];
+    expect(secretsIn(join(w.root, "state"), body)).toEqual([]);
+    expect(secretsIn(join(w.root, "state"), otherKey.privateKey.split("\n")[1])).toEqual([]);
+  });
+});

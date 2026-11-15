@@ -93,7 +93,7 @@ export class CredentialStore {
   /** The only decryption: the plaintext goes to memory and nowhere else. */
   async readSecret(name: string): Promise<string> {
     const file = this.blob(name);
-    return run(this.command, ["--user", "decrypt", file, "-"]);
+    return run(this.command, ["--user", "decrypt", `--name=${name}`, file, "-"]);
   }
 
   async removeSecret(name: string): Promise<boolean> {

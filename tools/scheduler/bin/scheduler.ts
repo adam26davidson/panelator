@@ -2,7 +2,6 @@
 import {startTelegram,telegramCheck} from '../src/service/telegram-start.ts';
 import {TelegramPoller} from '../src/telegram/poller.ts';
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { adapterFor } from "../src/adapters/index.ts";
@@ -29,6 +28,9 @@ import {setParameterModeCommand} from '../src/parameters/command.ts';
 import {registryActionsCheck,loadActionLevels,applyAction} from '../src/actions/index.ts';
 import {ActionLog} from '../src/actions/log.ts';
 import {undoAction} from '../src/actions/undo.ts';
+import {CredentialStore,appPrivateKey} from '../src/credentials/store.ts';
+import {loadCatalogueFor} from '../src/credentials/catalogue.ts';
+import {credCommand} from '../src/credentials/commands.ts';
 
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
@@ -74,9 +76,19 @@ if(args[0]==='quota') {
   console.log(JSON.stringify({...book,summary:await quotaSummary(paths,new Date())},null,2));
   process.exit(0);
 }
+const credentialStore=new CredentialStore({dir:cfg.credentials.dir});
+if(args[0]==='cred') {
+  // Spec 030 AC-4 as amended by spec 069 AC-3: the maintainer's commands over the encrypted store.
+  try{
+    const catalogue=loadCatalogueFor(agentsDir);
+    const out=await credCommand(args.slice(1),{cfg,store:credentialStore,catalogue,actionLog,stdin:async()=>{let t='';for await(const c of process.stdin)t+=c;return t;}});
+    for(const l of out.lines)console.log(l);
+    process.exit(out.exitCode);
+  }catch(e){console.error((e as Error).message);process.exit(1);}
+}
 if(['param','agent','action'].includes(args[0])) {
   let client:GitHubClient|undefined;
-  const remote=async()=>client??=new GitHubClient(createAppClient(cfg.app,readFileSync(cfg.app.private_key_path,'utf8')).octokit,cfg.repo);
+  const remote=async()=>client??=new GitHubClient(createAppClient(cfg.app,(await appPrivateKey(cfg,credentialStore)).key).octokit,cfg.repo);
   const ctx={paths,parameters,log:actionLog,levels,now:()=>new Date(),gh:{rerunWorkflowRun:async(id:number)=>(await remote()).rerunWorkflowRun(id),cancelWorkflowRun:async(id:number)=>(await remote()).cancelWorkflowRun(id)}};
   try {
     const [command,verb,name,value]=args;
@@ -96,7 +108,7 @@ if(['param','agent','action'].includes(args[0])) {
       if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
     } else if(command==='action'&&verb==='undo') {
       const row=await undoAction(ctx,name,'maintainer');if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
-    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; quota');
+    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; cred set <name>|list|check [<name>]|import|remove <name>; quota');
     process.exit(0);
   }catch(e){console.error((e as Error).message);process.exit(1);}
 }
@@ -105,9 +117,9 @@ await actionLog.markStalePending();
 if (cfg.app.id === 0 || cfg.app.installation_id === 0) fail("GitHub App ids not set in agents/scheduler.yaml");
 let privateKey: string;
 try {
-  privateKey = readFileSync(cfg.app.private_key_path, "utf8");
+  privateKey = (await appPrivateKey(cfg, credentialStore)).key;
 } catch (e) {
-  fail(`cannot read the GitHub App private key at ${cfg.app.private_key_path}: ${(e as Error).message}`);
+  fail((e as Error).message);
 }
 let branch = "";
 try {
