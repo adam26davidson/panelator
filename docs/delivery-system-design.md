@@ -538,6 +538,7 @@ are stale and are corrected as part of B.
 - `specs/065-scheduler-reserves-spec-and-adr-numbers/spec.md` (issue #125; the scheduler reserves spec and ADR numbers, ADR 0011)
 - `specs/066-filer-files-blocked-issues/spec.md` (issue #126; the filer files issues blocked on their predecessors)
 - `specs/067-incomplete-request-is-sent-back-for-completion/spec.md` (issue #129; an incomplete credential, funds or first-contact request is sent back for completion, ADR 0012)
+- `specs/068-beyond-github-aws-and-events/spec.md` (issue #130; row F2, second part: the AWS and event half of spec 030)
 - planned: web-ui-profile
   title: The web-ui profile: implement, fix and review instructions for UI packages
   brief: Spec 001 section 9 names `web-ui` among the v0 profiles and leaves its content to

@@ -189,7 +189,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   asserts the blob is not plaintext. Given the block is absent, then the
   defaults apply; given `dir` does not exist, then it is created with mode
   `0700` at the first `cred set`.
-- AC-2. **The catalogue says what each credential is.** `agents/credentials.yaml`
+- AC-2. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-1: the catalogue gains the `aws-sso` entry; its expiry probe reads the CLI's SSO cache through the scheduler's own command and spawns no `aws`. **The catalogue says what each credential is.** `agents/credentials.yaml`
   lists every credential the system knows, one entry each: `name`,
   `provider` (`github`, `telegram`, `aws`, ...), `purpose` (one line),
   `access` (the exact scopes or permissions, as a list of strings; least
@@ -294,7 +294,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   and the stage is in `decide` mode as today; `agents/stages/question-check.md`
   says so. Given a complete request, then the check judges the kind as
   before.
-- AC-7. **The request is sent with its content and fixed buttons.** Given a
+- AC-7. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-3: the `maintainer.contact` event for the send has `kind` equal to the request type and carries the request. **The request is sent with its content and fixed buttons.** Given a
   sent question carrying a request (spec 007 AC-5), then the Telegram
   message and the issue comment render the request's fields as a labelled
   list (the setup steps numbered; the message that would be sent quoted in
@@ -306,7 +306,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   the `maintainer.contact` event for the send (`kind` equal to the request
   type, `payload.request`) is the follow-up spec's (section 2). *(agent's
   call)*
-- AC-8. **The scheduler acts on the answer, then the stage resumes.** Given
+- AC-8. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-3: the answer is recorded as one `maintainer.contact` event with the request and its outcome. **The scheduler acts on the answer, then the stage resumes.** Given
   an answer (button or text) to a question with a request, then before the
   asking session resumes (spec 007 AC-13):
   - `first_contact`: given the "Approve" button, or a text whose first word
@@ -335,7 +335,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
 
 **Alerts over Telegram** (design section 8, "Telegram carries ... alerts")
 
-- AC-9. **Every notification reaches the chat.** Given Telegram on, then the
+- AC-9. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-4: `notify` resolves to the channel that carried the notification, and the recorder sits between the rate limiter and the `TelegramNotifier`. **Every notification reaches the chat.** Given Telegram on, then the
   service's `Notifier` is a `TelegramNotifier` wrapping the `LogNotifier`
   and the rate limiter of spec 001: every notification is written to the
   service log as today and then sent to the chat as one message headed by
@@ -461,7 +461,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   credential or a first contact. Given nothing is wrong, then the summary
   says so and no action is requested. The follow-up spec adds the AWS half
   (section 2) by extending this definition and prompt, not replacing them.
-- AC-16. **No AWS action here.** The `aws_scale` kind, the `scale` descriptor
+- AC-16. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-7: `aws_scale` exists as a level-1 kind. **No AWS action here.** The `aws_scale` kind, the `scale` descriptor
   on a reservation and the ledger input are the follow-up spec's (section 2)
   *(agent's call)*; this spec adds no `aws` action, spawns no `aws`, and
   leaves `agents/actions.yaml` with `renew_credential` as its one new kind.
