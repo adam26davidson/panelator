@@ -2527,6 +2527,14 @@ describe("driver: spec and ADR numbers are reserved by the scheduler (spec 065)"
     expect(failed.claim.state.reserved.adr).toBeNull();
   }, 120_000);
 
+  it("counts the chain's own PR's added ADR when reserving for the fix stage (AC-2)", async () => {
+    const t = await env({ fix: [(run: StageRun) => ({ head_sha: head(run.worktree), addressed: [] })] }, { issueBody: "Spec: specs/010-thing/spec.md" });
+    t.gh.routes.unshift({ method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: (_m, _b, url) => ({ body: url.searchParams.has("head") ? [] : [{ number: 9 }] }) },
+      { method: "GET", path: /^\/repos\/o\/r\/pulls\/9\/files$/, reply: () => ({ body: [{ filename: "docs/decisions/0006-mine.md", status: "added" }] }) });
+    await step(t.deps, at(t.claim, { stage: "fix", plan: implPlan as never, pr: { number: 9, head_sha: t.sha }, pendingFixInput: "fix it" }));
+    expect(inputOf(t.paths, "7-fix-1-").adr_number).toBe("0007");
+  }, 60_000);
+
   it("fails a fix result adding a held ADR (AC-4)", async () => {
     const t = await env({ fix: [(run: StageRun) => { commitIn(run.worktree, { "docs/decisions/0005-again.md": "adr\n" }); return { head_sha: head(run.worktree), addressed: [] }; }] }, { issueBody: "Spec: specs/010-thing/spec.md" });
     const c = at(t.claim, { stage: "fix", plan: implPlan as never, pr: { number: 9, head_sha: t.sha }, pendingFixInput: "fix it" });

@@ -652,7 +652,8 @@ async function reserveNumbers(deps: DriverDeps, claim: Claim, stage: AgentStageN
   const wantAdr = state.reserved.adr === null && ["spec", "implement", "fix"].includes(stage);
   if (!wantSpec && !wantAdr) return;
   await reserveSerially(async () => {
-    const held = await holders(numberDeps(deps), claim.issue, ownPrs(claim));
+    // The chain's own PRs count: their added numbers are taken (spec 065 section 3 excludes only other claims' own).
+    const held = await holders(numberDeps(deps), claim.issue);
     const spec = wantSpec ? nextFree(held, "spec") : null;
     const adr = wantAdr ? nextFree(held, "adr") : null;
     state.reserved = { spec: spec ?? state.reserved.spec, adr: adr ?? state.reserved.adr };
