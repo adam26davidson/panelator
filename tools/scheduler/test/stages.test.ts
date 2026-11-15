@@ -213,6 +213,21 @@ describe("committed stage prompts (AC-1, AC-14, AC-15, AC-17)", () => {
     expect(t).toMatch(/already settles the question, return `decide_yourself` and cite it/);
     expect(t).toMatch(/On `send`, also return `question`/);
   });
+  it("question-check.md returns incomplete for a missing request and never decide_yourself for it (spec 067 AC-3)", () => {
+    const t = read("question-check").replace(/\s+/g, " ");
+    expect(t).toContain("incomplete");
+    expect(t).toContain("must give");
+    expect(t).toContain("Never return `decide_yourself` because a request is missing");
+  });
+
+  it.each(["plan", "implement", "fix", "review", "spec"])("%s.md tells the stage how a request is completed (spec 067 AC-4)", (n) => {
+    const raw = read(n);
+    expect(raw.match(/request completed is not asking/g)).toHaveLength(1);
+    const t = raw.replace(/\s+/g, " ");
+    for (const field of ["name", "provider", "access", "setup", "amount_usd", "purpose", "charter_goal", "party", "channel", "why", "message"]) expect(t).toContain(`\`${field}\``);
+    expect(t).toContain("A second incomplete request is a failed run");
+  });
+
   it("question-check.md lists reported actions apart and sends a follow-up when the blocker still stands (spec 062 AC-2)", () => {
     const t = read("question-check").replace(/\s+/g, " ");
     expect(t).toContain("{{reported_actions}}");

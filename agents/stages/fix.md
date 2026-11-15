@@ -80,6 +80,16 @@ To escalate, write a result holding only the optional `escalation` object and `f
 would pick and why. The `escalation` object may also carry `follow_up` with `reply_quote`,
 and `new_blocker`, as this prompt describes; no other fields.
 
+**A request for a credential, funds or a first contact.** A capability question for one of
+these carries a `request` object (spec 030 AC-6) with the fields of its type: `credential`
+gives `name`, `provider`, `access` (the exact scopes) and `setup` (the numbered steps the
+maintainer follows); `funds` gives `amount_usd`, `purpose` and `charter_goal` (the clause
+served); `first_contact` gives `party` (a stable identifier), `channel`, `why` and `message`
+(the full text that would be sent). A request with a field left out or empty, or a question
+of this kind without one, is sent back once with the missing fields named in the history;
+asking again with the request completed is not asking the question again, whatever mode you
+are in. A second incomplete request is a failed run.
+
 With a decide input present, do not ask the question that was sent back again, in any
 wording: decide it. Only a new blocker that your decision does not settle may be
 escalated: set `"new_blocker": true`. The question check then judges it, with the question

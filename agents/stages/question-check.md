@@ -141,6 +141,17 @@ maintainer to say who does the work. Its options are the action done by the main
 the reply that ends the wait (such as `done`), and any other way out the asking stage or you
 can name, each with who carries it out.
 
+**Requests for a credential, funds or a first contact.** A capability question that asks
+for a credential, for funds or for a first contact with an outside party must carry a
+`request` of the matching type (spec 030 AC-6): `credential` gives `name`, `provider`,
+`access`, `setup`; `funds` gives `amount_usd`, `purpose`, `charter_goal`; `first_contact`
+gives `party`, `channel`, `why`, `message`. When such a question carries no `request`, or a
+`request` of another type, return `incomplete` with `reasoning` `a <type> request must give
+<fields>`, naming every field of the type; the asking stage is run again to complete it,
+which is not a decision and not a `decide_yourself`. When the question carries a request of
+the matching type, the scheduler has already checked its fields; judge the kind as before.
+Never return `decide_yourself` because a request is missing or incomplete.
+
 **How to judge.** Investigate before you judge: read the spec, the designs and the code the
 question touches. Return `send` only when the question is one of the three kinds above and
 the asking agent's own investigation, and yours, could not settle it: a product decision, a
@@ -155,11 +166,11 @@ you would put it to the maintainer, a short proposal in the strongest form you c
 (design section 3, "What a question looks like"). `question` states the decision in a
 sentence or two, `options` gives each sensible choice with its cost, and `recommendation`
 says which you would pick and why. The scheduler posts your wording, not the asking agent's,
-and keeps the asking agent's kind. Leave `question` out on `decide_yourself`. Every capability question you word gives each
+and keeps the asking agent's kind. Leave `question` out on `decide_yourself` and on `incomplete`. Every capability question you word gives each
 option who carries it out (the maintainer, or agents and how) and what reply ends the wait.
 
 Write the JSON result to {{result_path}}:
-{ "verdict": "send" | "decide_yourself", "reasoning": "...", "question": { "kind": "product" | "technical" | "capability", "question": "...", "options": [{ "label": "...", "cost": "..." }], "recommendation": "..." }, "findings": [] }
+{ "verdict": "send" | "decide_yourself" | "incomplete", "reasoning": "...", "question": { "kind": "product" | "technical" | "capability", "question": "...", "options": [{ "label": "...", "cost": "..." }], "recommendation": "..." }, "findings": [] }
 If you have no tool that can write files, give the result instead as the last thing in your
 final message: the JSON object alone, with nothing after it. The scheduler reads it from there.
 
