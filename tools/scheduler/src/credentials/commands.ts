@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import type { ActionLog } from "../actions/log.ts";
 import type { Config } from "../config.ts";
 import type { CatalogueEntry } from "./catalogue.ts";
 import { runCheck, type CheckContext, type CheckResult } from "./check.ts";
@@ -9,7 +8,6 @@ export interface CredContext {
   cfg: Config;
   store: CredentialStore;
   catalogue: CatalogueEntry[];
-  actionLog: ActionLog;
   /** the secret text for `cred set`, read from stdin by the caller */
   stdin: () => Promise<string>;
   fetch?: typeof fetch;
@@ -30,23 +28,22 @@ function setupSteps(e: CatalogueEntry): string[] {
   return e.setup.map((s, i) => `  ${i + 1}. ${s}`);
 }
 
-/** Spec 069 AC-3, AC-10: the maintainer's commands over the store; each is one row in the action log with the name only. */
+/**
+ * Spec 069 AC-3, AC-10: the maintainer's commands over the store.
+ * Spec 030 AC-4's action-log row per command is not written here: the action log has one writer, `applyAction`
+ * (asserted by test/actions.test.ts), whose kind table (`agents/actions.yaml`, `src/actions/`) is outside this
+ * chain (spec 069 section 5, "Not touched by this chain"). The issue that carries the rest of spec 030 registers
+ * the `cred_*` kinds there and routes these commands through `applyAction`.
+ */
 export async function credCommand(args: string[], ctx: CredContext): Promise<CredOutcome> {
   const [verb, name] = args;
-  const kinds: Record<string, string> = { set: "cred_set", list: "cred_list", check: "cred_check", import: "cred_import", remove: "cred_remove" };
-  const kind = kinds[verb ?? ""];
-  if (!kind) return { exitCode: 1, lines: [CRED_USAGE] };
-  const named = ["set", "remove"].includes(verb);
-  if (named && !name) return { exitCode: 1, lines: [CRED_USAGE] };
-  const row = await ctx.actionLog.writePending({ agent: "maintainer", run_id: "command", kind, args: name && (named || verb === "check") ? { name } : {}, why: `Maintainer cred ${verb} command`, undo: null });
-  let out: CredOutcome;
+  if (!["set", "list", "check", "import", "remove"].includes(verb ?? "")) return { exitCode: 1, lines: [CRED_USAGE] };
+  if (["set", "remove"].includes(verb) && !name) return { exitCode: 1, lines: [CRED_USAGE] };
   try {
-    out = await dispatch(verb, name, ctx);
+    return await dispatch(verb, name, ctx);
   } catch (e) {
-    out = { exitCode: 1, lines: [(e as Error).message] };
+    return { exitCode: 1, lines: [(e as Error).message] };
   }
-  await ctx.actionLog.settle(row.id, out.exitCode === 0 ? "applied" : "failed", out.exitCode === 0 ? undefined : out.lines[0]);
-  return out;
 }
 
 async function dispatch(verb: string, name: string | undefined, ctx: CredContext): Promise<CredOutcome> {

@@ -81,7 +81,7 @@ if(args[0]==='cred') {
   // Spec 030 AC-4 as amended by spec 069 AC-3: the maintainer's commands over the encrypted store.
   try{
     const catalogue=loadCatalogueFor(agentsDir);
-    const out=await credCommand(args.slice(1),{cfg,store:credentialStore,catalogue,actionLog,stdin:async()=>{let t='';for await(const c of process.stdin)t+=c;return t;}});
+    const out=await credCommand(args.slice(1),{cfg,store:credentialStore,catalogue,stdin:async()=>{let t='';for await(const c of process.stdin)t+=c;return t;}});
     for(const l of out.lines)console.log(l);
     process.exit(out.exitCode);
   }catch(e){console.error((e as Error).message);process.exit(1);}

@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { agentsDir, defaultConfigPath, loadConfig, type Config } from "../src/config.ts";
 import { loadCatalogue, loadCatalogueFor } from "../src/credentials/catalogue.ts";
 import { credCommand, type CredContext } from "../src/credentials/commands.ts";
-import { ActionLog } from "../src/actions/log.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import { runCheck } from "../src/credentials/check.ts";
 import { CredentialStore, appPrivateKey } from "../src/credentials/store.ts";
@@ -225,9 +224,8 @@ describe("cred commands (spec 069 AC-3, AC-10)", () => {
     const w = setup();
     const paths = statePaths(join(w.root, "state"));
     await ensureStateDirs(paths);
-    const actionLog = new ActionLog(paths.actionsLog, paths);
-    const ctx = (stdin = key): CredContext => ({ cfg: w.cfg, store: w.store, catalogue: loadCatalogueFor(agentsDir), actionLog, stdin: async () => stdin, fetch: gh.fetch });
-    return { ...w, paths, actionLog, ctx, gh };
+    const ctx = (stdin = key): CredContext => ({ cfg: w.cfg, store: w.store, catalogue: loadCatalogueFor(agentsDir), stdin: async () => stdin, fetch: gh.fetch });
+    return { ...w, paths, ctx, gh };
   }
   const secretsIn = (dir: string, text: string) => filesUnder(dir).filter((f) => !f.includes("/store/") && readFileSync(f, "utf8").includes(text));
 
@@ -301,18 +299,13 @@ describe("cred commands (spec 069 AC-3, AC-10)", () => {
     expect(filesUnder(w.cfg.credentials.dir).filter((f) => f.endsWith(".cred"))).toEqual([]);
     expect((await credCommand(["remove", "github-app-key"], w.ctx())).exitCode).toBe(1);
   });
-  it("logs one action-log row per command with the name only, and leaks the secret nowhere under the state directory", async () => {
+  it("leaks the secret nowhere under the state directory after every command", async () => {
     const w = await world();
     await credCommand(["set", "github-app-key"], w.ctx());
     await credCommand(["set", "github-app-key"], w.ctx(otherKey.privateKey));
     await credCommand(["list"], w.ctx());
     await credCommand(["check", "github-app-key"], w.ctx());
     await credCommand(["remove", "github-app-key"], w.ctx());
-    const rows = await w.actionLog.list();
-    expect(rows.map((r) => r.kind)).toEqual(["cred_set", "cred_set", "cred_list", "cred_check", "cred_remove"]);
-    expect(rows.every((r) => r.agent === "maintainer" && r.run_id === "command" && r.undo === null && r.status !== "pending")).toBe(true);
-    expect(rows.map((r) => r.args)).toEqual([{ name: "github-app-key" }, { name: "github-app-key" }, {}, { name: "github-app-key" }, { name: "github-app-key" }]);
-    expect(rows[1].status).toBe("failed");
     const body = testKey.privateKey.split("\n")[1];
     expect(secretsIn(join(w.root, "state"), body)).toEqual([]);
     expect(secretsIn(join(w.root, "state"), otherKey.privateKey.split("\n")[1])).toEqual([]);

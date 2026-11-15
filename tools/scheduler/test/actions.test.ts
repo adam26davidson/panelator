@@ -51,8 +51,7 @@ it('applyAction is the only writer of the action log',()=>{
  for(const dir of ['tools/scheduler/src','tools/scheduler/bin'])for(const f of readdirSync(dir,{recursive:true,encoding:'utf8'})){
   const rel=`${dir}/${f}`;if(rel.endsWith('.ts')&&readFileSync(rel,'utf8').includes('writePending('))files.push(rel);
  }
- // the maintainer's `cred` commands (spec 069 AC-10) log their own rows: their kinds are not registry actions
- expect(files.sort()).toEqual(['tools/scheduler/src/actions/index.ts','tools/scheduler/src/actions/log.ts','tools/scheduler/src/credentials/commands.ts']);
+ expect(files.sort()).toEqual(['tools/scheduler/src/actions/index.ts','tools/scheduler/src/actions/log.ts']);
 });
 it('audit input: effects carry defined kinds, refusals carry what was asked',async()=>{
  const paths=statePaths(await mkdtemp(join(tmpdir(),'actions-')));await ensureStateDirs(paths);
