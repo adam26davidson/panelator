@@ -188,3 +188,69 @@ describe("fileDesignChildren (spec 031 AC-4 to AC-7)", () => {
     expect(await run(gh, design("- `specs/001-x/spec.md`\n- `specs/002-y/spec.md`\n"))).toEqual({ filed: [], unblocked: [], errors: [] });
   });
 });
+
+describe("liftFilerBlocks through the scan (spec 066 AC-7)", () => {
+  let paths: ReturnType<typeof statePaths>;
+  let log: Record<string, unknown>[];
+  beforeEach(async () => {
+    paths = statePaths(mkdtempSync(join(tmpdir(), "children-")));
+    await ensureStateDirs(paths);
+    log = [];
+  });
+  const none = new Map<string, string>();
+  const run = (gh: FakeGh) => fileDesignChildren({ gh, paths, botLogin: BOT, now: () => new Date("2026-11-05T00:00:00Z"), log: (r) => log.push(r), designs: none });
+  const blockedBy = (nums: string) => `Blocked until ${nums}.\n\n<!-- panelator-blocked-by:${nums} -->`;
+
+  it("lifts the label once both predecessors are done, once", async () => {
+    const gh = new FakeGh([{ number: 94, state: "closed" }, { number: 132 }]);
+    const target = gh.add({ labels: ["class:bug", "validated", "blocked"] });
+    await gh.comment(target.number, blockedBy("94,132"));
+    expect((await run(gh)).unblocked).toEqual([]);
+    expect(gh.get(target.number).labels).toContain("blocked");
+    gh.get(132).state = "closed";
+    const r = await run(gh);
+    expect(r.unblocked).toEqual([target.number]);
+    expect(gh.get(target.number).labels).not.toContain("blocked");
+    const last = gh.comments.get(target.number)!.at(-1)!.body;
+    expect(last).toBe("Unblocked: #94, #132 are done.\n\n<!-- panelator-unblocked-by:94,132 -->");
+    expect(log).toContainEqual({ kind: "filer-unblocked", issue: target.number, blocked_by: [94, 132] });
+    gh.get(target.number).labels.push("blocked");
+    expect((await run(gh)).unblocked).toEqual([]);
+    expect(gh.get(target.number).labels).toContain("blocked");
+  });
+
+  it("keeps the block for an abandoned predecessor and counts an unknown number as done", async () => {
+    const gh = new FakeGh([{ number: 94, state: "closed", labels: ["abandoned"] }]);
+    const a = gh.add({ labels: ["blocked"] });
+    await gh.comment(a.number, blockedBy("94"));
+    const b = gh.add({ labels: ["blocked"] });
+    await gh.comment(b.number, blockedBy("999"));
+    const r = await run(gh);
+    expect(r.unblocked).toEqual([b.number]);
+    expect(gh.get(a.number).labels).toContain("blocked");
+    expect(log).toContainEqual({ kind: "filer-blocked-by-unknown", issue: b.number, blocked_by: 999 });
+  });
+
+  it("never lifts a blocked_until block, a hand-set block, a stranger's marker or another author's issue; one failure does not stop the rest", async () => {
+    const gh = new FakeGh([{ number: 94, state: "closed" }]);
+    const until = gh.add({ labels: ["blocked"] });
+    await gh.comment(until.number, "Blocked until x.\n\n<!-- panelator-blocked-until -->");
+    const hand = gh.add({ labels: ["blocked"] });
+    const stranger = gh.add({ labels: ["blocked"] });
+    await gh.comment(stranger.number, blockedBy("94"), "stranger");
+    const other = gh.add({ labels: ["blocked"], author: "someone" });
+    await gh.comment(other.number, blockedBy("94"));
+    const bad = gh.add({ labels: ["blocked"] });
+    const good = gh.add({ labels: ["blocked"] });
+    await gh.comment(good.number, blockedBy("94"));
+    const orig = gh.listComments.bind(gh);
+    gh.listComments = async (n: number) => {
+      if (n === bad.number) throw new Error("nope");
+      return orig(n);
+    };
+    const r = await run(gh);
+    expect(r.unblocked).toEqual([good.number]);
+    expect(r.errors).toEqual([`#${bad.number}: unblock: nope`]);
+    for (const i of [until, hand, stranger, other]) expect(gh.get(i.number).labels).toContain("blocked");
+  });
+});

@@ -7,6 +7,7 @@ import { parseChildEntries, type ChildEntry } from "../spec/parse.ts";
 import { appendFindings } from "../state/findings.ts";
 import type { StatePaths } from "../state/paths.ts";
 import type { IssueData } from "../types.ts";
+import { liftFilerBlocks } from "../filer/blocked.ts";
 import { blockedMarker, childMarker, isDone, neutraliseChildMarkers, resolveChildIssue, unblockedMarker } from "./markers.ts";
 
 const BLOCKED = "blocked";
@@ -190,5 +191,9 @@ export async function fileDesignChildren(d: ChildrenDeps): Promise<ChildrenResul
       }
     }
   }
+  // Spec 066 AC-7: the filer's own blocked-by blocks, judged over the same listing.
+  const lifted = await liftFilerBlocks({ gh: d.gh, issues, botLogin: d.botLogin, log: d.log });
+  result.unblocked.push(...lifted.unblocked);
+  result.errors.push(...lifted.errors);
   return result;
 }
