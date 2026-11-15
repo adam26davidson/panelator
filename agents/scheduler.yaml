@@ -27,6 +27,9 @@ labels:
 systemd:
   scope: true                # wrap stages in systemd-run --user --scope
   inhibit: true              # hold systemd-inhibit while a stage is in flight
+# credentials:                # spec 030 AC-1: the encrypted store `cred set` writes; both keys are optional
+#   dir: ~/.config/panelator/credentials
+#   warn_days: 7
 decide:
   base_url: ""               # /v1/systemone; unused in v0
   key_env: PANELATOR_DECIDE_KEY
