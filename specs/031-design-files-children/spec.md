@@ -218,7 +218,7 @@ is re-triaged by the filer into a new issue, so it is not finished work)*.
   the child unblocked *(agent's call: a wrongly early issue is cheaper than
   an issue blocked for ever)*. The design-tree check does not require the
   issue number, so a design can be written before the number is known.
-- AC-6. **Unblocking is the scan's too.** On every scan, for every planned
+- AC-6. Amended by [066-filer-files-blocked-issues](../066-filer-files-blocked-issues/spec.md) AC-7: the scan also lifts a blocked set by the filer with a panelator-blocked-by marker comment once every issue it names is done; a hand-set blocked and a blocked_until block are still never removed. **Unblocking is the scan's too.** On every scan, for every planned
   child whose issue is open, carries `blocked`, has the blocked marker
   comment of AC-5 and no comment with
   `<!-- panelator-child-unblocked:<design path>:<slug> -->`, both posted by
