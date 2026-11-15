@@ -61,6 +61,8 @@ export async function liftFilerBlocks(d: {
   const out = { unblocked: [] as number[], errors: [] as string[] };
   for (const issue of d.issues) {
     if (issue.author !== d.botLogin || issue.state !== "open" || !issue.labels.includes(BLOCKED_LABEL)) continue;
+    // A planned child's block is spec 031 AC-6's, not this pass's.
+    if (issue.body.includes("<!-- panelator-child:")) continue;
     try {
       const nums = latestBlockedBy(await d.gh.listComments(issue.number), d.botLogin);
       if (!nums) continue;
