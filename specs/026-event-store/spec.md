@@ -74,7 +74,7 @@ this spec is backfilled. Nothing reads the store yet except the index and the
   the directory itself) and asserts each is an append, a read, or the
   index's own rebuild. The usage pruning of spec 001 section 11 is unchanged
   and no longer loses data (the event has the copy).
-- AC-2. Amended by [063-pipeline-stopping-finding-ranks-first](../063-pipeline-stopping-finding-ranks-first/spec.md) AC-5: the issue.eligible payload gains stops_pipeline. **Every point the design names is recorded.** The scheduler records,
+- AC-2. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-3 and AC-4: a `maintainer.contact` payload may carry `request` and `outcome`, its `channel` is `telegram` when the `TelegramNotifier` carried it, and a sent request has `kind` equal to the request type. Amended by [063-pipeline-stopping-finding-ranks-first](../063-pipeline-stopping-finding-ranks-first/spec.md) AC-5: the issue.eligible payload gains stops_pipeline. **Every point the design names is recorded.** The scheduler records,
   at the moment it writes the existing record or makes the transition, with
   the payload shown:
   - `run.ended`: the usage record of spec 001 AC-24 (chain stages, rescues,

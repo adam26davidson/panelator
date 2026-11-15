@@ -241,7 +241,7 @@ only, as in spec 059. The *stale leftovers* of a volume at an age are:
   minutes old, then it goes too; given it is 10 minutes old, it stays. A
   grep of `tools/scheduler/src` shows `fs.rm` with `recursive` on a temp-dir
   path only in `actions/sweep-volume.ts`.
-- AC-5. **Infra health is a standing agent** (spec 030 AC-15, taken over).
+- AC-5. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-8: the definition gains credentials `aws-sso` and the action `aws_scale`, the input gains `aws`, and the prompt handles the `aws_forecast_over_cap` alarm. **Infra health is a standing agent** (spec 030 AC-15, taken over).
   `agents/standing/infra-health.md`: standard tier (`model:
   claude-sonnet-5-5`, as the standard-tier stages), Claude, `worktree: none`,
   `profile: none`, `permission: no-prompt`, schedule `6h`, events

@@ -161,7 +161,7 @@ the open reservations in the ledger (AC-6).
 
 **The launch gate and the running estimate** (design section 8)
 
-- AC-6. **Nothing is launched without a stated cost that fits.** The ledger
+- AC-6. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-6: a reservation may carry an optional `scale` descriptor written by its launcher, and its `expected_monthly_usd` is the down figure while scaled down. **Nothing is launched without a stated cost that fits.** The ledger
   `aws/ledger.json` holds reservations `{ id, what, expected_monthly_usd,
   why, by (agent or run id), at, released_at? }`. `reserveSpend(ctx, { what,
   expected_monthly_usd, why, by })` in `tools/scheduler/src/aws/ledger.ts` is
@@ -182,7 +182,7 @@ the open reservations in the ledger (AC-6).
   permission: AWS Budgets' action at 100% (section 8) still applies to a
   launch the ledger allowed, and the ledger is the system's record, not a
   store outside its reach (design section 6.2).
-- AC-7. **A refusal is a funds request.** Given a refused reservation, then
+- AC-7. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-5: the notification's text is laid out as a funds request with the two cap-raising steps, and its one `maintainer.contact` event is written by the notifier's recorder from the notification's `contact` field. **A refusal is a funds request.** Given a refused reservation, then
   one notification is sent through the `Notifier` with label `aws-funds`
   and a text giving what, the expected monthly cost, the shortfall against
   the cap, the forecast and the charter goal the `why` names, and a
