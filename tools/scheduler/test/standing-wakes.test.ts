@@ -148,8 +148,8 @@ describe('eventsWake (spec 025 AC-12 to AC-14)',()=>{
  it('only finding_queued is debounced',()=>{expect(DEBOUNCED_EVENTS).toEqual(['finding_queued']);});
 });
 describe('the event debounce through tick (spec 025 AC-12 to AC-15)',()=>{
- // The fixture's hourly operator agent would take the one slot at these times.
- const afterRun=async(w:World)=>{await writeAgentState(w.paths,'operator',{...(await readAgentState(w.paths,'operator'))!,paused:true});await writeAgentState(w.paths,'action-audit',{...(await readAgentState(w.paths,'action-audit'))!,paused:true});await queue(w,'first');await tick(w);expect(filerRuns(w)).toHaveLength(1);await queue(w,'second');};
+ // The fixture's hourly operator agent, and the 6-hourly infra health agent, would take the one slot at these times.
+ const afterRun=async(w:World)=>{await writeAgentState(w.paths,'operator',{...(await readAgentState(w.paths,'operator'))!,paused:true});await writeAgentState(w.paths,'action-audit',{...(await readAgentState(w.paths,'action-audit'))!,paused:true});await writeAgentState(w.paths,'infra-health',{...(await readAgentState(w.paths,'infra-health'))!,paused:true});await queue(w,'first');await tick(w);expect(filerRuns(w)).toHaveLength(1);await queue(w,'second');};
  const decidedOne={summary:'ok',decisions:[{ref:'1',outcome:'discard',reason:'no'}]};
  const decidedTwo={summary:'ok',decisions:[{ref:'2',outcome:'discard',reason:'no'}]};
  it('holds a finding_queued wake, keeps the event, and runs when the interval passes',async()=>{

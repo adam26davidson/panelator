@@ -193,3 +193,28 @@ export async function removeWorktree(repo: string, path: string): Promise<void> 
     await git(repo, "worktree", "prune");
   }
 }
+
+/** Spec 064: the paths `git worktree list` names, the main worktree first. */
+export async function listWorktrees(repo: string): Promise<string[]> {
+  return nulRecords((await git(repo, "worktree", "list", "--porcelain", "-z")).stdout)
+    .filter((r) => r.startsWith("worktree "))
+    .map((r) => r.slice("worktree ".length));
+}
+
+export async function pruneWorktrees(repo: string): Promise<void> {
+  await git(repo, "worktree", "prune");
+}
+
+/** Spec 064: the ref a worktree's own commits are measured against: its branch on the remote, else `origin/main`. */
+export async function remoteBase(worktree: string): Promise<string> {
+  const branch = (await git(worktree, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+  if (branch && branch !== "HEAD") {
+    try {
+      await git(worktree, "rev-parse", "--verify", "--quiet", `origin/${branch}`);
+      return `origin/${branch}`;
+    } catch {
+      // no counterpart on the remote
+    }
+  }
+  return "origin/main";
+}

@@ -815,8 +815,9 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
 // Spec 059 AC-6: a full volume postpones runs; it is not the work's failure.
 
 describe("end to end: a full volume postpones runs (spec 059 AC-6)", () => {
-  const LOW = async (_path: string) => ({ bytes: 100 * 2 ** 20, inodes: 1_000_000 });
   const ROOMY = async (_path: string) => ({ bytes: 20 * 2 ** 30, inodes: 1_000_000 });
+  // Only the chain's worktree volume is full: a full temp or state volume would also raise the scheduler's own sweep alarm (spec 064 AC-2).
+  const LOW = async (path: string) => (path.includes("/worktrees/") ? { bytes: 100 * 2 ** 20, inodes: 1_000_000 } : ROOMY(path));
   /** A clock the test moves past each retry_at. */
   const clock = (w: ChainWorld) => {
     const c = { offset: 0 };
@@ -847,7 +848,7 @@ describe("end to end: a full volume postpones runs (spec 059 AC-6)", () => {
     expect(records.filter((r) => r.kind === "transient-outage")).toEqual([expect.objectContaining({ issue: 7, cause: "ENOSPC" })]);
     expect(records.filter((r) => r.kind === "transient-outage-alarm")).toHaveLength(1);
     expect(w.notifications.filter((n) => n.gate === "infra")).toHaveLength(1);
-    expect(w.notifications.find((n) => n.gate === "infra")?.text).toContain(checkedPaths(w.paths, during.worktree)[0]);
+    expect(w.notifications.find((n) => n.gate === "infra")?.text).toContain(checkedPaths(w.paths, during.worktree)[2]);
     expect(events.filter((e) => e.event === "infra_alarm")).toEqual([{ event: "infra_alarm", payload: expect.objectContaining({ kind: "disk_full", issue: 7, cause: "ENOSPC" }) }]);
     expect(kinds(w, "stage")).toEqual([]);
     expect(records.filter((r) => r.kind === "chain-error")).toEqual([]);
@@ -1209,7 +1210,7 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
  },60000);
  it('postpones a standing agent when the state volume is low, and runs it after the wait (spec 059 AC-3, AC-6)',async()=>{
   let low=true;
-  const w=await standingWorld({'findings-filer':[{summary:'triaged',decisions:[]}]},async()=>({bytes:low?100*2**20:20*2**30,inodes:1_000_000}));
+  const w=await standingWorld({'findings-filer':[{summary:'triaged',decisions:[]}]},async path=>({bytes:low&&path.endsWith('/worktrees')?100*2**20:20*2**30,inodes:1_000_000}));// only the agent's worktree volume: a full state root would also raise the sweep's alarm (spec 064 AC-2)
   const log=capture(w);await dueNow(w,'findings-filer');
   await tickAt(w,T0);
   expect(await readAgentState(w.paths,'findings-filer')).toMatchObject({failures:0,postponed_until:'2026-10-01T00:01:00.000Z',outage:{count:1,alarmed:false}});

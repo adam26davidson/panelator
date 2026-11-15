@@ -39,6 +39,9 @@ export interface StatePaths {
   designRelabelled: string;
   /** Spec 031 AC-4: consecutive scans on which a planned child could not be filed. */
   childrenFailures: string;
+  /** Spec 064: the disk sweep's report, and the patches it saves of a worktree's work before removing it. */
+  diskSweep: string;
+  patchesSweep: string;
 }
 
 export function statePaths(root: string): StatePaths {
@@ -74,6 +77,8 @@ export function statePaths(root: string): StatePaths {
     quota: join(root, "quota.json"),
     designRelabelled: join(root, "design", "relabelled.json"),
     childrenFailures: join(root, "children", "failures.json"),
+    diskSweep: join(root, "disk-sweep.json"),
+    patchesSweep: join(root, "patches", "sweep"),
   };
 }
 

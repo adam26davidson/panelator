@@ -3,7 +3,7 @@ import {TelegramClient} from '../src/telegram/client.ts';
 import {telegramChannel} from '../src/telegram/channel.ts';
 import {fakeTelegram} from './helpers/fake-telegram.ts';
 import {emptyTelegram} from '../src/state/paused.ts';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -1394,7 +1394,9 @@ describe('Scheduler.tick: main check watcher (spec 036)',()=>{
   const {loadParameterDefinitions}=await import('../src/parameters/definitions.ts');
   const {ParameterStore}=await import('../src/parameters/store.ts');
   const {initializeAgents,readAgentState}=await import('../src/standing/state.ts');
-  const all=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,registryActionsCheck(join(agentsDir,'actions.yaml')));
+  const loaded=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,registryActionsCheck(join(agentsDir,'actions.yaml')));
+  // The checked-in infra health agent subscribes to `ci_failure_main` (spec 064); these tests need a registry without a subscriber.
+  const all:typeof loaded={...loaded,'infra-health':{...loaded['infra-health'],trigger:{...loaded['infra-health'].trigger,events:['infra_alarm']}}};
   const a=all['action-audit'];
   const subscribed={...all,'action-audit':{...a,trigger:{...a.trigger,events:[...(a.trigger.events??[]),'ci_failure_main']}}};
   h.deps.cfg.required_checks=['test'];
@@ -1605,5 +1607,36 @@ describe("Scheduler.tick: a chain blocked on main (spec 060)", () => {
     await h.s.tick();
     expect(await listBlocked(h.paths)).toEqual([]);
     expect(serviceRecords(h.paths).find((r) => r.kind === "blocked-dropped")).toMatchObject({ issue: 7 });
+  }, 30_000);
+});
+
+describe("Scheduler.tick: the disk sweep step (spec 064)", () => {
+  it("sweeps a stale test root in the tick and writes its report", async () => {
+    const before = process.env.CLAUDE_CODE_TMPDIR;
+    const tmp = join(tmpdir(), `loop-sweep-${process.pid}-${Date.now()}`);
+    mkdirSync(join(tmp, "panelator-test-old"), { recursive: true });
+    try {
+      process.env.CLAUDE_CODE_TMPDIR = tmp;
+      const { s, deps, paths } = await setup(routes([]));
+      const old = new Date(deps.now().getTime() - 3 * 3600_000);
+      utimesSync(join(tmp, "panelator-test-old"), old, old);
+      const t = await s.tick();
+      expect(t.errors).toEqual([]);
+      expect(existsSync(join(tmp, "panelator-test-old"))).toBe(false);
+      expect(JSON.parse(readFileSync(paths.diskSweep, "utf8")).volumes[0]).toMatchObject({ path: tmp, removed: 1 });
+      expect(serviceRecords(paths).filter((r) => r.kind === "disk-sweep")).toHaveLength(1);
+    } finally {
+      if (before === undefined) delete process.env.CLAUDE_CODE_TMPDIR;
+      else process.env.CLAUDE_CODE_TMPDIR = before;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("a failing sweep is reported in errors and the tick still finishes", async () => {
+    const { s, deps } = await setup(routes([issue(1)]));
+    deps.agentsDir = join(deps.agentsDir, "missing");
+    const t = await s.tick();
+    expect(t.errors.some((e) => e.startsWith("sweep: "))).toBe(true);
+    expect(t.eligible).toBe(1);
   }, 30_000);
 });
