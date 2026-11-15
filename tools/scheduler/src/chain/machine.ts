@@ -68,7 +68,7 @@ export function initialChainState(issue: number, specProblem: string | null = nu
     track: "issue", rescues: 0, specRescues: 0, replans: 0, specRevisions: 0, designRevisions: 0, specAnswers: 0, decideReturns: 0, history: [],
     rescueRun: false, specMode: null, specProblem, designProblem, question: null, askingStage: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
     pendingAnswer: null, recordIds: [], recordKind: null, recordAnswer: false, decideInput: null, decidedQuestion: null, parkedPr: null, pendingSince: null, checksRerun: false, securityPass: false,
-    chainFailures: null, chainErrors: 0, heldWork: [], checkRerun: null, blocked: null,
+    chainFailures: null, chainErrors: 0, heldWork: [], checkRerun: null, blocked: null, reserved: { spec: null, adr: null },
     ...(ledger ? seedFromLedger(ledger) : {}),
   };
 }

@@ -26,7 +26,8 @@ import { buildSelectContext } from "../shortlist/fetch.ts";
 import { specPathFromIssueBody } from "../spec/link.ts";
 import { parseChildEntries, parseSpec } from "../spec/parse.ts";
 import type { StageInput } from "../stages/prompt.ts";
-import { removeClaim, writeClaim, type Claim } from "../state/claims.ts";
+import { listClaims, removeClaim, writeClaim, type Claim } from "../state/claims.ts";
+import { collisions, fmtAdr, fmtSpec, holders, nextFree, numberedPaths, reserveSerially, type NumberDeps } from "./numbers.ts";
 import { appendFindings } from "../state/findings.ts";
 import { archiveLedger, writeLedger } from "../state/ledger.ts";
 import { classifyWork } from '../shortlist/rank.ts';
@@ -225,9 +226,27 @@ async function carriesMarks(worktree: string, questionIds: number[], start: stri
   return marksAll([...(await addedLinesByFile(worktree, `${start}..HEAD`)).values()].flat(), questionIds);
 }
 
+/** Every file the branch adds (`origin/main...HEAD`). */
+async function addedFiles(worktree: string): Promise<string[]> {
+  return (await gitOut(worktree, "-c", "core.quotePath=false", "diff", "--diff-filter=A", "--name-only", "origin/main...HEAD")).split("\n").filter(Boolean);
+}
+
 /** Files under docs/decisions/ the PR adds (`origin/main...HEAD`). */
 async function addedDecisionFiles(worktree: string): Promise<string[]> {
-  return (await gitOut(worktree, "-c", "core.quotePath=false", "diff", "--diff-filter=A", "--name-only", "origin/main...HEAD")).split("\n").filter((f) => f.startsWith(DECISIONS));
+  return (await addedFiles(worktree)).filter((f) => f.startsWith(DECISIONS));
+}
+
+const numberDeps = (deps: DriverDeps): NumberDeps => ({ repoDir: deps.repoDir, paths: deps.paths, gh: deps.gh, listClaims });
+/** The pull requests that are this chain's own, whose added numbers the chain does not collide with. */
+const ownPrs = (claim: Claim, ...more: (number | undefined)[]): number[] => [claim.state.pr?.number, claim.state.parkedPr?.number, ...more].filter((n): n is number => n !== undefined);
+
+/** Spec 065 AC-3, AC-4: the first number the branch's added paths take that main, another open PR or another claim holds, as a failure reason. */
+async function heldNumberReason(deps: DriverDeps, claim: Claim, kinds: ("spec" | "adr")[], ...more: (number | undefined)[]): Promise<string | null> {
+  const added = (await addedFiles(claim.worktree)).filter((f) => numberedPaths([f]).some((p) => kinds.includes(p.kind)));
+  if (!added.length) return null;
+  const hit = collisions(added, await holders(numberDeps(deps), claim.issue, ownPrs(claim, ...more)))[0];
+  if (!hit) return null;
+  return hit.kind === "spec" ? `result: spec number ${fmtSpec(hit.number)} is held by ${hit.holder}` : `result: ADR ${fmtAdr(hit.number)} is held by ${hit.holder}`;
 }
 
 /**
@@ -360,6 +379,8 @@ async function buildInput(
         : s.decideInput,
     spec_problem: s.specProblem ?? undefined,
     spec_path: specPathFromIssueBody(issueBody) ?? undefined,
+    spec_number: ["spec", "implement", "fix"].includes(s.stage) && s.reserved.spec !== null ? fmtSpec(s.reserved.spec) : undefined,
+    adr_number: ["spec", "implement", "fix"].includes(s.stage) && s.reserved.adr !== null ? fmtAdr(s.reserved.adr) : undefined,
     design_problem: s.designProblem ?? undefined,
     viewports: DESIGN_VIEWPORTS,
     answered_questions: answered,
@@ -613,7 +634,35 @@ async function fetchIssue(deps: DriverDeps, issue: number): Promise<{ title: str
   return { title: String(data.title ?? ""), body: String(data.body ?? "") };
 }
 
+/** Spec 065 AC-2: a handled result frees its ADR number, unless the branch holds an ADR of its own that a PR does not carry yet. */
 async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageName): Promise<ChainEvent | null> {
+  const event = await runAgentStageOnce(deps, claim, stage);
+  const state = claim.state;
+  if (event === null || state.conversation || state.reserved.adr === null || !["spec", "implement", "fix"].includes(stage)) return event;
+  if (event.type !== "stage_ok" && !(event.type === "stage_failed" && !event.postpone)) return event;
+  const heldBranch = "head" in event && event.head !== undefined && state.pr === null && (await addedDecisionFiles(claim.worktree)).length > 0;
+  if (!heldBranch) state.reserved = { ...state.reserved, adr: null };
+  return event;
+}
+
+/** Spec 065 AC-1, AC-2: reserves the numbers this run may take, once, under the process-wide reservation lock. */
+async function reserveNumbers(deps: DriverDeps, claim: Claim, stage: AgentStageName, issueBody: string): Promise<void> {
+  const state = claim.state;
+  const wantSpec = stage === "spec" && specPathFromIssueBody(issueBody) === null && state.reserved.spec === null;
+  const wantAdr = state.reserved.adr === null && ["spec", "implement", "fix"].includes(stage);
+  if (!wantSpec && !wantAdr) return;
+  await reserveSerially(async () => {
+    // The chain's own PRs count: their added numbers are taken (spec 065 section 3 excludes only other claims' own).
+    const held = await holders(numberDeps(deps), claim.issue);
+    const spec = wantSpec ? nextFree(held, "spec") : null;
+    const adr = wantAdr ? nextFree(held, "adr") : null;
+    state.reserved = { spec: spec ?? state.reserved.spec, adr: adr ?? state.reserved.adr };
+    await writeClaim(deps.paths, { ...claim, last_activity_at: deps.now().toISOString() });
+    deps.log({ kind: "number-reserved", issue: claim.issue, ...(spec !== null ? { spec: fmtSpec(spec) } : {}), ...(adr !== null ? { adr: fmtAdr(adr) } : {}) });
+  });
+}
+
+async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentStageName): Promise<ChainEvent | null> {
   const state = claim.state;
   // I2: never start a second run while the last one's scope is still alive.
   if (claim.run_id && deps.systemdScope && (await deps.unitActive(stageUnit(claim.run_id)))) {
@@ -715,6 +764,14 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
   const issue = await fetchIssue(deps, claim.issue);
   const specPath = specPathFromIssueBody(issue.body);
   const specText = specOnMain(deps.repoDir, specPath);
+  if (!state.conversation) {
+    // A read that fails reserves nothing: a number guessed without the open pull requests is the fault spec 065 removes.
+    try {
+      await reserveNumbers(deps, claim, stage, issue.body);
+    } catch (e) {
+      return postponed(`number reservation: ${(e as Error).message}`);
+    }
+  }
   const diffBefore = await diffFilesAgainstBase(claim.worktree);
   // C5: a sensitive diff gets the normal review first, then the security review (the state's security pass).
   const sensitive = stage === "review" && (state.sensitive || isSensitive(diffBefore, sensitiveGlobs).length > 0);
@@ -879,6 +936,8 @@ async function codeEvent(
   if (prNumber === undefined || !(await prBound(deps, claim, { prNumber, branch: branchOf(state) }, r.head_sha))) {
     return { type: "stage_failed", stage, reason: "result: pr mismatch" };
   }
+  const heldAdr = await heldNumberReason(deps, claim, ["adr"], prNumber);
+  if (heldAdr) return { type: "stage_failed", stage, reason: heldAdr };
   if (stage === "fix" && state.recordAnswer && !(await recordsAnswer(claim.worktree, state.recordIds, start))) {
     return { type: "stage_failed", stage, reason: "result: answer not recorded under docs/decisions/" };
   }
@@ -934,9 +993,19 @@ async function specEvent(deps: DriverDeps, claim: Claim, issueBody: string, r: S
   const pr = r.pr_number === undefined || r.head_sha === undefined ? null : await prBound(deps, claim, { prNumber: r.pr_number, branch: `spec-${claim.issue}` }, r.head_sha);
   if (!pr) return failed("result: pr mismatch");
   if (CLOSING_KEYWORD.test(pr.body)) return failed("result: spec PR body closes an issue");
+  if (issueSpec === null) {
+    const number = Number(/^specs\/(\d{3})-/.exec(specPath)?.[1]);
+    if (number !== state.reserved.spec) return failed(`result: spec number ${fmtSpec(number)} is not the reserved ${state.reserved.spec === null ? "(none)" : fmtSpec(state.reserved.spec)}`);
+  }
+  const held = await heldNumberReason(deps, claim, issueSpec === null ? ["spec", "adr"] : ["adr"], r.pr_number);
+  if (held) return failed(held);
   if (answerToRecord(state) && !(await carriesMarks(claim.worktree, state.recordIds, start))) return failed("result: answer not marked");
   const scope = await specTrackScope(deps, claim, await diffFilesAgainstBase(claim.worktree), specPath);
-  if (issueSpec === null) await deps.gh.setIssueBody(claim.issue, `${issueBody}\n\nSpec: ${specPath}`);
+  if (issueSpec === null) {
+    await deps.gh.setIssueBody(claim.issue, `${issueBody}\n\nSpec: ${specPath}`);
+    // The issue body and the open PR hold the number now.
+    state.reserved = { ...state.reserved, spec: null };
+  }
   return { type: "stage_ok", stage: "spec", result: r, scope };
 }
 

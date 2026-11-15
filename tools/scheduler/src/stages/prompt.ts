@@ -16,6 +16,9 @@ export interface StageInput {
   decide_input?: string;
   spec_problem?: string;
   spec_path?: string;
+  /** Spec 065: the numbers the scheduler reserved: three digits for a spec, four for an ADR. */
+  spec_number?: string;
+  adr_number?: string;
   design_problem?: string;
   viewports?: string;
   answered_questions?: string;
@@ -47,6 +50,8 @@ export function renderPrompt(template: string, input: StageInput): string {
     decide_input: input.decide_input ?? NONE,
     spec_problem: input.spec_problem ?? NONE,
     spec_path: input.spec_path ?? NONE,
+    spec_number: input.spec_number ?? NONE,
+    adr_number: input.adr_number ?? NONE,
     design_problem: input.design_problem ?? NONE,
     viewports: input.viewports ?? NONE,
     answered_questions: input.answered_questions ?? NONE,

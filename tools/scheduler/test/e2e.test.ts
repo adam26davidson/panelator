@@ -119,6 +119,7 @@ describe("end to end: one issue through the whole chain with the fake adapter an
       { method: "POST", path: /^\/repos\/o\/r\/issues\/7\/labels$/, reply: (_m, b) => { for (const l of (b as { labels: string[] }).labels) { labels.add(l); labelLog.push(`+${l}`); } return { body: [] }; } },
       { method: "DELETE", path: /^\/repos\/o\/r\/issues\/7\/labels\/([^/]+)$/, reply: (m) => { labels.delete(m[1]); labelLog.push(`-${m[1]}`); return { body: {} }; } },
       { method: "POST", path: /^\/repos\/o\/r\/issues\/7\/comments$/, reply: (_m, b) => { comments.push((b as { body: string }).body); return { status: 201, body: {} }; } },
+      { method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: () => ({ body: [] }) },
       { method: "GET", path: /^\/repos\/o\/r\/pulls\/9$/, reply: () => ({ body: { number: 9, base: { ref: "main" }, head: { ref: "issue-7", sha: SHA }, html_url: "u", mergeable: true, mergeable_state: "clean", merged: false, state: "open" } }) },
       { method: "GET", path: /^\/repos\/o\/r\/commits\/[0-9a-f]+\/check-runs$/, reply: () => ({ body: { total_count: 1, check_runs: [{ id: 1, name: "test", status: "completed", conclusion: "success" }] } }) },
       { method: "PUT", path: /^\/repos\/o\/r\/pulls\/9\/merge$/, reply: () => ({ body: { merged: true, message: "ok" } }) },
@@ -812,6 +813,122 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------
+// Spec 065 AC-7: the scheduler reserves spec and ADR numbers; a wrong or held number fails the result.
+
+describe("end to end: spec and ADR numbers are reserved by the scheduler (spec 065 AC-7)", () => {
+  const prev = { "specs/064-prev/spec.md": "# prev\n" };
+  /** A hand-made open PR adding `files`, as no chain of the scheduler's made it. */
+  const handPr = (w: ChainWorld, n: number, files: string[]) => {
+    w.prs.set(n, { number: n, head: `hand-${n}`, sha: "0".repeat(40), body: "", state: "open", merged: false });
+    w.addedByPr.set(n, files);
+  };
+  const specAt = (w: () => ChainWorld, path: string, extra: Record<string, string> = {}) => (run: StageRun) => {
+    const sha = w().push(run, { [path]: specOf(), ...extra }, "spec");
+    w().openPr(run, 12, sha, "A new spec");
+    return { verdict: "revised", spec_path: path, pr_number: 12, head_sha: sha };
+  };
+
+  it("main ends at 064: the spec run is given 065, its result passes the check, the Spec: line is appended and the reservation freed", async () => {
+    let w!: ChainWorld;
+    w = await chainWorld({ files: { ...repoFiles({ spec: null }), ...prev }, issueBody: "Do the thing.", results: { spec: [specAt(() => w, "specs/065-x/spec.md")] } });
+    await w.tick();
+    const [run] = runsOf(w, "spec");
+    expect(run.input).toMatchObject({ spec_number: "065", adr_number: "0001" });
+    expect(w.logs.filter((r) => r.kind === "number-reserved")).toEqual([{ kind: "number-reserved", issue: 7, spec: "065", adr: "0001" }]);
+    expect(w.issueBody).toBe("Do the thing.\n\nSpec: specs/065-x/spec.md");
+  }, 120_000);
+
+  it("two spec-less issues claimed in one tick with two slots are given 065 and 066, each reserved in its claim, and both free their reservation", async () => {
+    let w!: ChainWorld;
+    const claimed: Record<number, unknown> = {};
+    const plan: Record<string, { issue: number; pr: number; path: string }> = { "spec-7": { issue: 7, pr: 12, path: "specs/065-x/spec.md" }, "spec-8": { issue: 8, pr: 13, path: "specs/066-y/spec.md" } };
+    // Whichever run starts first answers for its own branch; each sees both claim files as they stand during the run.
+    const answer = (run: StageRun) => {
+      const branch = git(run.worktree, "rev-parse", "--abbrev-ref", "HEAD").trim();
+      const { issue, pr, path } = plan[branch];
+      for (const n of [7, 8]) { try { claimed[issue * 10 + n] = JSON.parse(readFileSync(join(w.paths.claims, `${n}.json`), "utf8")).state.reserved; } catch { /* claim not yet written */ } }
+      const sha = w.push(run, { [path]: specOf() }, "spec");
+      w.openPr(run, pr, sha, "A new spec");
+      return { verdict: "revised", spec_path: path, pr_number: pr, head_sha: sha };
+    };
+    w = await chainWorld({
+      files: { ...repoFiles({ spec: null }), ...prev }, issueBody: "Do the thing.", second: { body: "Do the other thing." }, slots: 2,
+      results: { spec: [answer, answer] },
+    });
+    await w.tick();
+    const byBranch = (b: string) => runsOf(w, "spec").find((r) => r.branch === b)!;
+    expect(runsOf(w, "spec")).toHaveLength(2);
+    expect(byBranch("spec-7").input.spec_number).toBe("065");
+    expect(byBranch("spec-8").input.spec_number).toBe("066");
+    expect(w.logs.filter((r) => r.kind === "number-reserved").map((r) => [r.issue, r.spec])).toEqual([[7, "065"], [8, "066"]]);
+    // During each run its own claim file carried its reservation.
+    for (const issue of [7, 8]) {
+      const seen = claimed[issue * 10 + issue] as { spec: number };
+      expect(seen.spec).toBe(issue === 7 ? 65 : 66);
+    }
+    expect(w.issueBody).toBe("Do the thing.\n\nSpec: specs/065-x/spec.md");
+    expect(w.secondBody).toBe("Do the other thing.\n\nSpec: specs/066-y/spec.md");
+    // The Spec: lines hold the numbers now; a claim still on disk no longer reserves them (a finished chain's claim is gone).
+    for (const n of [7, 8]) {
+      const file = join(w.paths.claims, `${n}.json`);
+      if (existsSync(file)) expect(JSON.parse(readFileSync(file, "utf8")).state.reserved.spec).toBeNull();
+    }
+  }, 120_000);
+
+  it("an open PR not of the scheduler's making holds 065: the spec run is given 066", async () => {
+    let w!: ChainWorld;
+    w = await chainWorld({ files: { ...repoFiles({ spec: null }), ...prev }, issueBody: "Do the thing.", results: { spec: [specAt(() => w, "specs/066-x/spec.md")] } });
+    handPr(w, 30, ["specs/065-hand/spec.md"]);
+    await w.tick();
+    expect(runsOf(w, "spec")[0].input.spec_number).toBe("066");
+    expect(w.issueBody).toBe("Do the thing.\n\nSpec: specs/066-x/spec.md");
+  }, 120_000);
+
+  it("a spec_path with another number fails before the Spec: line, and the second attempt is given the reserved number again", async () => {
+    let w!: ChainWorld;
+    w = await chainWorld({ files: { ...repoFiles({ spec: null }), ...prev }, issueBody: "Do the thing.", results: { spec: [specAt(() => w, "specs/065-x/spec.md"), FAIL] } });
+    handPr(w, 30, ["specs/065-hand/spec.md"]);
+    await w.tick();
+    const [first, second] = runsOf(w, "spec");
+    expect(first.input.spec_number).toBe("066");
+    expect(second.input.spec_number).toBe("066");
+    expect(second.input.history).toContain("spec attempt 1 failed: result: spec number 065 is not the reserved 066");
+    expect(w.issueBody).toBe("Do the thing.");
+  }, 120_000);
+
+  it("a spec run adding an ADR number another open PR holds fails, naming the PR", async () => {
+    let w!: ChainWorld;
+    w = await chainWorld({ files: { ...repoFiles({ spec: null }), ...prev }, issueBody: "Do the thing.", results: { spec: [specAt(() => w, "specs/065-x/spec.md", { "docs/decisions/0001-mine.md": "adr\n" }), FAIL] } });
+    handPr(w, 31, ["docs/decisions/0001-other.md"]);
+    await w.tick();
+    const [first, second] = runsOf(w, "spec");
+    expect(first.input.adr_number).toBe("0002");
+    expect(second.input.history).toContain("spec attempt 1 failed: result: ADR 0001 is held by PR #31");
+    expect(w.issueBody).toBe("Do the thing.");
+  }, 120_000);
+
+  it("an implement run adding the reserved ADR is handled as today and its reservation is freed", async () => {
+    let w!: ChainWorld;
+    let reservedDuringReview: unknown = "unset";
+    const a = agents(() => w);
+    w = await chainWorld({
+      files: repoFiles(),
+      results: {
+        plan: [PLAN],
+        implement: [a.implement(9, { "a.txt": "pr 9\n", "docs/decisions/0001-mine.md": "# adr\n" })],
+        review: [(run: StageRun) => { void run; reservedDuringReview = JSON.parse(readFileSync(join(w.paths.claims, "7.json"), "utf8")).state.reserved; return APPROVE; }],
+      },
+    });
+    await w.tick();
+    await expectSettled(w);
+    expect(runsOf(w, "implement")[0].input.adr_number).toBe("0001");
+    expect(reservedDuringReview).toEqual({ spec: null, adr: null });
+    expect(w.mergeRequests).toEqual([9]);
+    expect(w.onMain("docs/decisions/0001-mine.md")).toBe("# adr\n");
+  }, 120_000);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
 // Spec 059 AC-6: a full volume postpones runs; it is not the work's failure.
 
 describe("end to end: a full volume postpones runs (spec 059 AC-6)", () => {
@@ -906,7 +1023,8 @@ describe("end to end: a design's planned children (spec 031)", () => {
     const a = agents(() => w);
     const childSpec = specOf().replace(`Parent: ${PARENT}`, `Parent: ${KIDS}`);
     w = await chainWorld({
-      files: { "a.txt": "a\n", "docs/charter.md": CHARTER, [PARENT]: productSpec(`- \`${KIDS}\`\n`), [KIDS]: kids(plannedA + plannedB) },
+      // Main ends at spec 010, so the scheduler reserves 011 for the child's spec (spec 065).
+      files: { "a.txt": "a\n", "docs/charter.md": CHARTER, [PARENT]: productSpec(`- \`${KIDS}\`\n`), [KIDS]: kids(plannedA + plannedB), "specs/010-earlier/README.md": "An earlier spec.\n" },
       issueFromScan: true,
       results: {
         spec: [(run: StageRun) => {

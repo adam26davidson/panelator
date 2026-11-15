@@ -89,6 +89,8 @@ export interface ChainState {
   blocked: { on: BlockCondition | null; since: string | null; check: string | null; main_sha: string | null; blocks: number } | null;
   /** Spec 011 AC-1, spec 040: the branch and head a stage left when its result carried a question, one entry per branch; an entry is kept until a PR is bound on its branch or the attempt is discarded. */
   /** Spec 053: `carried` is the failure reason of an implement run that stopped before it finished; the entry is that run's work, not a question's hold. */
+  /** Spec 065 AC-1, AC-2: the spec and ADR numbers the scheduler reserved for this chain's next runs; null when none. */
+  reserved: { spec: number | null; adr: number | null };
   heldWork: { branch: string; head: string; carried?: string }[];
 }
 

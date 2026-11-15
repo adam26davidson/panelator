@@ -25,7 +25,7 @@ while you run; the scheduler reads only the result file.
 For an issue headed "Possible design flaw", in write mode either return the question for
  the independent question check, or, if your own investigation settles the flaw, decide it
  and record an ADR under docs/decisions/ in the spec PR alongside the spec carrying the
- change (process-spec 4.2 step 3). Never decide a product decision or change a recorded
+ change (an ADR you add is `docs/decisions/{{adr_number}}-<slug>.md`, the number the scheduler reserved for this run (take no other)) (process-spec 4.2 step 3). Never decide a product decision or change a recorded
  maintainer decision yourself.
 
 Issue {{issue}}
@@ -47,7 +47,7 @@ The question check sent this back for you to decide: {{decide_input}}
 
 - `write`: write or complete the spec named by the problem above ({{spec_problem}}). If the
   issue body has a `Spec:` line, the spec lives at that path; otherwise create
-  `specs/NNN-<slug>/spec.md` with the next free number.
+  `specs/{{spec_number}}-<slug>/spec.md`, the number the scheduler reserved for this issue; take no other.
 - `answer`: the plan stage found the spec could not be implemented as written and asked the
   questions given in the problem above ({{spec_problem}}). Answer each one. Write each
   technical answer into the spec where it belongs, marked as your call with
@@ -92,7 +92,7 @@ PR replaces the planned bullet with the file bullet, keeping `(issue #<n>)`.
 own spec, do not write one large spec. In the one spec PR, write the sub-design under
 `docs/designs/` with its planned children (at least two), a `README.md` in the spec's
 directory (the path of the issue's `Spec:` line) that points to the sub-design, and an ADR
-under `docs/decisions/` when the split is itself a decision. List the sub-design in its
+under `docs/decisions/` when the split is itself a decision (an ADR you add is `docs/decisions/{{adr_number}}-<slug>.md`, the number the scheduler reserved for this run (take no other)). List the sub-design in its
 parent's `## Children`. When that PR merges the scheduler files the children and closes
 this issue; the work continues in the children's issues.
 
@@ -100,7 +100,7 @@ this issue; the work continues in the children's issues.
 write it where it belongs: a product answer into `docs/product-spec.md` or the top design
 it belongs to (`docs/product-spec.md` or `docs/delivery-system-design.md`); a technical
 answer into the spec, or into an ADR under `docs/decisions/` when it is a large technical
-decision. In `write`, `answer` or `revise` mode, after a question you asked was answered,
+decision (an ADR you add is `docs/decisions/{{adr_number}}-<slug>.md`, the number the scheduler reserved for this run (take no other)). In `write`, `answer` or `revise` mode, after a question you asked was answered,
 record the answer this way in your own spec PR and carry on with the mode's work. The
 recorded text carries the mark described below.
 

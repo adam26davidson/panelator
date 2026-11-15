@@ -328,6 +328,16 @@
           ],
           "description": "Spec 060: the block's condition while blocked, and this issue's count of blocks."
         },
+        "reserved": {
+          "type": "object",
+          "required": ["spec", "adr"],
+          "additionalProperties": false,
+          "properties": {
+            "spec": { "type": ["integer", "null"], "minimum": 1 },
+            "adr": { "type": ["integer", "null"], "minimum": 1 }
+          },
+          "description": "Spec 065: the spec and ADR numbers the scheduler reserved for this chain."
+        },
         "heldWork": {
           "type": "array",
           "items": {

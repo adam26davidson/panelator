@@ -58,7 +58,7 @@ function scriptedAdapter(results: Record<string, Scripted[]>): Adapter & { ran: 
 }
 
 interface PrOver { headRef?: string; head?: string | (() => string); body?: string; merged?: boolean; mergeable?: boolean; state?: "open" | "closed" }
-interface RouteOver { checks?: unknown[]; mergeable?: boolean; merged?: boolean; issueLabels?: string[]; prHead?: string; headRef?: string; issueBody?: string; prs?: Record<number, PrOver> }
+interface RouteOver { openPrs?: { number: number; added: string[] }[]; checks?: unknown[]; mergeable?: boolean; merged?: boolean; issueLabels?: string[]; prHead?: string; headRef?: string; issueBody?: string; prs?: Record<number, PrOver> }
 
 function ghRoutes(sha: string, over: RouteOver = {}): Route[] {
   const labels = [...["validated", "in-progress", "class:product"], ...(over.issueLabels ?? [])].map((name) => ({ name }));
@@ -79,6 +79,8 @@ function ghRoutes(sha: string, over: RouteOver = {}): Route[] {
         return { body: { number: Number(m[1]), base: { ref: "main" }, head: { ref: pr.headRef ?? "issue-7", sha: head }, html_url: "u", body: pr.body ?? "", mergeable: pr.mergeable ?? true, mergeable_state: "clean", merged: pr.merged ?? false, state: pr.state ?? (pr.merged ? "closed" : "open") } };
       },
     },
+    { method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: () => ({ body: (over.openPrs ?? []).map((p) => ({ number: p.number })) }) },
+    { method: "GET", path: /^\/repos\/o\/r\/pulls\/(\d+)\/files$/, reply: (m) => ({ body: (over.openPrs?.find((p) => p.number === Number(m[1]))?.added ?? []).map((filename) => ({ filename, status: "added" })) }) },
     { method: "PATCH", path: /^\/repos\/o\/r\/pulls\/\d+$/, reply: () => ({ body: {} }) },
     { method: "DELETE", path: /^\/repos\/o\/r\/git\/refs\/heads\/.+$/, reply: () => ({ status: 204, body: null }) },
     { method: "GET", path: /^\/repos\/o\/r\/commits\/[0-9a-f]+\/check-runs$/, reply: () => ({ body: { total_count: checks.length, check_runs: checks } }) },
@@ -774,7 +776,7 @@ describe("driver: a branch left on origin by a failed attempt (final review T2)"
     const c = at(claim, { stage: "implement", plan: plan as never });
     await writeClaim(paths, c);
     await step(deps, c);
-    expect(gh.calls.some((call) => call.url.startsWith("/repos/o/r/pulls?") || call.url.includes("/git/refs/heads/"))).toBe(false);
+    expect(gh.calls.some((call) => (call.url.startsWith("/repos/o/r/pulls?") && call.url.includes("head=")) || call.url.includes("/git/refs/heads/"))).toBe(false);
   }, 60_000);
 
   it("drops a stale spec-7 the same way before the spec stage runs (re-claim after a release)", async () => {
@@ -1430,8 +1432,10 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
 
   it("appends the Spec: line to an issue body that has none (AC-21)", async () => {
     let wt = "";
-    const { gh } = await specRun((run: StageRun) => revised(head(run.worktree)), { issueBody: "Do the thing.", prs: { 12: { headRef: "spec-7", head: () => head(wt), body: "Refs #7" } } }, (_p, w) => { wt = w; });
-    expect(gh.calls.find((x) => x.method === "PATCH" && x.url === "/repos/o/r/issues/7")?.body).toEqual({ body: "Do the thing.\n\nSpec: specs/010-thing/spec.md" });
+    // Main holds specs/010, so the scheduler reserves 011 and the result takes it (spec 065 AC-3).
+    const { gh, r } = await specRun((run: StageRun) => revised(commitIn(run.worktree, { "specs/011-thing/spec.md": spec }), { spec_path: "specs/011-thing/spec.md" }), { issueBody: "Do the thing.", prs: { 12: { headRef: "spec-7", head: () => head(wt), body: "Refs #7" } } }, (_p, w) => { wt = w; });
+    expect(gh.calls.find((x) => x.method === "PATCH" && x.url === "/repos/o/r/issues/7")?.body).toEqual({ body: "Do the thing.\n\nSpec: specs/011-thing/spec.md" });
+    expect(r.claim.state.reserved).toEqual({ spec: null, adr: null });
   }, 60_000);
 
   it("fails a spec PR recording a technical answer without its mark, and accepts it with the mark (AC-18)", async () => {
@@ -1740,7 +1744,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
 
   it("says unknown, not 'not on origin' or '(none)', when the branch and PR lookups fail (AC-4)", async () => {
     let held = "";
-    const failing = (sha: string): Route[] => [{ method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: () => ({ status: 422, body: { message: "lookup failed" } }) }, ...ghRoutes(sha)];
+    const failing = (sha: string): Route[] => [{ method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: (_m, _b, url) => url.searchParams.has("head") ? { status: 422, body: { message: "lookup failed" } } : { body: [] } }, ...ghRoutes(sha)];
     const t = await setup(() => ({ implement: [] }), failing, (_p, wt) => { held = commitIn(wt, { "work.txt": "w\n" }); });
     const c = at(t.claim, { stage: "implement", plan: plan as never, heldWork: [{ branch: "issue-7", head: held }] });
     await writeClaim(t.paths, c);
@@ -2400,5 +2404,141 @@ describe("driver: a check failing outside the PR's scope (spec 060)", () => {
     const next = await step(deps, r.claim);
     expect(next.claim.state).toMatchObject({ stage: "fix", conflictPending: true });
     expect(head).toHaveLength(40);
+  }, 60_000);
+});
+
+describe("driver: spec and ADR numbers are reserved by the scheduler (spec 065)", () => {
+  const otherClaim = (issue: number, reserved: { spec: number | null; adr: number | null }, wt: string): Claim =>
+    ({ issue, state: { ...initialChainState(issue), reserved }, worktree: wt, started_at: new Date().toISOString(), last_activity_at: new Date().toISOString(), run_id: null });
+  const specAt = (n: string, extra: Record<string, string> = {}) => (run: StageRun) =>
+    ({ verdict: "revised", spec_path: `specs/${n}-thing/spec.md`, pr_number: 12, head_sha: commitIn(run.worktree, { [`specs/${n}-thing/spec.md`]: spec, ...extra }) });
+
+  async function env(results: Record<string, Scripted[]>, over: RouteOver = {}) {
+    let wt = "";
+    const files = withTopDesign({ "a.txt": "a\n", "specs/010-thing/spec.md": spec, "docs/decisions/0005-x.md": "x\n" }, "specs/010-thing/spec.md");
+    const prs = { 9: { headRef: "issue-7", head: () => head(wt) }, 12: { headRef: "spec-7", head: () => head(wt), body: "Refs #7" } };
+    const t = await setup(() => results, (sha) => ghRoutes(sha, { issueBody: "Do the thing.", prs, ...over }), (_p, w) => { wt = w; }, files);
+    const logs: Record<string, unknown>[] = [];
+    t.deps.log = (rec) => { logs.push(rec); };
+    const reserved = (rec: Record<string, unknown>) => logs.filter((l) => l.kind === "number-reserved" && Object.keys(rec).every((k) => l[k] === rec[k]));
+    const specClaim = at(t.claim, { stage: "spec", track: "spec", specMode: "write" });
+    await writeClaim(t.paths, specClaim);
+    return { ...t, logs, reserved, specClaim };
+  }
+  const issuePatched = (gh: { calls: { method: string; url: string }[] }) => gh.calls.some((x) => x.method === "PATCH" && x.url === "/repos/o/r/issues/7");
+
+  it("reserves the next spec and ADR number past main and the other claims, logs it, and gives it again on the retry (AC-1, AC-2)", async () => {
+    const t = await env({ spec: [undefined, undefined] });
+    await writeClaim(t.paths, otherClaim(8, { spec: 11, adr: 6 }, "/w8"));
+    const r = await step(t.deps, t.specClaim);
+    expect(inputOf(t.paths, "7-spec-1-")).toMatchObject({ spec_number: "012", adr_number: "0007" });
+    expect(validate("stage-input", inputOf(t.paths, "7-spec-1-")).ok).toBe(true);
+    expect(t.reserved({ issue: 7, spec: "012", adr: "0007" })).toHaveLength(1);
+    // The failed run frees the ADR number and keeps the spec number.
+    expect(r.claim.state.reserved).toEqual({ spec: 12, adr: null });
+    expect((await readClaim(t.paths, 7))!.state.reserved.spec).toBe(12);
+    await step(t.deps, r.claim);
+    expect(inputOf(t.paths, "7-spec-2-")).toMatchObject({ spec_number: "012" });
+    expect(t.reserved({ spec: "012" })).toHaveLength(1);
+  }, 60_000);
+
+  it("counts the specs an open pull request adds, however it was made (AC-1)", async () => {
+    const t = await env({ spec: [undefined] }, { openPrs: [{ number: 30, added: ["specs/011-hand/spec.md", "docs/decisions/0008-hand.md"] }] });
+    await step(t.deps, t.specClaim);
+    expect(inputOf(t.paths, "7-spec-1-")).toMatchObject({ spec_number: "012", adr_number: "0009" });
+  }, 60_000);
+
+  it("reserves no spec number when the issue has a Spec: line, and the spec_number is (none) (AC-1)", async () => {
+    const t = await env({ spec: [undefined] }, { issueBody: "Spec: specs/010-thing/spec.md" });
+    const r = await step(t.deps, t.specClaim);
+    expect(inputOf(t.paths, "7-spec-1-").spec_number).toBeUndefined();
+    expect(inputOf(t.paths, "7-spec-1-").adr_number).toBe("0006");
+    expect(r.claim.state.reserved.spec).toBeNull();
+  }, 60_000);
+
+  it("postpones the run, reserving nothing, when the open pull requests cannot be read (AC-1)", async () => {
+    const t = await env({ spec: [specAt("011")] });
+    t.gh.routes.unshift({ method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: () => ({ status: 500, body: { message: "down" } }) });
+    const r = await step(t.deps, t.specClaim);
+    expect(t.adapter.ran).toEqual([]);
+    expect(t.reserved({})).toEqual([]);
+    expect(r.claim.state.reserved).toEqual({ spec: null, adr: null });
+    expect(r.claim.state.history.join()).not.toMatch(/spec attempt 1 failed/);
+  }, 60_000);
+
+  it("appends the Spec: line for the reserved number and clears the reservation (AC-3)", async () => {
+    const t = await env({ spec: [specAt("011", { "docs/decisions/0006-mine.md": "adr\n" })] });
+    const r = await step(t.deps, t.specClaim);
+    expect(t.gh.calls.find((x) => x.method === "PATCH" && x.url === "/repos/o/r/issues/7")?.body).toEqual({ body: "Do the thing.\n\nSpec: specs/011-thing/spec.md" });
+    expect(r.claim.state.reserved).toEqual({ spec: null, adr: null });
+  }, 60_000);
+
+  it("fails a spec result with another number before the Spec: line is written, and the retry is given the reserved one (AC-3)", async () => {
+    const t = await env({ spec: [specAt("012"), undefined] });
+    const r = await step(t.deps, t.specClaim);
+    expect(r.claim.state.history).toContain("spec attempt 1 failed: result: spec number 012 is not the reserved 011");
+    expect(issuePatched(t.gh)).toBe(false);
+    await step(t.deps, r.claim);
+    expect(inputOf(t.paths, "7-spec-2-").spec_number).toBe("011");
+  }, 60_000);
+
+  it("names the holder of a spec or ADR number the branch adds: another PR, main or another claim's reservation (AC-3)", async () => {
+    const cases: [string, Record<string, string>, string, { number: number; added: string[] }[]][] = [
+      ["PR", { "docs/decisions/0006-mine.md": "a\n" }, "result: ADR 0006 is held by PR #30", [{ number: 30, added: ["docs/decisions/0006-other.md"] }]],
+      ["main", { "docs/decisions/0005-mine.md": "a\n" }, "result: ADR 0005 is held by docs/decisions/0005-x.md", []],
+      ["claim", { "docs/decisions/0009-mine.md": "a\n" }, "result: ADR 0009 is held by issue #8's reservation", []],
+    ];
+    for (const [name, extra, reason, openPrs] of cases) {
+      const t = await env({ spec: [specAt("011", extra)] }, { openPrs });
+      await writeClaim(t.paths, otherClaim(8, { spec: null, adr: 9 }, "/w8"));
+      const r = await step(t.deps, t.specClaim);
+      expect(r.claim.state.history, name).toContain(`spec attempt 1 failed: ${reason}`);
+      expect(issuePatched(t.gh), name).toBe(false);
+    }
+  }, 120_000);
+
+  it("fails a spec directory another open PR holds, naming the PR (AC-3)", async () => {
+    // The hand-made PR is not visible when the number is reserved: it opens while the stage runs.
+    let open: { number: number; added: string[] }[] = [];
+    const t = await env({ spec: [(run: StageRun) => { open.push({ number: 31, added: ["specs/011-hand/spec.md"] }); return specAt("011")(run); }] });
+    t.gh.routes.unshift({ method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: () => ({ body: open.map((p) => ({ number: p.number })) }) },
+      { method: "GET", path: /^\/repos\/o\/r\/pulls\/31\/files$/, reply: () => ({ body: [{ filename: "specs/011-hand/spec.md", status: "added" }] }) });
+    const r = await step(t.deps, t.specClaim);
+    expect(r.claim.state.history).toContain("spec attempt 1 failed: result: spec number 011 is held by PR #31");
+    expect(issuePatched(t.gh)).toBe(false);
+  }, 60_000);
+
+  const implPlan = { ...plan, tasks: [{ id: "T1", description: "d", files: ["a.txt"] }] };
+  it("passes an implement result adding its reserved ADR and frees the number; fails one adding a held ADR (AC-2, AC-4)", async () => {
+    const adr = (name: string) => (run: StageRun) => { commitIn(run.worktree, { [`docs/decisions/${name}`]: "adr\n" }); return impl(head(run.worktree)); };
+    const ok = await env({ implement: [adr("0006-mine.md")] }, { issueBody: "Spec: specs/010-thing/spec.md" });
+    const okClaim = at(ok.claim, { stage: "implement", plan: implPlan as never });
+    const done = await step(ok.deps, okClaim);
+    expect(inputOf(ok.paths, "7-implement-1-").adr_number).toBe("0006");
+    expect(done.claim.state).toMatchObject({ stage: "verify", reserved: { spec: null, adr: null } });
+
+    const held = await env({ implement: [adr("0006-mine.md")] }, { issueBody: "Spec: specs/010-thing/spec.md" });
+    held.gh.routes.unshift({ method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: (_m, _b, url) => ({ body: url.searchParams.has("head") ? [] : [{ number: 30 }] }) },
+      { method: "GET", path: /^\/repos\/o\/r\/pulls\/30\/files$/, reply: () => ({ body: [{ filename: "docs/decisions/0006-other.md", status: "added" }] }) });
+    // Reserved 0007 past the other PR, so the 0006 the run takes is held.
+    const failed = await step(held.deps, at(held.claim, { stage: "implement", plan: implPlan as never }));
+    expect(inputOf(held.paths, "7-implement-1-").adr_number).toBe("0007");
+    expect(failed.claim.state.history.join("\n")).toContain("result: ADR 0006 is held by PR #30");
+    expect(failed.claim.state.reserved.adr).toBeNull();
+  }, 120_000);
+
+  it("counts the chain's own PR's added ADR when reserving for the fix stage (AC-2)", async () => {
+    const t = await env({ fix: [(run: StageRun) => ({ head_sha: head(run.worktree), addressed: [] })] }, { issueBody: "Spec: specs/010-thing/spec.md" });
+    t.gh.routes.unshift({ method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: (_m, _b, url) => ({ body: url.searchParams.has("head") ? [] : [{ number: 9 }] }) },
+      { method: "GET", path: /^\/repos\/o\/r\/pulls\/9\/files$/, reply: () => ({ body: [{ filename: "docs/decisions/0006-mine.md", status: "added" }] }) });
+    await step(t.deps, at(t.claim, { stage: "fix", plan: implPlan as never, pr: { number: 9, head_sha: t.sha }, pendingFixInput: "fix it" }));
+    expect(inputOf(t.paths, "7-fix-1-").adr_number).toBe("0007");
+  }, 60_000);
+
+  it("fails a fix result adding a held ADR (AC-4)", async () => {
+    const t = await env({ fix: [(run: StageRun) => { commitIn(run.worktree, { "docs/decisions/0005-again.md": "adr\n" }); return { head_sha: head(run.worktree), addressed: [] }; }] }, { issueBody: "Spec: specs/010-thing/spec.md" });
+    const c = at(t.claim, { stage: "fix", plan: implPlan as never, pr: { number: 9, head_sha: t.sha }, pendingFixInput: "fix it" });
+    const r = await step(t.deps, c);
+    expect(r.claim.state.history.join("\n")).toContain("result: ADR 0005 is held by docs/decisions/0005-x.md");
   }, 60_000);
 });

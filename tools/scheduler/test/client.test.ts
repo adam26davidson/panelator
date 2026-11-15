@@ -257,6 +257,17 @@ describe("spec 006 calls", () => {
     const url = new URL(`https://x${gh.calls[0].url}`);
     expect(Object.fromEntries(url.searchParams)).toMatchObject({ head: "o:issue-7", state: "open" });
   });
+  it("openPullRequestsAddedFiles lists every open PR with the files it adds, and lets a read error through (spec 065)", async () => {
+    const { c, gh } = client([
+      { method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: () => ({ body: [{ number: 9 }, { number: 12 }] }) },
+      { method: "GET", path: /^\/repos\/o\/r\/pulls\/9\/files$/, reply: () => ({ body: [{ filename: "specs/065-x/spec.md", status: "added" }, { filename: "a.txt", status: "modified" }] }) },
+      { method: "GET", path: /^\/repos\/o\/r\/pulls\/12\/files$/, reply: () => ({ body: [] }) },
+    ]);
+    expect(await c.openPullRequestsAddedFiles()).toEqual([{ number: 9, added: ["specs/065-x/spec.md"] }, { number: 12, added: [] }]);
+    expect(new URL(`https://x${gh.calls[0].url}`).searchParams.get("state")).toBe("open");
+    const failing = client([{ method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: () => ({ status: 422, body: { message: "down" } }) }]);
+    await expect(failing.c.openPullRequestsAddedFiles()).rejects.toThrow();
+  });
   it("rerequestCheckRun is true when accepted and false on a 4xx", async () => {
     const { c, gh } = client([
       { method: "POST", path: /^\/repos\/o\/r\/check-runs\/1\/rerequest$/, reply: () => ({ status: 201, body: {} }) },

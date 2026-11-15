@@ -156,3 +156,22 @@ export function designTreeReport(
   }
   return out;
 }
+
+/** Spec 065 AC-5: one error per number held by two or more directories under specs/ or two or more .md files under docs/decisions/. */
+export function checkUniqueNumbers(root: string): string[] {
+  const errors: string[] = [];
+  const check = (dir: string, label: string, pattern: RegExp, only: (e: import("node:fs").Dirent) => boolean): void => {
+    if (!existsSync(join(root, dir))) return;
+    const byNumber = new Map<string, string[]>();
+    for (const e of readdirSync(join(root, dir), { withFileTypes: true })) {
+      const m = only(e) ? pattern.exec(e.name) : null;
+      if (m) byNumber.set(m[1]!, [...(byNumber.get(m[1]!) ?? []), e.name.replace(/\.md$/, "")]);
+    }
+    for (const [number, names] of [...byNumber].sort()) {
+      if (names.length > 1) errors.push(`${label}: number ${number} is held by ${names.sort().join(" and ")}`);
+    }
+  };
+  check("specs", "specs", /^(\d+)-/, (e) => e.isDirectory());
+  check("docs/decisions", "docs/decisions", /^(\d+)-.*\.md$/, (e) => e.isFile());
+  return errors;
+}
