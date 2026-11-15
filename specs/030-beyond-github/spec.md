@@ -272,7 +272,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
 
 **Requests from a chain stage** (design sections 3 and 8)
 
-- AC-6. **A capability question for one of the three needs carries a
+- AC-6. Amended by [067-incomplete-request-is-sent-back-for-completion](../067-incomplete-request-is-sent-back-for-completion/spec.md) AC-2: an incomplete request is an invalid result sent back to the asking stage for completion, holding its work and outside decide mode (the check's verdict for one it finds is incomplete, AC-3), never decide_yourself. **A capability question for one of the three needs carries a
   request.** The question object of spec 006 AC-8 gains an optional
   `request`, required when the question is a credential, funds or
   first-contact need:
@@ -623,6 +623,8 @@ list, the security criteria, or what routes a sensitive diff to the security
 review.
 
 ## 6. Verification
+
+> Amended by [067-incomplete-request-is-sent-back-for-completion](../067-incomplete-request-is-sent-back-for-completion/spec.md) AC-5: the recorded run "a credential question without setup" ends with the stage asked again holding its work and the completed request sent, not with decide_yourself.
 
 > Amended by [064-disk-sweep-and-infra-health](../064-disk-sweep-and-infra-health/spec.md) AC-7: the infra health runs (the `ci_failure_main` re-run, the pause and the unknown-kind finding) are verified by spec 064.
 
