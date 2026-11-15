@@ -2410,7 +2410,7 @@ describe("driver: a check failing outside the PR's scope (spec 060)", () => {
 describe("driver: spec and ADR numbers are reserved by the scheduler (spec 065)", () => {
   const otherClaim = (issue: number, reserved: { spec: number | null; adr: number | null }, wt: string): Claim =>
     ({ issue, state: { ...initialChainState(issue), reserved }, worktree: wt, started_at: new Date().toISOString(), last_activity_at: new Date().toISOString(), run_id: null });
-  const specAt = (n: string, extra: Record<string, unknown> = {}) => (run: StageRun) =>
+  const specAt = (n: string, extra: Record<string, string> = {}) => (run: StageRun) =>
     ({ verdict: "revised", spec_path: `specs/${n}-thing/spec.md`, pr_number: 12, head_sha: commitIn(run.worktree, { [`specs/${n}-thing/spec.md`]: spec, ...extra }) });
 
   async function env(results: Record<string, Scripted[]>, over: RouteOver = {}) {
