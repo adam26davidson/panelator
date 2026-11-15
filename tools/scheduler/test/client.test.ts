@@ -265,7 +265,7 @@ describe("spec 006 calls", () => {
     ]);
     expect(await c.openPullRequestsAddedFiles()).toEqual([{ number: 9, added: ["specs/065-x/spec.md"] }, { number: 12, added: [] }]);
     expect(new URL(`https://x${gh.calls[0].url}`).searchParams.get("state")).toBe("open");
-    const failing = client([{ method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: () => ({ status: 500, body: { message: "down" } }) }]);
+    const failing = client([{ method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: () => ({ status: 422, body: { message: "down" } }) }]);
     await expect(failing.c.openPullRequestsAddedFiles()).rejects.toThrow();
   });
   it("rerequestCheckRun is true when accepted and false on a 4xx", async () => {

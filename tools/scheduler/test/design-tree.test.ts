@@ -159,6 +159,7 @@ describe("designTreeReport (spec 031 AC-10)", () => {
 describe("checkUniqueNumbers", () => {
   const fixture = (dirs: string[], files: string[]) => {
     const root = mkdtempSync(join(tmpdir(), "uniq-"));
+    mkdirSync(join(root, "specs"), { recursive: true });
     for (const d of dirs) mkdirSync(join(root, "specs", d), { recursive: true });
     mkdirSync(join(root, "docs/decisions"), { recursive: true });
     writeFileSync(join(root, "specs/README.md"), "x");
