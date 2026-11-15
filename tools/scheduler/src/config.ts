@@ -28,6 +28,8 @@ export interface Config {
   };
   systemd: { scope: boolean; inhibit: boolean };
   decide: { base_url: string; key_env: string };
+  /** Spec 030 AC-1: the encrypted credential store. */
+  credentials: { dir: string; warn_days: number };
 }
 
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -67,7 +69,15 @@ export function loadConfig(path: string): Config {
   if (typeof designRevisions !== "number" || !Number.isInteger(designRevisions) || designRevisions < 1) {
     throw new Error("config bounds.design_revisions must be a positive integer");
   }
+  const creds = raw.credentials ?? {};
+  if (typeof creds !== "object" || creds === null || Array.isArray(creds)) throw new Error("config credentials must be an object");
+  const cr = creds as Record<string, unknown>;
+  if (Object.keys(cr).some((k) => !["dir", "warn_days"].includes(k))) throw new Error("config credentials unknown key");
+  if (cr.dir !== undefined && (typeof cr.dir !== "string" || !cr.dir)) throw new Error("config credentials dir must be a string");
+  const warnDays = cr.warn_days ?? 7;
+  if (typeof warnDays !== "number" || !Number.isInteger(warnDays) || warnDays < 1) throw new Error("config credentials warn_days must be an integer >= 1");
   const cfg: Config = {
+    credentials: { dir: expandHome(String(cr.dir ?? "~/.config/panelator/credentials")), warn_days: warnDays },
     telegram:{credentials_path:expandHome(String(tg.credentials_path??'~/.config/panelator/telegram.json')),long_poll_timeout_s:timeout},
     repo: str("repo"),
     maintainer: str("maintainer"),

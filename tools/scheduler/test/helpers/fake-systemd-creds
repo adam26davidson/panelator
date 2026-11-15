@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+// A reversible stand-in for `systemd-creds` (spec 069 section 3). The blob is a marker plus base64, never the plaintext.
+// FAKE_SYSTEMD_CREDS_FAIL=1 makes every call fail, for the "does not decrypt" tests.
+import { readFileSync, writeFileSync } from "node:fs";
+const MARKER = "FAKE-SYSTEMD-CREDS-V1\n";
+const fail = (msg) => {
+  process.stderr.write(`fake-systemd-creds: ${msg}\n`);
+  process.exit(1);
+};
+if (process.env.FAKE_SYSTEMD_CREDS_FAIL === "1") fail("failure requested");
+const args = process.argv.slice(2).filter((a) => a !== "--user");
+const verb = args[0];
+const rest = args.slice(1).filter((a) => !a.startsWith("--name="));
+if (verb === "encrypt") {
+  const [input, out] = rest;
+  if (input !== "-" || !out) fail("usage: encrypt --name=<name> - <out>");
+  const plain = readFileSync(0);
+  writeFileSync(out, MARKER + plain.toString("base64"));
+} else if (verb === "decrypt") {
+  const [file, out] = rest;
+  if (!file || out !== "-") fail("usage: decrypt <in> -");
+  let blob;
+  try { blob = readFileSync(file, "utf8"); } catch { fail("cannot read blob"); }
+  if (!blob.startsWith(MARKER)) fail("malformed blob");
+  process.stdout.write(Buffer.from(blob.slice(MARKER.length), "base64"));
+} else fail("unknown verb");
