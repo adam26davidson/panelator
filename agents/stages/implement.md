@@ -40,7 +40,7 @@ The question check sent this back for you to decide: {{decide_input}}
 When this is present, the question check found that your earlier question need not go to
 the maintainer, for the reasons given: decide it yourself, and do not ask it again. When
 the decision is a large one, write it as an ADR in `docs/decisions/` (a new file, with its
-reasoning); an ADR you add is always in the PR's scope.
+reasoning; the file is `docs/decisions/{{adr_number}}-<slug>.md`, the number the scheduler reserved for this run); an ADR you add is always in the PR's scope.
 
 Implement every task in the plan, test-first. Commit after each task: when a run is stopped by
 its bounds (cost, turns, time or a session limit), only committed work is carried to the next

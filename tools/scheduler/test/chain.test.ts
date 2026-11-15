@@ -410,7 +410,7 @@ describe("chain: ledger and claim state (AC-7)", () => {
     expect(initialChainState(4, "spec missing")).toMatchObject({
       issue: 4, specProblem: "spec missing", track: "issue", rescues: 0, specRescues: 0, replans: 0, specRevisions: 0, specAnswers: 0, decideReturns: 0,
       rescueRun: false, history: [], specMode: null, question: null, askingStage: null, answer: null, answerQuestionId: null, answerKind: null,
-      recordAnswer: false, decideInput: null, parkedPr: null, pendingSince: null, checksRerun: false,
+      recordAnswer: false, decideInput: null, parkedPr: null, pendingSince: null, checksRerun: false, reserved: { spec: null, adr: null },
     });
   });
   it("normalizeChainState loads a pre-006 claim state (AC-7)", () => {

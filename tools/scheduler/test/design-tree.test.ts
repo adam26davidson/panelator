@@ -1,7 +1,8 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { checkDesignTree, designTreeReport, loadDesignTree } from "../src/gates/design-tree.ts";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { checkUniqueNumbers, checkDesignTree, designTreeReport, loadDesignTree } from "../src/gates/design-tree.ts";
 import { childMarker } from "../src/children/markers.ts";
 import type { IssueData } from "../src/types.ts";
 
@@ -153,4 +154,25 @@ describe("designTreeReport (spec 031 AC-10)", () => {
     expect(entries[1]!.recordedIssue).toBeUndefined();
     expect(entries[1]!.done).toBe(false);
   });
+});
+
+describe("checkUniqueNumbers", () => {
+  const fixture = (dirs: string[], files: string[]) => {
+    const root = mkdtempSync(join(tmpdir(), "uniq-"));
+    for (const d of dirs) mkdirSync(join(root, "specs", d), { recursive: true });
+    mkdirSync(join(root, "docs/decisions"), { recursive: true });
+    writeFileSync(join(root, "specs/README.md"), "x");
+    writeFileSync(join(root, "docs/decisions/README.md"), "x");
+    for (const f of files) writeFileSync(join(root, "docs/decisions", f), "x");
+    return root;
+  };
+  it("flags two specs with one number", () => {
+    expect(checkUniqueNumbers(fixture(["030-test-board", "030-beyond-github"], []))).toEqual(["specs: number 030 is held by 030-beyond-github and 030-test-board"]);
+  });
+  it("accepts distinct numbers", () => expect(checkUniqueNumbers(fixture(["030-a", "031-b"], ["0001-a.md", "0002-b.md"]))).toEqual([]));
+  it("flags two ADRs with one number and ignores README.md", () => {
+    expect(checkUniqueNumbers(fixture([], ["0006-a.md", "0006-b.md"]))).toEqual(["docs/decisions: number 0006 is held by 0006-a and 0006-b"]);
+  });
+  it("accepts a root with neither directory", () => expect(checkUniqueNumbers(mkdtempSync(join(tmpdir(), "uniq-")))).toEqual([]));
+  it("holds on the repository", () => expect(checkUniqueNumbers(repoRoot)).toEqual([]));
 });

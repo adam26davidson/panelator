@@ -1,7 +1,7 @@
 # specs/
 
 One directory per feature: `specs/NNN-<slug>/spec.md`, numbered
-sequentially, with design artifacts beside it in `design/` when the domain
+sequentially (the scheduler reserves the number when the spec stage runs, spec 065), with design artifacts beside it in `design/` when the domain
 is `web-ui` or `widget`. The required sections are defined in
 [001-scheduler-core/spec.md](001-scheduler-core/spec.md) section 10:
 status line with class, domain, `Parent:` and derives-from links; goal; out of scope;

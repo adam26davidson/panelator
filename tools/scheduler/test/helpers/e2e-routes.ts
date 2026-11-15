@@ -156,6 +156,7 @@ export async function chainWorld(opts: {
   const rerequested: number[] = [];
   const prComments: { pr: number; body: string }[] = [];
   const prs = new Map<number, MockPr>();
+  const addedByPr = new Map<number, string[]>();
   const mergeRequests: number[] = [];
   let issueTitle = "Thing";
   let issueBody = opts.issueBody ?? "Spec: specs/010-thing/spec.md";
@@ -233,8 +234,12 @@ export async function chainWorld(opts: {
     {
       method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: (_m, _b, url) => {
         const head = url.searchParams.get("head")?.replace(/^o:/, "");
-        return { body: [...prs.values()].filter((pr) => pr.state === "open" && pr.head === head).map((pr) => ({ number: pr.number })) };
+        return { body: [...prs.values()].filter((pr) => pr.state === "open" && (head === undefined || pr.head === head)).map((pr) => ({ number: pr.number })) };
       },
+    },
+    // Spec 065: the files an open PR adds; a hand-made PR's are set with `addedByPr`, the scheduler's own are the diff of its branch's commits on origin.
+    {
+      method: "GET", path: /^\/repos\/o\/r\/pulls\/(\d+)\/files$/, reply: (m) => ({ body: (addedByPr.get(Number(m[1])) ?? []).map((filename) => ({ filename, status: "added" })) }),
     },
     {
       method: "GET", path: /^\/repos\/o\/r\/pulls\/(\d+)$/, reply: (m) => {
@@ -307,7 +312,7 @@ export async function chainWorld(opts: {
   const scheduler = new Scheduler(deps);
 
   return {
-    deps,scheduler,pair, paths, cfg, gh, filed, adapter, notifications, logs, labels, labelLog, comments, prComments, prs, mergeRequests,
+    deps,scheduler,pair, paths, cfg, gh, filed, adapter, notifications, logs, labels, labelLog, comments, prComments, prs, addedByPr, mergeRequests,
     rerequested,
     /** Spec 060: what each commit's `test` check reports from now on. */
     setChecks(fn: (sha: string) => { status: string; conclusion: string | null }) { checkFor = fn; },

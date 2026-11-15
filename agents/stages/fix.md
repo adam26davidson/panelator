@@ -43,7 +43,7 @@ The question you asked earlier, if any: {{question}}
 The maintainer's answer, if any: {{answer}}
 Work you did before your question, if any: {{held_work}}
 When an answer is present it is a decision: apply it and do not reopen it. When you are
-asked to record the answer as an ADR, add a file under `docs/decisions/` that states the
+asked to record the answer as an ADR, add a file `docs/decisions/{{adr_number}}-<slug>.md` (the number the scheduler reserved for this run) that states the
 question, the decision and its reasoning, and carries the mark
 `(maintainer answer, question #<id>)` with the question comment id given with the answer.
 
@@ -51,7 +51,7 @@ The question check sent this back for you to decide: {{decide_input}}
 When this is present, the question check found that your earlier question need not go to
 the maintainer, for the reasons given: decide it yourself, and do not ask it again. When
 the decision is a large one, write it as an ADR in `docs/decisions/` (a new file, with its
-reasoning); an ADR you add is always in the PR's scope.
+reasoning; the file is `docs/decisions/{{adr_number}}-<slug>.md`, the number the scheduler reserved for this run); an ADR you add is always in the PR's scope.
 
 Address each item, run `pnpm test` from the repo root, commit and push. Write the JSON
 result to {{result_path}}: { "head_sha": "<40 hex>", "addressed": [0, 1], "findings": [] }

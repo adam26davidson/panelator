@@ -116,6 +116,17 @@ export class GitHubClient {
     return (data as { number: number }[]).map((p) => p.number);
   }
 
+  /** Spec 065: every open pull request with the files it adds; any read error propagates. */
+  async openPullRequestsAddedFiles(): Promise<{ number: number; added: string[] }[]> {
+    const prs = (await this.octokit.paginate("GET /repos/{owner}/{repo}/pulls", { ...this.base, state: "open", per_page: 100 })) as Rec[];
+    const out: { number: number; added: string[] }[] = [];
+    for (const pr of prs) {
+      const files = (await this.octokit.paginate("GET /repos/{owner}/{repo}/pulls/{pull_number}/files", { ...this.base, pull_number: Number(pr.number), per_page: 100 })) as Rec[];
+      out.push({ number: Number(pr.number), added: files.filter((f) => f.status === "added").map((f) => String(f.filename)) });
+    }
+    return out;
+  }
+
   /** A branch that is already gone (404) or not a ref (422) is not an error. */
   async deleteBranch(branch: string): Promise<void> {
     try {

@@ -84,6 +84,12 @@
     "spec_path": {
       "type": "string"
     },
+    "spec_number": {
+      "type": "string"
+    },
+    "adr_number": {
+      "type": "string"
+    },
     "design_problem": {
       "type": "string"
     },

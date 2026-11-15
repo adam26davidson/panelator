@@ -291,6 +291,14 @@ describe("renderPrompt", () => {
     expect(renderPrompt("{{reported_actions}}", input)).toBe("(none)");
     expect(renderPrompt("{{reported_actions}}", { ...input, reported_actions: "#1 (capability)" })).toBe("#1 (capability)");
   });
+  it("renders spec_number and adr_number, (none) when absent (spec 065 AC-6)", () => {
+    expect(renderPrompt("{{spec_number}}|{{adr_number}}", { ...input, spec_number: "065", adr_number: "0011" })).toBe("065|0011");
+    expect(renderPrompt("{{spec_number}}|{{adr_number}}", input)).toBe("(none)|(none)");
+    const read = (n: string) => readFileSync(join(agentsDir, "stages", `${n}.md`), "utf8");
+    expect(read("spec")).not.toContain("next free number");
+    expect(read("spec")).toContain("specs/{{spec_number}}-<slug>/spec.md");
+    for (const n of ["spec", "implement", "fix"]) expect(read(n), n).toContain("docs/decisions/{{adr_number}}-<slug>.md");
+  });
   it("renders held_work, (none) when absent, in the four stages that carry it (spec 011 AC-4)", () => {
     const read = (n: string) => readFileSync(join(agentsDir, "stages", `${n}.md`), "utf8");
     expect(renderPrompt("{{held_work}}", input)).toBe("(none)");
