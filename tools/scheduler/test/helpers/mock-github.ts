@@ -1,6 +1,6 @@
 import { createVerify } from "node:crypto";
 export interface Call { method: string; url: string; body: unknown }
-export type Route = { method: string; path: RegExp; reply: (m: RegExpExecArray, body: unknown, url: URL, headers: Headers) => { status?: number; body: unknown; headers?: Record<string, string> } };
+export type Route = { method: string; path: RegExp; reply: (m: RegExpExecArray, body: unknown, url: URL, headers?: Headers) => { status?: number; body: unknown; headers?: Record<string, string> } };
 
 /** A fetch that answers from a route table and records every call. Unmatched routes return 404 with the url and are listed in `unmatched`. */
 export function mockGitHub(routes: Route[]): { fetch: typeof fetch; calls: Call[]; routes: Route[]; unmatched: string[] } {
@@ -47,7 +47,7 @@ export function appRouteSignedBy(publicKeyPem: string, appId: number, slug: stri
   return {
     method: "GET", path: /^\/app$/,
     reply: (_m, _b, _u, headers) => {
-      const jwt = /^bearer (.+)$/i.exec(headers.get("authorization") ?? "")?.[1];
+      const jwt = /^bearer (.+)$/i.exec(headers?.get("authorization") ?? "")?.[1];
       const [h, p, sig] = jwt?.split(".") ?? [];
       try {
         const ok = !!sig && createVerify("RSA-SHA256").update(`${h}.${p}`).verify(publicKeyPem, Buffer.from(sig, "base64url"));
