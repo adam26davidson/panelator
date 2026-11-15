@@ -28,6 +28,24 @@ describe("filer-result stops_pipeline (spec 063 AC-3)", () => {
   });
 });
 
+describe("filer-result blocked_by and blocked_until (spec 066 AC-1)", () => {
+  const issue = { title: "t", body: "b", class: "class:bug" };
+  const v = (decision: unknown) => validate("filer-result", { summary: "s", decisions: [decision] }).ok;
+  it("accepts either field on a file decision", () => {
+    expect(v({ ref: "1", outcome: "file", reason: "r", issue: { ...issue, blocked_by: [132] } })).toBe(true);
+    expect(v({ ref: "1", outcome: "file", reason: "r", issue: { ...issue, blocked_until: "an ESP-IDF project exists under firmware/" } })).toBe(true);
+  });
+  it("rejects both together, and a block on escalate or merge_into", () => {
+    expect(v({ ref: "1", outcome: "file", reason: "r", issue: { ...issue, blocked_by: [132], blocked_until: "x" } })).toBe(false);
+    const question = { kind: "product", text: "q", options: [{ label: "a", cost: "b" }], recommendation: "a" };
+    expect(v({ ref: "1", outcome: "escalate", reason: "r", question, issue: { ...issue, blocked_by: [132] } })).toBe(false);
+    expect(v({ ref: "1", outcome: "merge_into", reason: "r", issue_number: 4, issue: { ...issue, blocked_until: "x" } })).toBe(false);
+  });
+  it("rejects an empty, duplicated or non-positive blocked_by", () => {
+    for (const blocked_by of [[], [1, 1], [0]]) expect(v({ ref: "1", outcome: "file", reason: "r", issue: { ...issue, blocked_by } })).toBe(false);
+  });
+});
+
 describe("result schemas", () => {
   it('accepts settled conversation turns only with a non-empty decision on every asking stage',()=>{
     for(const name of ['plan-result','implement-result','review-result','fix-result','spec-result','design-result'] as const){

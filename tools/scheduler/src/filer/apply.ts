@@ -3,8 +3,11 @@ import type {IssueData,Question} from '../types.ts';
 import {validate} from '../schema/validate.ts';
 import {record as recordEvt} from '../events/store.ts';
 import {createIssueRecorded} from '../events/filed.ts';
+import {BLOCKED_LABEL,blockedByComment,blockedUntilComment,hasBlockedUntilMarker,isDone,latestBlockedBy,neutraliseBlockMarkers,parseBlockedBy} from './blocked.ts';
 import {readJsonLines,recordKey,settledCursor,advisoryAttempts,isRestingDiscard,isCapabilityIssue,stripCapabilityMarkers,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,CAPABILITY_TITLE,CAPABILITY_CLOSED_MARKER,type AdvisoryFailure,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
-export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string;stops_pipeline?:boolean};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'};rests_on_pr?:number}
+export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string;stops_pipeline?:boolean;blocked_by?:number[];blocked_until?:string};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'};rests_on_pr?:number}
+/** Model-written text reaches GitHub with neither the capability marker nor a block marker in it (spec 014 AC-6, spec 066 AC-5). */
+const strip=(text:string)=>neutraliseBlockMarkers(stripCapabilityMarkers(text));
 export interface FilerResult {summary:string;decisions:Decision[]}
 export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput,result:FilerResult):Promise<void> {
  const valid=validate('filer-result',result);if(!valid.ok)throw new Error(valid.errors.join('; '));
@@ -15,6 +18,8 @@ export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput
  for(const dec of result.decisions) {
   const abandoned=dec.ref.startsWith('issue:');
   if(!(abandoned?['retry','rewrite','close','escalate','defer']:['discard','file','merge_into','escalate','security']).includes(dec.outcome))throw new Error(`invalid outcome for ${dec.ref}`);
+  if((dec.issue?.blocked_by!==undefined||dec.issue?.blocked_until!==undefined)&&!['file','rewrite'].includes(dec.outcome))throw new Error(`a block is allowed on file or rewrite only: ${dec.ref}`);
+  if(dec.issue?.blocked_by!==undefined&&dec.issue.blocked_until!==undefined)throw new Error(`blocked_by and blocked_until are exclusive: ${dec.ref}`);
   if(dec.question && !['product','technical'].includes(dec.question.kind))throw new Error('design flaw question must be product or technical');
  }
  const triage=await readJsonLines<TriageEntry>(d.paths.findingsTriage);
@@ -62,7 +67,12 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
  // The bot's open issues, listed at most once per batch and kept current with the batch's own creates and closes (spec 037).
  let open:IssueData[]|undefined;
  const openBotIssues=async()=>open??=await d.gh.listOpenIssuesByAuthor(d.botLogin);
- const created=(number:number,title:string,body:string,labels:string[])=>{open?.push({number,title,author:d.botLogin,body,labels,state:'open',labelEvents:[],createdAt:d.now().toISOString()});return number;};
+ // All issues, listed only for a decision that names `blocked_by`, and at most once per batch (spec 066 AC-3).
+ let all:IssueData[]|undefined;
+ const allIssues=async()=>all??=await d.gh.listIssues({state:'all',labelEvents:false});
+ // Issues this batch made, which the listing above does not hold, and the issue each rewrite put in its predecessor's place (spec 066 AC-3, AC-6).
+ const madeNow=new Set<number>(),superseded=new Map<number,number>();
+ const created=(number:number,title:string,body:string,labels:string[])=>{madeNow.add(number);open?.push({number,title,author:d.botLogin,body,labels,state:'open',labelEvents:[],createdAt:d.now().toISOString()});return number;};
  const closed=(number:number)=>{if(open)open=open.filter(i=>i.number!==number);};
  const capabilityIssue=async()=>capability!==undefined?capability:(capability=(await openBotIssues()).find(i=>isCapabilityIssue(i,d.botLogin))?.number??null);
  const lastRows=()=>{const m=new Map<string,TriageEntry>();for(const t of triage)m.set(t.ref,t);return [...m.values()];};
@@ -82,20 +92,44 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   const marker=`<!-- panelator-finding:${runId}:${dec.ref} -->`;
   // Set when an issue is created with the default label because the model's class could not be resolved (spec 018 AC-3).
   const applied:{fallback?:{class:string;used:string}}={};
+  const blockComment=(nums:number[]|undefined,until:string|undefined)=>nums?blockedByComment(nums):blockedUntilComment(strip(until!));
   const file=async()=>{
    const issue=dec.issue?{...dec.issue}:{title:record?.finding.what??abandoned!.issue.title,body:JSON.stringify(record?.finding??abandoned!.issue,null,2),class:defaultClass(d.classes)};
    const existing=(await openBotIssues()).find(i=>i.author===d.botLogin&&new RegExp(`<!-- panelator-finding:[^:]+:${dec.ref.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')} -->`).test(i.body));
-   if(existing)return existing.number;
+   const block=dec.issue?.blocked_by!==undefined||dec.issue?.blocked_until!==undefined;
+   if(existing) {
+    // A crash between the create and the comment: the issue carries `blocked` but not what it waits for (spec 066 AC-5).
+    if(block&&existing.labels?.includes(BLOCKED_LABEL)&&!(await d.gh.listComments(existing.number)).some(c=>c.author===d.botLogin&&(parseBlockedBy(c.body)||hasBlockedUntilMarker(c.body))))
+     await d.gh.comment(existing.number,blockComment(dec.issue!.blocked_by?[...new Set(dec.issue!.blocked_by.map(n=>superseded.get(n)??n))]:undefined,dec.issue!.blocked_until));
+    return existing.number;
+   }
+   // The numbers still worth waiting for: a done issue and one that does not exist are dropped, each noted on the row (spec 066 AC-3).
+   let waitsFor:number[]|undefined;
+   if(dec.issue?.blocked_by) {
+    waitsFor=[];
+    for(const n of [...new Set(dec.issue.blocked_by.map(n=>superseded.get(n)??n))].sort((a,b)=>a-b)) {
+     const dep=madeNow.has(n)?null:(await allIssues()).find(i=>i.number===n);
+     if(!madeNow.has(n)&&!dep){row.reason+=` (blocked_by #${n} does not exist)`;d.log?.({kind:'filer-blocked-by-unknown',run_id:runId,ref:dec.ref,issue:n});}
+     else if(dep&&isDone(dep))row.reason+=` (blocked_by #${n} is done)`;
+     else waitsFor.push(n);
+    }
+   }
+   const blockedUntil=dec.issue?.blocked_until===undefined?undefined:strip(dec.issue.blocked_until);
+   const blocked=blockedUntil!==undefined||!!waitsFor?.length;
+   if(waitsFor?.length)row.blocked_by=waitsFor;
+   if(blockedUntil!==undefined)row.blocked_until=blockedUntil;
    // The class is resolved only where it is applied, so one decision's label never decides the batch (spec 018 AC-2, AC-3).
    const resolved=resolveClass(issue.class,d.classes);
    if(resolved===null){applied.fallback={class:issue.class,used:defaultClass(d.classes)};issue.class=applied.fallback.used;}
    else issue.class=resolved;
    // Spec creation belongs to the chain; an input cannot smuggle a Spec line into intake.
    // Nor can it carry the capability issue's marker (spec 014 AC-6).
-   let body=stripCapabilityMarkers(issue.body.replace(/^\s*Spec:.*$/gm,''));
+   let body=strip(issue.body.replace(/^\s*Spec:.*$/gm,''));
    if(dec.outcome==='escalate')body=`Possible design flaw\n\n${body}\n\nQuestion for the spec stage:\n${JSON.stringify(dec.question,null,2)}`;
-   const title=stripCapabilityMarkers(issue.title),text=stripCapabilityMarkers(`${body}\n\nFiler verification: ${dec.reason}`)+`\n\n${marker}`,labels=[issue.class,'validated',...(issue.stops_pipeline?[d.stopsPipelineLabel]:[])];
-   return created(await createIssueRecorded(d.gh,d.paths,{title,body:text,labels,by:d.botLogin,class:issue.class,marker}),title,text,labels);
+   const title=strip(issue.title),text=strip(`${body}\n\nFiler verification: ${dec.reason}`)+`\n\n${marker}`,labels=[issue.class,'validated',...(blocked?[BLOCKED_LABEL]:[]),...(issue.stops_pipeline?[d.stopsPipelineLabel]:[])];
+   const number=created(await createIssueRecorded(d.gh,d.paths,{title,body:text,labels,by:d.botLogin,class:issue.class,marker}),title,text,labels);
+   if(blocked)await d.gh.comment(number,blockComment(waitsFor,blockedUntil));
+   return number;
   };
   // A security flag overrides every public outcome; a discard is private and stays a discard (AC-19). A record
   // already judged security once (a retried advisory) is as private as a flagged one (spec 014 AC-9), and so is a
@@ -131,13 +165,24 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
    case 'merge_into': {
     const target=(await openBotIssues()).find(i=>i.number===dec.issue_number);
     if(!target){row.outcome='file';row.reason+=' (merge target closed or not bot-authored)';row.issue=await file();}
-    else {const comments=await d.gh.listComments(target.number);if(!comments.some(c=>c.body.includes(`:${dec.ref} -->`)))await d.gh.comment(target.number,stripCapabilityMarkers(`${JSON.stringify(record?.finding,null,2)}\n\n${dec.reason}`)+`\n\n${marker}`);if(dec.issue?.stops_pipeline)await d.gh.addLabels(target.number,[d.stopsPipelineLabel]);row.issue=target.number;}break;
+    else {const comments=await d.gh.listComments(target.number);if(!comments.some(c=>c.body.includes(`:${dec.ref} -->`)))await d.gh.comment(target.number,strip(`${JSON.stringify(record?.finding,null,2)}\n\n${dec.reason}`)+`\n\n${marker}`);if(dec.issue?.stops_pipeline)await d.gh.addLabels(target.number,[d.stopsPipelineLabel]);row.issue=target.number;}break;
    }
    case 'retry':
     if(triage.filter(t=>t.ref===dec.ref&&t.outcome==='retry').length>=2){row.outcome='defer';row.reason='retry limit of two exhausted';break;}
-    await d.gh.comment(abandoned!.issue.number,stripCapabilityMarkers(`Retry: ${dec.reason}`)+`\n\n${marker}`);await d.gh.removeLabel(abandoned!.issue.number,'abandoned');row.issue=abandoned!.issue.number;break;
-   case 'rewrite': row.issue=await file();await d.gh.closeIssue(abandoned!.issue.number,stripCapabilityMarkers(`Superseded by #${row.issue}: ${dec.reason}`));closed(abandoned!.issue.number);break;
-   case 'close':await d.gh.closeIssue(abandoned!.issue.number,stripCapabilityMarkers(dec.reason));closed(abandoned!.issue.number);row.issue=abandoned!.issue.number;break;
+    await d.gh.comment(abandoned!.issue.number,strip(`Retry: ${dec.reason}`)+`\n\n${marker}`);await d.gh.removeLabel(abandoned!.issue.number,'abandoned');row.issue=abandoned!.issue.number;break;
+   case 'rewrite': {
+    row.issue=await file();await d.gh.closeIssue(abandoned!.issue.number,strip(`Superseded by #${row.issue}: ${dec.reason}`));closed(abandoned!.issue.number);
+    // The issues that waited on the old one now wait on its replacement (spec 066 AC-6).
+    const from=abandoned!.issue.number,to=row.issue;superseded.set(from,to);
+    for(const i of (await openBotIssues()).filter(i=>i.number!==to&&i.labels.includes(BLOCKED_LABEL))) {
+     const waits=latestBlockedBy(await d.gh.listComments(i.number),d.botLogin);
+     if(!waits?.includes(from))continue;
+     await d.gh.comment(i.number,blockedByComment([...new Set(waits.map(n=>n===from?to:n))],{from,to}));
+     d.log?.({kind:'filer-block-repointed',run_id:runId,issue:i.number,from,to});
+    }
+    break;
+   }
+   case 'close':await d.gh.closeIssue(abandoned!.issue.number,strip(dec.reason));closed(abandoned!.issue.number);row.issue=abandoned!.issue.number;break;
    case 'discard':case 'defer':break;
   }
   const fb=applied.fallback;

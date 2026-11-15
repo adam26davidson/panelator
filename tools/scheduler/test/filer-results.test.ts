@@ -23,7 +23,7 @@ const examples=()=>{
 async function setup(){
  const paths=statePaths(await mkdtemp(join(tmpdir(),'filer-results-')));await ensureStateDirs(paths);
  const prs=new Map<number,unknown>();
- const gh={listOpenIssuesByLabel:vi.fn(async()=>[]),listOpenIssuesByAuthor:vi.fn(async()=>[]),searchOpenIssuesByMarker:vi.fn(async()=>[]),listComments:vi.fn(async()=>[]),createIssue:vi.fn(async(_t:string,_b:string,_l:string[])=>42),comment:vi.fn(async()=>({id:1})),removeLabel:vi.fn(async()=>{}),closeIssue:vi.fn(async()=>{}),findDraftSecurityAdvisory:vi.fn(async():Promise<string|null>=>null),createDraftSecurityAdvisory:vi.fn(async()=>'GHSA-private'),
+ const gh={listIssues:vi.fn(async(_o:unknown)=>[] as unknown[]),listOpenIssuesByLabel:vi.fn(async()=>[]),listOpenIssuesByAuthor:vi.fn(async()=>[]),searchOpenIssuesByMarker:vi.fn(async()=>[]),listComments:vi.fn(async()=>[]),createIssue:vi.fn(async(_t:string,_b:string,_l:string[])=>42),comment:vi.fn(async()=>({id:1})),removeLabel:vi.fn(async()=>{}),closeIssue:vi.fn(async()=>{}),findDraftSecurityAdvisory:vi.fn(async():Promise<string|null>=>null),createDraftSecurityAdvisory:vi.fn(async()=>'GHSA-private'),
   pullRequest:vi.fn(async(n:number)=>{const p=prs.get(n);if(!p)throw Object.assign(new Error('Not Found'),{status:404});return p;})};
  const log=vi.fn();
  const d:FilerDeps={paths,gh:gh as unknown as GitHubClient,botLogin:'bot',classes:['class:bug'],stopsPipelineLabel:'stops-pipeline',notify:vi.fn(async()=>{}),now:()=>new Date('2026-10-27T00:00:00Z'),log};
@@ -45,6 +45,7 @@ describe('the filer prompt (spec 025 AC-1)',()=>{
   const p=filer().prompt;
   expect(p).toMatch(/final message/);expect(p).not.toContain('{{result_path}}');expect(p).not.toMatch(/\bwrite (the )?json\b/i);
   expect(p).toMatch(/`issue`/);expect(p).toMatch(/rests_on_pr/);expect(p).toMatch(/rests_on_pr_closed/);
+  expect(p).toContain('"blocked_by":[');expect(p).toContain('"blocked_until":');expect(p).toContain('lifted by hand');
  });
  it('rendering leaves the examples intact',()=>{
   const rendered=renderStandingPrompt(filer().prompt,{agent:'a',events:'e',since:'s',parameters:'p',profile_instructions:''});

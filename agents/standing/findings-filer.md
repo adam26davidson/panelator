@@ -35,11 +35,12 @@ There must be one decision per records[].ref and abandoned[].ref. Every decision
 {"ref":"12","outcome":"discard","reason":"Not an issue: spec 014 AC-2 requires this behaviour."}
 {"ref":"13","outcome":"discard","reason":"PR #73 removes this code path.","rests_on_pr":73}
 {"ref":"14","outcome":"file","reason":"Reproduced from the code.","issue":{"title":"Short title","body":"What, where, evidence, how noticed, what you verified.","class":"class:bug","stops_pipeline":true}}
+{"ref":"14b","outcome":"file","reason":"Needs the work of #132 first.","issue":{"title":"Short title","body":"What, where, evidence, how noticed, what you verified.","class":"class:bug","blocked_by":[132]}}
 {"ref":"15","outcome":"merge_into","reason":"Same cause as #58.","issue_number":58,"issue":{"title":"Filed instead if #58 has closed","body":"What, where, evidence, how noticed, what you verified.","class":"class:bug"}}
 {"ref":"16","outcome":"escalate","reason":"The design and spec 008 disagree.","issue":{"title":"Short title","body":"What, where, evidence, how noticed, what you verified.","class":"class:bug"},"question":{"kind":"technical","question":"Which is right?","options":[{"label":"Change the spec","cost":"one PR"}],"recommendation":"Change the spec"}}
 {"ref":"17","outcome":"security","reason":"Exposes a token.","advisory":{"title":"Short title","description":"Details.","severity":"high"}}
 {"ref":"issue:20","outcome":"retry","reason":"What to do differently: read the new design first."}
-{"ref":"issue:21","outcome":"rewrite","reason":"The issue asks for the wrong fix.","issue":{"title":"Short title","body":"What, where, evidence, how noticed, what you verified.","class":"class:bug"}}
+{"ref":"issue:21","outcome":"rewrite","reason":"The issue asks for the wrong fix.","issue":{"title":"Short title","body":"What, where, evidence, how noticed, what you verified.","class":"class:bug","blocked_until":"an ESP-IDF project exists under firmware/"}}
 {"ref":"issue:22","outcome":"close","reason":"Done elsewhere, in #40."}
 {"ref":"issue:23","outcome":"defer","reason":"Blocked until the design settles."}
 ```
@@ -60,6 +61,13 @@ required check failing on `main`'s head for every PR, the scheduler or a standin
 on every tick), whether or not the record claimed it, and leave it off otherwise; a condition
 that fails one issue's work is not one. The scheduler then applies the label named in
 input.stops_pipeline_label, which puts the issue ahead of ordinary work.
+Set `issue.blocked_by` on a file or rewrite decision when the work cannot be built before the
+issues it names are done (closed and not abandoned), naming only numbers from
+`input.open_issues` or quoted in the record's own text, never a guess; the scheduler files the
+issue with `blocked`, which the shortlist skips, and lifts the label when every named issue is
+done. Use `issue.blocked_until` instead only when no issue stands for the predecessor, as one
+sentence saying what must be true (the label is then lifted by hand, so say it only for work a
+design or spec calls for). Never both, and never on escalate or merge_into.
 For abandoned issues use retry (reason includes what to do differently; maximum twice),
 rewrite (new issue supersedes it), close (why not worth doing or done elsewhere), escalate
 (possible design flaw as above) or defer (reason; offered again after seven days).
