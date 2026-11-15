@@ -189,7 +189,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   asserts the blob is not plaintext. Given the block is absent, then the
   defaults apply; given `dir` does not exist, then it is created with mode
   `0700` at the first `cred set`.
-- AC-2. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-1: the catalogue gains the `aws-sso` entry; its expiry probe reads the CLI's SSO cache through the scheduler's own command and spawns no `aws`. **The catalogue says what each credential is.** `agents/credentials.yaml`
+- AC-2. Amended by [069-github-app-key-check-signs-with-the-stored-key](../069-github-app-key-check-signs-with-the-stored-key/spec.md) AC-1: a `wrapper: none` entry's `check` is `{ builtin: <name> }`, a probe the scheduler runs over the stored secret; `github-app-key`'s check is the `github-app` probe (an App JWT signed with the stored key calling `GET /app`, AC-2), not `gh api /app` through the `gh` shim, and `telegram-bot`'s is `telegram-get-me`. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-1: the catalogue gains the `aws-sso` entry; its expiry probe reads the CLI's SSO cache through the scheduler's own command and spawns no `aws`. **The catalogue says what each credential is.** `agents/credentials.yaml`
   lists every credential the system knows, one entry each: `name`,
   `provider` (`github`, `telegram`, `aws`, ...), `purpose` (one line),
   `access` (the exact scopes or permissions, as a list of strings; least
@@ -246,7 +246,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   stage environment of spec 001 (`GH_TOKEN` empty, no SSH) is unchanged. A
   test asserts that the environment of a wrapped child carries the variable
   and the stage's own environment does not.
-- AC-4. **The maintainer's commands.** `panelator-scheduler cred set <name>`
+- AC-4. Amended by [069-github-app-key-check-signs-with-the-stored-key](../069-github-app-key-check-signs-with-the-stored-key/spec.md) AC-3: `cred set` runs the check over the secret it just stored and exits 1 when the check fails; `cred check` exits 1 when any check it ran failed. **The maintainer's commands.** `panelator-scheduler cred set <name>`
   reads the secret from stdin (never an argument, so it is not in the shell
   history), requires the name to be in the catalogue, encrypts it, writes
   the index entry with `set_by: maintainer`, runs the entry's `check` and
