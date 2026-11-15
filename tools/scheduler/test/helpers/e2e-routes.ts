@@ -137,6 +137,9 @@ export async function chainWorld(opts: {
   issueFromScan?: boolean;
   /** Spec 059: the free-space reader of the pre-flight check; ample when unset. */
   freeSpace?: (path: string) => Promise<FreeSpace>;
+  /** Spec 065 AC-7: a second open issue (#8) with this body, and how many chains the loop may run at once. */
+  second?: { body: string };
+  slots?: number;
 }) {
   const pair = repoPair(opts.files);
   const paths: StatePaths = statePaths(join(pair.root, "state"));
@@ -146,7 +149,7 @@ export async function chainWorld(opts: {
   const side = join(pair.root, "github-side");
   execFileSync("git", ["clone", "-q", pair.origin, side], { stdio: "ignore" });
 
-  const cfg = { ...loadConfig(defaultConfigPath), repo: "o/r", required_checks: ["test"], state_dir: paths.root, slots: 1, rescue_model: "claude-rescue-test" };
+  const cfg = { ...loadConfig(defaultConfigPath), repo: "o/r", required_checks: ["test"], state_dir: paths.root, slots: opts.slots ?? 1, rescue_model: "claude-rescue-test" };
   // A rescue model distinct from every stage model, so a run shows whether it was the rescue (AC-1).
   const labels = new Set(opts.labels ?? ["validated", "class:product"]);
   const labelLog: string[] = [];
@@ -161,6 +164,7 @@ export async function chainWorld(opts: {
   let issueTitle = "Thing";
   let issueBody = opts.issueBody ?? "Spec: specs/010-thing/spec.md";
   let issueOpen = true;
+  let secondBody = opts.second?.body ?? "";
   let nextId = 100;
   // Spec 031: issues the children scan created, in order; the first becomes #7 when `issueFromScan`, the rest are #8 and up.
   let issue7Exists = !opts.issueFromScan;
@@ -170,7 +174,8 @@ export async function chainWorld(opts: {
   const listing = (state: string) => {
     const seven = issue7Exists && (state === "all" || (state === "open") === issueOpen) ? [issue()] : [];
     const others = state === "closed" ? [] : otherIssues().map((f) => ({ number: f.number, title: f.title, body: f.body, user: { login: f.author, type: "Bot" }, labels: f.labels.map((name) => ({ name })), created_at: "2026-10-01T00:00:00Z", state: "open" }));
-    return [...seven, ...others];
+    const second = opts.second && state !== "closed" ? [secondIssue()] : [];
+    return [...seven, ...second, ...others];
   };
 
   const originRef = (branch: string): string | null => {
@@ -184,6 +189,10 @@ export async function chainWorld(opts: {
   const headOf = (pr: MockPr) => (pr.state === "open" ? originRef(pr.head) ?? pr.sha : pr.sha);
   const issue = () => ({
     number: 7, title: issueTitle, body: issueBody, user: { login: BOT, type: "Bot" }, labels: [...labels].map((name) => ({ name })), state: issueOpen ? "open" : "closed",
+    created_at: "2026-10-01T00:00:00Z", updated_at: new Date().toISOString(),
+  });
+  const secondIssue = () => ({
+    number: 8, title: "Other thing", body: secondBody, user: { login: BOT, type: "Bot" }, labels: [...labels].map((name) => ({ name })), state: "open",
     created_at: "2026-10-01T00:00:00Z", updated_at: new Date().toISOString(),
   });
   const logLabel = (n: number, entry: string) => labelLog.push(n === 7 ? entry : `#${n} ${entry}`);
@@ -202,6 +211,8 @@ export async function chainWorld(opts: {
       },
     },
     { method: "GET", path: /^\/repos\/o\/r\/issues\/\d+\/timeline$/, reply: () => ({ body: [] }) },
+    { method: "GET", path: /^\/repos\/o\/r\/issues\/8$/, reply: () => ({ body: secondIssue() }) },
+    { method: "PATCH", path: /^\/repos\/o\/r\/issues\/8$/, reply: (_m, b) => { const u = b as { body?: string }; if (u.body !== undefined) secondBody = u.body; return { body: secondIssue() }; } },
     { method: "GET", path: /^\/repos\/o\/r\/issues\/7$/, reply: () => ({ body: issue() }) },
     { method: "PATCH", path: /^\/repos\/o\/r\/issues\/7$/, reply: (_m, b) => { const u = b as { body?: string; state?: string }; if (u.body !== undefined) issueBody = u.body; if (u.state === "closed") issueOpen = false; return { body: issue() }; } },
     {
@@ -331,6 +342,7 @@ export async function chainWorld(opts: {
     },
     get issueOpen() { return issueOpen; },
     get issueBody() { return issueBody; },
+    get secondBody() { return secondBody; },
     /** One tick, then wait for the chains it started to stop (ended, paused or waiting). */
     async tick() {
       const t = await scheduler.tick();

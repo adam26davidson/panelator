@@ -838,6 +838,43 @@ describe("end to end: spec and ADR numbers are reserved by the scheduler (spec 0
     expect(w.issueBody).toBe("Do the thing.\n\nSpec: specs/065-x/spec.md");
   }, 120_000);
 
+  it("two spec-less issues claimed in one tick with two slots are given 065 and 066, each reserved in its claim, and both free their reservation", async () => {
+    let w!: ChainWorld;
+    const claimed: Record<number, unknown> = {};
+    const plan: Record<string, { issue: number; pr: number; path: string }> = { "spec-7": { issue: 7, pr: 12, path: "specs/065-x/spec.md" }, "spec-8": { issue: 8, pr: 13, path: "specs/066-y/spec.md" } };
+    // Whichever run starts first answers for its own branch; each sees both claim files as they stand during the run.
+    const answer = (run: StageRun) => {
+      const branch = git(run.worktree, "rev-parse", "--abbrev-ref", "HEAD").trim();
+      const { issue, pr, path } = plan[branch];
+      for (const n of [7, 8]) { try { claimed[issue * 10 + n] = JSON.parse(readFileSync(join(w.paths.claims, `${n}.json`), "utf8")).state.reserved; } catch { /* claim not yet written */ } }
+      const sha = w.push(run, { [path]: specOf() }, "spec");
+      w.openPr(run, pr, sha, "A new spec");
+      return { verdict: "revised", spec_path: path, pr_number: pr, head_sha: sha };
+    };
+    w = await chainWorld({
+      files: { ...repoFiles({ spec: null }), ...prev }, issueBody: "Do the thing.", second: { body: "Do the other thing." }, slots: 2,
+      results: { spec: [answer, answer] },
+    });
+    await w.tick();
+    const byBranch = (b: string) => runsOf(w, "spec").find((r) => r.branch === b)!;
+    expect(runsOf(w, "spec")).toHaveLength(2);
+    expect(byBranch("spec-7").input.spec_number).toBe("065");
+    expect(byBranch("spec-8").input.spec_number).toBe("066");
+    expect(w.logs.filter((r) => r.kind === "number-reserved").map((r) => [r.issue, r.spec])).toEqual([[7, "065"], [8, "066"]]);
+    // During each run its own claim file carried its reservation.
+    for (const issue of [7, 8]) {
+      const seen = claimed[issue * 10 + issue] as { spec: number };
+      expect(seen.spec).toBe(issue === 7 ? 65 : 66);
+    }
+    expect(w.issueBody).toBe("Do the thing.\n\nSpec: specs/065-x/spec.md");
+    expect(w.secondBody).toBe("Do the other thing.\n\nSpec: specs/066-y/spec.md");
+    // The Spec: lines hold the numbers now; a claim still on disk no longer reserves them (a finished chain's claim is gone).
+    for (const n of [7, 8]) {
+      const file = join(w.paths.claims, `${n}.json`);
+      if (existsSync(file)) expect(JSON.parse(readFileSync(file, "utf8")).state.reserved.spec).toBeNull();
+    }
+  }, 120_000);
+
   it("an open PR not of the scheduler's making holds 065: the spec run is given 066", async () => {
     let w!: ChainWorld;
     w = await chainWorld({ files: { ...repoFiles({ spec: null }), ...prev }, issueBody: "Do the thing.", results: { spec: [specAt(() => w, "specs/066-x/spec.md")] } });
