@@ -535,6 +535,7 @@ are stale and are corrected as part of B.
 - `specs/062-capability-answer-settles-nothing/spec.md` (issue #122)
 - `specs/063-pipeline-stopping-finding-ranks-first/spec.md` (issue #123)
 - `specs/064-disk-sweep-and-infra-health/spec.md` (issue #124; the infra health agent of row F2, taken over from spec 030)
+- `specs/065-scheduler-reserves-spec-and-adr-numbers/spec.md` (issue #125; the scheduler reserves spec and ADR numbers, ADR 0011)
 - planned: web-ui-profile
   title: The web-ui profile: implement, fix and review instructions for UI packages
   brief: Spec 001 section 9 names `web-ui` among the v0 profiles and leaves its content to
