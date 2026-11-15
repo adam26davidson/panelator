@@ -46,7 +46,8 @@
       "$ref": "question.json"
     },
     "verdict": {
-      "type": "string"
+      "type": "string",
+      "description": "The check's verdict on a checked entry: send, decide_yourself or incomplete (spec 067 AC-3)."
     },
     "reasoning": {
       "type": "string"

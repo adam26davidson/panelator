@@ -59,6 +59,34 @@
     "new_blocker": {
       "type": "boolean",
       "description": "C3: in decide mode, a blocker other than the question sent back to decide."
+    },
+    "request": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "description": "Spec 030 AC-6, spec 067 AC-1: the request a credential, funds or first-contact question carries. Completeness is the chain machine's rule, not the schema's.",
+      "properties": {
+        "type": {
+          "enum": [
+            "credential",
+            "funds",
+            "first_contact"
+          ]
+        },
+        "name": { "type": "string" },
+        "provider": { "type": "string" },
+        "access": { "type": "array", "items": { "type": "string" } },
+        "setup": { "type": "array", "items": { "type": "string" } },
+        "amount_usd": { "type": "number" },
+        "purpose": { "type": "string" },
+        "charter_goal": { "type": "string" },
+        "party": { "type": "string" },
+        "channel": { "type": "string" },
+        "why": { "type": "string" },
+        "message": { "type": "string" }
+      }
     }
   },
   "dependentRequired": {

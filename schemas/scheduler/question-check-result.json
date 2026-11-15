@@ -11,7 +11,8 @@
     "verdict": {
       "enum": [
         "send",
-        "decide_yourself"
+        "decide_yourself",
+        "incomplete"
       ]
     },
     "reasoning": {
