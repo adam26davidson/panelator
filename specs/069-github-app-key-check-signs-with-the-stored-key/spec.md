@@ -5,26 +5,41 @@ specs derived from that design need no maintainer approval (design section 11).
 Amends [030-beyond-github](../030-beyond-github/spec.md) AC-2 (the `check`
 field of a `wrapper: none` entry and the `github-app-key` entry's check) and
 AC-4 (`cred set` tests the secret it just stored and exits non-zero when the
-check fails), each marked as section 4 records.
+check fails), each marked as section 4 records. Revised 2026-11-15 in answer
+to the plan stage: spec 030's implementation is on no branch that reaches
+`main` (issue #39 is abandoned, its work unmerged on `origin/issue-39`), so
+this spec now also carries the part of spec 030 the probe stands on, built as
+spec 030 writes it: AC-1 (the store, the index, the `credentials` block),
+AC-2 (the catalogue and its loader, as amended here), the App-key rule of
+AC-3 and the commands of AC-4 (as amended here); section 1 ("How this reaches
+`main`") says why and what it leaves to the issue that carries the rest of
+spec 030. *(agent's call)*
 Class: bug. Domain: backend.
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
 section 8 ("Credentials": agents use credentials through wrappers and never
 see the secret; "the credential check automates renewal wherever the provider
-allows"), section 6.1 (the credential check on the roster) and section 10
-("Small work skips layers": a bug spec hangs directly off a top design);
+allows"), section 6.1 (the credential check on the roster), section 10
+("Small work skips layers": a bug spec hangs directly off a top design) and
+section 11 (row F2, the terminal state of an abandoned issue);
 [001-scheduler-core](../001-scheduler-core/spec.md) section 12 (the App
 private key mints the installation token in `token.json`; the `gh` wrapper
 carries that token; the refresh every 50 minutes);
-[030-beyond-github](../030-beyond-github/spec.md) AC-1 (`readSecret`, the
-index's `last_check`), AC-2 (the catalogue's `check` field, which this spec
-amends), AC-3 (the App key is read from the store once `github-app-key` is
-set), AC-4 (`cred set` and `cred check` run the check), AC-5 (a failed check
-produces `credential_expiry`), AC-8 (a credential "Done" is verified by the
-entry's check) and AC-13 (the credential check agent's input);
+[030-beyond-github](../030-beyond-github/spec.md) AC-1 (the store,
+`readSecret`, the index's `last_check`), AC-2 (the catalogue and its loader;
+the `check` field, which this spec amends), AC-3 (the App key is read from
+the store once `github-app-key` is set), AC-4 (`cred set`, `list`, `check`,
+`import`, `remove`), AC-5 (a failed check produces `credential_expiry`), AC-8
+(a credential "Done" is verified by the entry's check), AC-13 (the credential
+check agent's input) and AC-14 (`renew_credential` re-runs the check);
+[007-telegram-channel](../007-telegram-channel/spec.md) AC-1 (the Telegram
+credentials file, the shape the `telegram-bot` secret keeps);
+[008-agent-registry](../008-agent-registry/spec.md) AC-9 (the action log the
+`cred` commands write to);
 [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md)
 AC-1 (the `aws-sso` entry, whose check stays a command through its wrapper
-and which this spec does not change).
+and which this spec does not change) and section 1 ("What `main` must have
+before this is built", which names spec 030's implementation).
 
 ## 1. Goal
 
@@ -98,6 +113,77 @@ AC-3 reads the stored key for the next mint, and the maintainer who sees
 an old key would report "set" for a key that is not in use. Every change is
 cheap to reverse; no ADR (design section 3, item 2).
 
+### How this reaches `main`
+
+*(agent's call, answering the plan stage, 2026-11-15)* Every file the fix
+touches belongs to spec 030's implementation, and none of it is on `main`:
+`main` at bb37d65 has no `tools/scheduler/src/credentials/`, no
+`agents/credentials.yaml`, no `schemas/scheduler/credential-catalogue.json`
+and no fake `systemd-creds`. Issue #39, which carried spec 030, was
+abandoned a second time on 2026-11-05 (the fix loop's bound on the contacts
+gate of AC-11, not on the credential half); its unmerged work is
+`origin/issue-39` at 3b4aa7d, 76 `main` commits behind; no re-triage or
+rewrite of it exists. A chain builds on `origin/main` in its own worktree,
+so a spec that only amends spec 030's text names no path that exists, and
+the plan stage cannot plan it.
+
+**The rule.** This chain builds the part of spec 030 the probe stands on,
+as spec 030 writes it, and the probe on top of it:
+
+- spec 030 AC-1 in full: the `credentials` block of `agents/scheduler.yaml`,
+  the store directory, the `systemd-creds` blobs, `index.json`,
+  `readSecret` and `writeSecret`, the secret never leaving memory (AC-7
+  below);
+- spec 030 AC-2 as amended by AC-1 of this spec: the catalogue file, its
+  loader and its loading rules, and the three entries `github-app-key`,
+  `telegram-bot` and (per spec 068 AC-1) `aws-sso` (AC-8 below). Its last
+  sentence, the profile field `credentials` in place of `credential_hook`,
+  is not built here: the field exists to drive the shim directory of AC-3,
+  and goes with it;
+- the one rule of spec 030 AC-3 that concerns the key: "the App key that
+  mints `token.json` is read from the store once `github-app-key` is set,
+  else from `app.private_key_path` as today" (AC-9 below). The shim
+  directory, `cred exec` and the per-run `PATH` are not built here;
+- spec 030 AC-4 as amended by AC-3 of this spec: `cred set`, `cred list`,
+  `cred check`, `cred import` and `cred remove`, logged in the action log
+  (AC-10 below). `cred exec` goes with the shims.
+
+Everything else of spec 030 is left to the issue that carries the rest of
+it: the shims and `cred exec` (AC-3), the `credential_expiry` producer
+(AC-5), the request object, its rendering and the "Done" path (AC-6 to
+AC-8), the `TelegramNotifier` and alert replies (AC-9, AC-10), the contacts
+gate (AC-11, AC-12), the credential check agent (AC-13), `renew_credential`
+(AC-14), AC-16 and AC-17. No such issue exists today: the finding this run
+files asks the filer for one (a rewrite of #39 or a new issue), blocked by
+#131 (spec 066), so that it builds on a `main` that has
+`src/credentials/`; spec 068's "What `main` must have" paragraph then names
+that issue and this one. Each of those parts calls the probe through the
+one function `runCheck` of AC-5 below, which this chain leaves in place for
+them.
+
+**Why this way and not the other two.** A split (a sub-design under
+`docs/designs/` with the credential half of spec 030 and the probe as
+planned children, the probe `after:` the half) would make the scheduler file
+the issues and order them, but spec 030 is already the spec of that work and
+a child of the top design; a sub-design that re-broke it into children would
+cover the same parts twice (review criterion 8), and the first child would
+build spec 030 AC-2 as marked, which is the probe, so the second child would
+be empty. A "What `main` must have" paragraph alone (as spec 068 section 1
+has) would name an issue that does not exist, and a claimed issue has no
+path to wait for it: the plan stage would find the paths missing again and
+the chain would spend its attempts to reach `abandoned`. Building the
+foundation here is the one way #131's own chain can land the fix. It is more
+than the issue's one check, but every added criterion is spec 030's own text
+built unchanged, not a new rule; what the issue asks for (a `cred set` that
+reports the key it stored) does not exist without `cred set` and the store.
+`origin/issue-39` at 3b4aa7d is a permitted starting point for `store.ts`,
+`catalogue.ts`, `commands.ts`, the two schemas, the fake `systemd-creds` and
+`credentials.test.ts` where a file, rebased onto `main`, meets the criteria
+below (its catalogue used `builtin:<name>` as a string and the substitute
+check; neither passes AC-1); nothing in it has to be used. The decision is
+cheap to reverse (it adds files spec 030 already names, under spec 030's own
+rules); no ADR.
+
 ## 2. Out of scope
 
 - Any change to how the `gh` shim or `git-credential-panelator.ts`
@@ -108,26 +194,40 @@ cheap to reverse; no ADR (design section 3, item 2).
   path) is unchanged; the fix is that a bad key is reported when it is set.
 - The `aws-sso` entry (spec 068 AC-1): its check is a command through its
   wrapper, run by `src/aws/cli.ts`, and its expiry probe spawns nothing.
-  Neither changes.
+  Neither changes. Its entry is in the catalogue this chain writes (spec 068
+  AC-1 fixes its text); running its check or probe needs spec 022 and spec
+  068's implementations and is theirs. The loader of AC-8 accepts the entry;
+  `cred check` reports it `skipped: wrapper not built` until the shims
+  exist *(agent's call)*.
 - Comparing the key's permissions with the entry's `access` list, or
   checking the installation (`app.installation_id`) exists: the credential
   is the key; the installation is configuration.
 - Verifying a key before storing it, or keeping the previous blob when the
   check fails (section 1 says why).
-- Spec 030's requests, gate, notifier and standing agents (AC-6 to AC-17)
-  beyond what AC-8 and AC-13 inherit by running "the entry's check".
+- The rest of spec 030 (section 1, "How this reaches `main`"): the shims,
+  `cred exec`, the `credentials` profile field, the `credential_expiry`
+  producer, the requests and the "Done" path, the notifier, the contacts
+  gate, the two standing agents, `renew_credential`. Spec 069 AC-5 says how
+  they will call the probe; none is built or tested here beyond that.
+- The Telegram poller reading `telegram-bot` from the store. Spec 030 says
+  that only of the App key; the poller keeps reading
+  `telegram.credentials_path` (spec 007). `cred import` says so when it
+  lists the files (AC-10).
 
 ## 3. Acceptance criteria
 
 "Given" states use spec 030 section 3's fakes: the fake harness, the mocked
-GitHub API, the fake Telegram server of spec 007 and the fake `systemd-creds`.
-The *test key* is an RSA key pair generated by the test (`node:crypto`), its
+GitHub API, the fake Telegram server of spec 007 and a fake `systemd-creds`
+on `PATH` whose encrypt and decrypt are reversible and whose output goes to
+a fixture directory; this chain adds the fake, under
+`tools/scheduler/test/helpers/`, since spec 030's was never merged. The
+*test key* is an RSA key pair generated by the test (`node:crypto`), its
 private half stored through the fake `systemd-creds`; the mocked GitHub
 answers `GET /app` only to an `Authorization: Bearer <jwt>` header whose JWT
 verifies (RS256) against the test key's public half and whose `iss` is the
 configured `app.id`, returning `{ id: <app.id>, slug: <bot slug> }`; any
 other request to `GET /app` gets 401. *Store directory*, *index*: spec 030
-AC-1's.
+AC-1's, built by AC-7.
 
 - AC-1. **The catalogue's `check` has a form for each kind of entry.**
   `agents/credentials.yaml`'s `check` is either a string (an entry with a
@@ -145,8 +245,9 @@ AC-1's.
   { builtin: telegram-get-me }`; the `aws-sso` entry keeps its command.
 - AC-2. **The `github-app` probe tests the stored key and nothing else.**
   Given `github-app-key` set to the test key, when the probe runs (by `cred
-  set`, `cred check`, the credential check's pre-run of spec 030 AC-13, or a
-  credential "Done" of spec 030 AC-8), then it reads the key with
+  set` or `cred check` in this chain; by the credential check's pre-run of
+  spec 030 AC-13 or a credential "Done" of spec 030 AC-8 once the issue that
+  carries them builds them, AC-5), then it reads the key with
   `readSecret("github-app-key")`, builds an App client from `app.id` and
   that key (`createAppClient`, with the fetch the scheduler injects for
   tests), calls `GET /app` with the App JWT, and the check is `ok` when the
@@ -179,24 +280,108 @@ AC-1's.
   the probe. `cred check [<name>]` applies the same probe and index update
   and exits 1 when any check it ran failed.
 - AC-4. **The `telegram-get-me` probe is `getMe` with the stored token.**
-  Given `telegram-bot` set to a JSON secret `{ token, chat_id }`, then the
-  probe calls the fake Telegram's `getMe` with that token and is `ok` on a
-  200 with `ok: true`, `failed: unauthorized` on 401, `failed: <status or
-  error>` otherwise, and `failed: secret is not { token, chat_id }` when the
-  blob does not parse. The reason never contains the token. The poller's
-  own `getMe` and its `telegram` log lines (spec 007) are unchanged.
-- AC-5. **The rest of spec 030 reads the probe as the entry's check.** The
-  credential check's pre-run (spec 030 AC-13), the `credential_expiry`
-  producer (AC-5: a failed check produces the event) and the "Done" path
-  (AC-8: `done (verified)` or `done (check failed: <reason>)`) call the one
-  function `runCheck(entry)` of `src/credentials/check.ts`, which dispatches
-  on the check's form; a test of the "Done" path with `github-app-key` set
-  to a refused key resumes the stage with `done (check failed: GitHub
-  refused the JWT (401))`. The `renew_credential` action (AC-14) re-runs the
-  check through the same function; no catalogue entry has a renew command,
-  so that path is covered by its existing test with a test entry.
+  Given `telegram-bot` set to a JSON secret `{ bot_token, chat_id }` (the
+  shape of spec 007 AC-1's credentials file, so `cred import` stores that
+  file as it is), then the probe calls the fake Telegram's `getMe` with that
+  token and is `ok` on a 200 with `ok: true`, `failed: unauthorized` on 401,
+  `failed: <status or error>` otherwise, and `failed: secret is not {
+  bot_token, chat_id }` when the blob does not parse or has another shape.
+  The reason never contains the token. The poller's own `getMe` and its
+  `telegram` log lines (spec 007) are unchanged, and the poller keeps
+  reading `telegram.credentials_path` (section 2).
+- AC-5. **One function runs the entry's check, for this chain and the
+  next.** `runCheck(entry, ctx)` in `src/credentials/check.ts` dispatches on
+  the check's form (a command through the wrapper; a `builtin` probe), returns
+  `{ status: "ok" } | { status: "failed", reason } | { status: "skipped",
+  reason }`, and writes `last_checked_at` and `last_check` to the index; it
+  is the only place the index's check fields are written. In this chain its
+  callers are `cred set` and `cred check` (AC-3, AC-10). The credential
+  check's pre-run (spec 030 AC-13), the `credential_expiry` producer (AC-5),
+  the "Done" path (AC-8: `done (verified)` or `done (check failed:
+  <reason>)`) and `renew_credential` (AC-14) are not built here; when the
+  issue that carries the rest of spec 030 builds them, each calls this
+  function and adds nothing of its own to the check. The test of the "Done"
+  path with a refused key that this spec first named is dropped from this
+  spec and kept against `runCheck` only: given `github-app-key` set to a key
+  GitHub refuses, when `runCheck` runs over the repository catalogue's
+  entry, then it returns `failed: GitHub refused the JWT (401)` and the index
+  shows the same, so the "Done" path, when built, has the reason it resumes
+  the stage with. Given an entry whose check is a command and whose wrapper
+  is not built (today, `aws-sso`), then `runCheck` returns `skipped: wrapper
+  not built`, `last_check` is `null` and `cred check` does not count it as
+  failed *(agent's call: a skipped check is not a failed credential, and the
+  shims are not this chain's)*.
 - AC-6. **The earlier text is marked.** Spec 030 AC-2 and AC-4 carry the
   marks of section 4, and their earlier text follows unchanged.
+
+**The ground the probe stands on** (spec 030 AC-1 to AC-4, built here as
+spec 030 writes them; section 1, "How this reaches `main`")
+
+- AC-7. **The store of spec 030 AC-1, in full.** Given `agents/scheduler.yaml`
+  with a `credentials` block (`dir`, default `~/.config/panelator/credentials`;
+  `warn_days`, default 7, min 1; an unknown key or a `warn_days` under 1
+  fails loading as `config.ts` does for the other blocks), or without one
+  (the defaults apply), then `writeSecret(name, text)` in
+  `src/credentials/store.ts` produces `<dir>/<name>.cred` through
+  `systemd-creds --user encrypt --name=<name>` (the command path injectable
+  for the fake, as spec 030 section 5 says) and writes the index entry
+  (`name`, `created_at`, `set_by`, `expires_at`, `last_checked_at`,
+  `last_check`) to `<dir>/index.json`; `readSecret(name)` decrypts the blob
+  into memory and is the only decryption; given `dir` does not exist, then
+  the first `cred set` creates it with mode `0700`. A test asserts the blob
+  is not the plaintext, `index.json` holds no secret, and after a check the
+  secret is in no log line, run record, event payload or file of the state
+  directory (the "after a wrapped call" half of spec 030 AC-1's test waits
+  for the shims). `schemas/scheduler/credential-index.json` describes the
+  index. `warn_days` is read and validated here and used by nothing until
+  the producer (spec 030 AC-5) is built.
+- AC-8. **The catalogue of spec 030 AC-2, as amended.** `agents/credentials.yaml`
+  and its loader in `src/credentials/catalogue.ts` carry the fields spec 030
+  AC-2 lists (`name`, `provider`, `purpose`, `access`, `used_by`, `wrapper`,
+  `expiry`, `check`, `renew`, `setup`), with `check` in the two forms of
+  AC-1, and the loading rules of spec 030 AC-2 (an unknown key, a missing
+  required key, a `wrapper` command wrapped by two entries, a `used_by`
+  naming a profile or standing agent that does not exist; `scheduler` is a
+  valid `used_by` for a `wrapper: none` entry the scheduler uses itself
+  *(agent's call)*), each failing loading as spec 008 AC-1 does and each
+  run as a vitest test over the repository file. The repository catalogue
+  holds `github-app-key` and `telegram-bot` as spec 030 AC-2 writes them
+  (with this spec's checks) and `aws-sso` as spec 068 AC-1 writes it.
+  `schemas/scheduler/credential-catalogue.json` describes the file. The
+  profile field (`credentials` in place of `credential_hook`) is not changed
+  here (section 2).
+- AC-9. **The App key is read from the store once set (spec 030 AC-3's
+  rule).** Given the index has `github-app-key` and its blob decrypts, when
+  the scheduler starts (`bin/scheduler.ts`, where `app.private_key_path` is
+  read today), then the key that `createAppClient` signs with is
+  `readSecret("github-app-key")`, through one helper in `src/credentials/`,
+  and `app.private_key_path` is not read; given the index has no such
+  entry, then the path is read as today. Given the stored key is set but
+  does not decrypt (the fake made to fail), then the scheduler fails to
+  start with a message naming the credential and `cred set`, as it does
+  today for an unreadable path, and the message carries no key text. The
+  `gh` shim, `git-credential-panelator.ts`, `token.json` and the refresh are
+  unchanged (spec 001 section 12). A test asserts that with the test key in
+  the store and a different key at the path, the first `GET /app` the
+  started scheduler makes (`botLogin()`) carries a JWT the test key
+  verifies.
+- AC-10. **The commands of spec 030 AC-4, as amended.** `panelator-scheduler
+  cred set <name>` (stdin only; the name must be in the catalogue; stores,
+  writes the index entry with `set_by: maintainer`, runs `runCheck`, prints
+  the result and exits as AC-3 says), `cred list` (each entry with set or
+  missing, expiry, last check; never the secret), `cred check [<name>]`
+  (runs `runCheck` for the named or every entry, exits 1 when any returned
+  `failed`), `cred import` (reads `app.private_key_path` and
+  `telegram.credentials_path`, stores them as `github-app-key` and
+  `telegram-bot` with `set_by: import`, runs their checks, and prints the
+  two files: the `.pem` as safe to delete after the service has restarted
+  and minted from the store, the Telegram file as still read by the poller
+  until a later spec moves it *(agent's call, section 2)*) and `cred remove
+  <name>` (deletes the blob and the entry). Each is logged in the action log
+  with `agent: maintainer` and `args.name` only (spec 008 AC-9), as spec
+  030 AC-4 says. The expiry probe of `cred check` (`expiry: { probe }`)
+  runs through the wrapper and so is `skipped` with the check until the
+  shims exist; `expiry: index` and `none` are read as spec 030 says.
 
 ## 4. Amendments to earlier specs
 
@@ -213,48 +398,83 @@ AC-1's.
   AC-3: `cred set` runs the check over the secret it just stored and exits 1
   when the check fails; `cred check` exits 1 when any check it ran failed.`
 
-Spec 030 AC-1, AC-3, AC-5, AC-8, AC-13 and AC-14 are not amended: they say
-"the entry's check" or "the check" and apply as written to the probe. Spec
-068 AC-1 is not amended: the `aws-sso` entry has a wrapper and its check
-stays a command. Spec 001 section 12 is not amended: the `gh` shim and the
-token refresh are untouched.
+Spec 030 AC-1, AC-3, AC-5, AC-8, AC-13 and AC-14 are not amended: AC-1, the
+App-key rule of AC-3 and AC-4 are built here as written (AC-7 to AC-10), and
+the others say "the entry's check" or "the check" and apply as written to
+the probe when their issue builds them. Spec 068 AC-1 is not amended: the
+`aws-sso` entry has a wrapper and its check stays a command. Spec 001
+section 12 is not amended: the `gh` shim and the token refresh are
+untouched. Spec 068 section 1's "What `main` must have" paragraph is not
+edited here (it is not a criterion this spec supersedes); the finding of
+section 1 asks that it name the two issues.
 
 ## 5. Interfaces and files
 
-- `tools/scheduler/src/credentials/catalogue.ts`: the two forms of `check`
-  and the loading rules of AC-1; `schemas/scheduler/credential-catalogue.json`:
-  `check` as `oneOf` a string and `{ builtin: "github-app" | "telegram-get-me" }`.
+The rule: this chain creates the files of spec 030 section 5 that AC-7 to
+AC-10 need and no other of spec 030's, and the probe's files on top of them.
+Everything below is new on `main` unless marked *(exists)*.
+
+- `tools/scheduler/src/credentials/store.ts`: `readSecret`, `writeSecret`,
+  `removeSecret`, the index read and write, the `systemd-creds` spawn with
+  the command path injectable, the `0700` directory (AC-7); the one helper
+  that gives `bin/scheduler.ts` the App key from the store or the path
+  (AC-9).
+- `tools/scheduler/src/credentials/catalogue.ts`: the loader, the two forms
+  of `check` and the loading rules (AC-1, AC-8).
 - `tools/scheduler/src/credentials/check.ts`: `runCheck(entry, ctx)`
-  dispatching on the form; the probes `github-app` (AC-2) and
-  `telegram-get-me` (AC-4), each reading its secret with `readSecret`; the
-  index update shared by `cred set`, `cred check`, the pre-run and the "Done"
-  path (AC-5).
-- `tools/scheduler/src/github/auth.ts`: `createAppClient` is reused with
-  the stored key; if a helper is needed to call `GET /app` without a
-  configured installation, it is added beside `botLogin()` and the existing
-  functions are unchanged.
-- `tools/scheduler/src/credentials/commands.ts`: `cred set` and `cred
-  check` exit status and output (AC-3).
-- `agents/credentials.yaml`: `github-app-key` and `telegram-bot` checks as
-  `{ builtin }` (AC-1); the `github-app-key` `setup` steps end with
-  `panelator-scheduler cred set github-app-key < <the .pem>` and say that the
-  command prints `check ok` when the key is registered for the App.
-- `tools/README.md`: the two forms of `check` and what `cred set`'s exit
-  status means.
+  dispatching on the form and writing the index's check fields; the probes
+  `github-app` (AC-2) and `telegram-get-me` (AC-4), each reading its secret
+  with `readSecret`; `skipped` for a wrapper not built (AC-5).
+- `tools/scheduler/src/credentials/commands.ts`: `cred set`, `list`,
+  `check`, `import`, `remove`, their output, exit status and action-log
+  entries (AC-3, AC-10).
+- `tools/scheduler/bin/scheduler.ts` *(exists)*: the `cred` subcommands
+  dispatched to `commands.ts`; the App key read through the store helper
+  where `app.private_key_path` is read today (AC-9).
+- `tools/scheduler/src/config.ts` *(exists)* and `agents/scheduler.yaml`
+  *(exists)*: the `credentials` block, its defaults and validation (AC-7).
+- `tools/scheduler/src/github/auth.ts` *(exists)*: `createAppClient` is
+  reused with the stored key; if a helper is needed to call `GET /app`
+  without a configured installation, it is added beside `botLogin()` and
+  the existing functions are unchanged (AC-2).
+- `agents/credentials.yaml`: the three entries (AC-1, AC-8); the
+  `github-app-key` `setup` steps end with `panelator-scheduler cred set
+  github-app-key < <the .pem>` and say that the command prints `check ok`
+  when the key is registered for the App.
+- `schemas/scheduler/credential-catalogue.json` (`check` as `oneOf` a
+  string and `{ builtin: "github-app" | "telegram-get-me" }`) and
+  `schemas/scheduler/credential-index.json` (AC-7, AC-8).
+- `tools/scheduler/test/helpers/fake-systemd-creds`: the reversible fake
+  (section 3).
+- `tools/scheduler/test/credentials.test.ts`: AC-1 to AC-5 and AC-7 to
+  AC-10 (the catalogue rules, the test key and the JWT-verifying `GET /app`
+  route, the `cred set` exit status, `token.json` untouched, the reasons
+  without the secret, the blob not plaintext, the key read from the store
+  at start, `runCheck` over a refused key, `skipped` for `aws-sso`); the
+  `GET /app` route in `tools/scheduler/test/helpers/mock-github.ts` or
+  `e2e-routes.ts` where the start-up test of AC-9 needs it. The existing
+  recorded chains run unchanged with no `credentials` block (spec 030
+  section 6's last item), which the existing e2e tests show by passing.
+- `tools/README.md` *(exists)*: the `cred` commands, the `credentials`
+  block, the catalogue and the two forms of `check`, what `cred set`'s exit
+  status means (the documentation spec 030 section 5 names for its tool).
 - `specs/030-beyond-github/spec.md` AC-2 and AC-4: the marks of section 4
   (AC-6).
-- Tests: `tools/scheduler/test/credentials.test.ts` (AC-1 to AC-5: the
-  catalogue rules, the test key and the JWT-verifying `GET /app` route, the
-  `cred set` exit status, `token.json` untouched, the reasons without the
-  secret), the "Done" path test in `tools/scheduler/test/driver.test.ts` or
-  `e2e.test.ts` (AC-5), with the mocked route in
-  `tools/scheduler/test/helpers/e2e-routes.ts` where the recorded runs need
-  it.
-- `docs/delivery-system-design.md`: this spec under `## Children`.
+- `docs/delivery-system-design.md`: this spec under `## Children`; the spec
+  030 bullet says which issue builds which part.
 
-Where issue #39's implementation is not yet on `main`, these are changes to
-that implementation's files as spec 030 section 5 names them, built in the
-same chain or the one after; this spec adds no file spec 030 does not name.
+Not touched by this chain, though spec 030 section 5 names them:
+`src/credentials/shims.ts`, `src/runner/credentials.ts`, `src/runner/run.ts`
+(the shim directory), `src/profiles/resolve.ts`, `src/stages/definition.ts`,
+`src/types.ts`, `agents/profiles/*/profile.yaml`, `schemas/scheduler/profile.json`
+and `standing-definition.json` (the `credentials` field), `src/service/loop.ts`
+(the hourly producer), `src/contacts/`, `src/notify/telegram.ts`,
+`src/telegram/`, `src/chain/`, `src/decide/`, `src/actions/`,
+`src/standing/`, `agents/standing/credential-check.md`, `agents/actions.yaml`,
+`agents/stages/*.md`, the `question.json`, `contacts.json` and
+`credential-check-result.json` schemas. An implement stage that finds it
+needs one of them has found a gap in this spec, not permission.
+
 `tools/scheduler/`, `agents/`, `schemas/scheduler/` and
 `docs/delivery-system-design.md` are sensitive paths; the security review
 applies to the implementation PR (spec 006 AC-9). Nothing here changes the
@@ -262,30 +482,38 @@ sensitive-path list, the security criteria, what routes a sensitive diff to
 the security review, section 3 of the design, or any text marked as a
 maintainer answer. The probe adds no network listener; its one outbound call
 is `GET /app` to the configured GitHub API, which the scheduler already makes
-at start-up (`botLogin()`). The secret is read into memory for one probe and
-is in no log line, reason string, run record or event, as spec 030 AC-1
-requires; the AC-2 and AC-4 tests assert it for the failure reasons.
+at start-up (`botLogin()`). The store spawns `systemd-creds` and nothing
+else; the secret is read into memory for one probe or one start-up and is
+in no log line, reason string, run record or event, as spec 030 AC-1
+requires; the AC-2, AC-4, AC-7 and AC-9 tests assert it.
 
 ## 6. Verification
 
 - `pnpm install --frozen-lockfile` then `pnpm test` from the repository root
   pass, and `pnpm -F @panelator/scheduler typecheck` is clean, with the
-  tests of section 5 added.
+  tests of section 5 added and every existing recorded chain unchanged.
 - The AC-3 test (a key GitHub refuses makes `cred set github-app-key` exit 1
   with `last_check` failed) fails against a catalogue whose check is `gh api
   /installation/repositories --jq .total_count` with the mocked route
   answering 200, and passes with the probe. The AC-1 catalogue test fails on
   a repository catalogue whose `github-app-key` check is a string.
 - A grep of `tools/scheduler/src` shows `GET /app` requested in
-  `github/auth.ts` only, and `readSecret` called from `credentials/` only.
-- On the laptop, after the implementation is deployed: `panelator-scheduler
-  cred set github-app-key < <the current .pem>` prints `check ok` and exits
-  0, and `panelator-scheduler cred check github-app-key` does the same; the
-  implement stage runs them and quotes the output (without the key) in the
-  PR. The failing cases are exercised only by the tests: a wrong key is not
-  stored on the laptop, since spec 030 AC-3 would mint from it at the next
-  refresh. The next token refresh after the `cred set` succeeds (the service
-  log's refresh line).
+  `github/auth.ts` only, `readSecret` called from `credentials/` only, and
+  `systemd-creds` spawned from `credentials/store.ts` only.
+- `git diff --stat origin/main` of the implementation PR touches no file
+  the "Not touched by this chain" paragraph of section 5 lists.
+- On the laptop, after the implementation is deployed: the maintainer runs
+  `panelator-scheduler cred set github-app-key < <the current .pem>`, which
+  prints `check ok` and exits 0, then `panelator-scheduler cred check
+  github-app-key`, which does the same; after the service restarts, its log
+  shows the token minted (the refresh line) with the key read from the
+  store, and the `.pem` can be deleted. Storing the key is the maintainer's
+  step, done after merge: the implement stage does not ask for it, since
+  nothing in this chain depends on the store being populated (the path
+  keeps working until it is) *(agent's call; spec 030 section 6's
+  capability question is not raised by this chain)*. The failing cases are
+  exercised only by the tests: a wrong key is not stored on the laptop,
+  since spec 030 AC-3 would mint from it at the next start.
 
 ## 7. Open decisions
 
