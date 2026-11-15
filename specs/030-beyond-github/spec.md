@@ -246,7 +246,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   stage environment of spec 001 (`GH_TOKEN` empty, no SSH) is unchanged. A
   test asserts that the environment of a wrapped child carries the variable
   and the stage's own environment does not.
-- AC-4. Amended by [069-github-app-key-check-signs-with-the-stored-key](../069-github-app-key-check-signs-with-the-stored-key/spec.md) AC-3: `cred set` runs the check over the secret it just stored and exits 1 when the check fails; `cred check` exits 1 when any check it ran failed. **The maintainer's commands.** `panelator-scheduler cred set <name>`
+- AC-4. Amended by [069-github-app-key-check-signs-with-the-stored-key](../069-github-app-key-check-signs-with-the-stored-key/spec.md) AC-3: `cred set` runs the check over the secret it just stored and exits 1 when the check fails; `cred check` exits 1 when any check it ran failed. Amended by [069-github-app-key-check-signs-with-the-stored-key](../069-github-app-key-check-signs-with-the-stored-key/spec.md) AC-10: the action-log row is written by the kinds `cred_set`, `cred_check`, `cred_import` and `cred_remove` through `applyAction`, one row per credential acted on, and `cred list`, which reads only, is not logged. **The maintainer's commands.** `panelator-scheduler cred set <name>`
   reads the secret from stdin (never an argument, so it is not in the shell
   history), requires the name to be in the catalogue, encrypts it, writes
   the index entry with `set_by: maintainer`, runs the entry's `check` and
@@ -461,7 +461,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   credential or a first contact. Given nothing is wrong, then the summary
   says so and no action is requested. The follow-up spec adds the AWS half
   (section 2) by extending this definition and prompt, not replacing them.
-- AC-16. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-7: `aws_scale` exists as a level-1 kind. **No AWS action here.** The `aws_scale` kind, the `scale` descriptor
+- AC-16. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-7: `aws_scale` exists as a level-1 kind. Amended by [069-github-app-key-check-signs-with-the-stored-key](../069-github-app-key-check-signs-with-the-stored-key/spec.md) AC-11: `agents/actions.yaml` also gains the four `cred_*` kinds, so `renew_credential` is not its one new kind. **No AWS action here.** The `aws_scale` kind, the `scale` descriptor
   on a reservation and the ledger input are the follow-up spec's (section 2)
   *(agent's call)*; this spec adds no `aws` action, spawns no `aws`, and
   leaves `agents/actions.yaml` with `renew_credential` as its one new kind.

@@ -13,7 +13,14 @@ spec 030 writes it: AC-1 (the store, the index, the `credentials` block),
 AC-2 (the catalogue and its loader, as amended here), the App-key rule of
 AC-3 and the commands of AC-4 (as amended here); section 1 ("How this reaches
 `main`") says why and what it leaves to the issue that carries the rest of
-spec 030. *(agent's call)*
+spec 030. *(agent's call)* Revised again 2026-11-15 after two implement
+attempts and a plan gap: spec 030 AC-4's action-log row per `cred` command
+can only be written by `applyAction` with a kind defined in `src/actions/`
+and `agents/actions.yaml` (spec 008 AC-8, AC-9), which this spec's section 5
+listed as not touched; the `cred` commands are now the action kinds
+`cred_set`, `cred_check`, `cred_import` and `cred_remove` (AC-10, section 1
+"The commands are action kinds"), and spec 030 AC-4 and AC-16 carry marks
+for it. *(agent's call)*
 Class: bug. Domain: backend.
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
@@ -34,8 +41,12 @@ the store once `github-app-key` is set), AC-4 (`cred set`, `list`, `check`,
 check agent's input) and AC-14 (`renew_credential` re-runs the check);
 [007-telegram-channel](../007-telegram-channel/spec.md) AC-1 (the Telegram
 credentials file, the shape the `telegram-bot` secret keeps);
-[008-agent-registry](../008-agent-registry/spec.md) AC-9 (the action log the
-`cred` commands write to);
+[008-agent-registry](../008-agent-registry/spec.md) AC-8 (an action kind is
+code in `src/actions/` with an entry in `agents/actions.yaml`), AC-9 (the
+action log the `cred` commands write to, through `applyAction`, its one
+writer), AC-12 (the only `maintainer` actor is the command line) and AC-17
+(the maintainer's commands: `param set` goes through a kind, `param list`
+reads and is not logged);
 [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md)
 AC-1 (the `aws-sso` entry, whose check stays a command through its wrapper
 and which this spec does not change) and section 1 ("What `main` must have
@@ -96,6 +107,14 @@ App JWT.
    secret, runs the probe over the stored blob and prints the result as spec
    030 AC-4 says; when the check fails it exits 1, so a setup step that runs
    it in a shell stops there.
+5. **The `cred` commands that change state are action kinds.** `cred set`,
+   `cred check`, `cred import` and `cred remove` run through `applyAction`
+   as the level-1 kinds `cred_set`, `cred_check`, `cred_import` and
+   `cred_remove`, defined in `src/actions/` with entries in
+   `agents/actions.yaml` (spec 008 AC-8), which is how spec 030 AC-4's "logged
+   in the action log with `agent: maintainer` and `args.name` only" is met
+   (below, "The commands are action kinds"). `cred list` reads and is not
+   logged, as `param list` is not (spec 008 AC-17).
 
 *(agent's call)* The probe is a scheduler builtin rather than a new
 `panelator-scheduler` subcommand named as the check string (the way spec 068
@@ -112,6 +131,73 @@ AC-3 reads the stored key for the next mint, and the maintainer who sees
 `cred set` fail runs it again with the right key; a store that silently kept
 an old key would report "set" for a key that is not in use. Every change is
 cheap to reverse; no ADR (design section 3, item 2).
+
+### The commands are action kinds
+
+*(agent's call, answering the plan stage's second gap, 2026-11-15)* Spec
+030 AC-4 says every `cred` command "is logged in the action log with
+`agent: maintainer` (spec 008 AC-9), with `args.name` only". On `main` the
+action log has one writer, `applyAction` (`src/actions/index.ts`), which
+writes a row only for a kind that has code in `src/actions/` and an entry in
+`agents/actions.yaml` (spec 008 AC-8; `registryActionsCheck` fails the
+registry test for a kind with one and not the other), and the repository
+test `applyAction is the only writer of the action log`
+(`tools/scheduler/test/actions.test.ts`) fails for any other file under
+`src/` or `bin/` that writes a row. The first version of this spec listed
+`src/actions/` and `agents/actions.yaml` as not touched by this chain, so
+AC-10 could not be met: two implement attempts edited the writer test and
+were stopped for scope, a third wrote no rows and was escalated by the
+review. The spec was wrong, not the attempts.
+
+**The choice.** The commands go through `applyAction` as four new level-1
+kinds (option (a) of the plan stage's question), not deferred to the issue
+that carries the rest of spec 030 (option (b)). Spec 030 AC-4 is a recorded
+rule of a landed spec and spec 008 AC-8 and AC-9 say how a maintainer
+command that changes state is recorded: `param set` is the `set_parameter`
+kind requested as `maintainer`, and the only command spec 008 keeps out of
+the log is `param mode`, because "no action kind sets a mode" (AC-12,
+AC-17). A `cred set` that is not logged would be a second exception with no
+such reason, and the audit agent, which reads the log by kind, would not see
+credentials being set or removed. Deferring would also leave this chain's
+`cred` commands shaped one way and the next issue reshaping them. The cost
+is five more files in scope, each a few lines, and no change to the writer
+test.
+
+**The shape.** Following spec 008 AC-9 ("the line for a request is written
+before the effect, with status `pending`, and rewritten after it"), the
+kind's `apply` *is* the effect: `src/actions/cred-set.ts` calls
+`writeSecret` and `runCheck` of `src/credentials/`, `cred-check.ts` calls
+`runCheck`, `cred-import.ts` reads the configuration file, calls
+`writeSecret` and `runCheck`, `cred-remove.ts` calls `removeSecret`; and
+`bin/scheduler.ts` dispatches `cred <verb>` through `applyAction` as
+`maintainer` the way `param set` and `agent pause` do. `commands.ts` keeps
+the parsing, the output lines and the exit status (AC-10 says how), and
+`cred list` reads the index without a kind. The secret of `cred set` reaches
+the kind through the `ActionContext` (a `credentials` field, as spec 064 gave
+`sweep_volume` its `repoDir` and `onSweep`), never through `args`, so the
+row holds `{ name }` and nothing else; the check result reaches the command
+the same way (an `onResult` callback on that field), since a kind's `apply`
+returns only its undo. Each kind's `check` refuses any actor other than
+`maintainer` with the reason `maintainer only`, so a standing agent whose
+`actions` list named one is refused and the refusal logged (spec 008 AC-8,
+AC-12); each kind's undo is `null` (a removed blob cannot be restored, a set
+blob replaced the previous one, a check is not reversible), which spec 008
+AC-9 allows for kinds it does not name, and `action undo <id>` on such a row
+exits non-zero as spec 008 AC-10 says for a null undo.
+
+**The row's status.** A `cred set` whose check fails is `applied`: the
+effect spec 030 AC-4 describes (encrypt, write the index entry, run the
+check, print the result) completed, and the blob is in the store (AC-3). The
+check's result lives in the index (`last_check`, `last_checked_at`, AC-5)
+and in the command's output and exit status, not in the row's `reason`,
+which spec 008 AC-9 keeps for a refusal or a failure of the effect. `failed`
+is for an effect that did not complete (the `systemd-creds` spawn exiting
+non-zero, an index write failing, a probe throwing out of `runCheck`), with
+the error message as `reason`; the message carries no secret text (AC-7's
+test reads the log). The same holds for `cred_check` (the row is `applied`
+when the check ran, whatever it returned, `skipped` included) and
+`cred_import`. The decision is cheap to reverse (four small files and four
+entries); no ADR.
 
 ### How this reaches `main`
 
@@ -144,9 +230,12 @@ as spec 030 writes it, and the probe on top of it:
   mints `token.json` is read from the store once `github-app-key` is set,
   else from `app.private_key_path` as today" (AC-9 below). The shim
   directory, `cred exec` and the per-run `PATH` are not built here;
-- spec 030 AC-4 as amended by AC-3 of this spec: `cred set`, `cred list`,
-  `cred check`, `cred import` and `cred remove`, logged in the action log
-  (AC-10 below). `cred exec` goes with the shims.
+- spec 030 AC-4 as amended by AC-3 and AC-10 of this spec: `cred set`,
+  `cred list`, `cred check`, `cred import` and `cred remove`, the four that
+  change state logged in the action log as the kinds `cred_set`,
+  `cred_check`, `cred_import` and `cred_remove` of `src/actions/` and
+  `agents/actions.yaml` (AC-10 below; "The commands are action kinds"
+  above). `cred exec` goes with the shims.
 
 Everything else of spec 030 is left to the issue that carries the rest of
 it: the shims and `cred exec` (AC-3), the `credential_expiry` producer
@@ -377,11 +466,58 @@ spec 030 writes them; section 1, "How this reaches `main`")
   two files: the `.pem` as safe to delete after the service has restarted
   and minted from the store, the Telegram file as still read by the poller
   until a later spec moves it *(agent's call, section 2)*) and `cred remove
-  <name>` (deletes the blob and the entry). Each is logged in the action log
-  with `agent: maintainer` and `args.name` only (spec 008 AC-9), as spec
-  030 AC-4 says. The expiry probe of `cred check` (`expiry: { probe }`)
-  runs through the wrapper and so is `skipped` with the check until the
-  shims exist; `expiry: index` and `none` are read as spec 030 says.
+  <name>` (deletes the blob and the entry). Each command but `cred list` is
+  logged in the action log with `agent: maintainer` and `args.name` only
+  (spec 008 AC-9), as spec 030 AC-4 says, by running through `applyAction`
+  as the kind of AC-11 (`cred_set`, `cred_check`, `cred_import`,
+  `cred_remove`), one row per credential acted on: `cred check` with no
+  name writes one `cred_check` row per catalogue entry, `cred import` one
+  `cred_import` row per file. `bin/scheduler.ts` dispatches `cred <verb>`
+  through `applyAction` as `maintainer` with `run_id: command` and a `why`
+  of at least 20 characters, the way `param set` and `agent pause` do;
+  `commands.ts` parses the verbs, prints the lines and sets the exit status.
+  `cred list` reads the index and writes no row, as `param list` does not
+  (spec 008 AC-17) *(agent's call)*. A test asserts that after `cred set`,
+  `cred check`, `cred import` and `cred remove`, `action list` shows one row
+  per credential with `agent: maintainer`, `args: { name }` and no other
+  key, and that `cred list` added none. The expiry probe of `cred check`
+  (`expiry: { probe }`) runs through the wrapper and so is `skipped` with the
+  check until the shims exist; `expiry: index` and `none` are read as spec
+  030 says.
+- AC-11. **The `cred` kinds are actions of spec 008 AC-8.** `agents/actions.yaml`
+  gains `cred_set`, `cred_check`, `cred_import` and `cred_remove`, each
+  `level: 1` with a one-line description, and `src/actions/` gains one file
+  per kind (`cred-set.ts`, `cred-check.ts`, `cred-import.ts`,
+  `cred-remove.ts`) registered in `KINDS` of `src/actions/index.ts`, so the
+  registry test of spec 008 AC-1 and `registryActionsCheck` pass unchanged.
+  Each kind's `args` is `{ name }` exactly (`exact(args, ["name"])`), its
+  `changesMode` is `false` and its `undo` is `null`. Each kind's `check`
+  returns `maintainer only` when the actor is not `maintainer` (so a
+  standing agent whose `actions` list names one is refused and the refusal
+  logged, spec 008 AC-8 and AC-12), `unknown credential <name>` when the
+  name is not in the catalogue, and for `cred_import` `cannot read <path>`
+  when the configuration file of the credential is not readable (the path
+  is configuration, not secret). Each kind's `apply` is the command's
+  effect, calling into `src/credentials/`: `cred_set` calls `writeSecret`
+  with `set_by: maintainer` then `runCheck`; `cred_check` calls `runCheck`;
+  `cred_import` reads the file, calls `writeSecret` with `set_by: import`
+  then `runCheck`; `cred_remove` calls `removeSecret`. The secret of
+  `cred_set` and the check result travel through a `credentials` field of
+  `ActionContext` (the secret as a function the command sets from stdin,
+  the result through an `onResult(name, result)` callback), never through
+  `args` or the row. Given `cred set` with a key GitHub refuses, then the
+  row is `status: applied` with no `reason` (the blob was stored, AC-3; the
+  check's result is the index's `last_check` and the command's exit 1);
+  given `writeSecret` throws (the fake `systemd-creds` made to exit
+  non-zero), then the row is `status: failed` with the error as `reason`,
+  no index entry is written and the command exits 1; a test asserts both
+  rows and that neither `reason` nor any other field of the log holds the
+  key text. `action undo <id>` on a `cred_*` row exits non-zero with the
+  reason spec 008 AC-10 gives for a null undo. The repository test
+  `applyAction is the only writer of the action log`
+  (`tools/scheduler/test/actions.test.ts`) is unchanged and passes: no file
+  under `src/credentials/` or `bin/` writes a row. `schemas/scheduler/action.json`
+  leaves `kind` a free string and is not changed.
 
 ## 4. Amendments to earlier specs
 
@@ -397,6 +533,16 @@ spec 030 writes them; section 1, "How this reaches `main`")
   [069-github-app-key-check-signs-with-the-stored-key](../069-github-app-key-check-signs-with-the-stored-key/spec.md)
   AC-3: `cred set` runs the check over the secret it just stored and exits 1
   when the check fails; `cred check` exits 1 when any check it ran failed.`
+  and, beside it, `Amended by
+  [069-github-app-key-check-signs-with-the-stored-key](../069-github-app-key-check-signs-with-the-stored-key/spec.md)
+  AC-10: the action-log row is written by the kinds `cred_set`, `cred_check`,
+  `cred_import` and `cred_remove` through `applyAction`, one row per
+  credential acted on, and `cred list`, which reads only, is not logged.`
+- Spec 030 AC-16 is marked `Amended by
+  [069-github-app-key-check-signs-with-the-stored-key](../069-github-app-key-check-signs-with-the-stored-key/spec.md)
+  AC-11: `agents/actions.yaml` also gains the four `cred_*` kinds, so
+  `renew_credential` is not its one new kind.` The criterion's rule (no AWS
+  action in spec 030) is unchanged; only its count of new kinds is.
 
 Spec 030 AC-1, AC-3, AC-5, AC-8, AC-13 and AC-14 are not amended: AC-1, the
 App-key rule of AC-3 and AC-4 are built here as written (AC-7 to AC-10), and
@@ -404,7 +550,10 @@ the others say "the entry's check" or "the check" and apply as written to
 the probe when their issue builds them. Spec 068 AC-1 is not amended: the
 `aws-sso` entry has a wrapper and its check stays a command. Spec 001
 section 12 is not amended: the `gh` shim and the token refresh are
-untouched. Spec 068 section 1's "What `main` must have" paragraph is not
+untouched. Spec 008 is not amended: AC-8 says kinds are added as code in
+`src/actions/` with entries in `agents/actions.yaml`, and the `cred_*` kinds
+are added that way (AC-11), as spec 064's `sweep_volume` and spec 068's
+`aws_scale` were. Spec 068 section 1's "What `main` must have" paragraph is not
 edited here (it is not a criterion this spec supersedes); the finding of
 section 1 asks that it name the two issues.
 
@@ -425,12 +574,24 @@ Everything below is new on `main` unless marked *(exists)*.
   dispatching on the form and writing the index's check fields; the probes
   `github-app` (AC-2) and `telegram-get-me` (AC-4), each reading its secret
   with `readSecret`; `skipped` for a wrapper not built (AC-5).
-- `tools/scheduler/src/credentials/commands.ts`: `cred set`, `list`,
-  `check`, `import`, `remove`, their output, exit status and action-log
-  entries (AC-3, AC-10).
+- `tools/scheduler/src/credentials/commands.ts`: the `cred` verbs parsed,
+  each credential acted on passed to `applyAction` with its kind, the output
+  lines, the exit status; `cred list` reading the index (AC-3, AC-10). It
+  writes no action-log row itself.
+- `tools/scheduler/src/actions/cred-set.ts`, `cred-check.ts`,
+  `cred-import.ts`, `cred-remove.ts`: the four kinds, their `check` (the
+  actor, the name, the readable file) and their `apply` calling into
+  `src/credentials/` (AC-11); `tools/scheduler/src/actions/index.ts`
+  *(exists)*: the four added to `KINDS`, and the `credentials` field of
+  `ActionContext` (store, catalogue, the probe context, the stdin secret
+  function, `onResult`), the existing functions unchanged (AC-11).
+- `agents/actions.yaml` *(exists)*: the four `cred_*` entries, `level: 1`
+  with a description each (AC-11).
 - `tools/scheduler/bin/scheduler.ts` *(exists)*: the `cred` subcommands
-  dispatched to `commands.ts`; the App key read through the store helper
-  where `app.private_key_path` is read today (AC-9).
+  dispatched to `commands.ts`, which runs them through `applyAction` as
+  `maintainer` with the `credentials` context field set (AC-10, AC-11); the
+  App key read through the store helper where `app.private_key_path` is
+  read today (AC-9).
 - `tools/scheduler/src/config.ts` *(exists)* and `agents/scheduler.yaml`
   *(exists)*: the `credentials` block, its defaults and validation (AC-7).
 - `tools/scheduler/src/github/auth.ts` *(exists)*: `createAppClient` is
@@ -447,10 +608,13 @@ Everything below is new on `main` unless marked *(exists)*.
 - `tools/scheduler/test/helpers/fake-systemd-creds`: the reversible fake
   (section 3).
 - `tools/scheduler/test/credentials.test.ts`: AC-1 to AC-5 and AC-7 to
-  AC-10 (the catalogue rules, the test key and the JWT-verifying `GET /app`
+  AC-11 (the catalogue rules, the test key and the JWT-verifying `GET /app`
   route, the `cred set` exit status, `token.json` untouched, the reasons
   without the secret, the blob not plaintext, the key read from the store
-  at start, `runCheck` over a refused key, `skipped` for `aws-sso`); the
+  at start, `runCheck` over a refused key, `skipped` for `aws-sso`, the
+  action-log rows of AC-10 and AC-11 including the `maintainer only`
+  refusal and the `failed` row, all in this file and not in
+  `actions.test.ts`); the
   `GET /app` route in `tools/scheduler/test/helpers/mock-github.ts` or
   `e2e-routes.ts` where the start-up test of AC-9 needs it. The existing
   recorded chains run unchanged with no `credentials` block (spec 030
@@ -458,8 +622,8 @@ Everything below is new on `main` unless marked *(exists)*.
 - `tools/README.md` *(exists)*: the `cred` commands, the `credentials`
   block, the catalogue and the two forms of `check`, what `cred set`'s exit
   status means (the documentation spec 030 section 5 names for its tool).
-- `specs/030-beyond-github/spec.md` AC-2 and AC-4: the marks of section 4
-  (AC-6).
+- `specs/030-beyond-github/spec.md` AC-2, AC-4 and AC-16: the marks of
+  section 4 (AC-6).
 - `docs/delivery-system-design.md`: this spec under `## Children`; the spec
   030 bullet says which issue builds which part.
 
@@ -469,11 +633,17 @@ Not touched by this chain, though spec 030 section 5 names them:
 `src/types.ts`, `agents/profiles/*/profile.yaml`, `schemas/scheduler/profile.json`
 and `standing-definition.json` (the `credentials` field), `src/service/loop.ts`
 (the hourly producer), `src/contacts/`, `src/notify/telegram.ts`,
-`src/telegram/`, `src/chain/`, `src/decide/`, `src/actions/`,
-`src/standing/`, `agents/standing/credential-check.md`, `agents/actions.yaml`,
+`src/telegram/`, `src/chain/`, `src/decide/`, `src/actions/renew-credential.ts`
+(spec 030 AC-14's kind; the `cred_*` kinds of AC-11 are this chain's),
+`src/standing/`, `agents/standing/credential-check.md`,
 `agents/stages/*.md`, the `question.json`, `contacts.json` and
-`credential-check-result.json` schemas. An implement stage that finds it
-needs one of them has found a gap in this spec, not permission.
+`credential-check-result.json` schemas. Also not touched, though not spec
+030's: `tools/scheduler/test/actions.test.ts` (its `applyAction is the only
+writer` test must pass as it is; the `cred_*` tests are in
+`credentials.test.ts`), `schemas/scheduler/action.json` and
+`schemas/scheduler/action-log-entry.json` (`kind` is a free string in
+both). An implement stage that finds it needs one of them has found a gap
+in this spec, not permission.
 
 `tools/scheduler/`, `agents/`, `schemas/scheduler/` and
 `docs/delivery-system-design.md` are sensitive paths; the security review
@@ -485,7 +655,10 @@ is `GET /app` to the configured GitHub API, which the scheduler already makes
 at start-up (`botLogin()`). The store spawns `systemd-creds` and nothing
 else; the secret is read into memory for one probe or one start-up and is
 in no log line, reason string, run record or event, as spec 030 AC-1
-requires; the AC-2, AC-4, AC-7 and AC-9 tests assert it.
+requires; the AC-2, AC-4, AC-7, AC-9 and AC-11 tests assert it. The four
+`cred_*` kinds give no agent a new capability: each refuses any actor but
+`maintainer`, the actor only the command line can be (spec 008 AC-12), and
+a standing agent that names one in its `actions` list is refused and logged.
 
 ## 6. Verification
 
@@ -498,10 +671,19 @@ requires; the AC-2, AC-4, AC-7 and AC-9 tests assert it.
   answering 200, and passes with the probe. The AC-1 catalogue test fails on
   a repository catalogue whose `github-app-key` check is a string.
 - A grep of `tools/scheduler/src` shows `GET /app` requested in
-  `github/auth.ts` only, `readSecret` called from `credentials/` only, and
-  `systemd-creds` spawned from `credentials/store.ts` only.
+  `github/auth.ts` only, `readSecret` called from `credentials/` and
+  `actions/cred-*.ts` only, `writeSecret` and `removeSecret` called from
+  `actions/cred-*.ts` only, `systemd-creds` spawned from
+  `credentials/store.ts` only, and `writePending(` in `actions/index.ts` and
+  `actions/log.ts` only (the unchanged writer test says the same).
 - `git diff --stat origin/main` of the implementation PR touches no file
-  the "Not touched by this chain" paragraph of section 5 lists.
+  the "Not touched by this chain" paragraph of section 5 lists, and
+  `agents/actions.yaml` differs from `main` by the four `cred_*` entries
+  only.
+- After the AC-10 test's commands, `panelator-scheduler action list` prints
+  rows whose `kind` is one of the four and whose `args` is `{ name }`; the
+  audit input of spec 008 groups them by kind with no change to
+  `src/standing/`.
 - On the laptop, after the implementation is deployed: the maintainer runs
   `panelator-scheduler cred set github-app-key < <the current .pem>`, which
   prints `check ok` and exits 0, then `panelator-scheduler cred check

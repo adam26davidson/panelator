@@ -539,7 +539,7 @@ are stale and are corrected as part of B.
 - `specs/066-filer-files-blocked-issues/spec.md` (issue #126; the filer files issues blocked on their predecessors)
 - `specs/067-incomplete-request-is-sent-back-for-completion/spec.md` (issue #129; an incomplete credential, funds or first-contact request is sent back for completion, ADR 0012)
 - `specs/068-beyond-github-aws-and-events/spec.md` (issue #130; row F2, second part: the AWS and event half of spec 030)
-- `specs/069-github-app-key-check-signs-with-the-stored-key/spec.md` (issue #131; the `github-app-key` check signs with the stored key; a `wrapper: none` entry's check is a scheduler probe; carries spec 030's store, catalogue and `cred` commands, which the probe stands on)
+- `specs/069-github-app-key-check-signs-with-the-stored-key/spec.md` (issue #131; the `github-app-key` check signs with the stored key; a `wrapper: none` entry's check is a scheduler probe; carries spec 030's store, catalogue and `cred` commands, which the probe stands on; the `cred` commands are the action kinds `cred_set`, `cred_check`, `cred_import` and `cred_remove`)
 - planned: web-ui-profile
   title: The web-ui profile: implement, fix and review instructions for UI packages
   brief: Spec 001 section 9 names `web-ui` among the v0 profiles and leaves its content to
