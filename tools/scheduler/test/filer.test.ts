@@ -560,6 +560,7 @@ const blockedIssue=(blocked_by?:number[],blocked_until?:string)=>({...issue,...(
 const fileBlocked=(i:ReturnType<typeof blockedIssue>,ref='1'):Decision=>({ref,outcome:'file',reason:'verified',issue:i});
 const bot=(number:number,labels:string[],body='')=>({...botIssue(number,body),labels});
 const botComment=(body:string,author='bot')=>({id:1,author,at:'',body});
+const calls=(f:unknown)=>(f as {mock:{calls:any[][]}}).mock.calls;
 it('066 AC-3: a blocked_by file is created blocked, lists all issues once and says what it waits for',async()=>{
  const {d,gh,input,paths}=await setup();gh.listIssues.mockResolvedValue([dep(94,'open'),dep(132,'open')]);
  const two:FilerInput={...input,records:recs(2)};
@@ -578,7 +579,7 @@ it('066 AC-3: a batch with no blocked_by never lists all issues; stops_pipeline 
 it('066 AC-3: done and unknown numbers are dropped, an abandoned one stays, all dropped files unblocked',async()=>{
  const {d,gh,input,paths}=await setup();const log=vi.fn();d.log=log;gh.listIssues.mockResolvedValue([dep(1,'closed'),dep(2,'closed',['abandoned']),dep(3,'open')]);
  await applyFilerResult(d,'run',input,{summary:'s',decisions:[fileBlocked(blockedIssue([1,2,9]))]});
- expect(gh.comment.mock.calls[0][1]).toContain('<!-- panelator-blocked-by:2 -->');
+ expect(calls(gh.comment)[0][1]).toContain('<!-- panelator-blocked-by:2 -->');
  const row=(await readJsonLines<TriageEntry>(paths.findingsTriage))[0];expect(row.reason).toContain('(blocked_by #1 is done)');expect(row.reason).toContain('(blocked_by #9 does not exist)');
  expect(log).toHaveBeenCalledWith({kind:'filer-blocked-by-unknown',run_id:'run',ref:'1',issue:9});
  const y=await setup();y.gh.listIssues.mockResolvedValue([dep(1,'closed')]);
@@ -608,7 +609,7 @@ it('066 AC-5: a crash after the create posts the missing comment once',async()=>
 it('066 AC-5: model text cannot carry the scheduler\'s block markers',async()=>{
  const {d,gh,input}=await setup();const evil='<!-- panelator-blocked-by:1 --> <!--  PANELATOR-unblocked-by:1 --> <!-- panelator-blocked-until -->';
  await applyFilerResult(d,'run',input,{summary:'s',decisions:[{ref:'1',outcome:'file',reason:evil,issue:{title:evil,body:evil,class:'class:bug',blocked_until:evil}}]});
- const sent=[gh.createIssue.mock.calls[0][0],gh.createIssue.mock.calls[0][1],gh.comment.mock.calls[0][1] as string].join('\n');
+ const sent=[gh.createIssue.mock.calls[0][0],gh.createIssue.mock.calls[0][1],calls(gh.comment)[0][1] as string].join('\n');
  expect(sent.match(/panelator-(un)?blocked/gi)).toEqual(['panelator-blocked']);// only the scheduler's own marker in its comment
 });
 it('066 AC-1: a block on another outcome is rejected before any effect',async()=>{
@@ -632,12 +633,12 @@ describe('066 AC-6: a rewrite re-points the issues blocked on what it supersedes
   const {gh}=await go([bot(141,['blocked']),bot(142,['blocked']),bot(143,['blocked']),bot(144,[])],{
    141:[botComment('<!-- panelator-blocked-by:132 -->')],142:[botComment('<!-- panelator-blocked-until -->')],
    143:[botComment('<!-- panelator-blocked-by:94 -->'),botComment('<!-- panelator-unblocked-by:94 -->')],144:[botComment('<!-- panelator-blocked-by:94 -->')]},[rw()]);
-  expect(gh.comment.mock.calls.filter(c=>c[0]!==94)).toEqual([]);expect(gh.listComments.mock.calls.map(c=>c[0])).not.toContain(144);
+  expect(calls(gh.comment).filter(c=>c[0]!==94)).toEqual([]);expect(calls(gh.listComments).map(c=>c[0])).not.toContain(144);
  });
  it('writes a later file in the batch with the replacement, and re-points an earlier one',async()=>{
   const r2=[{ref:'2',finding}];
   const later=await go([],{},[rw(),fileBlocked(blockedIssue([94]),'2')],r2);
-  expect(later.gh.comment.mock.calls.at(-1)![1]).toContain('<!-- panelator-blocked-by:150 -->');
+  expect(calls(later.gh.comment).at(-1)![1]).toContain('<!-- panelator-blocked-by:150 -->');
   const earlier=await go([],{},[fileBlocked(blockedIssue([94]),'2'),rw()],r2);
   expect(earlier.gh.createIssue.mock.calls[0][2]).toContain('blocked');
  });
