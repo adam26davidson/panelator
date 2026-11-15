@@ -60,6 +60,28 @@ Wiping the state directory forgets every claim but leaves their `in-progress` la
 
 The shipped profiles are `backend`, `design`, `security` and `spec`. A plan whose domain names any other profile fails, and the firmware HIL check of spec section 8 has no owner until the firmware profile spec.
 
+## Credentials (specs 030 and 069)
+
+- The `credentials` block of `agents/scheduler.yaml` (both keys optional): `dir`
+  (default `~/.config/panelator/credentials`, created `0700` by the first `cred set`) and
+  `warn_days` (default 7, at least 1; read and validated, used by the expiry producer when it is built).
+  Each secret is a `systemd-creds` blob `<dir>/<name>.cred`; `<dir>/index.json` holds names, dates and
+  check results, never a secret. `PANELATOR_SYSTEMD_CREDS` overrides the `systemd-creds` path (a test hook
+  for the fake under `test/helpers/`).
+- `agents/credentials.yaml` is the catalogue. `check` has two forms: a command run through the entry's
+  wrapper (exit 0 means it works; reported `skipped: wrapper not built` until the shims exist), or
+  `{ builtin: github-app | telegram-get-me }` for a `wrapper: none` entry, a probe the scheduler runs over the
+  stored secret. `github-app` signs an App JWT with the stored key and calls `GET /app`; it passes only when
+  GitHub answers with the configured `app.id`, and it mints no installation token.
+- `panelator-scheduler cred set <name>` reads the secret from stdin, stores it, then runs the check. Exit 0:
+  the stored secret works. Exit 1: it was stored but failed its check (the reason and the setup steps are
+  printed), so run it again with the right secret. `cred list` (set or missing, last check),
+  `cred check [<name>]` (exit 1 when any check failed), `cred import` (stores `app.private_key_path` and
+  `telegram.credentials_path`) and `cred remove <name>`.
+- Each of those but `cred list` is a row in the action log, kind `cred_set`, `cred_check`, `cred_import` or
+  `cred_remove`, `agent: maintainer`, `args: { name }`, one row per credential.
+- The scheduler reads the App key from the store once `github-app-key` is set, else from `app.private_key_path`.
+
 ## Events (spec 026)
 
 The scheduler appends every run, stage transition, merge, CI result, review, finding, action, question, pause,

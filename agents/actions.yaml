@@ -19,3 +19,15 @@ undo:
 sweep_volume:
   level: 1
   description: "Remove stale leftovers the system created on a checked volume: leaked test roots and orphaned worktrees."
+cred_set:
+  level: 1
+  description: Store a credential read from stdin and run its check (maintainer command only).
+cred_check:
+  level: 1
+  description: Run a credential's check and record the result in the store's index (maintainer command only).
+cred_import:
+  level: 1
+  description: Store the credential held in its configuration file and run its check (maintainer command only).
+cred_remove:
+  level: 1
+  description: Delete a stored credential and its index entry (maintainer command only).

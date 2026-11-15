@@ -2,7 +2,6 @@
 import {startTelegram,telegramCheck} from '../src/service/telegram-start.ts';
 import {TelegramPoller} from '../src/telegram/poller.ts';
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { adapterFor } from "../src/adapters/index.ts";
@@ -29,6 +28,9 @@ import {setParameterModeCommand} from '../src/parameters/command.ts';
 import {registryActionsCheck,loadActionLevels,applyAction} from '../src/actions/index.ts';
 import {ActionLog} from '../src/actions/log.ts';
 import {undoAction} from '../src/actions/undo.ts';
+import {loadCatalogue,profileNames} from '../src/credentials/catalogue.ts';
+import {storeFromConfig,appPrivateKey} from '../src/credentials/store.ts';
+import {credCommand} from '../src/credentials/commands.ts';
 
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
@@ -50,11 +52,13 @@ function fail(reason: string): never {
   process.exit(78);
 }
 
-const {registry,parameters,levels}=(()=>{try {
+const credStore=storeFromConfig(cfg);
+const {registry,parameters,levels,catalogue}=(()=>{try {
   const kinds=registryActionsCheck(join(agentsDir,'actions.yaml'));
   const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,kinds);
   const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),cfg,registry));
-  return {registry,parameters,levels:loadActionLevels(join(agentsDir,'actions.yaml'))};
+  const catalogue=loadCatalogue(join(agentsDir,'credentials.yaml'),{profiles:profileNames(agentsDir),agents:Object.keys(registry)});
+  return {registry,parameters,levels:loadActionLevels(join(agentsDir,'actions.yaml')),catalogue};
 }catch(e){fail((e as Error).message);}})();
 await initializeAgents(paths,registry,parameters,new Date());
 const actionLog=new ActionLog(paths.actionsLog,paths);
@@ -74,14 +78,21 @@ if(args[0]==='quota') {
   console.log(JSON.stringify({...book,summary:await quotaSummary(paths,new Date())},null,2));
   process.exit(0);
 }
-if(['param','agent','action'].includes(args[0])) {
+if(['param','agent','action','cred'].includes(args[0])) {
   let client:GitHubClient|undefined;
-  const remote=async()=>client??=new GitHubClient(createAppClient(cfg.app,readFileSync(cfg.app.private_key_path,'utf8')).octokit,cfg.repo);
-  const ctx={paths,parameters,log:actionLog,levels,now:()=>new Date(),gh:{rerunWorkflowRun:async(id:number)=>(await remote()).rerunWorkflowRun(id),cancelWorkflowRun:async(id:number)=>(await remote()).cancelWorkflowRun(id)}};
+  const remote=async()=>client??=new GitHubClient(createAppClient(cfg.app,await appPrivateKey(cfg,credStore)).octokit,cfg.repo);
+  const ctx={paths,parameters,log:actionLog,levels,now:()=>new Date(),gh:{rerunWorkflowRun:async(id:number)=>(await remote()).rerunWorkflowRun(id),cancelWorkflowRun:async(id:number)=>(await remote()).cancelWorkflowRun(id)},
+   credentials:{store:credStore,catalogue,probe:{store:credStore,app:cfg.app,now:()=>new Date()},configPaths:{'github-app-key':cfg.app.private_key_path,'telegram-bot':cfg.telegram!.credentials_path}}};
   try {
     const [command,verb,name,value]=args;
     if(command==='param'&&verb==='list')console.log(JSON.stringify(await parameters.all(),null,2));
     else if(command==='agent'&&verb==='list')console.log(JSON.stringify(Object.fromEntries(Object.entries(await listAgentStates(paths)).map(([name,state])=>[name,{...state,pending_event_count:state.pending_events.length}])),null,2));
+    else if(command==='cred') {
+      const readStdin=async()=>{let text='';for await(const chunk of process.stdin)text+=chunk;return text;};
+      const out=await credCommand(verb,name,{ctx,readStdin});
+      for(const line of out.lines)console.log(line);
+      process.exit(out.exitCode);
+    }
     else if(command==='action'&&verb==='list')console.log(JSON.stringify(await actionLog.list(flag('--since')),null,2));
     else if(command==='param'&&verb==='set') {
       const def=parameters.definitions[name];if(!def)throw new Error(`undefined parameter ${name}`);
@@ -96,7 +107,7 @@ if(['param','agent','action'].includes(args[0])) {
       if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
     } else if(command==='action'&&verb==='undo') {
       const row=await undoAction(ctx,name,'maintainer');if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
-    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; quota');
+    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; cred set|list|check|import|remove; quota');
     process.exit(0);
   }catch(e){console.error((e as Error).message);process.exit(1);}
 }
@@ -105,9 +116,9 @@ await actionLog.markStalePending();
 if (cfg.app.id === 0 || cfg.app.installation_id === 0) fail("GitHub App ids not set in agents/scheduler.yaml");
 let privateKey: string;
 try {
-  privateKey = readFileSync(cfg.app.private_key_path, "utf8");
+  privateKey = await appPrivateKey(cfg, credStore);
 } catch (e) {
-  fail(`cannot read the GitHub App private key at ${cfg.app.private_key_path}: ${(e as Error).message}`);
+  fail((e as Error).message);
 }
 let branch = "";
 try {
