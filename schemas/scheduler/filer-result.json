@@ -51,6 +51,21 @@
                   },
                   "stops_pipeline": {
                     "type": "boolean"
+                  },
+                  "blocked_by": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "description": "Spec 066: issues the work waits for; the issue is filed blocked and the children scan lifts it."
+                  },
+                  "blocked_until": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Spec 066: one sentence naming a condition no issue stands for; the label is lifted by hand."
                   }
                 },
                 "required": [
@@ -58,7 +73,12 @@
                   "body",
                   "class"
                 ],
-                "additionalProperties": false
+                "additionalProperties": false,
+                "not": {
+                  "type": "object",
+                  "properties": {"blocked_by": {}, "blocked_until": {}},
+                  "required": ["blocked_by", "blocked_until"]
+                }
               },
               "issue_number": {
                 "type": "integer",
@@ -107,6 +127,26 @@
             ],
             "additionalProperties": false,
             "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "issue": {
+                      "anyOf": [
+                        {"type": "object", "properties": {"blocked_by": {}}, "required": ["blocked_by"]},
+                        {"type": "object", "properties": {"blocked_until": {}}, "required": ["blocked_until"]}
+                      ]
+                    }
+                  },
+                  "required": ["issue"]
+                },
+                "then": {
+                  "properties": {
+                    "outcome": {
+                      "enum": ["file", "rewrite"]
+                    }
+                  }
+                }
+              },
               {
                 "if": {
                   "properties": {"rests_on_pr": {}},

@@ -4,7 +4,7 @@ import {validate} from '../schema/validate.ts';
 import {record as recordEvt} from '../events/store.ts';
 import {createIssueRecorded} from '../events/filed.ts';
 import {readJsonLines,recordKey,settledCursor,advisoryAttempts,isRestingDiscard,isCapabilityIssue,stripCapabilityMarkers,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,CAPABILITY_TITLE,CAPABILITY_CLOSED_MARKER,type AdvisoryFailure,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
-export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string;stops_pipeline?:boolean};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'};rests_on_pr?:number}
+export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string;stops_pipeline?:boolean;blocked_by?:number[];blocked_until?:string};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'};rests_on_pr?:number}
 export interface FilerResult {summary:string;decisions:Decision[]}
 export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput,result:FilerResult):Promise<void> {
  const valid=validate('filer-result',result);if(!valid.ok)throw new Error(valid.errors.join('; '));
@@ -15,6 +15,8 @@ export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput
  for(const dec of result.decisions) {
   const abandoned=dec.ref.startsWith('issue:');
   if(!(abandoned?['retry','rewrite','close','escalate','defer']:['discard','file','merge_into','escalate','security']).includes(dec.outcome))throw new Error(`invalid outcome for ${dec.ref}`);
+  if((dec.issue?.blocked_by!==undefined||dec.issue?.blocked_until!==undefined)&&!['file','rewrite'].includes(dec.outcome))throw new Error(`a block is allowed on file or rewrite only: ${dec.ref}`);
+  if(dec.issue?.blocked_by!==undefined&&dec.issue.blocked_until!==undefined)throw new Error(`blocked_by and blocked_until are exclusive: ${dec.ref}`);
   if(dec.question && !['product','technical'].includes(dec.question.kind))throw new Error('design flaw question must be product or technical');
  }
  const triage=await readJsonLines<TriageEntry>(d.paths.findingsTriage);
