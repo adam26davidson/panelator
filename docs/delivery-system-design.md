@@ -559,12 +559,4 @@ are stale and are corrected as part of B.
     which asserts the profile list. `agents/` and `tools/scheduler/` are sensitive paths, so
     the security review runs. It leaves the `widget`, `firmware` and `infra` profiles, and the
     plan prompt's list of offered domains (issue #145), to their own work.
-- planned: test-board
-  title: Test board and automatic stable firmware promotion (design spec G)
-  brief: Row G of section 11 and the firmware paragraphs of section 5. It covers running
-    the hardware-in-the-loop tests on the real test board attached to the laptop, the
-    criteria for promoting firmware from beta to stable automatically when the board's tests
-    pass (which tests, any soak time on beta), removing the human release action, and the
-    pause of firmware work when a test bricks the board until the maintainer confirms it is
-    back. It leaves every other part of the delivery system to its siblings.
-  issue: #132
+- `specs/070-test-board/spec.md` (row G, issue #132; supersedes issue #40; the HIL workflow, suite and beta publication are the firmware's own, written against its section 8, ADR 0013)
