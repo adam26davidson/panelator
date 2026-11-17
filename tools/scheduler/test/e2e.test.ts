@@ -132,7 +132,7 @@ describe("end to end: one issue through the whole chain with the fake adapter an
       implement: [{ pr_number: 9, head_sha: SHA, tasks_done: ["T1"] }],
       review: [{ verdict: "approve", findings_on_pr: [], declined_to_judge: [] }],
     });
-    const cfg = { ...loadConfig(defaultConfigPath), repo: "o/r", required_checks: ["test"], state_dir: paths.root, slots: 1 };
+    const cfg = { ...loadConfig(defaultConfigPath), repo: "o/r", required_checks: ["test"], state_dir: paths.root, slots: 1, firmware: undefined };
     const deps: SchedulerDeps = {
       cfg, paths, gh: new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r"),
       notifier: { notify: async (n) => { notifications.push(n); } },

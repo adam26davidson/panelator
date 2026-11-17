@@ -94,7 +94,7 @@ export async function standingWorld(results:Record<string,Scripted[]>,freeSpace:
   const pair=repoPair({'README.md':'standing fixture'}),paths=statePaths(join(pair.root,'state'));await ensureStateDirs(paths);worldPaths.push(paths);
   const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,registryActionsCheck(join(agentsDir,'actions.yaml')));
   registry.operator={...registry['action-audit'],name:'operator',trigger:{schedule:'1h'},actions:['set_parameter','rerun_workflow'],input:'audit-input'};
-  const cfg={...loadConfig(defaultConfigPath),repo:'o/r',required_checks:['test'],slots:1};
+  const cfg={...loadConfig(defaultConfigPath),repo:'o/r',required_checks:['test'],slots:1,firmware:undefined};
   const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),cfg,registry));
   let now=new Date('2026-10-01T00:00:00Z');await initializeAgents(paths,registry,parameters,now);
   // The infra health agent (spec 064) is due every six hours and would take the one slot these worlds script; tests that run it unpause it.

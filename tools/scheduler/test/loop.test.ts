@@ -59,7 +59,7 @@ async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
   const started: number[] = [];
   let now = new Date("2026-10-12T12:00:00Z");
   let mono = 0;
-  const cfg = { ...loadConfig(defaultConfigPath), repo: "o/r", slots, state_dir: paths.root, poll_interval_s: 5 };
+  const cfg = { ...loadConfig(defaultConfigPath), repo: "o/r", slots, state_dir: paths.root, poll_interval_s: 5, firmware: undefined };
   const deps: SchedulerDeps = {
     cfg, paths, gh: new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r", { settleDelaysMs: [0, 0, 0] }),
     notifier: { notify: async (n) => { notifications.push(n); } },
