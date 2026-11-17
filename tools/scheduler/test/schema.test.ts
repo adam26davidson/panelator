@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { splitFrontmatter } from "../src/stages/definition.ts";
 import { validate } from "../src/schema/validate.ts";
+import { validate as validateFirmware } from "../src/firmware/validate.ts";
 
 const finding = {
   what: "duplicate pagination code",
@@ -384,13 +385,13 @@ describe("firmware schemas (spec 070)", () => {
     expect(validate("blocked", { ...blocked, condition: { kind: "board" } }).ok).toBe(false);
     expect(validate("escalation-ledger", { ...ledgerOf(initialChainState(1)), board_bricks: 1 }).ok).toBe(true);
     const board = { status: "ok", since: null, reason: null, check_run_id: null, pr: null, confirmed_at: null, confirmed_by: null };
-    expect(validate("board-state", board).ok).toBe(true);
-    expect(validate("board-state", { ...board, status: "dead" }).ok).toBe(false);
+    expect(validateFirmware("board-state", board).ok).toBe(true);
+    expect(validateFirmware("board-state", { ...board, status: "dead" }).ok).toBe(false);
   });
   it("validates a release record and a HIL result", () => {
     const rel = { tag: "firmware-v1", sha: "a", published_at: "t", channel: "beta", hil: null, soak: null, promoted_at: null, promoted_by: null, demoted_at: null, criteria: null };
-    expect(validate("firmware-release", rel).ok).toBe(true);
-    expect(validate("firmware-release", { ...rel, channel: "gamma" }).ok).toBe(false);
-    expect(validate("hil-result", { outcome: "pass" }).ok).toBe(false);
+    expect(validateFirmware("firmware-release", rel).ok).toBe(true);
+    expect(validateFirmware("firmware-release", { ...rel, channel: "gamma" }).ok).toBe(false);
+    expect(validateFirmware("hil-result", { outcome: "pass" }).ok).toBe(false);
   });
 });

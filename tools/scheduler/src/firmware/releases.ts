@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { record } from "../events/store.ts";
 import type { GitHubClient } from "../github/client.ts";
-import { validate } from "../schema/validate.ts";
+import { validate } from "./validate.ts";
 import type { StatePaths } from "../state/paths.ts";
 import { applyHilToBoard, type BoardCtx } from "./board.ts";
 import { markHilRead } from "./gate.ts";

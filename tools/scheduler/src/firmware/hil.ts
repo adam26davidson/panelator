@@ -1,5 +1,5 @@
 import type { CheckRunDetail } from "../github/types.ts";
-import { validate } from "../schema/validate.ts";
+import { validate } from "./validate.ts";
 import { record } from "../events/store.ts";
 import type { StatePaths } from "../state/paths.ts";
 

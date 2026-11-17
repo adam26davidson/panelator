@@ -1,6 +1,6 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { record } from "../events/store.ts";
-import { validate } from "../schema/validate.ts";
+import { validate } from "./validate.ts";
 import type { StatePaths } from "../state/paths.ts";
 import type { HilResult } from "./hil.ts";
 
