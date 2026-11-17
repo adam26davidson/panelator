@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aws-ledger.json",
+  "title": "AWS spend ledger (spec 022 AC-6)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "reservations"
+  ],
+  "properties": {
+    "reservations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "what",
+          "expected_monthly_usd",
+          "why",
+          "by",
+          "at",
+          "released_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "what": {
+            "type": "string",
+            "minLength": 10
+          },
+          "expected_monthly_usd": {
+            "type": "number",
+            "minimum": 0
+          },
+          "why": {
+            "type": "string",
+            "minLength": 10
+          },
+          "by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "released_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}

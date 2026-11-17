@@ -42,6 +42,9 @@ export interface StatePaths {
   /** Spec 064: the disk sweep's report, and the patches it saves of a worktree's work before removing it. */
   diskSweep: string;
   patchesSweep: string;
+  /** Spec 022: the delivery-system AWS account's last pulled cost and its spend ledger. */
+  awsCost: string;
+  awsLedger: string;
 }
 
 export function statePaths(root: string): StatePaths {
@@ -79,9 +82,11 @@ export function statePaths(root: string): StatePaths {
     childrenFailures: join(root, "children", "failures.json"),
     diskSweep: join(root, "disk-sweep.json"),
     patchesSweep: join(root, "patches", "sweep"),
+    awsCost: join(root, "aws", "cost.json"),
+    awsLedger: join(root, "aws", "ledger.json"),
   };
 }
 
 export async function ensureStateDirs(p: StatePaths): Promise<void> {
-  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.blocked, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), p.agents, p.events, dirname(p.eligibleMarks)]) await mkdir(d, { recursive: true });
+  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.blocked, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), p.agents, p.events, dirname(p.eligibleMarks), dirname(p.awsCost)]) await mkdir(d, { recursive: true });
 }

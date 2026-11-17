@@ -3,7 +3,7 @@
   default: 0
   min: 0
   mode: locked
-  description: Maximum AWS spend; infrastructure enforcement is added by F1.
+  description: Maximum monthly AWS spend of the delivery-system account; read by the launch gate, the daily forecast and the thresholds of spec 022 (set only by the maintainer).
 - name: system_work_share
   type: number
   default: 0.75

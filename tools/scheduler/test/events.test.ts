@@ -49,6 +49,7 @@ describe("recordEvent (spec 026 AC-1)", () => {
     const schema = JSON.parse(readFileSync(join(import.meta.dirname, "..", "..", "..", "schemas", "scheduler", "event.json"), "utf8"));
     expect(schema.$defs.envelope.properties.kind.enum).toEqual([...EVENT_KINDS]);
     expect(EVENT_KINDS).toContain("aws.cost");
+    expect(EVENT_KINDS).toContain("aws.reserve");
   });
 
   it("is the only code that writes under events/ (append-only grep)", () => {
