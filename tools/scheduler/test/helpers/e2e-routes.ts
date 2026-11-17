@@ -203,7 +203,7 @@ export async function chainWorld(opts: {
     created_at: "2026-10-01T00:00:00Z", updated_at: new Date().toISOString(),
   });
   const secondIssue = () => ({
-    number: 8, title: "Other thing", body: secondBody, user: { login: BOT, type: "Bot" }, labels: [...labels].map((name) => ({ name })), state: "open",
+    number: 8, title: "Other thing", body: secondBody, user: { login: BOT, type: "Bot" }, labels: (opts.labels ?? ["validated", "class:product"]).map((name) => ({ name })), state: "open",
     created_at: "2026-10-01T00:00:00Z", updated_at: new Date().toISOString(),
   });
   const logLabel = (n: number, entry: string) => labelLog.push(n === 7 ? entry : `#${n} ${entry}`);

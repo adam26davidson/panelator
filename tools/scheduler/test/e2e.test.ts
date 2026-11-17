@@ -36,7 +36,7 @@ import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
 import { openIndex } from "../src/events/index.ts";
 import { EVENT_KINDS } from "../src/events/kinds.ts";
 import { validate } from "../src/schema/validate.ts";
-import { OUT_OF_SCOPE, chainWorld, standingWorld, scripted, HOST_REFUSED, RATE_LIMITED, NETWORK_DOWN, UNREACHABLE_REASON, worldPaths, type ChainWorld } from "./helpers/e2e-routes.ts";
+import { OUT_OF_SCOPE, chainWorld, standingWorld, scripted, HOST_REFUSED, RATE_LIMITED, NETWORK_DOWN, UNREACHABLE_REASON, worldPaths, type ChainWorld, type Scripted } from "./helpers/e2e-routes.ts";
 import { checkedPaths } from "../src/runner/host-space.ts";
 import { git, repoPair, withDesign, withTopDesign } from "./helpers/repo-pair.ts";
 import { fileDesignChildren } from "../src/children/scan.ts";
@@ -2052,5 +2052,198 @@ describe("end to end: an implement run stopped before it finished keeps its work
     expect(kinds(w, "held-work")).toEqual([]);
     expect(inputsOf(w, "implement")[1].held_work).toBeUndefined();
     expect(w.mergeRequests).toEqual([9]);
+  }, 120_000);
+});
+
+describe("end to end: the test board gate and firmware promotion (spec 070)", () => {
+  const PLAN_FW = { verdict: "ready", domain: "backend", tasks: [{ id: "T1", description: "d", files: ["firmware/", "a.txt", ".github/workflows/hil.yml"] }] };
+  const FW_FILES = { "firmware/main.c": "int main(void){return 0;}\n", ".github/workflows/hil.yml": "name: hil\n" };
+  const hilJson = (over: Record<string, unknown> = {}, board: Record<string, unknown> = {}) => ({
+    outcome: "pass", kind: "pr", sha: "a".repeat(40), run_id: 900, tests: [{ name: "provision", status: "pass", duration_ms: 1 }], log: "boot ok",
+    ...over, board: { status: "ok", firmware_sha: null, uptime_s: 10, resets: 0, free_heap: 1, free_psram: 1, ...board },
+  });
+  const BRICKED = (id: number) => ({ id, conclusion: "failure", result: hilJson({ outcome: "bricked", reason: "no boot banner after restore", run_id: 900 + id }, { status: "bricked" }) });
+  const PASS = (id: number) => ({ id, conclusion: "success", result: hilJson({ run_id: 900 + id }) });
+  /** Check runs reported for every commit but main's head, which only the release step reads. */
+  const forPr = (w: ChainWorld, runs: () => ReturnType<typeof PASS>[]) => w.setHil((sha) => (sha === git(w.pair.origin, "rev-parse", "main").trim() ? [] : runs()));
+  const blockedRec = (w: ChainWorld): BlockedRecord | null => (existsSync(join(w.paths.blocked, "7.json")) ? JSON.parse(readFileSync(join(w.paths.blocked, "7.json"), "utf8")) : null);
+  const board = (w: ChainWorld) => JSON.parse(readFileSync(w.paths.board, "utf8"));
+  const alerts = (w: ChainWorld) => [...w.logs, ...readFileSync(w.paths.serviceLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l))].filter((r) => r.kind === "board-alert");
+  const queued = (w: ChainWorld) => (existsSync(w.paths.findingsQueue) ? readFileSync(w.paths.findingsQueue, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
+  const fwWorld = (results: Record<string, Scripted[]>, extra: Record<string, unknown> = {}) => chainWorld({ files: repoFiles({ spec: specOf([".github/workflows/hil.yml"]) }), results, firmware: true, ...extra });
+  const cmdCtx = async (w: ChainWorld) => {
+    const { firmwareCommand } = await import("../src/firmware/commands.ts");
+    const { boardCtx } = await import("../src/chain/driver.ts");
+    const ctx = { paths: w.paths, parameters: w.deps.parameters!, log: new ActionLog(w.paths.actionsLog, w.paths), levels: loadActionLevels(join(agentsDir, "actions.yaml")), now: () => new Date(), gh: w.deps.gh, firmware: { board: boardCtx(w.deps), promote: undefined as never } };
+    return (...rest: string[]) => firmwareCommand("board", rest, ctx as never);
+  };
+
+  it("no firmware block: the service log says off, once, and no release or check-run call is made", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: [a.implement(9)], review: [APPROVE] } });
+    await w.tick();
+    await w.tick();
+    const lines = readFileSync(w.paths.serviceLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    expect(lines.filter((l) => l.kind === "firmware")).toEqual([expect.objectContaining({ state: "off" })]);
+    expect(lines.filter((l) => l.kind === "tick").every((t) => t.board === undefined && t.firmware === undefined)).toBe(true);
+    expect(w.gh.calls.some((c) => /releases|check_name/.test(c.url))).toBe(false);
+    expect(w.mergeRequests).toEqual([9]);
+  }, 120_000);
+
+  it("a firmware PR waits for the HIL check, passes on pass; a non-firmware PR merges with no HIL check present (AC-2)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await fwWorld({ plan: [PLAN_FW], implement: [a.implement(9, FW_FILES)], review: [APPROVE, APPROVE] });
+    let runs: ReturnType<typeof PASS>[] = [];
+    forPr(w, () => runs);
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["plan", "implement"]);
+    runs = [PASS(1)];
+    for (let i = 0; i < 4 && !w.mergeRequests.length; i++) await w.tick();
+    expect(w.mergeRequests).toEqual([9]);
+    expect(w.logs.filter((r) => r.kind === "error")).toEqual([]);
+    expect(board(w).status).toBe("ok");
+
+    let n!: ChainWorld;
+    const b = agents(() => n);
+    n = await fwWorld({ plan: [PLAN], implement: [b.implement(9)], review: [APPROVE] });
+    await n.tick();
+    expect(n.mergeRequests).toEqual([9]);
+    expect(n.gh.calls.filter((c) => /check_name=hil/.test(c.url) && !/\/commits\/[0-9a-f]{40}\/check-runs/.test(c.url.replace(/\?.*/, "")))).toEqual([]);
+  }, 120_000);
+
+  it("a fail result runs fix with the failed tests' lines, counted as a fix (AC-2)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await fwWorld({ plan: [PLAN_FW], implement: [a.implement(9, FW_FILES)], review: [APPROVE, APPROVE], fix: [a.fix({ "firmware/main.c": "int main(void){return 1;}\n" })] });
+    const failing = { id: 1, conclusion: "failure", result: hilJson({ outcome: "fail", tests: [{ name: "claim", status: "fail", duration_ms: 3, message: "no frame seen" }], log: "serial tail" }) };
+    // The first head fails; the head the fix pushes passes.
+    w.setHil((sha) => (sha === git(w.pair.origin, "rev-parse", "main").trim() ? [] : sha === w.prs.get(9)?.sha ? [failing] : [PASS(2)]));
+    await w.tick();
+    await w.tick();
+    expect(w.adapter.ran).toContain("fix");
+    expect(runsOf(w, "fix")[0].input.fix_input).toContain("claim: no frame seen");
+    expect(runsOf(w, "fix")[0].input.fix_input).toContain("serial tail");
+    for (let i = 0; i < 4 && !w.mergeRequests.length; i++) await w.tick();
+    expect(w.mergeRequests).toEqual([9]);
+  }, 120_000);
+
+  it("a firmware PR without the HIL workflow blocks with the finding, and resumes when main gains the file (AC-3)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await fwWorld({ plan: [PLAN_FW], implement: [a.implement(9, { "firmware/main.c": "int main(void){return 0;}\n" })], review: [APPROVE, APPROVE] });
+    forPr(w, () => [PASS(1)]);
+    await w.tick();
+    expect(blockedRec(w)).toMatchObject({ condition: { kind: "paths", paths: [".github/workflows/hil.yml"] } });
+    expect(queued(w)[0].finding).toMatchObject({ what: "firmware PR #9 cannot be tested on the board: .github/workflows/hil.yml does not exist", where: ".github/workflows/hil.yml", noticed_how: "verify of PR #9" });
+    expect(await listClaims(w.paths)).toEqual([]);
+    w.moveMain({ ".github/workflows/hil.yml": "name: hil\n" });
+    for (let i = 0; i < 4 && !w.mergeRequests.length; i++) await w.tick();
+    expect(blockedRec(w)).toBeNull();
+    expect(w.mergeRequests).toEqual([9]);
+  }, 120_000);
+
+  it("a brick: the board is bricked, one alert, the chain blocked without a slot while a non-firmware issue merges; board back re-runs the HIL run and verify passes (AC-4 to AC-7)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await fwWorld(
+      { plan: [PLAN_FW, PLAN], implement: [a.implement(9, FW_FILES), (run: StageRun) => { const sha = w.push(run, { "a.txt": "issue 8\n" }); w.openPr(run, 10, sha, "Closes #8"); return { pr_number: 10, head_sha: sha, tasks_done: ["T1"] }; }], review: [APPROVE, APPROVE, APPROVE] },
+      { second: { body: "Spec: specs/010-thing/spec.md" } },
+    );
+    let runs: ReturnType<typeof PASS>[] = [BRICKED(1)];
+    forPr(w, () => runs);
+    await w.tick();
+    expect(board(w)).toMatchObject({ status: "bricked", pr: 9 });
+    expect(alerts(w)).toHaveLength(1);
+    expect(alerts(w)[0].text).toContain("panelator-scheduler board back");
+    expect(blockedRec(w)).toMatchObject({ condition: { kind: "board" }, state: { boardBricks: 1, blocked: { blocks: 0 } } });
+    expect(queued(w)).toEqual([]);
+    expect(w.notifications).toEqual([]);
+    expect(w.comments.filter((c) => c.body.includes("waits for the test board"))).toHaveLength(1);
+    // The slot is free: another issue runs and merges while the board is down.
+    for (let i = 0; i < 4 && !w.mergeRequests.includes(10); i++) await w.tick();
+    expect(blockedRec(w)).not.toBeNull();
+    expect(alerts(w)).toHaveLength(1);
+
+    // The maintainer confirms; the chain resumes, re-runs the HIL run and verifies the new result.
+    const cmd = await cmdCtx(w);
+    expect((await cmd("back")).exitCode).toBe(0);
+    expect(board(w)).toMatchObject({ status: "ok", confirmed_by: "maintainer" });
+    await w.tick();
+    expect(blockedRec(w)).toBeNull();
+    // main moved while the chain was blocked, so the rebase changed the head: that head gets its own run, nothing is re-run.
+    expect(w.reruns).toEqual([]);
+    runs = [BRICKED(1), PASS(2)];
+    for (let i = 0; i < 4 && !w.mergeRequests.includes(9); i++) await w.tick();
+    expect(w.mergeRequests).toEqual([10, 9]);
+    expect(w.logs.filter((r) => r.kind === "error")).toEqual([]);
+    expect(alerts(w)).toHaveLength(1);
+  }, 180_000);
+
+  it("a second brick on the same issue at bounds.board_bricks 2 takes the terminal step (AC-5)", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await fwWorld({ plan: [PLAN_FW], implement: [a.implement(9, FW_FILES)], review: [APPROVE, APPROVE] });
+    let runs: ReturnType<typeof PASS>[] = [BRICKED(1)];
+    forPr(w, () => runs);
+    await w.tick();
+    await (await cmdCtx(w))("back");
+    runs = [BRICKED(1), BRICKED(2)];
+    await w.tick();
+    // The head did not change, so the bricked run is re-run once (AC-6).
+    expect(w.reruns).toEqual([901]);
+    expect(w.logs.filter((r) => r.kind === "hil-rerun")).toEqual([{ kind: "hil-rerun", issue: 7, run_id: 901 }]);
+    for (let i = 0; i < 4 && !w.labelLog.includes("+abandoned"); i++) await w.tick();
+    expect(w.labelLog).toContain("+abandoned");
+    expect(w.prs.get(9)!.state).toBe("closed");
+    expect(w.comments.at(-1)!.body).toContain("the PR's firmware bricked the test board 2 times");
+    expect(blockedRec(w)).toBeNull();
+    expect(board(w).status).toBe("bricked");
+  }, 180_000);
+
+  it("a soaked beta release is promoted once and the release edited; a demotion sets the flag back and it is never promoted again (AC-10, AC-12)", async () => {
+    const { writeReleases } = await import("../src/firmware/releases.ts");
+    const { applyHilToBoard } = await import("../src/firmware/board.ts");
+    const { boardCtx } = await import("../src/chain/driver.ts");
+    const { firmwareCommand } = await import("../src/firmware/commands.ts");
+    const w = await fwWorld({});
+    const sha = w.moveMain({ "firmware/main.c": "v2\n" });
+    w.publish(1, "firmware-v1", sha);
+    w.setHil(() => []);
+    await applyHilToBoard(boardCtx(w.deps), hilJson({}, { firmware_sha: sha }) as never, 1);
+    await writeReleases(w.paths, [{
+      tag: "firmware-v1", sha, published_at: "2026-11-10T00:00:00Z", channel: "beta", hil: { conclusion: "success", check_run_id: 5, at: "2026-11-10T00:00:00Z" },
+      soak: { started_at: "2026-11-10T00:00:00Z", results: 8, last_at: "2026-11-16T00:00:00Z", resets: 0, clean: true }, promoted_at: null, promoted_by: null, demoted_at: null, criteria: null,
+    }]);
+    await w.tick();
+    expect(w.releaseEdits).toEqual([{ id: 1, prerelease: false }]);
+    expect(JSON.parse(readFileSync(w.paths.firmwareReleases, "utf8"))[0]).toMatchObject({ channel: "stable", promoted_by: "scheduler", criteria: { soaked: true, latest: true } });
+    await w.tick();
+    expect(w.releaseEdits).toHaveLength(1);
+
+    const log = new ActionLog(w.paths.actionsLog, w.paths);
+    const { promotionDeps } = await import("../src/service/loop.ts");
+    const ctx = { paths: w.paths, parameters: w.deps.parameters!, log, levels: loadActionLevels(join(agentsDir, "actions.yaml")), now: () => new Date(), gh: w.deps.gh, firmware: { board: boardCtx(w.deps), promote: promotionDeps(w.deps, 72 * 3_600_000, true, () => true) } };
+    expect((await firmwareCommand("firmware", ["demote", "firmware-v1", "boots", "slowly"], ctx as never)).exitCode).toBe(0);
+    expect(w.releaseEdits.at(-1)).toEqual({ id: 1, prerelease: true });
+    await w.tick();
+    expect(w.releaseEdits).toHaveLength(2);
+    expect((await log.list()).map((r) => [r.agent, r.kind, r.args])).toEqual([["maintainer", "firmware_demote", { tag: "firmware-v1", reason: "boots slowly" }]]);
+  }, 120_000);
+
+  it("a beta release is recorded, its main HIL result read and its soak started; it is not promoted before the soak, and the tick line says what it waits on (AC-8 to AC-11)", async () => {
+    let w!: ChainWorld;
+    w = await fwWorld({});
+    const sha = w.moveMain({ "firmware/main.c": "v1\n" });
+    w.publish(1, "firmware-v1", sha);
+    w.setHil((s) => (s === sha ? [{ id: 5, conclusion: "success", completed_at: "2026-11-17T10:00:00Z", result: hilJson({ kind: "main", sha, run_id: 905 }, { firmware_sha: sha }) }] : []));
+    await w.tick();
+    const rel = JSON.parse(readFileSync(w.paths.firmwareReleases, "utf8"));
+    expect(rel).toMatchObject([{ tag: "firmware-v1", sha, channel: "beta", hil: { conclusion: "success", check_run_id: 5 }, soak: { results: 0, clean: true } }]);
+    expect(w.releaseEdits).toEqual([]);
+    expect(board(w).status).toBe("ok");
+    const tick = readFileSync(w.paths.serviceLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((l) => l.kind === "tick").at(-1);
+    expect(tick).toMatchObject({ board: { status: "ok" }, firmware: { stable: null, next: { tag: "firmware-v1", waiting_on: ["soaked"] } } });
   }, 120_000);
 });

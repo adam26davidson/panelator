@@ -23,7 +23,7 @@ import { rankIssues, classifyWork, classOf } from "../shortlist/rank.ts";
 import type { IssueData } from "../types.ts";
 import { selectEligible } from "../shortlist/select.ts";
 import { boardDown, readBoard, remindBoard } from "../firmware/board.ts";
-import { promotionStep, type FirmwareLine } from "../firmware/promote.ts";
+import { promotionStep, type FirmwareLine, type PromoteDeps } from "../firmware/promote.ts";
 import { releaseStep } from "../firmware/releases.ts";
 import { isFirmwarePr } from "../firmware/paths.ts";
 import { listClaims, readClaim, removeClaim, writeClaim, type Claim, type Outage } from "../state/claims.ts";
@@ -68,6 +68,14 @@ export const BLOCK_RECHECK_S = 1800;
 
 /** I3: a token this close to expiry is refreshed at the start of a tick. */
 export const TOKEN_REFRESH_MARGIN_MS = 5 * 60_000;
+
+/** Spec 070 AC-10: what the promotion step and the maintainer's promote and demote commands need of the service. */
+export function promotionDeps(d: Pick<SchedulerDeps, "paths" | "gh" | "now" | "serviceLog" | "telegram">, soakMs: number, enabled: boolean, isAncestor: (a: string, b: string) => boolean): PromoteDeps {
+  return {
+    paths: d.paths, gh: d.gh, now: d.now, log: (r) => d.serviceLog.write(r), isAncestor, soakMs, enabled,
+    tell: async (text) => void (d.telegram ? await d.telegram.sendReply(text) : d.serviceLog.write({ kind: "firmware-notice", text })),
+  };
+}
 
 export interface TickInfo {
   eligible: number;
@@ -608,11 +616,7 @@ export class Scheduler {
         await releaseStep({ prefix: fw.release_tag_prefix, hilCheck: fw.hil_check, paths: d.paths, gh: d.gh, now: d.now, log: (r) => d.serviceLog.write(r), board, onMain: (sha) => isAncestor(sha, "origin/main"), mainHead: () => git("rev-parse", "origin/main") });
       }
       const read = async <T,>(name: string, fallback: T): Promise<T> => (d.parameters ? ((await d.parameters.read(name)).value as T) : fallback);
-      info.firmware = await promotionStep({
-        paths: d.paths, gh: d.gh, now: d.now, log: (r) => d.serviceLog.write(r), isAncestor,
-        soakMs: parseDuration(await read<string>("firmware.soak_hours", "72h")), enabled: await read<boolean>("firmware.promotion_enabled", true),
-        tell: async (text) => void (d.telegram ? await d.telegram.sendReply(text) : d.serviceLog.write({ kind: "firmware-notice", text })),
-      });
+      info.firmware = await promotionStep(promotionDeps(d, parseDuration(await read<string>("firmware.soak_hours", "72h")), await read<boolean>("firmware.promotion_enabled", true), isAncestor));
     } catch (e) {
       info.errors.push(`firmware: ${(e as Error).message}`);
     }
