@@ -46,8 +46,12 @@ The question check sent this back for you to decide: {{decide_input}}
 **What to do in each mode.**
 
 - `write`: write or complete the spec named by the problem above ({{spec_problem}}). If the
-  issue body has a `Spec:` line, the spec lives at that path; otherwise create
+  issue body has a `Spec:` line, the spec lives at that path, unless the scheduler reserved a
+  number (`{{spec_number}}` is not `(none)`), which it does for an issue with a line only when that
+  path's number is held elsewhere: then the spec moves to `specs/{{spec_number}}-<slug>/spec.md`
+  (`git mv`, with every reference to the old path in the PR updated). Without a `Spec:` line create
   `specs/{{spec_number}}-<slug>/spec.md`, the number the scheduler reserved for this issue; take no other.
+  Never edit the issue body: the scheduler writes its `Spec:` line.
 - `answer`: the plan stage found the spec could not be implemented as written and asked the
   questions given in the problem above ({{spec_problem}}). Answer each one. Write each
   technical answer into the spec where it belongs, marked as your call with
@@ -195,7 +199,8 @@ for any issue: the issue stays open for the implementation.
 Write the JSON result to {{result_path}}, in exactly one of these shapes:
 { "verdict": "revised", "spec_path": "specs/NNN-slug/spec.md", "pr_number": <n>, "head_sha": "<40 hex>", "findings": [] }
 { "verdict": "question", "question": { "kind": "product" | "technical" | "capability", "question": "...", "options": [{ "label": "...", "cost": "..." }], "recommendation": "..." }, "findings": [] }
-`spec_path` must equal the issue's `Spec:` line when it has one. In a question, `kind` names
+`spec_path` must equal the issue's `Spec:` line when it has one, unless the spec moved in this PR: then it names
+the new path and the scheduler rewrites the line. In a question, `kind` names
 which of the three kinds it is, `options` gives each sensible choice with its cost, and
 `recommendation` says which you would pick and why. Kind `other` is not a question for the
 maintainer and is treated as "decide it yourself". The `question` object may also carry

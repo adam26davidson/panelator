@@ -54,8 +54,17 @@ the decision is a large one, write it as an ADR in `docs/decisions/` (a new file
 reasoning; the file is `docs/decisions/{{adr_number}}-<slug>.md`, the number the scheduler reserved for this run); an ADR you add is always in the PR's scope.
 
 Address each item, run `pnpm test` from the repo root, commit and push. Write the JSON
-result to {{result_path}}: { "head_sha": "<40 hex>", "addressed": [0, 1], "findings": [] }
-where addressed lists the indices of the items you resolved.
+result to {{result_path}}: { "head_sha": "<40 hex>", "addressed": [0, 1], "spec_path": "specs/NNN-slug/spec.md", "findings": [] }
+where addressed lists the indices of the items you resolved and `spec_path` is present only when
+you moved the spec (see **Moving the spec.**).
+
+**Moving the spec.** On a spec pull request whose spec must move (a review asks for another slug,
+or the spec's number is held elsewhere and the scheduler reserved `{{spec_number}}`), move the
+directory with `git mv` to `specs/<number>-<slug>/`: the spec's own number, or `{{spec_number}}`
+when it is not `(none)`; no other. Update every reference to the old path inside the PR (the
+parent's `## Children` bullet, the spec's heading, and the ADRs and marks the PR adds), and add
+`"spec_path"` beside `head_sha`, naming the new path. Never edit the issue body: the scheduler
+rewrites its `Spec:` line from your result.
 
 **Escalation.** Escalate only a product decision (a big-picture choice about what
 panelator is and promises its users: audience, scope and non-goals, built-in widgets,

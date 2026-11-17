@@ -251,6 +251,20 @@ describe("committed stage prompts (AC-1, AC-14, AC-15, AC-17)", () => {
   it("fix.md marks a recorded ADR", () => {
     expect(read("fix")).toContain("(maintainer answer, question #");
   });
+  it("fix.md and spec.md say how a spec moves and that the issue body is the scheduler's (spec 071 AC-6)", () => {
+    const fix = read("fix");
+    expect(fix).toContain("**Moving the spec.**");
+    expect(fix).toContain("git mv");
+    expect(fix).toContain("{{spec_number}}");
+    expect(fix).toMatch(/"spec_path": "specs\/NNN-slug\/spec\.md"/);
+    const spec = read("spec");
+    expect(spec).toContain("specs/{{spec_number}}-<slug>/spec.md");
+    expect(spec).toMatch(/unless the spec moved in this PR/);
+    for (const t of [fix, spec]) {
+      expect(t).toContain("Never edit the issue body");
+      expect(t.match(/edit the issue body/gi)).toHaveLength(1);
+    }
+  });
   it("spec.md marks answers, refers with Refs and never switches branches", () => {
     const t = read("spec");
     expect(t).toContain("Refs #");
