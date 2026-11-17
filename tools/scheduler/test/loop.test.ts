@@ -1640,3 +1640,61 @@ describe("Scheduler.tick: the disk sweep step (spec 064)", () => {
     expect(t.eligible).toBe(1);
   }, 30_000);
 });
+
+/** A SleepInhibitor over a fake systemd-inhibit: records each spawn's --why, each kill, and the service-log records. */
+const recordingInhibitor = () => {
+  const spawned: string[] = [], killed: string[] = [], logged: Record<string, unknown>[] = [];
+  const spawn = ((_cmd: string, args: string[]) => { const why = args.find((a) => a.startsWith("--why="))!.slice(6); spawned.push(why); return { kill: () => { killed.push(why); return true; }, unref() {}, on(ev: string, fn: () => void) { if (ev === "spawn") fn(); } }; }) as never;
+  return { spawned, killed, logged, inhibitor: new SleepInhibitor({ enabled: true, spawn, log: (r) => logged.push(r) }) };
+};
+
+describe("Scheduler: sleep inhibitor while runs are in flight", () => {
+  it("takes the lock before a run's harness starts and releases it only when the last of two overlapping runs ends", async () => {
+    const log = grantLog();
+    const rec = recordingInhibitor();
+    const heldAtStart: boolean[] = [];
+    const h = await setup(routes([]), 2, async (d, claim) => { heldAtStart.push(rec.inhibitor.held); return log.drive(d, claim, () => false); });
+    h.deps.inhibitor = rec.inhibitor;
+    await withStanding(h, log);
+    const standing = h.deps.runStanding!;
+    h.deps.runStanding = async (...a) => { heldAtStart.push(rec.inhibitor.held); return standing(...a); };
+    await readyClaim(h, 3);
+    await h.s.tick();
+    await settle();
+    expect(log.grants.sort()).toEqual(["chain:3", "standing"]);
+    expect(heldAtStart).toEqual([true, true]);
+    expect(rec.spawned).toEqual(["standing action-audit"]);
+    await rmClaim(h, 3);
+    await log.release("chain:3");
+    expect(rec.inhibitor.held).toBe(true);
+    expect(rec.killed).toEqual([]);
+    await log.release("standing");
+    expect(rec.inhibitor.held).toBe(false);
+    expect(rec.killed).toEqual(["standing action-audit"]);
+    expect(rec.logged.map((r) => r.kind)).toEqual(["inhibit-acquired", "inhibit-released"]);
+  }, 30_000);
+
+  it("takes the lock again for the next run and releases it when the service stops", async () => {
+    const log = grantLog();
+    const rec = recordingInhibitor();
+    const h = await setup(routes([]), 1, log.drive);
+    h.deps.inhibitor = rec.inhibitor;
+    await withStanding(h, log);
+    await h.s.tick();
+    await settle();
+    await log.release("standing");
+    expect(rec.inhibitor.held).toBe(false);
+    let ticks = 0;
+    const tick = h.s.tick.bind(h.s);
+    h.s.tick = async () => { const t = await tick(); if (++ticks === 1) h.s.stop("SIGTERM"); return t; };
+    const running = h.s.run();
+    for (let i = 0; i < 100 && log.grants.length < 2; i++) await settle();
+    expect(rec.inhibitor.held).toBe(true);
+    await log.release("standing");
+    await running;
+    expect(rec.inhibitor.held).toBe(false);
+    expect(rec.spawned).toEqual(["standing action-audit", "standing action-audit"]);
+    expect(rec.killed).toHaveLength(2);
+    expect(rec.logged.map((r) => r.kind)).toEqual(["inhibit-acquired", "inhibit-released", "inhibit-acquired", "inhibit-released"]);
+  }, 30_000);
+});

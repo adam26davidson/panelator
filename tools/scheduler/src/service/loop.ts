@@ -198,7 +198,7 @@ export class Scheduler {
   #start(claim: Claim): void {
     if (this.#active.has(claim.issue)) return;
     const d = this.#deps;
-    d.inhibitor.acquire();
+    d.inhibitor.acquire(`issue ${claim.issue}`);
     const p = this.#drive(d, claim, () => this.#stopping)
       .then(() => this.#countFailure(claim.issue, null, claim.outage))
       .catch(async (e) => {
@@ -727,7 +727,7 @@ export class Scheduler {
         for (let next = dueStanding.shift(); next; next = dueStanding.shift()) {
           const { def, state } = next;
           if (state.running && (await Promise.all(runningUnits(state.running.run_id).map((u) => d.unitActive(u)))).some(Boolean)) continue;
-          d.inhibitor.acquire();
+          d.inhibitor.acquire(`standing ${def.name}`);
           const p = (d.runStanding ?? runStandingAgent)({ ...d, parameters: d.parameters! }, def, state)
             .catch((e) => d.log({ kind: "standing-error", agent: def.name, error: String(e) }))
             .finally(() => { this.#activeStanding.delete(def.name); this.#sampleLater(); if (this.active === 0) { d.inhibitor.release(); if (this.#restartPending && !this.#ticking) d.requestRestart(); } });

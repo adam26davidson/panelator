@@ -141,6 +141,9 @@ if (has("--check-auth")) {
 const stopRefresh = app.startTokenRefresh(paths);
 const gh = new GitHubClient(app.octokit, cfg.repo);
 
+const inhibitor = new SleepInhibitor({ enabled: cfg.systemd.inhibit, log: (rec) => serviceLog.write(rec) });
+// The lock never outlives the process, whatever path ends it.
+process.on("exit", () => inhibitor.release());
 const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec));
 let exitCode = 0;
 let restartRequested = false;
@@ -152,7 +155,7 @@ const scheduler: Scheduler = new Scheduler({
   stopUnit: (unit) => systemdStopUnit(unit, { enabled: cfg.systemd.scope }),
   refreshToken: () => app.refreshTokenFile(paths).then(() => {}),
   log: (rec) => serviceLog.write(rec), fetchOrigin: () => fetchOrigin(repoRoot),
-  botLogin, serviceLog, inhibitor: new SleepInhibitor({ enabled: cfg.systemd.inhibit }),
+  botLogin, serviceLog, inhibitor,
   fastForward: () => fastForwardMain(repoRoot), sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   monotonic: () => Number(process.hrtime.bigint() / 1_000_000n),
   // Called on every idle tick while a restart is pending; only the first call acts.
