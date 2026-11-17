@@ -4,7 +4,7 @@ import {fakeTelegram} from './helpers/fake-telegram.ts';
 import {emptyTelegram,listPaused,type PausedRecord} from '../src/state/paused.ts';
 import {completePause, OUT_OF_SCOPE_PARAGRAPH} from "../src/chain/driver.ts";
 import { tmpdir } from "node:os";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
@@ -2557,5 +2557,156 @@ describe("driver: spec and ADR numbers are reserved by the scheduler (spec 065)"
     const c = at(t.claim, { stage: "fix", plan: implPlan as never, pr: { number: 9, head_sha: t.sha }, pendingFixInput: "fix it" });
     const r = await step(t.deps, c);
     expect(r.claim.state.history.join("\n")).toContain("result: ADR 0005 is held by docs/decisions/0005-x.md");
+  }, 60_000);
+});
+
+describe("driver: a spec PR moves its spec (spec 071)", () => {
+  const otherClaim = (issue: number, spec: number): Claim =>
+    ({ issue, state: { ...initialChainState(issue), reserved: { spec, adr: null } }, worktree: "/w8", started_at: new Date().toISOString(), last_activity_at: new Date().toISOString(), run_id: null });
+  const BODY = "Intro line.\n\nSpec: specs/030-x/spec.md\n\nMore text.\n";
+  const topWith = (...paths: string[]) => `# Top design\n\n## Children\n\n${paths.map((p) => `- \`${p}\``).join("\n")}\n`;
+  const LINE = "specs/030-x/spec.md";
+
+  /** A spec PR adding `specs/030-x/` (and its Children bullet); main holds what `mainFiles` says. */
+  async function env(results: Record<string, Scripted[]>, over: { mainFiles?: Record<string, string>; openPrs?: { number: number; added: string[] }[]; issueBody?: string; reserved?: number | null; track?: "spec" | "issue" } = {}) {
+    let wt = "";
+    const branch = over.track === "issue" ? "issue-7" : "spec-7";
+    const files = withTopDesign({ "a.txt": "a\n", "specs/010-thing/spec.md": spec, ...(over.mainFiles ?? {}) }, "specs/010-thing/spec.md");
+    const prs = { 12: { headRef: branch, head: () => head(wt), body: "Refs #7" } };
+    const t = await setup(() => results, (sha) => ghRoutes(sha, { issueBody: over.issueBody ?? BODY, prs, openPrs: over.openPrs }), (_p, w) => {
+      wt = w;
+      if (branch !== "issue-7") git(w, "checkout", "-q", "-b", branch);
+      commitIn(w, { [LINE]: spec, "docs/top.md": topWith("specs/010-thing/spec.md", LINE) }, "spec work");
+      git(w, "push", "-q", "-u", "origin", branch);
+    }, files);
+    const logs: Record<string, unknown>[] = [];
+    t.deps.log = (rec) => { logs.push(rec); };
+    const claim = at(t.claim, { stage: "fix", track: over.track ?? "spec", pr: { number: 12, head_sha: head(wt) }, pendingFixInput: "fix it", reserved: { spec: over.reserved ?? null, adr: null } });
+    await writeClaim(t.paths, claim);
+    const body = () => t.gh.calls.find((x) => x.method === "PATCH" && x.url === "/repos/o/r/issues/7")?.body;
+    return { ...t, claim, logs, body };
+  }
+  /** The fake fix: moves the directory with git mv to `to`, updates the parent's bullet and names the new path. */
+  const mover = (to: string, over: { copy?: boolean; name?: string } = {}) => (run: StageRun) => {
+    const from = "specs/030-x";
+    if (over.copy) cpSync(join(run.worktree, from), join(run.worktree, to), { recursive: true }); else git(run.worktree, "mv", from, to);
+    const sh = commitIn(run.worktree, { "docs/top.md": topWith("specs/010-thing/spec.md", `${to}/spec.md`) }, "move");
+    return { head_sha: sh, addressed: [], spec_path: over.name ?? `${to}/spec.md` };
+  };
+  const failedWith = (r: { claim: Claim }) => r.claim.state.history.join("\n");
+
+  it("reserves the next number when the line path's number is held by main, and the fix moves the spec (issue #41's sequence, AC-1, AC-5)", async () => {
+    const t = await env({ fix: [mover("specs/031-x")] }, { mainFiles: { "specs/030-other/spec.md": spec } });
+    const r = await step(t.deps, t.claim);
+    expect(inputOf(t.paths, "7-fix-1-").spec_number).toBe("031");
+    expect(t.logs.filter((l) => l.kind === "number-reserved" && "spec" in l)).toEqual([expect.objectContaining({ issue: 7, spec: "031" })]);
+    expect(failedWith(r)).not.toMatch(/failed/);
+    expect(t.body()).toEqual({ body: "Intro line.\n\nSpec: specs/031-x/spec.md\n\nMore text.\n" });
+    expect(t.logs).toContainEqual({ kind: "spec-moved", issue: 7, from: LINE, to: "specs/031-x/spec.md" });
+    expect(r.claim.state.reserved.spec).toBeNull();
+    expect(r.claim.state.pendingFixInput ?? "").not.toMatch(/outside spec PR scope|no Parent line/);
+  }, 60_000);
+
+  it("a slug-only move on a free number reserves nothing and passes (AC-1, AC-5)", async () => {
+    const t = await env({ fix: [mover("specs/030-y")] });
+    const r = await step(t.deps, t.claim);
+    expect(inputOf(t.paths, "7-fix-1-").spec_number).toBeUndefined();
+    expect(t.logs.some((l) => l.kind === "number-reserved" && "spec" in l)).toBe(false);
+    expect(t.body()).toEqual({ body: "Intro line.\n\nSpec: specs/030-y/spec.md\n\nMore text.\n" });
+    expect(t.logs.some((l) => l.kind === "spec-moved")).toBe(true);
+    expect(r.claim.state.pendingFixInput ?? "").not.toMatch(/outside spec PR scope|no Parent line/);
+  }, 60_000);
+
+  it("replays issue #41: a rename without spec_path gets the three violations and no line rewrite (AC-5)", async () => {
+    const t = await env({ fix: [(run: StageRun) => { const x = mover("specs/031-x")(run); return { head_sha: x.head_sha, addressed: [] }; }] }, { mainFiles: { "specs/030-other/spec.md": spec } });
+    const r = await step(t.deps, t.claim);
+    expect(t.body()).toBeUndefined();
+    expect(r.claim.state.pendingFixInput).toContain(`${LINE}: no Parent line`);
+    expect(r.claim.state.pendingFixInput).toContain("docs/top.md: outside spec PR scope");
+  }, 60_000);
+
+  const holdCases: [string, { mainFiles?: Record<string, string>; openPrs?: { number: number; added: string[] }[] }, boolean][] = [
+    ["main", { mainFiles: { "specs/030-other/spec.md": spec } }, true],
+    ["another open PR", { openPrs: [{ number: 30, added: ["specs/030-hand/spec.md"] }] }, true],
+    ["nothing", {}, false],
+  ];
+  for (const [name, over, reserved] of holdCases) {
+    it(`reserves a number only when the line path's number is held: ${name} (AC-1)`, async () => {
+      const t = await env({ fix: [undefined] }, over);
+      await step(t.deps, t.claim);
+      expect(inputOf(t.paths, "7-fix-1-").spec_number).toBe(reserved ? "031" : undefined);
+    }, 60_000);
+  }
+
+  it("reserves past another claim's reservation, and gives an existing reservation again (AC-1)", async () => {
+    const t = await env({ fix: [undefined] }, { mainFiles: { "specs/030-other/spec.md": spec } });
+    await writeClaim(t.paths, otherClaim(8, 31));
+    await step(t.deps, t.claim);
+    expect(inputOf(t.paths, "7-fix-1-").spec_number).toBe("032");
+    const u = await env({ fix: [undefined] }, { reserved: 40 });
+    await step(u.deps, u.claim);
+    expect(inputOf(u.paths, "7-fix-1-").spec_number).toBe("040");
+    expect(u.logs.filter((l) => l.kind === "number-reserved" && "spec" in l)).toEqual([]);
+  }, 120_000);
+
+  it("reserves nothing when the line path is on main (AC-1)", async () => {
+    const t = await env({ fix: [undefined] }, { issueBody: "Spec: specs/010-thing/spec.md", mainFiles: { "specs/010-other/spec.md": spec } });
+    await step(t.deps, t.claim);
+    expect(inputOf(t.paths, "7-fix-1-").spec_number).toBeUndefined();
+  }, 60_000);
+
+  it("fails a move to a number that is neither the issue's nor the reserved one, leaving the body (AC-2 item 5)", async () => {
+    const t = await env({ fix: [mover("specs/033-x")] }, { mainFiles: { "specs/030-other/spec.md": spec } });
+    const r = await step(t.deps, t.claim);
+    expect(failedWith(r)).toContain("result: spec number 033 is not the issue's 030 or the reserved 031");
+    expect(t.body()).toBeUndefined();
+  }, 60_000);
+
+  it("fails a copy that leaves the old directory (AC-2 item 3)", async () => {
+    const t = await env({ fix: [mover("specs/030-y", { copy: true })] });
+    const r = await step(t.deps, t.claim);
+    expect(failedWith(r)).toContain("result: spec moved to specs/030-y/spec.md but specs/030-x/ still holds files");
+    expect(t.body()).toBeUndefined();
+  }, 60_000);
+
+  it("fails a path with no spec at it (AC-2 item 4)", async () => {
+    const t = await env({ fix: [mover("specs/030-y", { name: "specs/030-z/spec.md" })] });
+    const r = await step(t.deps, t.claim);
+    expect(failedWith(r)).toContain("result: no spec at specs/030-z/spec.md");
+  }, 60_000);
+
+  it("fails a move to a number another open PR holds, naming it (AC-2 item 6)", async () => {
+    const t = await env({ fix: [mover("specs/035-x")] }, { reserved: 35, openPrs: [{ number: 30, added: ["specs/035-hand/spec.md"] }] });
+    const r = await step(t.deps, t.claim);
+    expect(failedWith(r)).toContain("result: spec number 035 is held by PR #30");
+  }, 60_000);
+
+  it("fails a move on a spec that is on main (AC-2 item 2)", async () => {
+    const t = await env({ fix: [(run: StageRun) => { const sh = commitIn(run.worktree, { "specs/010-thing/notes.md": "n\n" }); return { head_sha: sh, addressed: [], spec_path: "specs/010-new/spec.md" }; }] }, { issueBody: "Spec: specs/010-thing/spec.md" });
+    const r = await step(t.deps, t.claim);
+    expect(failedWith(r)).toContain("result: the spec at specs/010-thing/spec.md is on main and cannot move");
+  }, 60_000);
+
+  it("fails a move off the spec track (AC-2 item 1)", async () => {
+    const t = await env({ fix: [mover("specs/030-y")] }, { track: "issue" });
+    const r = await step(t.deps, t.claim);
+    expect(failedWith(r)).toContain("result: spec_path differs from the issue's Spec: line");
+    expect(t.body()).toBeUndefined();
+  }, 60_000);
+
+  it("a spec result may move the spec, and the scheduler rewrites the line (AC-3, AC-4)", async () => {
+    const t = await env({ spec: [(run: StageRun) => ({ verdict: "revised", spec_path: "specs/030-y/spec.md", pr_number: 12, head_sha: commitIn(run.worktree, { "specs/030-y/spec.md": spec, "docs/top.md": topWith("specs/010-thing/spec.md", "specs/030-y/spec.md") }) })] });
+    const c = at(t.claim, { stage: "spec", track: "spec", specMode: "write", pr: null });
+    const r = await step(t.deps, c);
+    expect(failedWith(r)).not.toMatch(/failed/);
+    expect(t.body()).toEqual({ body: "Intro line.\n\nSpec: specs/030-y/spec.md\n\nMore text.\n" });
+    expect(t.logs).toContainEqual({ kind: "spec-moved", issue: 7, from: LINE, to: "specs/030-y/spec.md" });
+  }, 60_000);
+
+  it("a spec result revising a spec on main cannot name a new path (AC-2 item 2)", async () => {
+    const t = await env({ spec: [(run: StageRun) => { const sh = commitIn(run.worktree, { "specs/010-new/spec.md": spec }); return { verdict: "revised", spec_path: "specs/010-new/spec.md", pr_number: 12, head_sha: sh }; }] }, { issueBody: "Spec: specs/010-thing/spec.md" });
+    const r = await step(t.deps, at(t.claim, { stage: "spec", track: "spec", specMode: "write", pr: null }));
+    expect(failedWith(r)).toContain("result: the spec at specs/010-thing/spec.md is on main and cannot move");
+    expect(t.body()).toBeUndefined();
   }, 60_000);
 });

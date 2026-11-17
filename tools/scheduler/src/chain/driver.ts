@@ -23,7 +23,7 @@ import {
   checkoutBranch, commitsPatch, deleteLocalBranch, diffFilesAgainstBase, discardUncommitted, onlyRebased, rebaseOntoMain, removeWorktree, syncToRemote, uncommittedPatch,
 } from "../runner/worktree.ts";
 import { buildSelectContext } from "../shortlist/fetch.ts";
-import { specPathFromIssueBody } from "../spec/link.ts";
+import { specPathFromIssueBody, withSpecPath } from "../spec/link.ts";
 import { parseChildEntries, parseSpec } from "../spec/parse.ts";
 import type { StageInput } from "../stages/prompt.ts";
 import { listClaims, removeClaim, writeClaim, type Claim } from "../state/claims.ts";
@@ -107,6 +107,16 @@ function gitShow(repoDir: string, ref: string): string | null {
     return execFileSync("git", ["show", ref], { cwd: repoDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   } catch {
     return null;
+  }
+}
+
+/** Spec 071 definitions: a spec is on main when origin/main holds any file under its directory. */
+function specDirOnMain(repoDir: string, specPath: string): boolean {
+  try {
+    const dir = specPath.slice(0, specPath.lastIndexOf("/") + 1);
+    return execFileSync("git", ["ls-tree", "-r", "--name-only", "origin/main", "--", dir], { cwd: repoDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() !== "";
+  } catch {
+    return false;
   }
 }
 
@@ -247,6 +257,41 @@ async function heldNumberReason(deps: DriverDeps, claim: Claim, kinds: ("spec" |
   const hit = collisions(added, await holders(numberDeps(deps), claim.issue, ownPrs(claim, ...more)))[0];
   if (!hit) return null;
   return hit.kind === "spec" ? `result: spec number ${fmtSpec(hit.number)} is held by ${hit.holder}` : `result: ADR ${fmtAdr(hit.number)} is held by ${hit.holder}`;
+}
+
+const specNumberOf = (path: string): number => Number(/^specs\/(\d{3})-/.exec(path)?.[1]);
+const specDirOf = (path: string): string => path.slice(0, path.lastIndexOf("/"));
+
+async function headHolds(worktree: string, path: string): Promise<boolean> {
+  return (await gitOut(worktree, "cat-file", "-e", `HEAD:${path}`).then(() => true, () => false));
+}
+
+/**
+ * Spec 071 AC-2: the first reason a spec move (a result whose spec_path differs from the issue's Spec: line) fails, or null.
+ * `specTrack` is false for a fix on another track.
+ */
+async function specMoveReason(deps: DriverDeps, claim: Claim, linePath: string, specPath: string, ...ownMore: (number | undefined)[]): Promise<string | null> {
+  if (claim.state.track !== "spec") return "result: spec_path differs from the issue's Spec: line";
+  if (specDirOnMain(deps.repoDir, linePath)) return `result: the spec at ${linePath} is on main and cannot move`;
+  const oldDir = specDirOf(linePath);
+  if ((await gitOut(claim.worktree, "ls-tree", "-r", "--name-only", "HEAD", "--", `${oldDir}/`)).trim() !== "") return `result: spec moved to ${specPath} but ${oldDir}/ still holds files`;
+  const newDir = specDirOf(specPath);
+  if (!(await headHolds(claim.worktree, `${newDir}/spec.md`)) && !(await headHolds(claim.worktree, `${newDir}/README.md`))) return `result: no spec at ${specPath}`;
+  const number = specNumberOf(specPath);
+  const reserved = claim.state.reserved.spec;
+  if (number !== specNumberOf(linePath) && number !== reserved) {
+    return `result: spec number ${fmtSpec(number)} is not the issue's ${fmtSpec(specNumberOf(linePath))} or the reserved ${reserved === null ? "(none)" : fmtSpec(reserved)}`;
+  }
+  return heldNumberReason(deps, claim, ["spec"], ...ownMore);
+}
+
+/** Spec 071 AC-4: the scheduler rewrites the issue's Spec: line to the moved spec, logs it and clears the reservation; returns the new body. */
+async function moveSpecLine(deps: DriverDeps, claim: Claim, issueBody: string, from: string, to: string): Promise<string> {
+  const body = withSpecPath(issueBody, to);
+  await deps.gh.setIssueBody(claim.issue, body);
+  deps.log({ kind: "spec-moved", issue: claim.issue, from, to });
+  claim.state.reserved = { ...claim.state.reserved, spec: null };
+  return body;
 }
 
 /**
@@ -648,14 +693,19 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
 /** Spec 065 AC-1, AC-2: reserves the numbers this run may take, once, under the process-wide reservation lock. */
 async function reserveNumbers(deps: DriverDeps, claim: Claim, stage: AgentStageName, issueBody: string): Promise<void> {
   const state = claim.state;
-  const wantSpec = stage === "spec" && specPathFromIssueBody(issueBody) === null && state.reserved.spec === null;
+  const linePath = specPathFromIssueBody(issueBody);
+  const wantSpec = stage === "spec" && linePath === null && state.reserved.spec === null;
+  // Spec 071 AC-1: a spec or spec-track fix run for a spec not on main reserves a number when the line path's number is held elsewhere.
+  const checkLine = linePath !== null && state.reserved.spec === null && (stage === "spec" || (stage === "fix" && state.track === "spec")) && !specDirOnMain(deps.repoDir, linePath);
   const wantAdr = state.reserved.adr === null && ["spec", "implement", "fix"].includes(stage);
-  if (!wantSpec && !wantAdr) return;
+  if (!wantSpec && !wantAdr && !checkLine) return;
   await reserveSerially(async () => {
     // The chain's own PRs count: their added numbers are taken (spec 065 section 3 excludes only other claims' own).
     const held = await holders(numberDeps(deps), claim.issue);
-    const spec = wantSpec ? nextFree(held, "spec") : null;
+    let spec = wantSpec ? nextFree(held, "spec") : null;
+    if (checkLine && linePath !== null && collisions([linePath], await holders(numberDeps(deps), claim.issue, ownPrs(claim))).length > 0) spec = nextFree(held, "spec");
     const adr = wantAdr ? nextFree(held, "adr") : null;
+    if (spec === null && adr === null) return;
     state.reserved = { spec: spec ?? state.reserved.spec, adr: adr ?? state.reserved.adr };
     await writeClaim(deps.paths, { ...claim, last_activity_at: deps.now().toISOString() });
     deps.log({ kind: "number-reserved", issue: claim.issue, ...(spec !== null ? { spec: fmtSpec(spec) } : {}), ...(adr !== null ? { adr: fmtAdr(adr) } : {}) });
@@ -932,10 +982,17 @@ async function codeEvent(
     const head = await holdWork(deps, claim, stage);
     return stage === "implement" ? { type: "stage_ok", stage, result: result as ImplementOutcome, head } : { type: "stage_ok", stage, result: result as FixOutcome, head };
   }
-  const r = result as ImplementResult | { head_sha: string };
+  const r = result as ImplementResult | { head_sha: string; spec_path?: string };
   const prNumber = stage === "implement" ? (r as ImplementResult).pr_number : state.pr?.number;
   if (prNumber === undefined || !(await prBound(deps, claim, { prNumber, branch: branchOf(state) }, r.head_sha))) {
     return { type: "stage_failed", stage, reason: "result: pr mismatch" };
+  }
+  // Spec 071 AC-5: a fix result naming another path than the issue's Spec: line moves the spec.
+  const linePath = specPathFromIssueBody(issueBody);
+  const movedTo = stage === "fix" && linePath !== null && "spec_path" in r && r.spec_path !== undefined && r.spec_path !== linePath ? r.spec_path : null;
+  if (movedTo !== null) {
+    const reason = await specMoveReason(deps, claim, linePath!, movedTo, prNumber);
+    if (reason) return { type: "stage_failed", stage, reason };
   }
   const heldAdr = await heldNumberReason(deps, claim, ["adr"], prNumber);
   if (heldAdr) return { type: "stage_failed", stage, reason: heldAdr };
@@ -948,7 +1005,7 @@ async function codeEvent(
   }
   const diff = await diffFilesAgainstBase(claim.worktree);
   let scope: ScopeResult = { ok: true };
-  if (state.track === "spec") scope = await specTrackScope(deps, claim, diff, specPathFromIssueBody(issueBody));
+  if (state.track === "spec") scope = await specTrackScope(deps, claim, diff, movedTo ?? linePath);
   else if (state.track === "design") scope = designScopeGate(diff, specPathFromIssueBody(issueBody) ?? "");
   else if (state.plan) {
     // C6: an ADR the PR adds is in scope (design section 3 item 2: an agent records its own large decision); an edit to an
@@ -958,10 +1015,11 @@ async function codeEvent(
     scope = scopeGate(diff, state.plan, parseSpec(specText), sensitiveGlobs, extra);
   }
   if (stage === "implement") return { type: "stage_ok", stage, result: result as ImplementOutcome, scope };
+  const bodyNow = movedTo !== null ? await moveSpecLine(deps, claim, issueBody, linePath!, movedTo) : issueBody;
   const fix = result as FixOutcome;
   const verdict = "out_of_scope" in fix ? fix.out_of_scope : undefined;
   if (!verdict) return { type: "stage_ok", stage, result: fix, scope };
-  return { type: "stage_ok", stage, result: fix, scope, mainSha: mainSha ?? (await originMain(deps)), outOfScope: await judgeOutOfScope(deps, claim, issueBody, r.head_sha, verdict.paths) };
+  return { type: "stage_ok", stage, result: fix, scope, mainSha: mainSha ?? (await originMain(deps)), outOfScope: await judgeOutOfScope(deps, claim, bodyNow, r.head_sha, verdict.paths) };
 }
 
 /** `git rev-parse origin/main` in the scheduler's checkout. */
@@ -990,10 +1048,15 @@ async function specEvent(deps: DriverDeps, claim: Claim, issueBody: string, r: S
   // D5: the spec-result schema already refused a spec_path outside specs/ (the run failed as "result: invalid").
   const specPath = r.spec_path!;
   const issueSpec = specPathFromIssueBody(issueBody);
-  if (issueSpec !== null && issueSpec !== specPath) return failed("result: spec_path differs from the issue's Spec: line");
+  const moved = issueSpec !== null && issueSpec !== specPath;
   const pr = r.pr_number === undefined || r.head_sha === undefined ? null : await prBound(deps, claim, { prNumber: r.pr_number, branch: `spec-${claim.issue}` }, r.head_sha);
   if (!pr) return failed("result: pr mismatch");
   if (CLOSING_KEYWORD.test(pr.body)) return failed("result: spec PR body closes an issue");
+  // Spec 071 AC-3: on the spec track a revised spec may move while it is not on main.
+  if (moved) {
+    const reason = await specMoveReason(deps, claim, issueSpec, specPath, r.pr_number);
+    if (reason) return failed(reason);
+  }
   if (issueSpec === null) {
     const number = Number(/^specs\/(\d{3})-/.exec(specPath)?.[1]);
     if (number !== state.reserved.spec) return failed(`result: spec number ${fmtSpec(number)} is not the reserved ${state.reserved.spec === null ? "(none)" : fmtSpec(state.reserved.spec)}`);
@@ -1002,6 +1065,7 @@ async function specEvent(deps: DriverDeps, claim: Claim, issueBody: string, r: S
   if (held) return failed(held);
   if (answerToRecord(state) && !(await carriesMarks(claim.worktree, state.recordIds, start))) return failed("result: answer not marked");
   const scope = await specTrackScope(deps, claim, await diffFilesAgainstBase(claim.worktree), specPath);
+  if (moved) await moveSpecLine(deps, claim, issueBody, issueSpec, specPath);
   if (issueSpec === null) {
     await deps.gh.setIssueBody(claim.issue, `${issueBody}\n\nSpec: ${specPath}`);
     // The issue body and the open PR hold the number now.
