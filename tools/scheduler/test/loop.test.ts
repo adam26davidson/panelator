@@ -1644,7 +1644,7 @@ describe("Scheduler.tick: the disk sweep step (spec 064)", () => {
 /** A SleepInhibitor over a fake systemd-inhibit: records each spawn's --why, each kill, and the service-log records. */
 const recordingInhibitor = () => {
   const spawned: string[] = [], killed: string[] = [], logged: Record<string, unknown>[] = [];
-  const spawn = ((_cmd: string, args: string[]) => { const why = args.find((a) => a.startsWith("--why="))!.slice(6); spawned.push(why); return { kill: () => { killed.push(why); return true; }, unref() {}, on() {} }; }) as never;
+  const spawn = ((_cmd: string, args: string[]) => { const why = args.find((a) => a.startsWith("--why="))!.slice(6); spawned.push(why); return { kill: () => { killed.push(why); return true; }, unref() {}, on(ev: string, fn: () => void) { if (ev === "spawn") fn(); } }; }) as never;
   return { spawned, killed, logged, inhibitor: new SleepInhibitor({ enabled: true, spawn, log: (r) => logged.push(r) }) };
 };
 

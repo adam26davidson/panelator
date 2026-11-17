@@ -124,18 +124,28 @@ describe("SleepInhibitor (AC-30)", () => {
       expect(() => i.acquire("issue 5")).not.toThrow();
       expect(i.held).toBe(false);
       i.release();
-      expect(logged).toEqual([
-        { kind: "inhibit-acquired", why: "issue 3" },
-        { kind: "inhibit-unavailable", error: "spawn systemd-inhibit ENOENT" },
-        { kind: "inhibit-acquired", why: "issue 4" },
-      ]);
+      // Neither child ever spawned, so no lock was taken and none is logged as acquired.
+      expect(logged).toEqual([{ kind: "inhibit-unavailable", error: "spawn systemd-inhibit ENOENT" }]);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+  it("logs no inhibit-acquired for a real spawn of a missing binary, whose ENOENT arrives on a later turn", async () => {
+    const logged: Record<string, unknown>[] = [];
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const i = new SleepInhibitor({ enabled: true, bin: "/nonexistent/systemd-inhibit", log: (r) => logged.push(r) });
+      i.acquire("issue 6");
+      await new Promise((r) => setTimeout(r, 200));
+      expect(i.held).toBe(false);
+      expect(logged.map((r) => r.kind)).toEqual(["inhibit-unavailable"]);
     } finally {
       errSpy.mockRestore();
     }
   });
   it("logs one record per transition and ignores the exit its own kill causes", () => {
     const handlers: Record<string, (...a: unknown[]) => void> = {};
-    const fakeSpawn = (() => ({ kill: () => { handlers.exit!(null, "SIGTERM"); return true; }, unref() {}, on(ev: string, fn: (...a: unknown[]) => void) { handlers[ev] = fn; } })) as never;
+    const fakeSpawn = (() => ({ kill: () => { handlers.exit!(null, "SIGTERM"); return true; }, unref() {}, on(ev: string, fn: (...a: unknown[]) => void) { handlers[ev] = fn; if (ev === "spawn") fn(); } })) as never;
     const logged: Record<string, unknown>[] = [];
     const i = new SleepInhibitor({ enabled: true, spawn: fakeSpawn, log: (r) => logged.push(r) });
     i.acquire("standing infra-health");

@@ -7,6 +7,7 @@ export class SleepInhibitor {
   #log: (rec: Record<string, unknown>) => void;
   #child: ChildProcess | null = null;
   #unavailableLogged = false;
+  #started = false;
 
   constructor(opts: { enabled: boolean; bin?: string; spawn?: typeof nodeSpawn; log?: (rec: Record<string, unknown>) => void }) {
     this.#enabled = opts.enabled;
@@ -29,6 +30,14 @@ export class SleepInhibitor {
       this.#unavailable((e as Error).message);
       return;
     }
+    this.#child = child;
+    this.#started = false;
+    // Logged on spawn, not here: a missing binary only reports ENOENT on a later turn, and no lock was taken.
+    child.on("spawn", () => {
+      if (this.#child !== child) return;
+      this.#started = true;
+      this.#log({ kind: "inhibit-acquired", why });
+    });
     // Exit or error while still held: the lock was never taken or was lost (no binary, logind refused it).
     child.on("exit", (code, signal) => {
       if (this.#child !== child) return;
@@ -41,8 +50,6 @@ export class SleepInhibitor {
       this.#unavailable((e as Error).message);
     });
     child.unref();
-    this.#child = child;
-    this.#log({ kind: "inhibit-acquired", why });
   }
 
   release(): void {
@@ -50,7 +57,7 @@ export class SleepInhibitor {
     this.#child = null;
     if (!c) return;
     c.kill();
-    this.#log({ kind: "inhibit-released" });
+    if (this.#started) this.#log({ kind: "inhibit-released" });
   }
 
   #unavailable(error: string): void {
