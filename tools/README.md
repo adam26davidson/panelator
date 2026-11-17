@@ -83,6 +83,31 @@ The shipped profiles are `backend`, `design`, `security` and `spec`. A plan whos
   `cred_remove`, `agent: maintainer`, `args: { name }`, one row per credential.
 - The scheduler reads the App key from the store once `github-app-key` is set, else from `app.private_key_path`.
 
+## The test board and firmware promotion (spec 070)
+
+- The `firmware` block of `agents/scheduler.yaml` (optional; without it nothing here runs and the service log says
+  `{ "kind": "firmware", "state": "off" }` once): `paths` (default `["firmware/**"]`), `hil_check` (default `hil`),
+  `hil_workflow` (default `hil.yml`), `release_tag_prefix` (default `firmware-v`). `bounds.board_bricks` (default 2)
+  is how many PR heads of one issue may brick the board before the issue is abandoned. The parameters
+  `firmware.soak_hours` (default `72h`) and `firmware.promotion_enabled` (default `true`) tune promotion.
+- A PR whose files match `paths` passes verify only with the HIL check green on its head, beside `required_checks`.
+  The HIL check is posted by the firmware's own workflow on the laptop's runner; its output is the JSON of
+  `schemas/scheduler/hil-result.json` (spec 070 section 8). A firmware PR whose head has no
+  `.github/workflows/<hil_workflow>` waits for `main` to gain one.
+- `board.json` in the state directory is the board's state (`ok`, `absent`, `bricked`, `unknown`). A bricked or absent
+  board blocks every firmware PR at verify and the shortlist skips firmware issues; other work continues. The
+  maintainer gets one Telegram message (and a `board-alert` line in the service log) with the recovery steps, and one
+  reminder after 24 hours.
+- Commands: `panelator-scheduler board` and `firmware` print `board.json` and the recorded releases (channel, HIL
+  state, soak, criteria) and write nothing. `board back` (the only way out of `bricked`), `board bricked <reason>`,
+  `firmware promote <tag>` and `firmware demote <tag> <reason>` are action kinds (`board_back`, `board_bricked`,
+  `firmware_promote`, `firmware_demote`), each one row in the action log with `agent: maintainer`.
+- Published builds are GitHub Releases tagged `<release_tag_prefix><version>`, prerelease while beta. The tick
+  records them, follows the board's HIL results and promotes a beta build (clears the prerelease flag) when its HIL
+  check passed on `main`, it soaked for `firmware.soak_hours` with at least two results and no resets, the board
+  stayed `ok`, no newer passing build exists and it was not demoted. Each tick's service-log line carries `board` and
+  `firmware: { stable, next: { tag, waiting_on } }`.
+
 ## Events (spec 026)
 
 The scheduler appends every run, stage transition, merge, CI result, review, finding, action, question, pause,
