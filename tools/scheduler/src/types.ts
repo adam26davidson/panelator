@@ -187,6 +187,8 @@ export interface ReviewResult {
 export interface FixResult {
   head_sha: string;
   addressed: number[];
+  /** Spec 071 AC-5: the new path of a spec the fix moved on a spec PR. */
+  spec_path?: string;
   /** Spec 060 AC-5: the failure's cause lies outside the PR's scope; `paths` are the files whose change would clear it. */
   out_of_scope?: { cause: string; paths: string[] };
   escalation?: Question;

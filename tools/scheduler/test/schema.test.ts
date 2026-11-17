@@ -376,3 +376,15 @@ describe("spec 060 schemas", () => {
     expect(validate("blocked", { ...base, condition: { kind: "paths", paths: [], main_sha: "a" } }).ok).toBe(false);
   });
 });
+
+describe("fix-result spec_path (spec 071 AC-5)", () => {
+  const fix = { head_sha: "a".repeat(40), addressed: [] };
+  it("accepts the field beside head_sha and refuses a bad pattern or an escalation-only result with it", () => {
+    expect(validate("fix-result", fix).ok).toBe(true);
+    expect(validate("fix-result", { ...fix, spec_path: "specs/031-x/spec.md" }).ok).toBe(true);
+    expect(validate("fix-result", { ...fix, spec_path: "docs/x.md" }).ok).toBe(false);
+    expect(validate("fix-result", { ...fix, spec_path: "specs/31-x/spec.md" }).ok).toBe(false);
+    const q = { kind: "product", text: "q", options: [{ label: "a", cost: "b" }], recommendation: "a" };
+    expect(validate("fix-result", { escalation: q, spec_path: "specs/031-x/spec.md" }).ok).toBe(false);
+  });
+});
