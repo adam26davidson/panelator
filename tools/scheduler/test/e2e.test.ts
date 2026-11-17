@@ -1906,30 +1906,6 @@ describe("end to end: a check failing outside the PR's scope waits for main (spe
   }, 120_000);
 });
 
-describe("every event kind is recorded across the recorded chains (spec 026 AC-2)", () => {
-  /** Kinds with no producer yet: spec 027 adds `metrics.snapshot`, spec 028 `reflection.plan` and empties this list. */
-  const NOT_YET_PRODUCED = ["metrics.snapshot", "reflection.plan"];
-  /** `aws.cost` has its producer in spec F1; the F1 and F2 contact kinds are not asserted either. */
-  const RESERVED = ["aws.cost"];
-  it("finds each kind at least once in the events/ files the runs above left", () => {
-    expect(worldPaths.length).toBeGreaterThan(5);
-    const seen = new Set<string>();
-    const contacts = new Set<string>();
-    for (const p of worldPaths) {
-      if (!existsSync(p.events)) continue;
-      for (const f of readdirSync(p.events).filter((f) => f.endsWith(".jsonl"))) {
-        for (const l of readFileSync(join(p.events, f), "utf8").split("\n").filter(Boolean)) {
-          const e = JSON.parse(l);
-          expect(validate("event", e), l).toEqual({ ok: true });
-          seen.add(e.kind);
-          if (e.kind === "maintainer.contact") contacts.add(e.payload.kind);
-        }
-      }
-    }
-    expect(EVENT_KINDS.filter((k) => !seen.has(k) && !RESERVED.includes(k) && !NOT_YET_PRODUCED.includes(k))).toEqual([]);
-    for (const k of ["notification", "question", "reminder"]) expect(contacts.has(k), k).toBe(true);
-  });
-});
 
 describe("end to end: an implement run stopped before it finished keeps its work (spec 053)", () => {
   const rev = (run: StageRun) => git(run.worktree, "rev-parse", "HEAD").trim();
@@ -2246,4 +2222,29 @@ describe("end to end: the test board gate and firmware promotion (spec 070)", ()
     const tick = readFileSync(w.paths.serviceLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((l) => l.kind === "tick").at(-1);
     expect(tick).toMatchObject({ board: { status: "ok" }, firmware: { stable: null, next: { tag: "firmware-v1", waiting_on: ["soaked"] } } });
   }, 120_000);
+});
+
+describe("every event kind is recorded across the recorded chains (spec 026 AC-2)", () => {
+  /** Kinds with no producer yet: spec 027 adds `metrics.snapshot`, spec 028 `reflection.plan` and empties this list. */
+  const NOT_YET_PRODUCED = ["metrics.snapshot", "reflection.plan"];
+  /** `aws.cost` has its producer in spec F1; the F1 and F2 contact kinds are not asserted either. */
+  const RESERVED = ["aws.cost"];
+  it("finds each kind at least once in the events/ files the runs above left", () => {
+    expect(worldPaths.length).toBeGreaterThan(5);
+    const seen = new Set<string>();
+    const contacts = new Set<string>();
+    for (const p of worldPaths) {
+      if (!existsSync(p.events)) continue;
+      for (const f of readdirSync(p.events).filter((f) => f.endsWith(".jsonl"))) {
+        for (const l of readFileSync(join(p.events, f), "utf8").split("\n").filter(Boolean)) {
+          const e = JSON.parse(l);
+          expect(validate("event", e), l).toEqual({ ok: true });
+          seen.add(e.kind);
+          if (e.kind === "maintainer.contact") contacts.add(e.payload.kind);
+        }
+      }
+    }
+    expect(EVENT_KINDS.filter((k) => !seen.has(k) && !RESERVED.includes(k) && !NOT_YET_PRODUCED.includes(k))).toEqual([]);
+    for (const k of ["notification", "question", "reminder"]) expect(contacts.has(k), k).toBe(true);
+  });
 });
