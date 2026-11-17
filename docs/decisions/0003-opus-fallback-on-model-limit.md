@@ -32,10 +32,8 @@ The maintainer chose "allow the Opus fallback by default" on 2026-10-29.
 - When only a strong-tier stage's own Claude model is limited (a model-scope
   limit such as the Fable limit), the stage runs on the next-best Claude model
   instead of waiting for the reset. This applies to ordinary strong-tier chain
-  stages and to standing agents. It does not apply to rescues: the delivery
-  design's section 4 (a protected statement) makes a rescue "one more attempt
-  on the strongest model", and this decision does not cover rescues, so a
-  rescue under a Fable limit is postponed as spec 006 AC-27 says. The move happens up front when the limit is already known,
+  stages and to standing agents. It did not apply to rescues at first; the
+  amendment of 2026-11-17 below extends it to them. The move happens up front when the limit is already known,
   or as one retry, capped by `retry_cost_limit_usd`, when a run hits it.
 - A limit shared by all Claude models (session, weekly) never triggers this.
   The stage waits for the reset as before.
@@ -54,3 +52,25 @@ The maintainer chose "allow the Opus fallback by default" on 2026-10-29.
 - The no-weaker-vendor part of AC-25 stays: a strong-tier stage is still never
   moved to an OpenAI model because of a Claude limit (independent stages keep
   spec 006 AC-26).
+
+## Amendment 2026-11-17 (maintainer decision): rescues fall back too
+
+Decided by: the maintainer, on 2026-11-17.
+
+The decision above left rescues out: the delivery design's section 4 (a
+protected statement) made a rescue "one more attempt on the strongest model",
+so a rescue under a Fable limit was postponed (spec 006 AC-27). In production
+the rescue plan stage of issue #132 then held its slot for more than six hours
+waiting on Fable, while an ordinary plan stage for issue #37 fell back to Opus
+at once. While Fable is limited, the strongest model available is Opus.
+
+- A rescue takes the model-limit fallback like any other strong-tier stage:
+  up front when the limit is already known, or as the one cost-capped retry
+  when its run hits the limit. Its run id ends in `-rescue-fallback` and its
+  stage log record carries both `rescue` and `fallback`.
+- When the fallback model is limited too, the rescue is postponed as before.
+- Nothing else changes: the rescue still counts as the one rescue, gets the
+  same history and input, and never takes a stage's own (non-Claude) fallback.
+- The maintainer amended design section 4's rescue row to match: "one more
+  attempt on the strongest available model (Fable, or Opus when Fable is
+  limited, ADR 0003 amendment 2026-11-17)".

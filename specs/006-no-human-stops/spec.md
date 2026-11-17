@@ -597,7 +597,9 @@ AC-10 second sentence, AC-13)
   - a failure postponed for quota is handled before every other failure rule:
     in a rescue run it postpones the rescue, which stays a rescue and is not
     spent. (Amended by spec 013: the postponement ends at the limit's reset.
-    A rescue never takes spec 013's model-limit fallback.)
+    A rescue takes spec 013's model-limit fallback like any strong-tier
+    stage, so it is postponed only when the fallback model is limited too:
+    ADR 0003 amendment 2026-11-17.)
 
   The ended states are `done`, `released`, `abandoned` and `paused`.
 - AC-28. **End-to-end chains are recorded.** Recorded end-to-end tests (fake
