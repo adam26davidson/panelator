@@ -28,10 +28,11 @@ describe("claudeAdapter.buildCommand (AC-18)", () => {
     }
   });
   it("builds the headless command with bounds, session id and no-prompt permission", () => {
-    const { argv, env } = claudeAdapter.buildCommand(run);
+    const { argv, env, stdin } = claudeAdapter.buildCommand(run);
     expect(argv[0]).toBe("claude");
     expect(argv).toContain("-p");
-    expect(argv[argv.indexOf("-p") + 1]).toContain("/tmp/r.json");
+    expect(stdin).toBe(run.prompt);
+    expect(argv).not.toContain(run.prompt);
     expect(argv.slice(argv.indexOf("--output-format"), argv.indexOf("--output-format") + 2)).toEqual(["--output-format", "stream-json"]);
     expect(argv).toContain("--verbose");
     expect(argv.slice(argv.indexOf("--model"), argv.indexOf("--model") + 2)).toEqual(["--model", "claude-fable-5-1"]);

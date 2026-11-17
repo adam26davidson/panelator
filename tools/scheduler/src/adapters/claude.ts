@@ -20,7 +20,7 @@ export function claudeResult(events: unknown[]): Rec | null {
 
 function buildCommand(run: ClaudeStageRun): Command {
   const argv = [
-    "claude", "-p", run.prompt,
+    "claude", "-p",
     "--output-format", "stream-json", "--verbose",
     "--model", run.model,
     "--max-turns", String(run.bounds.max_turns),
@@ -45,7 +45,8 @@ function buildCommand(run: ClaudeStageRun): Command {
   argv.push("--add-dir", dirname(run.resultPath));
   argv.push("--allowedTools", [...tools, writeResult].join(","));
   if(run.conversation)argv.push('--tools','Read,Glob,Grep,Write,Edit');
-  return { argv, env: { CI: "true", CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(run.bounds.timeout_min * 60_000) } };
+  // The prompt goes on stdin: a standing agent's input can pass the 128 KiB a single argument may hold (spawn E2BIG).
+  return { argv, stdin: run.prompt, env: { CI: "true", CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(run.bounds.timeout_min * 60_000) } };
 }
 
 const isRetry = (e: Rec): boolean => e.type === "system" && e.subtype === "api_retry";

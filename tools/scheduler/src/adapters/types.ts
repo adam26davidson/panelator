@@ -52,6 +52,8 @@ export interface Judgement {
 export interface Command {
   argv: string[];
   env: Record<string, string>;
+  /** Written to the child's stdin; a prompt in argv fails with E2BIG past Linux's 128 KiB per-argument limit. */
+  stdin?: string;
 }
 
 export interface Adapter {
