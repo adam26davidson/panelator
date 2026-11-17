@@ -1,0 +1,14 @@
+name: questions_decide_yourself
+goal: autonomy
+description: Questions the check returned to the asker to decide
+unit: questions
+direction: higher
+introduced: 2026-10-28
+rationale: >-
+  When the question check returns a question to the stage that asked it, the system avoided bothering
+  the maintainer, but it also means the asker wasted a run on a question it should not have asked.
+  Counting these returns beside the questions sent shows how the check is behaving: a high count with
+  few questions sent means the check is doing its work, and a low count with many questions sent
+  suggests the threshold is too lenient. The design uses it to tune the question check threshold.
+query: |-
+  SELECT date(at, 'weekday 0', '-6 days') AS bucket, count(*) AS value, count(*) AS n FROM events WHERE kind = 'question' AND json_extract(payload, '$.event') = 'checked' AND json_extract(payload, '$.verdict') = 'decide_yourself' AND at >= :from AND at < :to GROUP BY bucket

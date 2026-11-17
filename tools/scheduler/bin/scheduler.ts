@@ -31,6 +31,10 @@ import {undoAction} from '../src/actions/undo.ts';
 import {loadCatalogue,profileNames} from '../src/credentials/catalogue.ts';
 import {storeFromConfig,appPrivateKey} from '../src/credentials/store.ts';
 import {credCommand} from '../src/credentials/commands.ts';
+import {loadMetricDefinitions,assertReadOnlySelect} from '../src/metrics/definitions.ts';
+import {computeMetrics,historyRange,recordSnapshot} from '../src/metrics/compute.ts';
+import {formatReport} from '../src/metrics/format.ts';
+import {openIndex} from '../src/events/index.ts';
 
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
@@ -53,12 +57,12 @@ function fail(reason: string): never {
 }
 
 const credStore=storeFromConfig(cfg);
-const {registry,parameters,levels,catalogue}=(()=>{try {
+const {registry,parameters,levels,catalogue,metrics}=(()=>{try {
   const kinds=registryActionsCheck(join(agentsDir,'actions.yaml'));
   const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,kinds);
   const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),cfg,registry));
   const catalogue=loadCatalogue(join(agentsDir,'credentials.yaml'),{profiles:profileNames(agentsDir),agents:Object.keys(registry)});
-  return {registry,parameters,levels:loadActionLevels(join(agentsDir,'actions.yaml')),catalogue};
+  return {registry,parameters,levels:loadActionLevels(join(agentsDir,'actions.yaml')),catalogue,metrics:loadMetricDefinitions(join(agentsDir,'metrics'))};
 }catch(e){fail((e as Error).message);}})();
 await initializeAgents(paths,registry,parameters,new Date());
 const actionLog=new ActionLog(paths.actionsLog,paths);
@@ -70,6 +74,29 @@ if(args[0]==='events'&&args[1]==='backfill') {
   const counts=await backfillEvents(paths,rec=>serviceLog.write(rec));
   console.log(JSON.stringify(counts,null,2));
   process.exit(0);
+}
+if(args[0]==='metrics'||(args[0]==='events'&&args[1]==='query')) {
+  // Spec 027 AC-6: the maintainer's view; the index opens read-only and only --snapshot records an event.
+  try {
+    if(args[0]==='events') {
+      if(!args[2])throw new Error('usage: events query "<sql>"');
+      assertReadOnlySelect(args[2]);
+      const db=openIndex(paths,{readOnly:true});
+      for(const row of db.prepare(args[2]).all())console.log(JSON.stringify(row));
+    } else if(args[1]==='show') {
+      const def=metrics[args[2]];if(!def)throw new Error(`unknown metric ${args[2]}`);
+      const db=openIndex(paths,{readOnly:true});
+      const report=computeMetrics(db,metrics,{...historyRange(db,def,new Date()),names:[def.name]});
+      console.log(JSON.stringify({definition:def,history:report.metrics[0]?.buckets},null,2));
+    } else if(!args[1]||args[1].startsWith('--')) {
+      const weeks=Number(flag('--weeks')??12);if(!Number.isInteger(weeks)||weeks<1)throw new Error('--weeks must be a positive integer');
+      const to=new Date(),from=new Date(to.getTime()-weeks*7*86400000),db=openIndex(paths,{readOnly:true});
+      const report=computeMetrics(db,metrics,{from,to,includeRetired:has('--all')});
+      if(has('--snapshot'))await recordSnapshot(paths,report);
+      console.log(has('--json')?JSON.stringify(report,null,2):formatReport(report));
+    } else throw new Error('usage: metrics [--weeks n] [--json] [--snapshot] [--all]|show <name>; events backfill|query "<sql>"');
+    process.exit(0);
+  }catch(e){console.error((e as Error).message);process.exit(1);}
 }
 if(args[0]==='quota') {
   // Spec 013 AC-10: the quota book, with the claims and agents waiting on it.
