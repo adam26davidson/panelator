@@ -52,3 +52,15 @@
   max: 24h
   mode: auto
   description: Length of a Claude subscription session window, from its first run (spec 013).
+- name: firmware.soak_hours
+  type: duration
+  default: 72h
+  min: 12h
+  max: 30d
+  mode: auto
+  description: How long a beta firmware build must run on the test board, from its first passing HIL result on main, before it is promoted to stable (spec 070 AC-10).
+- name: firmware.promotion_enabled
+  type: boolean
+  default: true
+  mode: auto
+  description: Whether the scheduler promotes beta firmware to stable; a standing agent that sees a regression in a beta build may hold promotion, and the maintainer may lock it (spec 070 AC-10).

@@ -1,6 +1,6 @@
 import type { Octokit } from "octokit";
 import type { IssueData, LabelEvent } from "../types.ts";
-import type { CheckRun, CheckSummary, IssueComment, PullRequestInfo } from "./types.ts";
+import type { CheckRun, CheckRunDetail, CheckSummary, IssueComment, PullRequestInfo, ReleaseInfo } from "./types.ts";
 import { cleanJobLog } from "./job-log.ts";
 
 type Rec = Record<string, unknown>;
@@ -184,6 +184,42 @@ export class GitHubClient {
     if (failed.length) return { status: "failed", runs, failed };
     if (missing.length || considered.some((r) => r.status !== "completed") || considered.length === 0) return { status: "pending", runs, failed };
     return { status: "green", runs, failed };
+  }
+
+  /** Spec 070 AC-2, AC-9: every check run of one name on a commit (not only the latest), with its output text; full pagination. */
+  async checkRunsNamed(sha: string, name: string): Promise<CheckRunDetail[]> {
+    let total = 0;
+    const raw = await this.octokit.paginate("GET /repos/{owner}/{repo}/commits/{ref}/check-runs", { ...this.base, ref: sha, check_name: name, filter: "all", per_page: 100 }, (response) => {
+      total = response.data.total_count;
+      return response.data;
+    });
+    if (raw.length !== total) throw new Error(`check runs incomplete: got ${raw.length}, server reports ${total}`);
+    return raw.map((r) => ({
+      id: Number(r.id), name: r.name, status: r.status, conclusion: r.conclusion ?? null, completed_at: r.completed_at ?? null,
+      html_url: String(r.html_url ?? ""), output_text: r.output?.text ?? null,
+    }));
+  }
+
+  /** Spec 070 AC-8: every release, full pagination (process-spec 6.4), drafts left out. */
+  async listReleases(): Promise<ReleaseInfo[]> {
+    const raw = (await this.octokit.paginate("GET /repos/{owner}/{repo}/releases", { ...this.base, per_page: 100 })) as Rec[];
+    return raw.filter((r) => !r.draft).map((r) => ({ id: Number(r.id), tag: String(r.tag_name), prerelease: Boolean(r.prerelease), published_at: String(r.published_at ?? r.created_at ?? ""), url: String(r.html_url ?? "") }));
+  }
+
+  /** Spec 070 AC-8: the commit a tag points at; an annotated tag is peeled. */
+  async resolveTag(tag: string): Promise<string> {
+    const { data } = await this.octokit.request("GET /repos/{owner}/{repo}/git/ref/{+ref}", { ...this.base, ref: `tags/${tag}` });
+    let obj = data.object as { type: string; sha: string };
+    for (let i = 0; obj.type === "tag" && i < 5; i++) {
+      const t = await this.octokit.request("GET /repos/{owner}/{repo}/git/tags/{tag_sha}", { ...this.base, tag_sha: obj.sha });
+      obj = t.data.object as { type: string; sha: string };
+    }
+    return obj.sha;
+  }
+
+  /** Spec 070 AC-10, AC-12: the channel is the release's prerelease flag; nothing else of the release changes. */
+  async setReleasePrerelease(id: number, prerelease: boolean): Promise<void> {
+    await this.octokit.request("PATCH /repos/{owner}/{repo}/releases/{release_id}", { ...this.base, release_id: id, prerelease, request: { retries: 0 } });
   }
 
   async jobLogExcerpt(jobId: number, lines = 200): Promise<string> {

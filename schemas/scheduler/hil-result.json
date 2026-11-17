@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hil-result.json",
+  "type": "object",
+  "required": [
+    "outcome",
+    "kind",
+    "sha",
+    "run_id",
+    "board",
+    "tests",
+    "log"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "outcome": {
+      "enum": [
+        "pass",
+        "fail",
+        "bricked",
+        "absent"
+      ]
+    },
+    "kind": {
+      "enum": [
+        "pr",
+        "main",
+        "soak"
+      ]
+    },
+    "sha": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "integer"
+    },
+    "board": {
+      "type": "object",
+      "required": [
+        "status",
+        "firmware_sha",
+        "uptime_s",
+        "resets",
+        "free_heap",
+        "free_psram"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "ok",
+            "bricked",
+            "absent"
+          ]
+        },
+        "firmware_sha": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uptime_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "resets": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "free_heap": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "free_psram": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "status",
+          "duration_ms"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "fail",
+              "skip"
+            ]
+          },
+          "duration_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "reason": {
+      "type": "string"
+    },
+    "log": {
+      "type": "string",
+      "maxLength": 32768
+    }
+  }
+}

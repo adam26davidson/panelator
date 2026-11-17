@@ -3,6 +3,7 @@ export const EVENT_KINDS = [
   "run.ended", "chain.transition", "issue.eligible", "issue.claimed", "issue.released", "merge", "pr.opened", "ci.check",
   "review.result", "finding.queued", "finding.triaged", "action", "question", "pause.started", "pause.ended", "block.started", "block.ended", "slots.sample",
   "maintainer.contact", "parameter.changed", "agent.run", "issue.filed", "reflection.plan", "metrics.snapshot", "aws.cost",
+  "hil.result", "board.changed", "firmware.published", "firmware.promoted", "firmware.demoted",
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 

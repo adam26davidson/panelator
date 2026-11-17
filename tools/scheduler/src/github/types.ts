@@ -31,3 +31,23 @@ export interface IssueComment {
   at: string;
   body: string;
 }
+
+/** Spec 070: a check run with its output, as the HIL check is read. */
+export interface CheckRunDetail {
+  id: number;
+  name: string;
+  status: string;
+  conclusion: string | null;
+  completed_at: string | null;
+  html_url: string;
+  output_text: string | null;
+}
+
+/** Spec 070 AC-8: a GitHub Release as the scheduler reads it. */
+export interface ReleaseInfo {
+  id: number;
+  tag: string;
+  prerelease: boolean;
+  published_at: string;
+  url: string;
+}

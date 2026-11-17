@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "firmware-release.json",
+  "type": "object",
+  "required": [
+    "tag",
+    "sha",
+    "published_at",
+    "channel",
+    "hil",
+    "soak",
+    "promoted_at",
+    "promoted_by",
+    "demoted_at",
+    "criteria"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "tag": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sha": {
+      "type": "string",
+      "minLength": 1
+    },
+    "published_at": {
+      "type": "string"
+    },
+    "channel": {
+      "enum": [
+        "beta",
+        "stable"
+      ]
+    },
+    "hil": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "conclusion",
+            "check_run_id",
+            "at"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "conclusion": {
+              "type": "string"
+            },
+            "check_run_id": {
+              "type": "integer"
+            },
+            "at": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "soak": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "started_at",
+            "results",
+            "last_at",
+            "resets",
+            "clean"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "started_at": {
+              "type": "string"
+            },
+            "results": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "last_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "resets": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "clean": {
+              "type": "boolean"
+            }
+          }
+        }
+      ]
+    },
+    "promoted_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "promoted_by": {
+      "enum": [
+        "scheduler",
+        "maintainer",
+        "superseded",
+        null
+      ]
+    },
+    "demoted_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "criteria": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "boolean"
+          }
+        }
+      ]
+    }
+  }
+}

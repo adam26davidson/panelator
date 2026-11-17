@@ -39,7 +39,12 @@
             "issue.filed",
             "reflection.plan",
             "metrics.snapshot",
-            "aws.cost"
+            "aws.cost",
+            "hil.result",
+            "board.changed",
+            "firmware.published",
+            "firmware.promoted",
+            "firmware.demoted"
           ]
         },
         "issue": {

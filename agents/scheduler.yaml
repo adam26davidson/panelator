@@ -17,7 +17,13 @@ rescue_model: claude-fable-5-1   # strongest model, for rescue attempts (spec 00
 notify_rate_limit_hours: 4
 bounds:
   design_revisions: 2        # design stage reruns after a merge whose gate still fails (spec 029 AC-4)
+  board_bricks: 2            # PR heads of one issue that may brick the test board before the issue is abandoned (spec 070 AC-5)
 required_checks: [test]
+firmware:                    # spec 070 AC-1: the test board gate and the beta to stable promotion; remove the block to turn it off
+  paths: ["firmware/**"]
+  hil_check: hil
+  hil_workflow: hil.yml
+  release_tag_prefix: firmware-v
 state_dir: ~/.local/state/panelator-scheduler
 labels:
   priority: priority

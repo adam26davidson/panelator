@@ -65,3 +65,23 @@ describe("loadConfig", () => {
     expect(c.app.private_key_path).not.toContain("~");
   });
 });
+
+describe("firmware block (spec 070 AC-1)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cfg-"));
+  const p = join(dir, "s.yaml");
+  const base = "repo: a/b\nmaintainer: a\napp: {bot_login: bot}\n";
+  it("is absent without the block, defaulted with it, and on in the committed config", () => {
+    writeFileSync(p, base);
+    expect(loadConfig(p).firmware).toBeUndefined();
+    expect(loadConfig(p).bounds.board_bricks).toBe(2);
+    writeFileSync(p, base + "firmware: {}\n");
+    expect(loadConfig(p).firmware).toEqual({ paths: ["firmware/**"], hil_check: "hil", hil_workflow: "hil.yml", release_tag_prefix: "firmware-v" });
+    expect(loadConfig(defaultConfigPath).firmware?.hil_check).toBe("hil");
+  });
+  it("rejects unknown keys, empty paths, empty names and bad bounds", () => {
+    for (const bad of ["firmware: {extra: 1}", "firmware: {paths: []}", "firmware: {hil_check: ''}", "firmware: []", "bounds: {board_bricks: 0}", "bounds: {board_bricks: 1.5}"]) {
+      writeFileSync(p, base + bad + "\n");
+      expect(() => loadConfig(p), bad).toThrow(/firmware|board_bricks/);
+    }
+  });
+});

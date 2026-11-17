@@ -4,6 +4,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 
+export interface FirmwareConfig { paths: string[]; hil_check: string; hil_workflow: string; release_tag_prefix: string }
+
 export interface Config {
   telegram?: {credentials_path:string;long_poll_timeout_s:number};
   repo: string;
@@ -16,7 +18,9 @@ export interface Config {
   /** the strongest model, used for rescue attempts (spec 006 AC-1) */
   rescue_model: string;
   notify_rate_limit_hours: number;
-  bounds: { design_revisions: number };
+  bounds: { design_revisions: number; board_bricks: number };
+  /** Spec 070 AC-1: absent means no firmware handling. */
+  firmware?: FirmwareConfig;
   /** check-run names the verify stage waits on; [] means every check run on the head SHA */
   required_checks: string[];
   state_dir: string;
@@ -76,6 +80,11 @@ export function loadConfig(path: string): Config {
   if (typeof designRevisions !== "number" || !Number.isInteger(designRevisions) || designRevisions < 1) {
     throw new Error("config bounds.design_revisions must be a positive integer");
   }
+  const boardBricks = (bounds as Record<string, unknown>).board_bricks ?? 2;
+  if (typeof boardBricks !== "number" || !Number.isInteger(boardBricks) || boardBricks < 1) {
+    throw new Error("config bounds.board_bricks must be a positive integer");
+  }
+  const firmware = loadFirmware(raw.firmware);
   const cfg: Config = {
     telegram:{credentials_path:expandHome(String(tg.credentials_path??'~/.config/panelator/telegram.json')),long_poll_timeout_s:timeout},
     repo: str("repo"),
@@ -92,7 +101,8 @@ export function loadConfig(path: string): Config {
     retry_cost_limit_usd: num("retry_cost_limit_usd", 1),
     rescue_model: typeof raw.rescue_model === "string" && raw.rescue_model ? raw.rescue_model : "claude-fable-5-1",
     notify_rate_limit_hours: num("notify_rate_limit_hours", 4),
-    bounds: { design_revisions: designRevisions },
+    bounds: { design_revisions: designRevisions, board_bricks: boardBricks },
+    ...(firmware ? { firmware } : {}),
     required_checks: Array.isArray(raw.required_checks) ? (raw.required_checks as string[]) : [],
     state_dir: expandHome(String(raw.state_dir ?? "~/.local/state/panelator-scheduler")),
     labels: {
@@ -109,4 +119,20 @@ export function loadConfig(path: string): Config {
   if (cfg.poll_interval_s < 5) throw new Error("config poll_interval_s must be >= 5");
   if (!cfg.app.bot_login) throw new Error("config app.bot_login is required");
   return cfg;
+}
+
+/** Spec 070 AC-1: the optional `firmware` block with its defaults; any malformed key is a config error. */
+function loadFirmware(raw: unknown): FirmwareConfig | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("config firmware must be an object");
+  const f = raw as Record<string, unknown>;
+  if (Object.keys(f).some((k) => !["paths", "hil_check", "hil_workflow", "release_tag_prefix"].includes(k))) throw new Error("config firmware unknown key");
+  const paths = f.paths ?? ["firmware/**"];
+  if (!Array.isArray(paths) || !paths.length || paths.some((p) => typeof p !== "string" || !p)) throw new Error("config firmware.paths must be a non-empty list of globs");
+  const name = (k: string, d: string): string => {
+    const v = f[k] ?? d;
+    if (typeof v !== "string" || !v) throw new Error(`config firmware.${k} must be a non-empty string`);
+    return v;
+  };
+  return { paths: paths as string[], hil_check: name("hil_check", "hil"), hil_workflow: name("hil_workflow", "hil.yml"), release_tag_prefix: name("release_tag_prefix", "firmware-v") };
 }

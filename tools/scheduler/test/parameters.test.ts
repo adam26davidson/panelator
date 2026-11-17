@@ -62,3 +62,16 @@ it('param mode records in the parameter history only and prints the new state',a
  expect([await readFile(paths.parameters,'utf8'),await readFile(paths.parametersHistory,'utf8')]).toEqual(before);
  expect(existsSync(paths.actionsLog)).toBe(false);
 });
+
+it('defines the firmware parameters of spec 070 AC-1', async()=>{
+  const {loadParameterDefinitions}=await import('../src/parameters/definitions.ts');
+  const {agentsDir,defaultConfigPath,loadConfig}=await import('../src/config.ts');
+  const {loadRegistry}=await import('../src/standing/registry.ts');
+  const {EVENT_NAMES}=await import('../src/standing/events.ts');
+  const {registryActionsCheck}=await import('../src/actions/index.ts');
+  const {join}=await import('node:path');
+  const reg=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,registryActionsCheck(join(agentsDir,'actions.yaml')));
+  const defs=loadParameterDefinitions(join(agentsDir,'parameters.yaml'),loadConfig(defaultConfigPath),reg);
+  expect(defs['firmware.soak_hours']).toMatchObject({type:'duration',default:'72h',min:'12h',max:'30d',mode:'auto'});
+  expect(defs['firmware.promotion_enabled']).toMatchObject({type:'boolean',default:true,mode:'auto'});
+});

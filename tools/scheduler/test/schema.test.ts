@@ -376,3 +376,21 @@ describe("spec 060 schemas", () => {
     expect(validate("blocked", { ...base, condition: { kind: "paths", paths: [], main_sha: "a" } }).ok).toBe(false);
   });
 });
+
+describe("firmware schemas (spec 070)", () => {
+  it("accepts the board condition, board_bricks, and the board state", () => {
+    const blocked = { issue: 1, state: {}, worktree: "w", since: "s", pr: { number: 2, head_sha: "x" } };
+    expect(validate("blocked", { ...blocked, condition: { kind: "board", main_sha: "abc" } }).ok).toBe(true);
+    expect(validate("blocked", { ...blocked, condition: { kind: "board" } }).ok).toBe(false);
+    expect(validate("escalation-ledger", { ...ledgerOf(initialChainState(1)), board_bricks: 1 }).ok).toBe(true);
+    const board = { status: "ok", since: null, reason: null, check_run_id: null, pr: null, confirmed_at: null, confirmed_by: null };
+    expect(validate("board-state", board).ok).toBe(true);
+    expect(validate("board-state", { ...board, status: "dead" }).ok).toBe(false);
+  });
+  it("validates a release record and a HIL result", () => {
+    const rel = { tag: "firmware-v1", sha: "a", published_at: "t", channel: "beta", hil: null, soak: null, promoted_at: null, promoted_by: null, demoted_at: null, criteria: null };
+    expect(validate("firmware-release", rel).ok).toBe(true);
+    expect(validate("firmware-release", { ...rel, channel: "gamma" }).ok).toBe(false);
+    expect(validate("hil-result", { outcome: "pass" }).ok).toBe(false);
+  });
+});

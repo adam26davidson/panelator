@@ -42,6 +42,13 @@ export interface StatePaths {
   /** Spec 064: the disk sweep's report, and the patches it saves of a worktree's work before removing it. */
   diskSweep: string;
   patchesSweep: string;
+  /** Spec 070: the test board's state, the recorded firmware releases, and the HIL check runs already read. */
+  board: string;
+  firmwareReleases: string;
+  firmwareHilRead: string;
+  firmwareListedAt: string;
+  /** Spec 070 AC-7: when the maintainer was last told the board is down, and whether the one reminder was sent. */
+  boardAlert: string;
 }
 
 export function statePaths(root: string): StatePaths {
@@ -79,9 +86,14 @@ export function statePaths(root: string): StatePaths {
     childrenFailures: join(root, "children", "failures.json"),
     diskSweep: join(root, "disk-sweep.json"),
     patchesSweep: join(root, "patches", "sweep"),
+    board: join(root, "board.json"),
+    firmwareReleases: join(root, "firmware", "releases.json"),
+    firmwareHilRead: join(root, "firmware", "hil-read.json"),
+    boardAlert: join(root, "board-alert.json"),
+    firmwareListedAt: join(root, "firmware", "listed-at.json"),
   };
 }
 
 export async function ensureStateDirs(p: StatePaths): Promise<void> {
-  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.blocked, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), p.agents, p.events, dirname(p.eligibleMarks)]) await mkdir(d, { recursive: true });
+  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.blocked, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), dirname(p.firmwareReleases), p.agents, p.events, dirname(p.eligibleMarks)]) await mkdir(d, { recursive: true });
 }

@@ -121,6 +121,11 @@
       "type": "integer",
       "minimum": 0,
       "description": "C7: releases for repeated chain errors."
+    },
+    "board_bricks": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Spec 070: PR heads of this issue whose firmware bricked the test board."
     }
   }
 }

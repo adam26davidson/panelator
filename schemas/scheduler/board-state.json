@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "board-state.json",
+  "type": "object",
+  "required": [
+    "status",
+    "since",
+    "reason",
+    "check_run_id",
+    "pr",
+    "confirmed_at",
+    "confirmed_by"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "enum": [
+        "ok",
+        "absent",
+        "bricked",
+        "unknown"
+      ]
+    },
+    "since": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "check_run_id": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "pr": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "confirmed_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "confirmed_by": {
+      "enum": [
+        "maintainer",
+        null
+      ]
+    }
+  }
+}
