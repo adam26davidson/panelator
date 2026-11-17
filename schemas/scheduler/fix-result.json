@@ -88,7 +88,10 @@
               {
                 "required": [
                   "spec_path"
-                ]
+                ],
+                "properties": {
+                  "spec_path": true
+                }
               }
             ]
           },
