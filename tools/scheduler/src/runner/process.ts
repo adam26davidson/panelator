@@ -82,11 +82,11 @@ export function spawnBounded(o: SpawnOptions): Promise<SpawnResult> {
     };
 
     const timer = setTimeout(() => kill("timeout"), o.timeoutMs);
-    child.stdout.on("data", (c: Buffer) => {
+    child.stdout!.on("data", (c: Buffer) => {
       o.onStdoutChunk(c);
       if (o.killOnEvent?.()) kill("event");
     });
-    child.stderr.on("data", (c: Buffer) => o.onStderrChunk?.(c));
+    child.stderr!.on("data", (c: Buffer) => o.onStderrChunk?.(c));
     child.on("error", (e) => {
       clearTimeout(timer);
       clearTimeout(killTimer);
