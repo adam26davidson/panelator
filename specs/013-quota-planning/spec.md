@@ -180,8 +180,8 @@ directory, written under the state lock.
 
 **Model-specific limits**
 
-- AC-9. Given a strong-tier Claude stage (an ordinary chain stage or a
-  standing agent, not a rescue) whose model is blocked by a `model`-scope
+- AC-9. Given a strong-tier Claude stage (an ordinary chain stage, a
+  rescue or a standing agent) whose model is blocked by a `model`-scope
   limit only,
   `quota.model_limit_fallback` true (default) and
   `quota.model_limit_fallback_model` (default `claude-opus-5-5`) not
@@ -195,10 +195,9 @@ directory, written under the state lock.
   apply. Given the parameter false, then the stage waits as before. A
   standard-tier stage whose model is blocked runs on its own `fallback`
   when that is not blocked, without a 429 first.
-  A rescue never takes this fallback: the design (section 4, a protected
-  statement) makes a rescue "one more attempt on the strongest model", and
-  the maintainer's decision does not cover rescues, so a rescue under a
-  Fable limit is postponed as spec 006 AC-27 says. When a standing agent is
+  A rescue takes this fallback too (the design's section 4: "the strongest
+  available model"; ADR 0003 amendment 2026-11-17), never its stage's own
+  `fallback`, and its run id ends in `-rescue-fallback`. When a standing agent is
   moved before launch, its state's `running.run_id` is the id the run
   actually has (`<run id>-fallback`), so a restart finds the run's unit.
   Default allowed, as the maintainer decided on 2026-10-29

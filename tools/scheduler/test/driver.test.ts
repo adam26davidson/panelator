@@ -894,18 +894,35 @@ describe("driver: quota (spec 013)", () => {
     expect(usage).toEqual(["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5-5"]);
   }, 60_000);
 
-  it("never moves a rescue to the fallback model: it postpones under a Fable limit (AC-9, spec 006 AC-27)", async () => {
-    const w = await world({ "claude-fable-5-1": [FABLE] }, "2026-10-29T07:15:00Z");
+  it("moves a rescue to the next-best Claude model under a Fable limit, then launches there directly (AC-9; ADR 0003 amendment 2026-11-17)", async () => {
+    const w = await world({ "claude-fable-5-1": [FABLE], "claude-opus-5-5": [plan, plan] }, "2026-10-29T07:15:00Z");
     const c = at(w.claim, { stage: "plan", rescueRun: true, rescues: 1 });
     await writeClaim(w.paths, c);
     let r = await step(w.deps, c);
-    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5"]);
+    expect(r.claim.state).toMatchObject({ stage: "implement", rescueRun: false, rescues: 1 });
+    expect(w.logs.filter((l) => l.kind === "quota-fallback")).toEqual([{ kind: "quota-fallback", issue: 7, stage: "plan", from: "claude-fable-5-1", to: "claude-opus-5-5", key: "claude:fable" }]);
+    expect(w.logs.filter((l) => l.kind === "stage").at(-1)).toMatchObject({ outcome: "ok", rescue: true, fallback: "claude-opus-5-5", run_id: expect.stringMatching(/-rescue-fallback$/) });
+    // Started again while the Fable limit holds, the rescue launches on Opus without a 429 first.
+    w.setNow("2026-10-29T07:20:00Z");
+    r = await step(w.deps, at(r.claim, { stage: "plan", rescueRun: true }));
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5", "plan:claude-opus-5-5"]);
+    expect(r.claim.state).toMatchObject({ stage: "implement", rescueRun: false, rescues: 1 });
+    expect(w.logs.filter((l) => l.kind === "stage").at(-1)).toMatchObject({ outcome: "ok", rescue: true, fallback: "claude-opus-5-5", run_id: expect.stringMatching(/-rescue-fallback$/) });
+  }, 60_000);
+
+  it("postpones a rescue when the fallback model is limited too (AC-9, spec 006 AC-27)", async () => {
+    const w = await world({ "claude-fable-5-1": [FABLE], "claude-opus-5-5": ["You've hit your Opus limit · resets 9pm (UTC)"] }, "2026-10-29T07:15:00Z");
+    const c = at(w.claim, { stage: "plan", rescueRun: true, rescues: 1 });
+    await writeClaim(w.paths, c);
+    let r = await step(w.deps, c);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5"]);
     expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "plan", rescueRun: true, rescues: 1, postponedUntil: "2026-10-29T07:30:00.000Z" });
-    // Started again while the Fable limit holds, the rescue waits rather than run on Opus.
+    // Started again while both limits hold, the rescue waits and runs nothing.
     r = await step(w.deps, at(r.claim, { stage: "plan", postponedUntil: null }));
-    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
-    expect(r.claim.state).toMatchObject({ stage: "waiting", rescueRun: true });
-    expect(w.logs.filter((l) => l.kind === "quota-fallback")).toEqual([]);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5"]);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", rescueRun: true, rescues: 1 });
+    expect(w.logs.filter((l) => l.kind === "quota-wait").at(-1)).toMatchObject({ stage: "plan", key: "claude:fable" });
   }, 60_000);
 
   it("caps a session wait at quota.session_window as set in the parameter store (AC-1, AC-8)", async () => {

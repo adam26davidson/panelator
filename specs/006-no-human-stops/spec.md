@@ -87,7 +87,8 @@ AC-10 second sentence, AC-13)
 
   when the event is processed, then the chain runs a **rescue**. The stuck
   stage (a fix stage when the fix loop is exhausted) runs once more on the
-  rescue model from chain configuration, in a fresh session. Its input is the
+  rescue model from chain configuration (or spec 013 AC-9's fallback model
+  when the rescue model is limited), in a fresh session. Its input is the
   history (AC-7). No `needs-human` label is applied. A bound hit by the spec
   stage or on a spec PR follows AC-5's spec-track rule instead.
 - AC-2. **A second bound triggers a re-plan.** Given a rescue has run on the
@@ -597,7 +598,9 @@ AC-10 second sentence, AC-13)
   - a failure postponed for quota is handled before every other failure rule:
     in a rescue run it postpones the rescue, which stays a rescue and is not
     spent. (Amended by spec 013: the postponement ends at the limit's reset.
-    A rescue never takes spec 013's model-limit fallback.)
+    A rescue takes spec 013's model-limit fallback under AC-9's conditions,
+    like any strong-tier stage; otherwise it is postponed: ADR 0003
+    amendment 2026-11-17.)
 
   The ended states are `done`, `released`, `abandoned` and `paused`.
 - AC-28. **End-to-end chains are recorded.** Recorded end-to-end tests (fake

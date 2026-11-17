@@ -700,11 +700,12 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
   const tier = state.rescueRun ? "strong" : def.tier;
   let firstRun: { model: string; harness: Harness } | null = null;
   if (!state.conversation && !state.resumeSession) {
-    // A rescue is "one more attempt on the strongest model" (design section 4): never the model-limit fallback.
+    // A rescue is "one more attempt on the strongest available model" (design section 4; ADR 0003 amendment
+    // 2026-11-17): it takes the model-limit fallback, never the stage's own fallback.
     const launch = await planLaunch(deps.paths, {
       what, stage, tier, harness: primaryHarness, model: primaryModel,
       fallback: state.rescueRun ? undefined : def.fallback, independent: state.rescueRun ? false : def.independent,
-    }, state.rescueRun ? { ...quota, modelFallback: false } : quota, deps.now());
+    }, quota, deps.now());
     if (launch.kind === "wait") {
       deps.log({ kind: launch.defer ? "quota-defer" : "quota-wait", issue: claim.issue, stage, model: primaryModel, key: launch.key, until: launch.until, reason: launch.reason, ...launch.defer });
       return { type: "stage_failed", stage, reason: `quota: ${launch.reason}`, postpone: true, until: launch.until };
@@ -845,20 +846,20 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
     return out.outcome==='ok'?{type:'stage_ok',stage,result:out.result} as ChainEvent:{type:'stage_failed',stage,reason:out.reason??out.outcome};
   }
   if (out.outcome !== "ok") {
-    // A rescue is never downgraded: like any strong-tier stage it is postponed on a rate limit (AC-27), and it never
-    // takes the model-limit fallback of spec 013 AC-9.
+    // A rescue is a strong-tier stage: on a rate limit it takes spec 013 AC-9's model-limit fallback (ADR 0003
+    // amendment 2026-11-17) or is postponed (AC-27), never the stage's own fallback.
     const retryDef: StageDefinition = state.rescueRun ? { ...def, tier: "strong", independent: false, fallback: undefined } : def;
     if (firstRun) {
       // Already on the fallback: only afterFallback judges it (AC-26).
       if (afterFallback(retryDef, out.judgement).kind === "postpone") return postponed(out.reason ?? out.outcome);
     } else {
-      const toModel = state.rescueRun ? null : modelLimitFallback(await readBook(deps.paths), { tier: retryDef.tier, harness: primaryHarness, model: primaryModel }, quota, deps.now());
+      const toModel = modelLimitFallback(await readBook(deps.paths), { tier: retryDef.tier, harness: primaryHarness, model: primaryModel }, quota, deps.now());
       const retry = retryDecision(retryDef, out.judgement, out.usage.cost_usd ?? 0, deps.cfg.retry_cost_limit_usd, toModel);
       if (retry.kind === "postpone") return postponed(out.reason ?? out.outcome);
       if (retry.kind === "fallback") {
         if (retry.model === toModel) deps.log({ kind: "quota-fallback", issue: claim.issue, stage, from: primaryModel, to: toModel, key: out.limit?.key });
-        out = await exec(retry.model, retry.harness, "fallback");
-        deps.log({ kind: "stage", issue: claim.issue, stage, attempt, outcome: out.outcome, reason: out.reason, run_id: out.runId, fallback: retry.model });
+        out = await exec(retry.model, retry.harness, state.rescueRun ? "rescue-fallback" : "fallback");
+        deps.log({ kind: "stage", issue: claim.issue, stage, attempt, outcome: out.outcome, reason: out.reason, run_id: out.runId, rescue: state.rescueRun || undefined, fallback: retry.model });
         await rejectHostRefused(out);
         if (out.limit) deps.log({ kind: "quota-limit", issue: claim.issue, stage, run_id: out.runId, key: out.limit.key, scope: out.limit.scope, resets_at: out.limit.resets_at, source: out.limit.source });
         // Only afterFallback judges the fallback run (AC-26).
