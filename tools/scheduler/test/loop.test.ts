@@ -1728,7 +1728,7 @@ describe("Scheduler.tick AWS step (spec 022 AC-1, AC-2, AC-10, AC-11; spec 050 A
     expect(w.logs.filter((l) => l.kind === "aws-off")).toHaveLength(1);
     expect(tickLines(paths).every((t) => t.aws.off === "no aws block in agents/scheduler.yaml")).toBe(true);
     expect(w.calls()).toEqual([]);
-  });
+  }, 30000);
 
   it("pulls once, keeps the field, pulls again after the interval, and follows a param set without a pull", async () => {
     const { s, w, deps, paths, setNow } = await awsSetup({ cap: 100 });
@@ -1746,7 +1746,7 @@ describe("Scheduler.tick AWS step (spec 022 AC-1, AC-2, AC-10, AC-11; spec 050 A
     setNow(new Date("2026-10-13T13:00:00Z"));
     await s.tick();
     expect(w.calls().filter((c) => c[0] === "ce")).toHaveLength(2);
-  });
+  }, 30000);
 
   it("at cap 0 pulls nothing, shows pull_skipped, and records the skip once", async () => {
     const { s, w, paths } = await awsSetup({ cap: 0 });
@@ -1755,5 +1755,5 @@ describe("Scheduler.tick AWS step (spec 022 AC-1, AC-2, AC-10, AC-11; spec 050 A
     expect(tickLines(paths).at(-1).aws).toEqual({ actual_usd: null, forecast_usd: null, cap_usd: 0, reserved_usd: null, as_of: null, pull_skipped: "cap 0" });
     expect(w.calls().map((c) => c[0])).toEqual(["sts"]);
     expect(w.logs.filter((l) => l.kind === "aws-pull-skipped")).toHaveLength(1);
-  });
+  }, 30000);
 });

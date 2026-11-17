@@ -1909,8 +1909,8 @@ describe("end to end: a check failing outside the PR's scope waits for main (spe
 describe("every event kind is recorded across the recorded chains (spec 026 AC-2)", () => {
   /** Kinds with no producer yet: spec 027 adds `metrics.snapshot`, spec 028 `reflection.plan` and empties this list. */
   const NOT_YET_PRODUCED = ["metrics.snapshot", "reflection.plan"];
-  /** `aws.cost` has its producer in spec F1; the F1 and F2 contact kinds are not asserted either. */
-  const RESERVED = ["aws.cost"];
+  /** The AWS kinds (spec 022) are produced only with an `aws` block, and are asserted in aws.test.ts; the F2 contact kinds are not asserted either. */
+  const RESERVED = ["aws.cost", "aws.reserve"];
   it("finds each kind at least once in the events/ files the runs above left", () => {
     expect(worldPaths.length).toBeGreaterThan(5);
     const seen = new Set<string>();
