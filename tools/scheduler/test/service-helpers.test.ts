@@ -103,6 +103,47 @@ describe("SleepInhibitor (AC-30)", () => {
       errSpy.mockRestore();
     }
   });
+  it("logs one inhibit-unavailable record however often systemd-inhibit is missing or exits at once, and never throws", () => {
+    const handlers: Record<string, (...a: unknown[]) => void>[] = [];
+    let throwNext = false;
+    const fakeSpawn = (() => {
+      if (throwNext) throw new Error("EACCES");
+      const h: Record<string, (...a: unknown[]) => void> = {};
+      handlers.push(h);
+      return { kill: () => true, unref() {}, on(ev: string, fn: (...a: unknown[]) => void) { h[ev] = fn; } };
+    }) as never;
+    const logged: Record<string, unknown>[] = [];
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const i = new SleepInhibitor({ enabled: true, spawn: fakeSpawn, log: (r) => logged.push(r) });
+      i.acquire("issue 3");
+      handlers[0]!.error!(new Error("spawn systemd-inhibit ENOENT"));
+      i.acquire("issue 4");
+      handlers[1]!.exit!(1, null);
+      throwNext = true;
+      expect(() => i.acquire("issue 5")).not.toThrow();
+      expect(i.held).toBe(false);
+      i.release();
+      expect(logged).toEqual([
+        { kind: "inhibit-acquired", why: "issue 3" },
+        { kind: "inhibit-unavailable", error: "spawn systemd-inhibit ENOENT" },
+        { kind: "inhibit-acquired", why: "issue 4" },
+      ]);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+  it("logs one record per transition and ignores the exit its own kill causes", () => {
+    const handlers: Record<string, (...a: unknown[]) => void> = {};
+    const fakeSpawn = (() => ({ kill: () => { handlers.exit!(null, "SIGTERM"); return true; }, unref() {}, on(ev: string, fn: (...a: unknown[]) => void) { handlers[ev] = fn; } })) as never;
+    const logged: Record<string, unknown>[] = [];
+    const i = new SleepInhibitor({ enabled: true, spawn: fakeSpawn, log: (r) => logged.push(r) });
+    i.acquire("standing infra-health");
+    i.acquire("issue 3");
+    i.release();
+    i.release();
+    expect(logged).toEqual([{ kind: "inhibit-acquired", why: "standing infra-health" }, { kind: "inhibit-released" }]);
+  });
   it("does nothing when disabled", () => {
     const i = new SleepInhibitor({ enabled: false, spawn: (() => { throw new Error("no"); }) as never });
     i.acquire();
