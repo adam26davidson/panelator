@@ -15,7 +15,7 @@ import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 
 const fixtures = join(import.meta.dirname, "fixtures", "events");
 const expected = JSON.parse(readFileSync(join(fixtures, "expected.json"), "utf8")) as { from: string; to: string; metrics: Record<string, { bucket: string; value: number | null; n: number }[]> };
-const seeds = loadMetricDefinitions(join(agentsDir, "metrics"), new Date("2026-10-28"));
+const seeds = loadMetricDefinitions(join(agentsDir, "metrics"), new Date());
 
 async function fixtureState() {
   const p = statePaths(mkdtempSync(join(tmpdir(), "metrics-")));

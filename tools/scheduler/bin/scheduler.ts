@@ -32,7 +32,7 @@ import {loadCatalogue,profileNames} from '../src/credentials/catalogue.ts';
 import {storeFromConfig,appPrivateKey} from '../src/credentials/store.ts';
 import {credCommand} from '../src/credentials/commands.ts';
 import {loadMetricDefinitions,assertReadOnlySelect} from '../src/metrics/definitions.ts';
-import {computeMetrics,historyRange,recordSnapshot} from '../src/metrics/compute.ts';
+import {computeMetrics,historyRange,recordSnapshot,weekStart} from '../src/metrics/compute.ts';
 import {formatReport} from '../src/metrics/format.ts';
 import {openIndex} from '../src/events/index.ts';
 
@@ -90,7 +90,7 @@ if(args[0]==='metrics'||(args[0]==='events'&&args[1]==='query')) {
       console.log(JSON.stringify({definition:def,history:report.metrics[0]?.buckets},null,2));
     } else if(!args[1]||args[1].startsWith('--')) {
       const weeks=Number(flag('--weeks')??12);if(!Number.isInteger(weeks)||weeks<1)throw new Error('--weeks must be a positive integer');
-      const to=new Date(),from=new Date(to.getTime()-weeks*7*86400000),db=openIndex(paths,{readOnly:true});
+      const to=new Date(),from=new Date(Date.parse(weekStart(to.getTime()))-(weeks-1)*7*86400000),db=openIndex(paths,{readOnly:true});
       const report=computeMetrics(db,metrics,{from,to,includeRetired:has('--all')});
       if(has('--snapshot'))await recordSnapshot(paths,report);
       console.log(has('--json')?JSON.stringify(report,null,2):formatReport(report));
