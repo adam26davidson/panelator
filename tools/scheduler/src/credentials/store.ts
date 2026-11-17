@@ -67,7 +67,7 @@ export class CredentialStore {
   }
   async readSecret(name: string): Promise<string> {
     try {
-      return await this.run(["--user", "decrypt", this.blob(name), "-"]);
+      return await this.run(["--user", "decrypt", `--name=${name}`, this.blob(name), "-"]);
     } catch (e) {
       throw new Error(`cannot read credential ${name}: ${(e as Error).message}; run panelator-scheduler cred set ${name}`);
     }

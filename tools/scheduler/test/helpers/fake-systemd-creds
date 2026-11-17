@@ -1,23 +1,36 @@
 #!/usr/bin/env node
-// A reversible stand-in for `systemd-creds` (spec 069 section 3): the blob is the reversed bytes, base64, behind a marker.
+// A reversible stand-in for `systemd-creds` (spec 069 section 3): the blob is the embedded name and the reversed bytes, base64, behind a marker.
+// Like the real tool, the name defaults to the file's basename and decrypt fails when it differs from the name encrypted.
 // Set FAKE_SYSTEMD_CREDS_FAIL to make it exit 1.
 import { readFileSync, writeFileSync } from "node:fs";
+import { basename } from "node:path";
 if (process.env.FAKE_SYSTEMD_CREDS_FAIL) {
   console.error("fake systemd-creds: failing as asked");
   process.exit(1);
 }
 const args = process.argv.slice(2);
 const verb = args.find((a) => a === "encrypt" || a === "decrypt");
+const nameArg = args.find((a) => a.startsWith("--name="));
+const positional = args.filter((a) => !a.startsWith("--") && a !== verb);
+const nameFor = (file) => (nameArg ? nameArg.slice(7) : basename(file));
 if (verb === "encrypt") {
   const input = readFileSync(0);
-  writeFileSync(args[args.length - 1], "FAKE-CRED:" + Buffer.from(input).reverse().toString("base64"));
+  const out = positional[positional.length - 1];
+  writeFileSync(out, "FAKE-CRED:" + nameFor(out) + ":" + Buffer.from(input).reverse().toString("base64"));
 } else if (verb === "decrypt") {
-  const blob = readFileSync(args[args.length - 2], "utf8");
+  const file = positional[positional.length - 2];
+  const blob = readFileSync(file, "utf8");
   if (!blob.startsWith("FAKE-CRED:")) {
     console.error("fake systemd-creds: not a blob");
     process.exit(1);
   }
-  process.stdout.write(Buffer.from(blob.slice(10), "base64").reverse());
+  const rest = blob.slice(10);
+  const sep = rest.indexOf(":");
+  if (rest.slice(0, sep) !== nameFor(file)) {
+    console.error("Name in credential doesn't match expectations.");
+    process.exit(1);
+  }
+  process.stdout.write(Buffer.from(rest.slice(sep + 1), "base64").reverse());
 } else {
   console.error("fake systemd-creds: unknown verb");
   process.exit(2);
