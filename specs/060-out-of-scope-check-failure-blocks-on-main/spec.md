@@ -204,7 +204,7 @@ is the state of section 3's AC-4.
   runs as today, with the whole excerpt as `fixInput` (spec 056 AC-4) and
   the fix's input gaining, on these two tracks, the paragraph of AC-5. A new
   head (a fix's or a rebase's) clears `checkRerun`.
-- AC-4. Amended by [063-pipeline-stopping-finding-ranks-first](../063-pipeline-stopping-finding-ranks-first/spec.md) AC-6: the finding carries stops_pipeline: true. **A block is a pause without a question.** Given the machine blocks,
+- AC-4. Amended by [070-test-board](../070-test-board/spec.md) AC-3 and AC-5: a block for a missing HIL workflow or on the test board carries the actions those criteria name instead of this finding and notification, and a board block does not increase `blocks`. Amended by [063-pipeline-stopping-finding-ranks-first](../063-pipeline-stopping-finding-ranks-first/spec.md) AC-6: the finding carries stops_pipeline: true. **A block is a pause without a question.** Given the machine blocks,
   then the state's stage is `blocked`, the state carries `blocked: { on:
   <condition>, since, check, main_sha, blocks }` (`blocks` counting this
   issue's blocks, kept in the ledger beside the other counters), and the
@@ -253,7 +253,7 @@ is the state of section 3's AC-4.
   the verdict is applied as a fix that changed nothing (the fix is counted,
   verify runs, and today's path follows), with the history noting `block
   bound reached`.
-- AC-7. **The loop resumes a blocked issue when its condition holds.** Given
+- AC-7. Amended by [070-test-board](../070-test-board/spec.md) AC-6: a `board` condition holds when the test board's state is `ok` or `unknown`. **The loop resumes a blocked issue when its condition holds.** Given
   a `blocked/<issue>.json` record, when a tick runs after its fetch of
   `origin/main`, then the loop tests the condition against main's head:
   `main_green` holds when main's head differs from `main_sha` or the record
@@ -271,7 +271,7 @@ is the state of section 3's AC-4.
   answered resumes and before standing agents. Given it does not hold, then
   nothing is written beyond the record's check time and the tick goes on;
   a blocked record has no time ceiling (the finding is the recovery path).
-- AC-8. **The resume rebases, pushes and verifies.** Given the chain's first
+- AC-8. Amended by [070-test-board](../070-test-board/spec.md) AC-6: after a `board` block whose head did not change, the HIL workflow run is re-run before verify. **The resume rebases, pushes and verifies.** Given the chain's first
   step applies `unblocked` at stage `blocked`, then the state's stage is
   `verify`, `blocked` keeps `blocks` and drops the condition, `checkRerun`
   is cleared, and the actions are `{ type: "rebase_push" }` then `verify`.
