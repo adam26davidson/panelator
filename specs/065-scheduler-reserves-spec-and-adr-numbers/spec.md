@@ -153,7 +153,7 @@ directory keeps its number, README). A reservation is `{ spec: number | null,
 adr: number | null }` on the claim state (`ChainState.reserved`), kept in the
 claim file like every other field.
 
-- AC-1. **The spec number is reserved before the spec stage runs.** Given a
+- AC-1. Amended by [071-spec-pr-moves-its-spec](../071-spec-pr-moves-its-spec/spec.md) AC-1: a spec or spec-track fix run also reserves a spec number when the issue's Spec: line names a spec not on main whose number another holder holds. **The spec number is reserved before the spec stage runs.** Given a
   claim entering the spec stage (any mode) for an issue whose body has no
   `Spec:` line and whose `reserved.spec` is null, when the driver prepares the
   run, then it computes the next free spec number, writes it to
