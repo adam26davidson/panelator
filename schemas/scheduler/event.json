@@ -877,6 +877,27 @@
         },
         "type": "object"
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "metrics.snapshot"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "metrics-report.json"
+          }
+        },
+        "type": "object"
+      }
     }
   ]
 }
