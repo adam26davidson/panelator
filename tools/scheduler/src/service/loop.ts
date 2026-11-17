@@ -38,6 +38,8 @@ import type { SleepInhibitor } from "./inhibit.ts";
 import type { ServiceLog } from "./log.ts";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import type { StatePaths } from "../state/paths.ts";
+import { awsTick, type AwsTickField } from "../aws/cost.ts";
+import type { AwsContext } from "../aws/context.ts";
 import { schedulerChanged } from "./git.ts";
 import { fileDesignChildren } from "../children/scan.ts";
 import { loadDesignTree } from "../gates/design-tree.ts";
@@ -57,6 +59,8 @@ export interface SchedulerDeps extends DriverDeps {
   refreshToken?: () => Promise<void>;
   /** Spec 031 AC-3: the children scan; defaults to fileDesignChildren over the designs of the checked-out main. */
   scanChildren?: () => Promise<unknown>;
+  /** Spec 022: the delivery-system AWS step of a tick; absent means no step (a context without a config is "AWS off"). */
+  aws?: AwsContext;
 }
 
 /** Spec 060 AC-7: main's checks are read for a blocked record at most this often while main's head stays the same. */
@@ -75,6 +79,8 @@ export interface TickInfo {
   standing: string[];
   errors: string[];
   restartPending: boolean;
+  /** Spec 022 AC-10: the AWS step's figures, or why AWS is off. */
+  aws?: AwsTickField;
 }
 
 /**
@@ -709,6 +715,9 @@ export class Scheduler {
       const blockedIssues = (await listBlocked(d.paths)).map((r) => r.issue);
       let held = new Set([...(await listClaims(d.paths)).filter((c) => !stillPaused.has(c.issue) && !blockedIssues.includes(c.issue)).map((c) => c.issue), ...this.#active.keys()]).size;
       info.held = held;
+
+      // Spec 022: the identity, the due pull and the forecast, after the resumes and before the standing agents; a failure never stops the tick.
+      if (d.aws) info.aws = await awsTick({ ...d.aws, emitEvent: d.emitEvent }).catch((e) => { info.errors.push(`aws: ${(e as Error).message}`); return { off: (e as Error).message }; });
 
       const dueStanding: { def: StandingDefinition; state: NonNullable<Awaited<ReturnType<typeof readAgentState>>> }[] = [];
       if (d.registry && d.parameters) {

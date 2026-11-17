@@ -45,6 +45,8 @@ export interface StatePaths {
   /** Spec 022: the delivery-system AWS account's last pulled cost and its spend ledger. */
   awsCost: string;
   awsLedger: string;
+  /** Spec 022 AC-8, AC-9, AC-4: which notices went out this month, and the pull failures of the day. */
+  awsNotices: string;
 }
 
 export function statePaths(root: string): StatePaths {
@@ -84,6 +86,7 @@ export function statePaths(root: string): StatePaths {
     patchesSweep: join(root, "patches", "sweep"),
     awsCost: join(root, "aws", "cost.json"),
     awsLedger: join(root, "aws", "ledger.json"),
+    awsNotices: join(root, "aws", "notices.json"),
   };
 }
 
