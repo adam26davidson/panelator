@@ -129,7 +129,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
     if(i>=0)cmd.argv[i+1]='read,grep,find';
     else cmd.argv.splice(1,0,'--tools','read,grep,find');
   }
-  await writeFile(join(dir, "command.txt"), JSON.stringify({ argv: cmd.argv, env: Object.keys(cmd.env), cwd: req.worktree }, null, 2));
+  await writeFile(join(dir, "command.txt"), JSON.stringify({ argv: cmd.argv, ...(cmd.stdin === undefined ? {} : { stdin_bytes: Buffer.byteLength(cmd.stdin) }), env: Object.keys(cmd.env), cwd: req.worktree }, null, 2));
 
   const splitter = new JsonlSplitter();
   const events: unknown[] = [];
@@ -147,6 +147,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
     try {
       spawned = await spawnBounded({
         argv: cmd.argv,
+        stdin: cmd.stdin,
         env: { ...cmd.env, ...stageEnv(ctx.binDir, ctx.paths.root, ctx.gitIdentity) },
         cwd: req.worktree,
         timeoutMs: req.def.bounds.timeout_min * 60_000,

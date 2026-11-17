@@ -3,6 +3,8 @@ import { spawn } from "node:child_process";
 export interface SpawnOptions {
   argv: string[];
   env: Record<string, string>;
+  /** Written to the child's stdin, which is then closed; without it stdin is ignored. */
+  stdin?: string;
   cwd: string;
   timeoutMs: number;
   onStdoutChunk: (chunk: Buffer) => void;
@@ -55,8 +57,13 @@ export function spawnBounded(o: SpawnOptions): Promise<SpawnResult> {
       cwd: o.cwd,
       env: { ...process.env, ...o.env },
       detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [o.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
+    if (o.stdin !== undefined && child.stdin) {
+      // A child that exits without reading its input raises EPIPE here; its exit is reported as usual.
+      child.stdin.on("error", () => {});
+      child.stdin.end(o.stdin);
+    }
     const pgid = child.pid!;
     let timedOut = false;
     let killedByEvent = false;

@@ -40,6 +40,13 @@ describe("spawnBounded", () => {
     expect(r.timedOut).toBe(false);
     expect(chunks.join("")).toBe('{"type":"a"}\n{"type":"b"}\n');
   });
+  it("writes stdin past the 128 KiB a single argument may hold (the findings filer's spawn E2BIG)", async () => {
+    const input = "x".repeat(300 * 1024);
+    const chunks: Buffer[] = [];
+    const r = await spawnBounded({ argv: ["cat"], stdin: input, env: {}, cwd: tmpdir(), timeoutMs: 10_000, onStdoutChunk: (c) => chunks.push(c) });
+    expect(r.exitCode).toBe(0);
+    expect(Buffer.concat(chunks).toString()).toBe(input);
+  });
   it("kills the whole process group on timeout, including a grandchild that ignores SIGTERM (AC-23, review focus 3)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "proc-"));
     const pidFile = join(dir, "grandchild.pid");
