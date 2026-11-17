@@ -487,7 +487,7 @@ AC-10 second sentence, AC-13)
   receives `needs-design-stage` with a comment that spec E will provide the
   design stage. It is not claimed. The label is applied once, with no repeat
   notification on later polls. Spec E removes it (section 2).
-- AC-21. Amended by [065-scheduler-reserves-spec-and-adr-numbers](../065-scheduler-reserves-spec-and-adr-numbers/spec.md) AC-3: before the Spec: line is appended, the number of spec_path must be the one the scheduler reserved and no numbered path the PR adds may be held by main, another open PR or another claim; otherwise the result is a failed run. **The spec stage's contract.** Its result validates against
+- AC-21. Amended by [071-spec-pr-moves-its-spec](../071-spec-pr-moves-its-spec/spec.md) AC-3: on the spec track a spec or fix result may name a spec_path other than the issue's Spec: line while the spec is not on main, and the scheduler then checks the move and rewrites the line. Amended by [065-scheduler-reserves-spec-and-adr-numbers](../065-scheduler-reserves-spec-and-adr-numbers/spec.md) AC-3: before the Spec: line is appended, the number of spec_path must be the one the scheduler reserved and no numbered path the PR adds may be held by main, another open PR or another claim; otherwise the result is a failed run. **The spec stage's contract.** Its result validates against
   `spec-result`:
   - `verdict`: `revised` or `question`;
   - `spec_path`, `pr_number` and `head_sha`, required for `revised`;
