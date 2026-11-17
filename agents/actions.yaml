@@ -31,3 +31,15 @@ cred_import:
 cred_remove:
   level: 1
   description: Delete a stored credential and its index entry (maintainer command only).
+board_back:
+  level: 1
+  description: Confirm the test board is back after a brick, so firmware work resumes (maintainer command only).
+board_bricked:
+  level: 1
+  description: Mark the test board bricked by hand, pausing firmware work and telling the maintainer (maintainer command only).
+firmware_promote:
+  level: 1
+  description: Promote a recorded beta firmware release to stable whatever the criteria (maintainer command only).
+firmware_demote:
+  level: 1
+  description: Set a firmware release's prerelease flag back, so it is beta again and never promoted by the scheduler (maintainer command only).

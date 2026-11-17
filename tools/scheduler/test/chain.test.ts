@@ -1187,6 +1187,8 @@ describe("chain: every event in every stage (AC-27)", () => {
     { type: "conflict_gone" },
     answered(),
     { type: "unblocked", main_sha: "9".repeat(40) },
+    { type: "hil_board", sensitive: false, mainSha: "9".repeat(40), reason: "bricked", runId: 5, brick: true },
+    { type: "hil_missing", sensitive: false, mainSha: "9".repeat(40), path: ".github/workflows/hil.yml", files: ["firmware/a.c"] },
     { type: "liveness_expired" },
     { type: "chain_error", error: "boom" },
   ];
@@ -1197,7 +1199,9 @@ describe("chain: every event in every stage (AC-27)", () => {
       case "start": return stage === "claimed" || stage === "waiting";
       case "stage_ok":
       case "stage_failed": return e.stage === stage;
-      case "checks": return stage === "verify";
+      case "checks":
+      case "hil_board":
+      case "hil_missing": return stage === "verify";
       case "merge_result":
       case "head_moved": return stage === "merge";
       case "rebase_conflict": return ["plan", "implement", "review", "fix", "verify", "merge"].includes(stage);
@@ -1854,5 +1858,51 @@ describe("an incomplete request is sent back for completion (spec 067)", () => {
     const ledger = ledgerOf({ ...initialChainState(1), incompleteRequests: 1 });
     expect(ledger.incompleteRequests).toBe(1);
     expect(initialChainState(1, null, ledger).incompleteRequests).toBe(1);
+  });
+});
+
+describe("the test board gate (spec 070 AC-3, AC-5)", () => {
+  const sha = "7".repeat(40);
+  const verifyingPr = (over: Partial<ChainState> = {}) => at("verify", { pr: pr8, ...over });
+  const hilBoard = (over: Record<string, unknown> = {}): ChainEvent => ({ type: "hil_board", sensitive: false, mainSha: sha, reason: "bricked: no boot banner", runId: 55, brick: true, ...over }) as ChainEvent;
+
+  it("AC-5: a brick blocks with the board condition, one comment and no finding, notice or block count", () => {
+    const r = transition(verifyingPr(), hilBoard());
+    expect(r.state).toMatchObject({ stage: "blocked", boardBricks: 1, hilRun: 55, blocked: { on: { kind: "board", main_sha: sha }, blocks: 0 } });
+    expect(types(r.actions)).toEqual(["comment", "block"]);
+    expect(JSON.stringify(r.actions)).not.toContain("@");
+    expect(ledgerOf(r.state)).toMatchObject({ board_bricks: 1 });
+    expect(ledgerOf(verifyingPr())).not.toHaveProperty("board_bricks");
+    expect(initialChainState(1, null, ledgerOf(r.state)).boardBricks).toBe(1);
+  });
+
+  it("AC-5: a board already down blocks without counting a brick", () => {
+    const r = transition(verifyingPr(), hilBoard({ brick: false, runId: null }));
+    expect(r.state).toMatchObject({ stage: "blocked", boardBricks: 0 });
+  });
+
+  it("AC-5: at bounds.board_bricks the terminal step runs, with the reason", () => {
+    const r = transition(verifyingPr({ boardBricks: 1 }), hilBoard(), { designRevisions: 2, boardBricks: 2 });
+    expect(r.state.stage).toBe("abandoned");
+    expect(types(r.actions)).toEqual(expect.arrayContaining(["close_pr", "comment", "label", "finding", "notify", "done"]));
+    expect(r.state.history.at(-1)).toContain("the PR's firmware bricked the test board 2 times");
+    expect(transition(verifyingPr({ boardBricks: 1 }), hilBoard(), { designRevisions: 2, boardBricks: 3 }).state.stage).toBe("blocked");
+  });
+
+  it("AC-6: unblocked keeps the run to re-run", () => {
+    const blocked = transition(verifyingPr(), hilBoard()).state;
+    const r = transition(blocked, { type: "unblocked", main_sha: "8".repeat(40) });
+    expect(r.state).toMatchObject({ stage: "verify", hilRun: 55 });
+    expect(r.actions).toEqual([{ type: "rebase_push" }, { type: "verify" }]);
+  });
+
+  it("AC-3: a missing HIL workflow blocks with the paths condition and the finding", () => {
+    const r = transition(verifyingPr(), { type: "hil_missing", sensitive: false, mainSha: sha, path: ".github/workflows/hil.yml", files: ["firmware/a.c"] });
+    expect(r.state).toMatchObject({ stage: "blocked", blocked: { on: { kind: "paths", paths: [".github/workflows/hil.yml"], main_sha: sha }, blocks: 1 } });
+    const f = r.actions.find((a) => a.type === "finding") as Extract<Action, { type: "finding" }>;
+    expect(f.finding).toMatchObject({
+      what: "firmware PR #8 cannot be tested on the board: .github/workflows/hil.yml does not exist", where: ".github/workflows/hil.yml", noticed_how: "verify of PR #8",
+    });
+    expect(f.finding.evidence).toContain("specs/070-test-board/spec.md");
   });
 });

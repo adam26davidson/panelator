@@ -11,7 +11,9 @@ export type ChainStage =
 /** Spec 060 AC-4: what a blocked chain waits for on origin/main. */
 export type BlockCondition =
   | { kind: "main_green"; check: string; main_sha: string }
-  | { kind: "paths"; paths: string[]; main_sha: string };
+  | { kind: "paths"; paths: string[]; main_sha: string }
+  /** Spec 070 AC-5: the test board is bricked or absent; the loop resumes the chain when it is ok or unknown. */
+  | { kind: "board"; main_sha: string };
 
 export interface ChainState {
   resumeSession?:import('../state/paused.ts').AskingSession|null;
@@ -87,6 +89,10 @@ export interface ChainState {
   checksRerun: boolean;
   /** Spec 060 AC-3: the PR head whose failed check was re-run once; a new head clears it. */
   checkRerun: string | null;
+  /** Spec 070 AC-5: PR heads of this issue whose firmware bricked the test board; kept in the ledger. */
+  boardBricks: number;
+  /** Spec 070 AC-6: the workflow run whose bricked or absent result blocked the chain; re-run once after the resume when the head did not change. */
+  hilRun: number | null;
   /** Spec 060 AC-4: the block's condition while blocked; `blocks` counts this issue's blocks and is kept in the ledger. */
   blocked: { on: BlockCondition | null; since: string | null; check: string | null; main_sha: string | null; blocks: number } | null;
   /** Spec 011 AC-1, spec 040: the branch and head a stage left when its result carried a question, one entry per branch; an entry is kept until a PR is bound on its branch or the attempt is discarded. */
@@ -122,6 +128,9 @@ export type ChainEvent =
   | { type: "conflict_gone" }
   /** The PR head moved after verify and review; valid only in stage merge, which goes back to verify. */
   | { type: "head_moved"; head_sha: string }
+  /** Spec 070 AC-3, AC-5: verify of a firmware PR found no HIL workflow in the head, or the board down (`brick`: a bricked result from this head's HIL run `runId`). */
+  | { type: "hil_missing"; sensitive: boolean; mainSha: string; path: string; files: string[] }
+  | { type: "hil_board"; sensitive: boolean; mainSha: string; reason: string; runId: number | null; brick: boolean }
   /** Spec 060 AC-8: the loop found the block's condition true on origin/main. */
   | { type: "unblocked"; main_sha: string }
   | { type: "answered"; answer: string; questionId: number }

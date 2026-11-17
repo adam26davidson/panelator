@@ -5,8 +5,10 @@ import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { adapterFor } from "../src/adapters/index.ts";
-import { agentsDir, defaultConfigPath, loadConfig, repoRoot } from "../src/config.ts";
+import { agentsDir, defaultConfigPath, loadConfig, repoRoot, type Config } from "../src/config.ts";
 import { createAppClient } from "../src/github/auth.ts";
+import { parseDuration } from "../src/standing/registry.ts";
+import type { StatePaths } from "../src/state/paths.ts";
 import { GitHubClient } from "../src/github/client.ts";
 import { LogNotifier } from "../src/notify/log.ts";
 import { recordedNotifier } from "../src/notify/recorded.ts";
@@ -53,6 +55,12 @@ function fail(reason: string): never {
 }
 
 const credStore=storeFromConfig(cfg);
+/** Spec 070 AC-12: the commands work from the laptop without the service; the maintainer sees the board message in the log and on the terminal, since no Telegram channel runs here. */
+function cliFirmware(cfg:Config,paths:StatePaths,remote:()=>Promise<GitHubClient>,log:ServiceLog,soakMs:number){
+  const lazy={listReleases:async()=>(await remote()).listReleases(),setReleasePrerelease:async(id:number,p:boolean)=>(await remote()).setReleasePrerelease(id,p)};
+  const board={paths,now:()=>new Date(),repo:cfg.repo,log:(r:Record<string,unknown>)=>{log.write(r);if(r.kind==='board-alert')console.log(String(r.text));},telegram:null};
+  return {board,promote:{paths,gh:lazy,now:()=>new Date(),log:(r:Record<string,unknown>)=>log.write(r),soakMs,enabled:true,isAncestor:(a:string,b:string)=>{try{execFileSync('git',['-C',repoRoot,'merge-base','--is-ancestor',a,b],{stdio:'ignore'});return true;}catch{return false;}},tell:async(text:string)=>{log.write({kind:'firmware-notice',text});}}};
+}
 const {registry,parameters,levels,catalogue}=(()=>{try {
   const kinds=registryActionsCheck(join(agentsDir,'actions.yaml'));
   const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,kinds);
@@ -78,15 +86,23 @@ if(args[0]==='quota') {
   console.log(JSON.stringify({...book,summary:await quotaSummary(paths,new Date())},null,2));
   process.exit(0);
 }
-if(['param','agent','action','cred'].includes(args[0])) {
+if(['param','agent','action','cred','board','firmware'].includes(args[0])) {
   let client:GitHubClient|undefined;
   const remote=async()=>client??=new GitHubClient(createAppClient(cfg.app,await appPrivateKey(cfg,credStore)).octokit,cfg.repo);
   const ctx={paths,parameters,log:actionLog,levels,now:()=>new Date(),gh:{rerunWorkflowRun:async(id:number)=>(await remote()).rerunWorkflowRun(id),cancelWorkflowRun:async(id:number)=>(await remote()).cancelWorkflowRun(id)},
+   ...(cfg.firmware?{firmware:cliFirmware(cfg,paths,remote,serviceLog,parseDuration(String((await parameters.read('firmware.soak_hours')).value)))}:{}),
    credentials:{store:credStore,catalogue,probe:{store:credStore,app:cfg.app,now:()=>new Date()},configPaths:{'github-app-key':cfg.app.private_key_path,'telegram-bot':cfg.telegram!.credentials_path}}};
   try {
     const [command,verb,name,value]=args;
     if(command==='param'&&verb==='list')console.log(JSON.stringify(await parameters.all(),null,2));
     else if(command==='agent'&&verb==='list')console.log(JSON.stringify(Object.fromEntries(Object.entries(await listAgentStates(paths)).map(([name,state])=>[name,{...state,pending_event_count:state.pending_events.length}])),null,2));
+    else if(command==='board'||command==='firmware') {
+      if(!cfg.firmware)throw new Error('firmware handling is not configured (no firmware block in the scheduler configuration)');
+      const {firmwareCommand}=await import('../src/firmware/commands.ts');
+      const out=await firmwareCommand(command,args.slice(1),ctx);
+      for(const line of out.lines)console.log(line);
+      process.exit(out.exitCode);
+    }
     else if(command==='cred') {
       const readStdin=async()=>{let text='';for await(const chunk of process.stdin)text+=chunk;return text;};
       const out=await credCommand(verb,name,{ctx,readStdin});
@@ -107,7 +123,7 @@ if(['param','agent','action','cred'].includes(args[0])) {
       if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
     } else if(command==='action'&&verb==='undo') {
       const row=await undoAction(ctx,name,'maintainer');if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
-    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; cred set|list|check|import|remove; quota');
+    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; cred set|list|check|import|remove; board [back|bricked <reason>]; firmware [promote <tag>|demote <tag> <reason>]; quota');
     process.exit(0);
   }catch(e){console.error((e as Error).message);process.exit(1);}
 }

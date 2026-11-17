@@ -1,6 +1,6 @@
 import {TelegramAnswers} from '../telegram/answers.ts';
 import {questionMessage,reminderText} from '../telegram/questions.ts';
-import { applyActions, sendPausedQuestion, completePause, driveChain as defaultDriveChain, recordTransition, step, type DriverDeps } from "../chain/driver.ts";
+import { applyActions, boardCtx, sendPausedQuestion, completePause, driveChain as defaultDriveChain, recordTransition, step, type DriverDeps } from "../chain/driver.ts";
 import { CLAIM_LABEL, ENDED, HISTORY_ENTRY_MAX, NEEDS_DECISION_LABEL, initialChainState, ledgerOf, stuckOf as stuckStage, transition } from "../chain/machine.ts";
 import {emit} from '../standing/events.ts';
 import { quotaSummary } from "../quota/book.ts";
@@ -22,6 +22,10 @@ import {backfillEvents} from '../events/backfill.ts';
 import { rankIssues, classifyWork, classOf } from "../shortlist/rank.ts";
 import type { IssueData } from "../types.ts";
 import { selectEligible } from "../shortlist/select.ts";
+import { boardDown, readBoard, remindBoard } from "../firmware/board.ts";
+import { promotionStep, type FirmwareLine } from "../firmware/promote.ts";
+import { releaseStep } from "../firmware/releases.ts";
+import { isFirmwarePr } from "../firmware/paths.ts";
 import { listClaims, readClaim, removeClaim, writeClaim, type Claim, type Outage } from "../state/claims.ts";
 import { CEILING_MIN_FAILURES, CEILING_MIN_SPAN_MS, DISK_FULL, forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, PAST_CEILING, transientCause } from "../chain/transient.ts";
 import { readLedger, writeLedger } from "../state/ledger.ts";
@@ -75,6 +79,9 @@ export interface TickInfo {
   standing: string[];
   errors: string[];
   restartPending: boolean;
+  /** Spec 070 AC-10, AC-11: present when firmware handling is on. */
+  board?: { status: string; since: string | null };
+  firmware?: FirmwareLine;
 }
 
 /**
@@ -119,6 +126,7 @@ export class Scheduler {
   #stopReason = "";
   #ticking = false;
   #restartPending = false;
+  #firmwareOffLogged = false;
   #firstTick = true;
   /** Spec 016: the kind of the last running slot granted; a standing agent goes first after a start. */
   #lastGrant: "standing" | "chain" = "chain";
@@ -562,6 +570,7 @@ export class Scheduler {
       }
       return { holds: changed.some((f) => c.paths.some((p) => f === p || (p.endsWith("/") && f.startsWith(p)))), rec };
     }
+    if (c.kind === "board") return { holds: ["ok", "unknown"].includes((await readBoard(d.paths)).status), rec };
     const now = d.now();
     const moved = head !== (rec.checked_sha ?? c.main_sha);
     const stale = rec.last_check == null || now.getTime() - Date.parse(rec.last_check) >= BLOCK_RECHECK_S * 1000;
@@ -572,6 +581,43 @@ export class Scheduler {
     const failed = summary.failed.some((f) => f.name === c.check);
     const pending = !run || run.status !== "completed";
     return { holds: !failed && !pending, rec: { ...rec, last_check: now.toISOString(), checked_sha: pending ? rec.checked_sha : head } };
+  }
+
+  /** Spec 070 AC-1, AC-8 to AC-11: off without the block; otherwise the release step, the reminder and the tick-line fields. */
+  async #firmware(fresh: boolean, info: TickInfo): Promise<void> {
+    const d = this.#deps;
+    const fw = d.cfg.firmware;
+    if (!fw) {
+      if (!this.#firmwareOffLogged) d.serviceLog.write({ kind: "firmware", state: "off" });
+      this.#firmwareOffLogged = true;
+      return;
+    }
+    const board = boardCtx(d);
+    try {
+      await remindBoard(board);
+      const git = (...a: string[]) => execFileSync("git", a, { cwd: d.repoDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      const isAncestor = (a: string, b: string) => {
+        try {
+          execFileSync("git", ["merge-base", "--is-ancestor", a, b], { cwd: d.repoDir, stdio: "ignore" });
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      if (fresh) {
+        await releaseStep({ prefix: fw.release_tag_prefix, hilCheck: fw.hil_check, paths: d.paths, gh: d.gh, now: d.now, log: (r) => d.serviceLog.write(r), board, onMain: (sha) => isAncestor(sha, "origin/main"), mainHead: () => git("rev-parse", "origin/main") });
+      }
+      const read = async <T,>(name: string, fallback: T): Promise<T> => (d.parameters ? ((await d.parameters.read(name)).value as T) : fallback);
+      info.firmware = await promotionStep({
+        paths: d.paths, gh: d.gh, now: d.now, log: (r) => d.serviceLog.write(r), isAncestor,
+        soakMs: parseDuration(await read<string>("firmware.soak_hours", "72h")), enabled: await read<boolean>("firmware.promotion_enabled", true),
+        tell: async (text) => void (d.telegram ? await d.telegram.sendReply(text) : d.serviceLog.write({ kind: "firmware-notice", text })),
+      });
+    } catch (e) {
+      info.errors.push(`firmware: ${(e as Error).message}`);
+    }
+    const b = await readBoard(d.paths).catch(() => null);
+    if (b) info.board = { status: b.status, since: b.since };
   }
 
   async tick(): Promise<TickInfo> {
@@ -697,6 +743,9 @@ export class Scheduler {
       // Like an answered paused issue, outside the turns below.
       for (const claim of answeredClaims) if (this.active < slots && !this.#stopping) this.#start(claim);
 
+      // Spec 070: the board and the firmware releases, before the blocked chains look at the board.
+      await this.#firmware(fresh, info);
+
       // Spec 060 AC-7: after answered resumes, before standing agents and new claims.
       if (fresh && (await listBlocked(d.paths)).length) {
         const open = await openIssues();
@@ -749,6 +798,13 @@ export class Scheduler {
         // AC-13: the shortlist treats an issue with a paused record as claimed.
         const claimed = new Set([...(await listClaims(d.paths)).map((c) => c.issue), ...(await listPaused(d.paths)).map((r) => r.issue), ...(await listBlocked(d.paths)).map((r) => r.issue)]);
         const ctx = buildSelectContext(d.repoDir, d.cfg, claimed, d.botLogin);
+        // Spec 070 AC-5: while the board is down, an issue with firmware work waits at its rank for the board.
+        if (d.cfg.firmware && boardDown(await readBoard(d.paths))) {
+          const globs = d.cfg.firmware.paths;
+          const prs = await d.gh.openPullRequestFiles().catch((e) => (info.errors.push(`firmware prs: ${(e as Error).message}`), []));
+          const issuesWithFirmwarePr = new Set(prs.filter((p) => isFirmwarePr(p.files, globs)).map((p) => Number(/^issue-(\d+)$/.exec(p.head_ref)?.[1] ?? 0)).filter(Boolean));
+          ctx.firmwareHold = { globs, issuesWithFirmwarePr };
+        }
         // Spec 029 AC-8: an issue parked with needs-design-stage goes back to the shortlist, once.
         const done = new Set(await readRelabelled(d.paths));
         for (const issue of issues!) {

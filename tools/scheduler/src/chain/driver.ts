@@ -35,6 +35,8 @@ import { appendMerge } from "../state/merges.ts";
 import { record } from "../events/store.ts";
 import { recordChecks } from "../events/ci.ts";
 import { writeBlocked } from "../state/blocked.ts";
+import { firmwareGate } from "../firmware/gate.ts";
+import type { BoardCtx } from "../firmware/board.ts";
 import { emptyTelegram, writePaused, type PausedRecord } from "../state/paused.ts";
 import { savePatch } from "../state/patches.ts";
 import type { StatePaths } from "../state/paths.ts";
@@ -1046,6 +1048,11 @@ async function mainChecks(deps: DriverDeps, issue: number): Promise<{ sha: strin
   }
 }
 
+/** Spec 070 AC-4, AC-7: what the board's state changes need of the driver. */
+export function boardCtx(deps: Pick<DriverDeps, "paths" | "now" | "cfg" | "log" | "telegram">): BoardCtx {
+  return { paths: deps.paths, now: deps.now, repo: deps.cfg.repo, log: deps.log, telegram: deps.telegram ?? null };
+}
+
 async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> {
   const pr = claim.state.pr;
   if (!pr) throw new Error(`verify without a PR (issue ${claim.issue})`);
@@ -1053,7 +1060,20 @@ async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> 
   await recordChecks(deps.paths, deps.now(), { sha: pr.head_sha, pr: pr.number }, summary);
   // R1: judge sensitivity on the pushed head (after head_moved the local copy is stale).
   await syncWorktree(deps, claim);
-  const sensitive = isSensitive(await diffFilesAgainstBase(claim.worktree), readSensitiveGlobs(deps.agentsDir)).length > 0;
+  const files = await diffFilesAgainstBase(claim.worktree);
+  const sensitive = isSensitive(files, readSensitiveGlobs(deps.agentsDir)).length > 0;
+  let hilPending: string | null = null;
+  if (summary.status !== "failed" && deps.cfg.firmware) {
+    const gate = await firmwareGate({ cfg: deps.cfg, paths: deps.paths, gh: deps.gh, now: deps.now, board: boardCtx(deps) }, {
+      worktree: claim.worktree, head: pr.head_sha, pr: pr.number, files, sensitive, mainSha: () => originMain(deps),
+    });
+    if (gate.kind === "event") return gate.event;
+    if (gate.kind === "hil" && gate.state === "failed") {
+      return { type: "checks", status: "failed", log: `${gate.name}\n${gate.log ?? ""}`, sensitive, at: deps.now().toISOString(), ...(gate.failedId === undefined ? {} : { failedId: gate.failedId }) };
+    }
+    if (gate.kind === "hil" && gate.state === "pending") hilPending = gate.name;
+  }
+  if (hilPending && summary.status !== "pending") return { type: "checks", status: "pending", sensitive, at: deps.now().toISOString(), pending: [hilPending] };
   if (summary.status === "failed") {
     const first = summary.failed[0];
     const log = await deps.gh.jobLogExcerpt(first.id).catch(() => `(no log for ${first.name})`);
@@ -1066,7 +1086,7 @@ async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> 
     const pending = required.length
       ? required.filter((n) => summary.runs.find((r) => r.name === n)?.status !== "completed")
       : summary.runs.filter((r) => r.status !== "completed").map((r) => r.name);
-    return { type: "checks", status: "pending", sensitive, at: deps.now().toISOString(), pending };
+    return { type: "checks", status: "pending", sensitive, at: deps.now().toISOString(), pending: hilPending ? [...pending, hilPending] : pending };
   }
   return { type: "checks", status: summary.status, sensitive, at: deps.now().toISOString() };
 }
@@ -1227,6 +1247,17 @@ async function rebasePush(deps: DriverDeps, claim: Claim): Promise<void> {
     claim.pendingEvent = { type: "rebase_conflict", detail: rebase.conflict };
     return;
   }
+  if (!rebase.moved && claim.state.hilRun !== null) {
+    // Spec 070 AC-6: the head did not change, so the bricked or absent run is re-run once; a changed head gets its own run.
+    const run = claim.state.hilRun;
+    try {
+      await deps.gh.rerunWorkflowRun(run);
+      deps.log({ kind: "hil-rerun", issue: claim.issue, run_id: run });
+    } catch (e) {
+      deps.log({ kind: "hil-rerun-error", issue: claim.issue, run_id: run, error: (e as Error).message });
+    }
+  }
+  if (claim.state.hilRun !== null) claim.state = { ...claim.state, hilRun: null };
   if (!rebase.moved) return;
   const after = await worktreeHead(claim.worktree);
   const branch = branchOf(claim.state);
@@ -1445,7 +1476,7 @@ export async function step(deps: DriverDeps, claim: Claim): Promise<{ claim: Cla
   }
 
   const before = claim.state;
-  const next = transition(before, event, { designRevisions: deps.cfg.bounds.design_revisions });
+  const next = transition(before, event, { designRevisions: deps.cfg.bounds.design_revisions, boardBricks: deps.cfg.bounds.board_bricks });
   // Tm3: a transition that went through is progress: the count of consecutive chain errors starts again.
   const state = next.state.chainFailures === null ? next.state : { ...next.state, chainFailures: null };
   const actions = next.actions;

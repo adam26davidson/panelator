@@ -135,3 +135,17 @@ describe("selectEligible: UI design (spec 029 AC-1)", () => {
     expect(r.designProblems.size).toBe(0);
   });
 });
+
+describe("selectEligible: the board is down (spec 070 AC-5)", () => {
+  const fw = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-firmware.md"), "utf8");
+  const files: Record<string, string> = { ...withTopDesign({ "specs/010-thing/spec.md": good }, "specs/010-thing/spec.md"), ...withTopDesign({ "specs/011-fw/spec.md": fw }, "specs/011-fw/spec.md") };
+  const base = { appBot: BOT, maintainer: ME, labels, claimed: new Set<number>(), readSpec: (p: string) => files[p] ?? null, listDesign: () => [] };
+  const issues = [issue(1), issue(2, { body: "Spec: specs/011-fw/spec.md" }), issue(3)];
+  it("skips an issue whose spec names a firmware path or that has an open firmware PR, and keeps the rest", () => {
+    const hold = { globs: ["firmware/**"], issuesWithFirmwarePr: new Set([3]) };
+    expect(selectEligible(issues, { ...base, firmwareHold: hold }).eligible.map((i) => i.number)).toEqual([1]);
+  });
+  it("puts them back at their rank when the board is not down", () => {
+    expect(selectEligible(issues, base).eligible.map((i) => i.number)).toEqual([1, 2, 3]);
+  });
+});

@@ -127,6 +127,17 @@ export class GitHubClient {
     return out;
   }
 
+  /** Spec 070 AC-5: each open pull request's head branch with its changed files; any read error propagates. */
+  async openPullRequestFiles(): Promise<{ number: number; head_ref: string; files: string[] }[]> {
+    const prs = (await this.octokit.paginate("GET /repos/{owner}/{repo}/pulls", { ...this.base, state: "open", per_page: 100 })) as Rec[];
+    const out: { number: number; head_ref: string; files: string[] }[] = [];
+    for (const pr of prs) {
+      const files = (await this.octokit.paginate("GET /repos/{owner}/{repo}/pulls/{pull_number}/files", { ...this.base, pull_number: Number(pr.number), per_page: 100 })) as Rec[];
+      out.push({ number: Number(pr.number), head_ref: String(rec(pr.head).ref ?? ""), files: files.map((f) => String(f.filename)) });
+    }
+    return out;
+  }
+
   /** A branch that is already gone (404) or not a ref (422) is not an error. */
   async deleteBranch(branch: string): Promise<void> {
     try {

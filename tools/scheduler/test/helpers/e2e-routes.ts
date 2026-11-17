@@ -121,6 +121,8 @@ export async function standingWorld(results:Record<string,Scripted[]>,freeSpace:
   return {pair,paths,registry,parameters,deps,scheduler,adapter,mock,gh,issues,comments,notifications,setNow:(value:Date)=>{now=value;}};
 }
 
+/** Spec 070: one HIL check run as a commit reports it; `result` is the JSON of section 8 (or any text) in `output.text`. */
+export interface HilRun { id: number; status?: string; conclusion?: string | null; completed_at?: string; result?: unknown }
 export interface MockPr { number: number; head: string; sha: string; body: string; state: "open" | "closed"; merged: boolean }
 export interface MockComment { id: number; author: string; body: string; at: string }
 
@@ -140,6 +142,8 @@ export async function chainWorld(opts: {
   /** Spec 065 AC-7: a second open issue (#8) with this body, and how many chains the loop may run at once. */
   second?: { body: string };
   slots?: number;
+  /** Spec 070: firmware handling on, as in the committed configuration; off otherwise, so every earlier recorded chain is unchanged. */
+  firmware?: boolean;
 }) {
   const pair = repoPair(opts.files);
   const paths: StatePaths = statePaths(join(pair.root, "state"));
@@ -150,6 +154,7 @@ export async function chainWorld(opts: {
   execFileSync("git", ["clone", "-q", pair.origin, side], { stdio: "ignore" });
 
   const cfg = { ...loadConfig(defaultConfigPath), repo: "o/r", required_checks: ["test"], state_dir: paths.root, slots: opts.slots ?? 1, rescue_model: "claude-rescue-test" };
+  if (!opts.firmware) delete cfg.firmware;
   // A rescue model distinct from every stage model, so a run shows whether it was the rescue (AC-1).
   const labels = new Set(opts.labels ?? ["validated", "class:product"]);
   const labelLog: string[] = [];
@@ -157,6 +162,12 @@ export async function chainWorld(opts: {
   /** Spec 060: what a commit's required `test` check reports; green unless a test sets it. */
   let checkFor: (sha: string) => { status: string; conclusion: string | null } = () => ({ status: "completed", conclusion: "success" });
   const rerequested: number[] = [];
+  /** Spec 070: the HIL check runs a commit reports, the workflow runs re-run, the releases and their edits. */
+  let hilFor: (sha: string) => HilRun[] = () => [];
+  const reruns: number[] = [];
+  const releases: { id: number; tag_name: string; prerelease: boolean; published_at: string; html_url: string; draft: boolean }[] = [];
+  const tagShas = new Map<string, string>();
+  const releaseEdits: { id: number; prerelease: boolean }[] = [];
   const prComments: { pr: number; body: string }[] = [];
   const prs = new Map<number, MockPr>();
   const addedByPr = new Map<number, string[]>();
@@ -245,12 +256,18 @@ export async function chainWorld(opts: {
     {
       method: "GET", path: /^\/repos\/o\/r\/pulls$/, reply: (_m, _b, url) => {
         const head = url.searchParams.get("head")?.replace(/^o:/, "");
-        return { body: [...prs.values()].filter((pr) => pr.state === "open" && (head === undefined || pr.head === head)).map((pr) => ({ number: pr.number })) };
+        return { body: [...prs.values()].filter((pr) => pr.state === "open" && (head === undefined || pr.head === head)).map((pr) => ({ number: pr.number, head: { ref: pr.head } })) };
       },
     },
     // Spec 065: the files an open PR adds; a hand-made PR's are set with `addedByPr`, the scheduler's own are the diff of its branch's commits on origin.
     {
-      method: "GET", path: /^\/repos\/o\/r\/pulls\/(\d+)\/files$/, reply: (m) => ({ body: (addedByPr.get(Number(m[1])) ?? []).map((filename) => ({ filename, status: "added" })) }),
+      method: "GET", path: /^\/repos\/o\/r\/pulls\/(\d+)\/files$/, reply: (m) => {
+        const added = (addedByPr.get(Number(m[1])) ?? []).map((filename) => ({ filename, status: "added" }));
+        const pr = prs.get(Number(m[1]));
+        // The scheduler's own PRs: the files their branch changes on origin (spec 070 reads these; spec 065 reads only the added ones above).
+        const own = pr && originRef(pr.head) ? git(pair.origin, "diff", "--name-only", `main...refs/heads/${pr.head}`).split("\n").filter(Boolean).map((filename) => ({ filename, status: "modified" })) : [];
+        return { body: [...added, ...own] };
+      },
     },
     {
       method: "GET", path: /^\/repos\/o\/r\/pulls\/(\d+)$/, reply: (m) => {
@@ -293,7 +310,24 @@ export async function chainWorld(opts: {
     },
     {
       method: "GET", path: /^\/repos\/o\/r\/commits\/([0-9a-f]+)\/check-runs$/,
-      reply: (m) => ({ body: { total_count: 1, check_runs: [{ id: 41, name: "test", ...checkFor(m[1]) }] } }),
+      reply: (m, _b, url) => {
+        if (url.searchParams.get("check_name")) {
+          const runs = hilFor(m[1]).map((r) => ({ id: r.id, name: url.searchParams.get("check_name"), status: r.status ?? "completed", conclusion: r.conclusion ?? null, completed_at: r.completed_at ?? "2026-11-17T10:00:00Z", html_url: "u", output: { text: typeof r.result === "string" ? r.result : r.result === undefined ? null : JSON.stringify(r.result) } }));
+          return { body: { total_count: runs.length, check_runs: runs } };
+        }
+        return { body: { total_count: 1, check_runs: [{ id: 41, name: "test", ...checkFor(m[1]) }] } };
+      },
+    },
+    { method: "POST", path: /^\/repos\/o\/r\/actions\/runs\/(\d+)\/rerun$/, reply: (m) => { reruns.push(Number(m[1])); return { status: 201, body: {} }; } },
+    { method: "GET", path: /^\/repos\/o\/r\/releases$/, reply: (_m, _b, url) => ({ body: releases, headers: pageLink(url, 1, 1) }) },
+    { method: "GET", path: /^\/repos\/o\/r\/git\/ref\/tags\/(.+)$/, reply: (m) => ({ body: { object: { type: "commit", sha: tagShas.get(decodeURIComponent(m[1])) } } }) },
+    {
+      method: "PATCH", path: /^\/repos\/o\/r\/releases\/(\d+)$/, reply: (m, b) => {
+        const rel = releases.find((r) => r.id === Number(m[1]))!;
+        rel.prerelease = (b as { prerelease: boolean }).prerelease;
+        releaseEdits.push({ id: rel.id, prerelease: rel.prerelease });
+        return { body: rel };
+      },
     },
     { method: "POST", path: /^\/repos\/o\/r\/check-runs\/(\d+)\/rerequest$/, reply: (m) => { rerequested.push(Number(m[1])); return { status: 201, body: {} }; } },
     { method: "GET", path: /^\/repos\/o\/r\/actions\/jobs\/\d+\/logs$/, reply: () => ({ body: "FAIL tools/design-stage/test/render.test.ts\nError: browserType.launch: Executable doesn't exist\n" }) },
@@ -324,7 +358,14 @@ export async function chainWorld(opts: {
 
   return {
     deps,scheduler,pair, paths, cfg, gh, filed, adapter, notifications, logs, labels, labelLog, comments, prComments, prs, addedByPr, mergeRequests,
-    rerequested,
+    rerequested, reruns, releaseEdits,
+    /** Spec 070: the HIL check runs each commit reports from now on. */
+    setHil(fn: (sha: string) => HilRun[]) { hilFor = fn; },
+    /** Spec 070: a published release whose tag points at `sha`. */
+    publish(id: number, tag: string, sha: string, prerelease = true) {
+      releases.push({ id, tag_name: tag, prerelease, published_at: "2026-11-17T09:00:00Z", html_url: "u", draft: false });
+      tagShas.set(tag, sha);
+    },
     /** Spec 060: what each commit's `test` check reports from now on. */
     setChecks(fn: (sha: string) => { status: string; conclusion: string | null }) { checkFor = fn; },
     /** Spec 060: a commit on origin's main (as a merge of another PR would be) touching `files`; the new head. */

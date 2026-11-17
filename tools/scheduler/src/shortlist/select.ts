@@ -6,6 +6,7 @@ import {
 import { specPathFromIssueBody } from "../spec/link.ts";
 import { parseSpec } from "../spec/parse.ts";
 import type { IssueData } from "../types.ts";
+import { specNamesFirmwarePath } from "../firmware/paths.ts";
 
 export interface SelectContext {
   appBot: string;
@@ -15,6 +16,8 @@ export interface SelectContext {
   /** Reads any repo-relative file on main (specs and their parent designs); null when absent. */
   readSpec: (path: string) => string | null;
   listDesign: (specPath: string) => string[];
+  /** Spec 070 AC-5: set while the test board is bricked or absent; firmware issues are skipped. */
+  firmwareHold?: { globs: string[]; issuesWithFirmwarePr: Set<number> };
 }
 
 export interface Decision {
@@ -43,6 +46,8 @@ export function selectEligible(issues: IssueData[], ctx: SelectContext): Selecti
   for (const issue of issues) {
     if (ctx.claimed.has(issue.number)) continue;
     if (issue.labels.includes(CLAIM_LABEL) || issue.labels.includes(BLOCKED) || issue.labels.includes(ABANDONED_LABEL) || issue.labels.some((l) => l.startsWith(SKIP_PREFIX))) continue;
+
+    if (ctx.firmwareHold && (ctx.firmwareHold.issuesWithFirmwarePr.has(issue.number) || namesFirmware(issue, ctx, ctx.firmwareHold.globs))) continue;
 
     const steps: [string, () => GateResult][] = [
       ["authority", () => authorityGate(issue, ctx.appBot, ctx.maintainer, VALIDATED_LABEL)],
@@ -83,4 +88,10 @@ function specText(issue: IssueData, ctx: SelectContext): string | null {
 function parsedSpec(issue: IssueData, ctx: SelectContext) {
   // Only reached after specPresentGate passed, so the text exists and parses clean.
   return parseSpec(specText(issue, ctx) ?? "");
+}
+
+/** AC-5: the issue's spec on origin/main names a path under a firmware prefix in its interfaces section. */
+function namesFirmware(issue: IssueData, ctx: SelectContext, globs: string[]): boolean {
+  const text = specText(issue, ctx);
+  return text !== null && specNamesFirmwarePath(parseSpec(text).listedPaths, globs);
 }

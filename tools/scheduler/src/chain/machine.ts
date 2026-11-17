@@ -20,8 +20,8 @@ export const MAX_INCOMPLETE_REQUESTS = 1;
 /** Spec 060 AC-6: blocks on main per issue; past it a failed check on a spec or design PR runs the fix loop as before. */
 export const MAX_BLOCKS = 3;
 /** Spec 029 AC-4: the configured bound (`bounds.design_revisions`) is passed to `transition`; this is its default. */
-export interface Bounds { designRevisions: number }
-export const DEFAULT_BOUNDS: Bounds = { designRevisions: 2 };
+export interface Bounds { designRevisions: number; /** Spec 070 AC-5: `bounds.board_bricks`. */ boardBricks?: number }
+export const DEFAULT_BOUNDS: Bounds = { designRevisions: 2, boardBricks: 2 };
 /** C7: releases for repeated chain errors; the next one abandons the issue. */
 export const MAX_CHAIN_ERRORS = 1;
 export const VERIFY_PENDING_MAX_H = 6;
@@ -45,18 +45,22 @@ export type LedgerCounts = Pick<
   blocks?: number;
   /** Spec 067: written only once non-zero, like `designRevisions`. */
   incompleteRequests?: number;
+  /** Spec 070: written only once non-zero. */
+  board_bricks?: number;
 };
-type LedgerSource = Omit<LedgerCounts, "pendingAnswer" | "chainFailures" | "chainErrors"> & Partial<LedgerCounts> & { blocked?: ChainState["blocked"] };
+type LedgerSource = Omit<LedgerCounts, "pendingAnswer" | "chainFailures" | "chainErrors"> & Partial<LedgerCounts> & { blocked?: ChainState["blocked"]; boardBricks?: number };
 
 /** The ledger's fields of a state; a ledger written before T4 and C7 lacks the last three, which default. */
 export function ledgerOf(state: LedgerSource): LedgerCounts {
   const blocks = state.blocked?.blocks ?? state.blocks ?? 0;
+  const bricks = state.boardBricks ?? state.board_bricks ?? 0;
   return {
     rescues: state.rescues, specRescues: state.specRescues, replans: state.replans, specRevisions: state.specRevisions,
     specAnswers: state.specAnswers, decideReturns: state.decideReturns, history: [...state.history],
     pendingAnswer: state.pendingAnswer ?? null, chainFailures: state.chainFailures ?? null, chainErrors: state.chainErrors ?? 0,
     ...(state.designRevisions ? { designRevisions: state.designRevisions } : {}),
     ...(blocks ? { blocks } : {}),
+    ...(bricks ? { board_bricks: bricks } : {}),
     ...(state.incompleteRequests ? { incompleteRequests: state.incompleteRequests } : {}),
   };
 }
@@ -74,15 +78,15 @@ export function initialChainState(issue: number, specProblem: string | null = nu
     track: "issue", rescues: 0, specRescues: 0, replans: 0, specRevisions: 0, designRevisions: 0, specAnswers: 0, decideReturns: 0, incompleteRequests: 0, history: [],
     rescueRun: false, specMode: null, specProblem, designProblem, question: null, askingStage: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
     pendingAnswer: null, recordIds: [], recordKind: null, recordAnswer: false, decideInput: null, decidedQuestion: null, parkedPr: null, pendingSince: null, checksRerun: false, securityPass: false,
-    chainFailures: null, chainErrors: 0, heldWork: [], checkRerun: null, blocked: null, reserved: { spec: null, adr: null },
+    chainFailures: null, chainErrors: 0, heldWork: [], checkRerun: null, boardBricks: 0, hilRun: null, blocked: null, reserved: { spec: null, adr: null },
     ...(ledger ? seedFromLedger(ledger) : {}),
   };
 }
 
 function seedFromLedger(ledger: LedgerSource): Partial<ChainState> {
-  const { blocks, ...counts } = ledgerOf(ledger);
+  const { blocks, board_bricks, ...counts } = ledgerOf(ledger);
   return {
-    ...counts, history: ledger.history.slice(-HISTORY_MAX_ENTRIES).map(clip),
+    ...counts, boardBricks: board_bricks ?? 0, history: ledger.history.slice(-HISTORY_MAX_ENTRIES).map(clip),
     ...(blocks ? { blocked: { on: null, since: null, check: null, main_sha: null, blocks } } : {}),
   };
 }
@@ -270,7 +274,7 @@ function designToSpecRevise(s: ChainState, reason: string): Step | null {
 }
 
 function boundsText(s: ChainState): string {
-  return `design revision ${s.designRevisions}, rescue ${s.rescues}/${MAX_RESCUES}, spec-track rescue ${s.specRescues}/${MAX_RESCUES}, re-plan ${s.replans}/${MAX_REPLANS}, spec revision ${s.specRevisions}/${MAX_SPEC_REVISIONS}, chain-error release ${s.chainErrors}/${MAX_CHAIN_ERRORS}, block ${s.blocked?.blocks ?? 0}/${MAX_BLOCKS}, incomplete request ${s.incompleteRequests}/${MAX_INCOMPLETE_REQUESTS}`;
+  return `design revision ${s.designRevisions}, rescue ${s.rescues}/${MAX_RESCUES}, spec-track rescue ${s.specRescues}/${MAX_RESCUES}, re-plan ${s.replans}/${MAX_REPLANS}, spec revision ${s.specRevisions}/${MAX_SPEC_REVISIONS}, chain-error release ${s.chainErrors}/${MAX_CHAIN_ERRORS}, block ${s.blocked?.blocks ?? 0}/${MAX_BLOCKS}, incomplete request ${s.incompleteRequests}/${MAX_INCOMPLETE_REQUESTS}${s.boardBricks ? `, board brick ${s.boardBricks}` : ""}`;
 }
 
 /** Informational only: no @ anywhere (AC-5, C11), the newest history entries that fit. The driver appends the run-record paths. */
@@ -631,7 +635,7 @@ function lastCheckFailure(s: ChainState): { name: string | null; entry: string }
  * Spec 060 AC-4: a pause without a question. The state is `blocked` (the claim goes, the worktree stays), one finding
  * carries the cause to the filer, the issue is told, and the driver writes the record. The driver fills `since`.
  */
-function block(state: ChainState, condition: BlockCondition, cause?: string): Step {
+function block(state: ChainState, condition: Exclude<BlockCondition, { kind: "board" }>, cause?: string): Step {
   const { name, entry } = lastCheckFailure(state);
   const check = condition.kind === "main_green" ? condition.check : name;
   const track = state.track;
@@ -657,6 +661,46 @@ function block(state: ChainState, condition: BlockCondition, cause?: string): St
       },
       { type: "comment", text: text.replaceAll("@", "(at)") },
       { type: "notify", gate: "infra", label: "", text: `Issue #${state.issue}: the ${track} PR waits for main (${where}).` },
+      { type: "block", condition },
+    ],
+  };
+}
+
+/** Spec 070 AC-5: a pause without a question, finding or notice: the board is down, firmware work waits, `blocks` is not counted. */
+function boardBlock(state: ChainState, event: Extract<ChainEvent, { type: "hil_board" }>, bounds: Bounds): Step {
+  let s: ChainState = { ...state, sensitive: event.sensitive, pendingSince: null, checksRerun: false, hilRun: event.runId };
+  if (event.brick) {
+    s = { ...s, boardBricks: s.boardBricks + 1 };
+    if (s.boardBricks >= (bounds.boardBricks ?? DEFAULT_BOUNDS.boardBricks!)) {
+      return abandon(note({ ...s, hilRun: null }, `fix: the PR's firmware bricked the test board ${s.boardBricks} times`), "fix");
+    }
+  }
+  const condition: BlockCondition = { kind: "board", main_sha: event.mainSha };
+  const text = `PR #${state.pr?.number ?? "?"} waits for the test board: ${event.reason}. The maintainer has been told and confirms with \`panelator-scheduler board back\` once the board is back; the chain then re-runs the board's tests and verifies again. Other work continues.`;
+  return {
+    state: { ...s, stage: "blocked", pendingFixInput: null, blocked: { on: condition, since: null, check: null, main_sha: event.mainSha, blocks: s.blocked?.blocks ?? 0 } },
+    actions: [{ type: "comment", text: text.replaceAll("@", "(at)") }, { type: "block", condition }],
+  };
+}
+
+/** Spec 070 AC-3: a firmware PR whose head has no HIL workflow waits for main to gain one; the finding gets it built. */
+function workflowBlock(state: ChainState, event: Extract<ChainEvent, { type: "hil_missing" }>): Step {
+  const n = state.pr?.number ?? 0;
+  const condition: BlockCondition = { kind: "paths", paths: [event.path], main_sha: event.mainSha };
+  const text = `Firmware PR #${n} cannot be tested on the board: ${event.path} does not exist. The PR stays open on its branch; the chain waits for a change to ${event.path} on main, then rebases the PR and verifies again. The cause has been filed as a finding.`;
+  return {
+    state: { ...state, stage: "blocked", sensitive: event.sensitive, pendingFixInput: null, pendingSince: null, blocked: { on: condition, since: null, check: null, main_sha: event.mainSha, blocks: (state.blocked?.blocks ?? 0) + 1 } },
+    actions: [
+      {
+        type: "finding", stage: "fix",
+        finding: {
+          what: `firmware PR #${n} cannot be tested on the board: ${event.path} does not exist`, where: event.path,
+          evidence: `Section 8 of specs/070-test-board/spec.md names this workflow as the board's gate; the PR's firmware files: ${event.files.slice(0, 10).join(", ")}`,
+          noticed_how: `verify of PR #${n}`,
+        },
+      },
+      { type: "comment", text },
+      { type: "notify", gate: "infra", label: "", text: `Issue #${state.issue}: firmware PR #${n} waits for ${event.path} on main.` },
       { type: "block", condition },
     ],
   };
@@ -1001,6 +1045,8 @@ function baseTransition(state: ChainState, event: ChainEvent, bounds: Bounds): S
       break;
     case "verify":
       if (event.type === "checks") return verifyChecks(state, event);
+      if (event.type === "hil_board") return boardBlock(state, event, bounds);
+      if (event.type === "hil_missing") return workflowBlock(state, event);
       break;
     case "merge":
       if (event.type === "merge_result") {
