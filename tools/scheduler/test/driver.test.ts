@@ -1389,7 +1389,8 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
 
   it("fails a revised result whose spec_path differs from the issue's Spec: line (AC-21)", async () => {
     const { r } = await specRun((run: StageRun) => revised(head(run.worktree), { spec_path: "specs/011-other/spec.md" }));
-    expect(r.claim.state.history).toContain("spec attempt 1 failed: result: spec_path differs from the issue's Spec: line");
+    // Spec 071 AC-2 item 2: the line's spec is on main, so it cannot move (was "spec_path differs" before spec 071).
+    expect(r.claim.state.history).toContain("spec attempt 1 failed: result: the spec at specs/010-thing/spec.md is on main and cannot move");
   }, 60_000);
 
   it("fails a spec PR whose body closes an issue, by number, owner/repo#N or URL (AC-21, D8)", async () => {
