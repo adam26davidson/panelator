@@ -1698,6 +1698,7 @@ describe("Scheduler: sleep inhibitor while runs are in flight", () => {
     expect(rec.killed).toHaveLength(2);
     expect(rec.logged.map((r) => r.kind)).toEqual(["inhibit-acquired", "inhibit-released", "inhibit-acquired", "inhibit-released"]);
   }, 30_000);
+});
 
 describe("Scheduler.tick AWS step (spec 022 AC-1, AC-2, AC-10, AC-11; spec 050 AC-5, AC-8)", () => {
   const tickLines = (paths: ReturnType<typeof statePaths>) => readFileSync(paths.serviceLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((l) => l.kind === "tick");
