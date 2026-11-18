@@ -356,3 +356,27 @@ describe("renderPrompt", () => {
     expect(() => renderPrompt("{{nope}}", input)).toThrow(/unknown placeholder/);
   });
 });
+
+describe("{{pr_body}} (spec 080)", () => {
+  const base = { issue: { number: 1, title: "t", body: "b" }, spec: "S", result_path: "/r", profile_instructions: "p" };
+  const pr = { number: 9, head_sha: "a".repeat(40), url: "u" };
+  const render = (input: Parameters<typeof renderPrompt>[1]) => renderPrompt("<{{pr_body}}>", input);
+  it("renders none, none, empty and the body (AC-1)", () => {
+    expect(render(base)).toBe("<(none)>");
+    expect(render({ ...base, pr })).toBe("<(none)>");
+    expect(render({ ...base, pr: { ...pr, body: "" } })).toBe("<(empty)>");
+    expect(render({ ...base, pr: { ...pr, body: " \n\t" } })).toBe("<(empty)>");
+    expect(render({ ...base, pr: { ...pr, body: "Closes #1" } })).toBe("<Closes #1>");
+  });
+  it("keeps placeholder text in a body literal (AC-2)", () => {
+    expect(render({ ...base, pr: { ...pr, body: "{{spec}} {{nope}}" } })).toBe("<{{spec}} {{nope}}>");
+  });
+  it("puts the body after the Pull request line in review.md", () => {
+    const t = readFileSync(join(agentsDir, "stages", "review.md"), "utf8");
+    expect(t.match(/\{\{pr_body\}\}/g)).toHaveLength(1);
+    const out = renderPrompt(t.replace(/^---[\s\S]*?\n---\n/, ""), { ...base, pr: { ...pr, body: "BODY-TEXT" }, ci: "CI" });
+    expect(out.indexOf("Pull request: #9")).toBeGreaterThan(-1);
+    expect(out.indexOf("BODY-TEXT")).toBeGreaterThan(out.indexOf("Pull request: #9"));
+    expect(out.indexOf("BODY-TEXT")).toBeLessThan(out.indexOf("CI summary"));
+  });
+});

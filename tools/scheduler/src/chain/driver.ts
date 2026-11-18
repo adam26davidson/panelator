@@ -822,10 +822,20 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
   const security = sensitive && state.securityPass;
   const profile = pickProfile(deps, def, state, security);
   const ci = stage === "review" && state.pr ? await ciSummary(deps, state.pr.head_sha, state.pr.number) : undefined;
+  // Spec 080: the review reads the pull request's description; without it the review does not start.
+  let prBody: string | undefined;
+  if (stage === "review" && state.pr) {
+    try {
+      prBody = (await deps.gh.pullRequest(state.pr.number)).body;
+    } catch (e) {
+      return postponed(`pr description: ${(e as Error).message}`);
+    }
+  }
   // AC-10: review gets the diff's cited answers; C8: the question check gets the issue's answered questions.
   const checkAnswers = stage === "question-check" ? await issueAnswers(deps, claim.issue) : undefined;
   const answered = stage === "review" ? await answeredQuestions(deps, claim.issue, claim.worktree) : checkAnswers?.answered;
   const input = await buildInput(deps, claim, issue.title, issue.body, specText, ci, answered, checkAnswers?.reported);
+  if (input.pr && prBody !== undefined) input.pr.body = prBody;
 
   input.decision=state.decision??undefined;
   const beforePatch=state.conversation?await uncommittedPatch(claim.worktree):'';

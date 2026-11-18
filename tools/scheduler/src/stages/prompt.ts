@@ -4,7 +4,7 @@ export interface StageInput {
   issue: { number: number; title: string; body: string };
   spec: string;
   plan?: PlanResult;
-  pr?: { number: number; head_sha: string; url: string };
+  pr?: { number: number; head_sha: string; url: string; body?: string };
   ci?: string;
   findings?: string;
   fix_input?: string;
@@ -39,6 +39,7 @@ export function renderPrompt(template: string, input: StageInput): string {
     spec: input.spec,
     plan: input.plan ? JSON.stringify(input.plan, null, 2) : NONE,
     pr: input.pr ? `#${input.pr.number} ${input.pr.head_sha} ${input.pr.url}` : NONE,
+    pr_body: input.pr?.body === undefined ? NONE : input.pr.body.trim() === "" ? "(empty)" : input.pr.body,
     ci: input.ci ?? NONE,
     findings: input.findings ?? NONE,
     fix_input: input.fix_input ?? NONE,
