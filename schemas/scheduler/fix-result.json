@@ -10,6 +10,11 @@
           "type": "string",
           "pattern": "^[0-9a-f]{40}$"
         },
+        "spec_path": {
+          "type": "string",
+          "pattern": "^specs/[0-9]{3}-[a-z0-9-]+/spec\\.md$",
+          "description": "Spec 071 AC-5: the spec's new path when this fix moved it; allowed beside head_sha only."
+        },
         "addressed": {
           "type": "array",
           "items": {
@@ -78,6 +83,11 @@
               {
                 "required": [
                   "addressed"
+                ]
+              },
+              {
+                "required": [
+                  "spec_path"
                 ]
               }
             ]
