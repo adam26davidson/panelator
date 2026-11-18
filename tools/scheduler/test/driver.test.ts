@@ -2,7 +2,8 @@ import {TelegramClient} from '../src/telegram/client.ts';
 import {telegramChannel} from '../src/telegram/channel.ts';
 import {fakeTelegram} from './helpers/fake-telegram.ts';
 import {emptyTelegram,listPaused,type PausedRecord} from '../src/state/paused.ts';
-import {completePause, OUT_OF_SCOPE_PARAGRAPH} from "../src/chain/driver.ts";
+import {completePause, OUT_OF_SCOPE_PARAGRAPH, specMoveReason} from "../src/chain/driver.ts";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -2558,4 +2559,140 @@ describe("driver: spec and ADR numbers are reserved by the scheduler (spec 065)"
     const r = await step(t.deps, c);
     expect(r.claim.state.history.join("\n")).toContain("result: ADR 0005 is held by docs/decisions/0005-x.md");
   }, 60_000);
+});
+
+describe("driver: a spec PR moves its spec (spec 071)", () => {
+  const body = (line: string) => `Do the thing.\n\nSpec: ${line}\n\nTrailer`;
+  const topWith = (...specs: string[]) => `# Top design\n\n## Children\n\n- \`specs/010-thing/spec.md\`\n${specs.map((s) => `- \`${s}\`\n`).join("")}`;
+  const bodyPatch = (gh: { calls: { method: string; url: string; body?: unknown }[] }) => gh.calls.find((x) => x.method === "PATCH" && x.url === "/repos/o/r/issues/7")?.body as { body: string } | undefined;
+
+  /** The spec PR holds `line`; main holds `mainHas` (a spec directory) when given. */
+  async function env(results: (sha: string) => Record<string, Scripted[]>, line: string, opts: { mainHas?: string; openPrs?: { number: number; added: string[] }[]; others?: Claim[]; track?: "spec" | "issue" } = {}) {
+    let wt = "";
+    const files = withTopDesign({ "a.txt": "a\n", "specs/010-thing/spec.md": spec, ...(opts.mainHas ? { [`${opts.mainHas}/spec.md`]: spec } : {}) }, "specs/010-thing/spec.md");
+    const prs = { 12: { headRef: "spec-7", head: () => head(wt), body: "Refs #7" } };
+    const t = await setup(results, (sha) => ghRoutes(sha, { issueBody: body(line), prs, openPrs: opts.openPrs }), (_p, w) => {
+      wt = w;
+      git(w, "checkout", "-q", "-b", "spec-7");
+      commitIn(w, { [line]: spec, "docs/top.md": topWith(line) }, "spec work");
+      git(w, "push", "-q", "-u", "origin", "spec-7");
+    }, files);
+    const logs: Record<string, unknown>[] = [];
+    t.deps.log = (rec) => { logs.push(rec); };
+    for (const o of opts.others ?? []) await writeClaim(t.paths, o);
+    const c = at(t.claim, { stage: "fix", track: "spec", pr: { number: 12, head_sha: t.sha }, pendingFixInput: "Fix it." });
+    await writeClaim(t.paths, c);
+    return { ...t, logs, c, of: (k: string) => logs.filter((l) => l.kind === k) };
+  }
+  /** The fix: `git mv` the old directory to the new one (or copy it), fix the parent's bullet, and report `spec_path`. */
+  const moveFix = (from: string, to: string, o: { copy?: boolean; report?: string | null } = {}) => (run: StageRun) => {
+    const wt = run.worktree;
+    if (o.copy) execFileSync("cp", ["-r", join(wt, from), join(wt, to)]);
+    else git(wt, "mv", from, to);
+    const sha = commitIn(wt, { "docs/top.md": topWith(`${to}/spec.md`) }, "move");
+    const report = o.report === undefined ? `${to}/spec.md` : o.report;
+    return { head_sha: sha, addressed: [], ...(report === null ? {} : { spec_path: report }) };
+  };
+  const other = (issue: number, spec_: number | null): Claim =>
+    ({ issue, state: { ...initialChainState(issue), reserved: { spec: spec_, adr: null } }, worktree: `/w${issue}`, started_at: new Date().toISOString(), last_activity_at: new Date().toISOString(), run_id: null });
+
+  it("replays issue #41: the rename without spec_path fails with the three violations; with it the scope is ok, the line is rewritten and the reservation spent (AC-1, AC-5, AC-7)", async () => {
+    const bad = await env(() => ({ fix: [moveFix("specs/030-x", "specs/031-x", { report: null })] }), "specs/030-x/spec.md", { mainHas: "specs/030-other" });
+    const r0 = await step(bad.deps, bad.c);
+    expect(inputOf(bad.paths, "7-fix-1-").spec_number).toBe("031");
+    expect(r0.claim.state.pendingFixInput).toContain("specs/030-x/spec.md: no Parent line");
+    expect(r0.claim.state.pendingFixInput).toContain("docs/top.md: outside spec PR scope");
+    expect(bodyPatch(bad.gh)).toBeUndefined();
+
+    const t = await env(() => ({ fix: [moveFix("specs/030-x", "specs/031-x")] }), "specs/030-x/spec.md", { mainHas: "specs/030-other" });
+    const r = await step(t.deps, t.c);
+    expect(inputOf(t.paths, "7-fix-1-").spec_number).toBe("031");
+    expect(t.of("number-reserved").map((l) => l.spec)).toEqual(["031"]);
+    expect(r.claim.state.history.join()).not.toMatch(/failed/);
+    expect(r.claim.state.pendingFixInput ?? "").not.toContain("outside spec PR scope");
+    expect(bodyPatch(t.gh)).toEqual({ body: body("specs/031-x/spec.md") });
+    expect(t.of("spec-moved")).toEqual([{ kind: "spec-moved", issue: 7, from: "specs/030-x/spec.md", to: "specs/031-x/spec.md" }]);
+    expect(r.claim.state.reserved.spec).toBeNull();
+  }, 60_000);
+
+  it("moves to a new slug on a free number with no reservation (AC-1, AC-5)", async () => {
+    const t = await env(() => ({ fix: [moveFix("specs/072-a", "specs/072-b")] }), "specs/072-a/spec.md");
+    const r = await step(t.deps, t.c);
+    expect(inputOf(t.paths, "7-fix-1-").spec_number).toBeUndefined();
+    expect(t.of("number-reserved").filter((l) => l.spec !== undefined)).toEqual([]);
+    expect(bodyPatch(t.gh)).toEqual({ body: body("specs/072-b/spec.md") });
+    expect(r.claim.state.history.join()).not.toMatch(/failed/);
+  }, 60_000);
+
+  it("reserves a number held by an open PR or another claim, gives a set reservation again, and does not count the chain's own PR (AC-1)", async () => {
+    const pr = await env(() => ({ fix: [undefined] }), "specs/030-x/spec.md", { openPrs: [{ number: 30, added: ["specs/030-hand/spec.md"] }] });
+    await step(pr.deps, pr.c);
+    expect(inputOf(pr.paths, "7-fix-1-").spec_number).toBe("031");
+    const cl = await env(() => ({ fix: [undefined] }), "specs/030-x/spec.md", { others: [other(8, 30)] });
+    await step(cl.deps, cl.c);
+    expect(inputOf(cl.paths, "7-fix-1-").spec_number).toBe("031");
+    const set = await env(() => ({ fix: [undefined] }), "specs/030-x/spec.md");
+    await writeClaim(set.paths, at(set.c, {}, {}));
+    const c2 = at(set.c, { reserved: { spec: 44, adr: null } });
+    await writeClaim(set.paths, c2);
+    await step(set.deps, c2);
+    expect(inputOf(set.paths, "7-fix-1-").spec_number).toBe("044");
+    const own = await env(() => ({ fix: [undefined] }), "specs/030-x/spec.md", { openPrs: [{ number: 12, added: ["specs/030-x/spec.md"] }] });
+    await step(own.deps, own.c);
+    expect(inputOf(own.paths, "7-fix-1-").spec_number).toBeUndefined();
+  }, 120_000);
+
+  it("reserves nothing for a spec on main (AC-1)", async () => {
+    const t = await env(() => ({ fix: [undefined] }), "specs/010-thing/spec.md", { openPrs: [{ number: 30, added: ["specs/010-hand/spec.md"] }] });
+    await step(t.deps, t.c);
+    expect(inputOf(t.paths, "7-fix-1-").spec_number).toBeUndefined();
+  }, 60_000);
+
+  const failures: [string, string, string, Parameters<typeof moveFix>[2], string][] = [
+    ["a rename to a number that is not the reservation (item 5)", "specs/033-x", "specs/030-x", {}, "result: spec number 033 is not the issue's 030 or the reserved 031"],
+    ["a copy (item 3)", "specs/031-x", "specs/030-x", { copy: true }, "result: spec moved to specs/031-x/spec.md but specs/030-x/ still holds files"],
+  ];
+  for (const [name, to, from, o, reason] of failures) {
+    it(`fails ${name} and leaves the issue body alone (AC-2)`, async () => {
+      const t = await env(() => ({ fix: [moveFix(from, to, o)] }), "specs/030-x/spec.md", { mainHas: "specs/030-other" });
+      const r = await step(t.deps, t.c);
+      expect(r.claim.state.history).toContain(`fix attempt 1 failed: ${reason}`);
+      expect(bodyPatch(t.gh)).toBeUndefined();
+    }, 60_000);
+  }
+
+  it("fails a move with no spec at the new path, an issue-track move, and a move of a spec on main (AC-2 items 4, 1, 2)", async () => {
+    const none = await env(() => ({ fix: [(run: StageRun) => { git(run.worktree, "rm", "-q", "-r", "specs/072-a"); return { head_sha: commitIn(run.worktree, { "b.txt": "b\n" }), addressed: [], spec_path: "specs/031-x/spec.md" }; }] }), "specs/072-a/spec.md");
+    const r1 = await step(none.deps, none.c);
+    expect(r1.claim.state.history.join()).toContain("result: no spec at specs/031-x/spec.md");
+    const issueTrack = await specMoveReason({} as DriverDeps, { state: { track: "issue" } } as Claim, "specs/072-a/spec.md", "specs/072-b/spec.md");
+    expect(issueTrack).toBe("result: spec_path differs from the issue's Spec: line");
+    const onMain = await env(() => ({ fix: [(run: StageRun) => ({ head_sha: head(run.worktree), addressed: [], spec_path: "specs/011-y/spec.md" })] }), "specs/010-thing/spec.md");
+    const r3 = await step(onMain.deps, onMain.c);
+    expect(r3.claim.state.history.join()).toContain("result: the spec at specs/010-thing/spec.md is on main and cannot move");
+    for (const t of [none, onMain]) expect(bodyPatch(t.gh)).toBeUndefined();
+  }, 120_000);
+
+  describe("the spec stage (AC-3)", () => {
+    const specClaim = async (t: Awaited<ReturnType<typeof env>>) => {
+      const c = at(t.c, { stage: "spec", track: "spec", specMode: "write" });
+      await writeClaim(t.paths, c);
+      return c;
+    };
+    const revised = (from: string, to: string) => (run: StageRun) => {
+      git(run.worktree, "mv", from, to);
+      return { verdict: "revised", spec_path: `${to}/spec.md`, pr_number: 12, head_sha: commitIn(run.worktree, { "docs/top.md": topWith(`${to}/spec.md`) }, "move") };
+    };
+    it("rewrites the line for a revised result that moves the spec, and refuses one that moves a spec on main", async () => {
+      const t = await env(() => ({ spec: [revised("specs/072-a", "specs/072-b")] }), "specs/072-a/spec.md");
+      const r = await step(t.deps, await specClaim(t));
+      expect(r.claim.state.history.join()).not.toMatch(/failed/);
+      expect(bodyPatch(t.gh)).toEqual({ body: body("specs/072-b/spec.md") });
+      expect(t.of("spec-moved")).toHaveLength(1);
+      const m = await env(() => ({ spec: [(run: StageRun) => ({ verdict: "revised", spec_path: "specs/011-y/spec.md", pr_number: 12, head_sha: head(run.worktree) })] }), "specs/010-thing/spec.md");
+      const r2 = await step(m.deps, await specClaim(m));
+      expect(r2.claim.state.history.join()).toContain("result: the spec at specs/010-thing/spec.md is on main and cannot move");
+      expect(bodyPatch(m.gh)).toBeUndefined();
+    }, 120_000);
+  });
 });

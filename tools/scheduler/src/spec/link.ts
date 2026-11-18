@@ -8,5 +8,5 @@ export function specPathFromIssueBody(body: string): string | null {
 
 /** Spec 071 AC-4: the body with its `Spec:` line replaced by `Spec: <path>`; every other byte is kept, and a body with no line is returned as it is. */
 export function withSpecPath(body: string, path: string): string {
-  return body.replace(SPEC_LINE, `Spec: ${path}`);
+  return body.replace(SPEC_LINE, (line, old: string) => line.replace(old, path));
 }
