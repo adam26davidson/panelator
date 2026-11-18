@@ -3,11 +3,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentsDir, repoRoot } from "../src/config.ts";
 import { isSensitive } from "../src/gates/index.ts";
-import { listProfiles, readSensitiveGlobs, resolveProfile } from "../src/profiles/resolve.ts";
+import { implementationProfiles, listProfiles, readSensitiveGlobs, resolveProfile } from "../src/profiles/resolve.ts";
 
 describe("profiles", () => {
   it("lists the committed v0 profiles", () => {
     expect(listProfiles(agentsDir)).toEqual(["backend", "design", "security", "spec"]);
+  });
+  it("lists only backend as an implementation profile (spec 077 AC-4)", () => {
+    expect(implementationProfiles(agentsDir)).toEqual(["backend"]);
   });
   it("resolves backend with its skills dir, instructions and tools", () => {
     const p = resolveProfile(agentsDir, "backend");

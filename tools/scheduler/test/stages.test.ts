@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentsDir } from "../src/config.ts";
 import { loadStageDefinitions, parseStageDefinition } from "../src/stages/definition.ts";
-import { resolveProfile } from "../src/profiles/resolve.ts";
+import { implementationProfiles, resolveProfile } from "../src/profiles/resolve.ts";
 import { renderReplyPrompt,renderPrompt } from "../src/stages/prompt.ts";
 
 const minimal = `---
@@ -113,6 +113,15 @@ describe("committed stage prompts (AC-1, AC-14, AC-15, AC-17)", () => {
     const text = read(n);
     expect(text).toContain('"security": false, "stops_pipeline": false }');
     expect(text).toContain("stops every run or every PR");
+  });
+  it("plan names the implementation profiles and the areas (spec 077 AC-4)", () => {
+    const text = read("plan").replace(/\s+/g, " ");
+    const sentence = /The domains with an implementation profile today are:[^.]*\./.exec(text)?.[0] ?? "";
+    expect([...sentence.matchAll(/`([^`]+)`/g)].map((m) => m[1])).toEqual(implementationProfiles(agentsDir));
+    expect(text).not.toContain("firmware, infra");
+    const areas = text.split(". ").find((s) => s.includes("`backend` for everything else")) ?? "";
+    expect(areas).toContain("`tools/`");
+    expect(areas).toContain("`agents/`");
   });
   const full = {
     issue: { number: 7, title: "Add thing", body: "Spec: specs/010-thing/spec.md" },
