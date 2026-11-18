@@ -488,8 +488,18 @@ describe("driveChain", () => {
     const c = await steps(deps, claim, 3);
     expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1"]);
     expect(c.state).toMatchObject({ stage: "plan", rescues: 1, rescueRun: true });
-    expect(c.state.history.at(-1)).toContain("profile not available: firmware");
+    expect(c.state.history.at(-1)).toContain("profile not available: firmware (implementation profiles: backend)");
     expect(notifications).toEqual([]);
+  }, 60_000);
+
+  it("fails a plan whose domain names a stage profile (spec 077 AC-2)", async () => {
+    const spec = { ...plan, domain: "spec" };
+    const { deps, claim, adapter } = await setup(() => ({ plan: [spec, { ...spec }] }));
+    const c = await steps(deps, claim, 3);
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1"]);
+    // plan-result.json's domain enum already refuses "spec" before the I4 check runs, so the plan fails as an invalid result.
+    expect(c.state.history.at(-1)).toMatch(/profile not available: spec|result: invalid/);
+    expect(c.state).toMatchObject({ stage: "plan", rescues: 1, rescueRun: true });
   }, 60_000);
 });
 

@@ -10,6 +10,12 @@ export function listProfiles(agentsDir: string): string[] {
     .sort();
 }
 
+export const STAGE_PROFILES: readonly string[] = ["design", "security", "spec"];
+
+export function implementationProfiles(agentsDir: string): string[] {
+  return listProfiles(agentsDir).filter((n) => !STAGE_PROFILES.includes(n));
+}
+
 export function resolveProfile(agentsDir: string, name: string): Profile {
   const dir = join(agentsDir, "profiles", name);
   if (!/^[a-z][a-z0-9-]*$/.test(name) || !existsSync(join(dir, "profile.yaml"))) throw new Error(`unknown profile: ${name}`);

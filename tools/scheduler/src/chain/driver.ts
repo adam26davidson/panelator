@@ -13,7 +13,7 @@ import type { GitHubClient } from "../github/client.ts";
 import { neutraliseMarkers } from "../github/markers.ts";
 import type { PullRequestInfo } from "../github/types.ts";
 import type { Notifier } from "../notify/types.ts";
-import { listProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
+import { implementationProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
 import { afterFallback, harnessForModel, retryDecision } from "../runner/retry.ts";
 import type { ParameterStore } from "../parameters/store.ts";
 import { modelLimitFallback, planLaunch, quotaParams, readBook, waitAfterLimit } from "../quota/book.ts";
@@ -946,7 +946,8 @@ async function stageEvent(deps: DriverDeps, claim: Claim, stage: AgentStageName,
       if (!("escalation" in plan && plan.escalation)) {
         // I4: a domain with no profile fails the plan rather than running under another profile.
         const domain = (plan as { domain: string }).domain;
-        if (!listProfiles(deps.agentsDir).includes(domain)) return { type: "stage_failed", stage: "plan", reason: `profile not available: ${domain}` };
+        const impl = implementationProfiles(deps.agentsDir);
+        if (!impl.includes(domain)) return { type: "stage_failed", stage: "plan", reason: `profile not available: ${domain} (implementation profiles: ${impl.join(", ")})` };
       }
       if ("escalation" in plan && plan.escalation) return { type: "stage_ok", stage: "plan", result: plan, head: await holdWork(deps, claim, "plan") };
       return { type: "stage_ok", stage: "plan", result: plan };
