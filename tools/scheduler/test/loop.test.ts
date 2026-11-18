@@ -8,7 +8,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Octokit } from "octokit";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { agentsDir, defaultConfigPath, loadConfig } from "../src/config.ts";
 import { GitHubClient } from "../src/github/client.ts";
 import { BLOCK_RECHECK_S, MAX_CHAIN_FAILURES, Scheduler, type SchedulerDeps } from "../src/service/loop.ts";
@@ -31,6 +31,7 @@ import type { Notification } from "../src/notify/types.ts";
 import { ALL, matches } from "./helpers/markers.ts";
 import { mockGitHub, pageLink, type Route } from "./helpers/mock-github.ts";
 import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
+import { watchTickErrors } from "./helpers/tick-errors.ts";
 
 const spec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
 const BOT = { login: "panelator-pipeline[bot]", type: "Bot" };
@@ -55,7 +56,9 @@ async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
   const pair = repoPair(withTopDesign({ "a.txt": "a\n", "specs/010-thing/spec.md": specFile }, "specs/010-thing/spec.md"));
   const paths = statePaths(join(pair.root, "state"));
   await ensureStateDirs(paths);
-  const gh = mockGitHub(rs);
+  // fallback after the caller's routes (first match wins): a tick that loads the registry may list check runs
+  const mainChecks: Route = { method: "GET", path: /^\/repos\/o\/r\/commits\/[^/]+\/check-runs$/, reply: () => ({ body: { total_count: 1, check_runs: [{ id: 1, name: "test", status: "completed", conclusion: "success" }] } }) };
+  const gh = mockGitHub([...rs, mainChecks]);
   const notifications: Notification[] = [];
   const started: number[] = [];
   let now = new Date("2026-10-12T12:00:00Z");
@@ -74,7 +77,10 @@ async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
     fastForward: async () => ({ moved: false, changedPaths: [] }), sleep: async () => {}, monotonic: () => mono, requestRestart: () => { started.push(-1); },
   };
   const s = new Scheduler(deps, { driveChain: drive ?? (async (_d, claim) => { started.push(claim.issue); return { ...claim, state: { ...claim.state, stage: "verify" } }; }) });
-  return { s, deps, gh, notifications, started, paths, pair, setNow: (d: Date) => { now = d; }, setMono: (m: number) => { mono = m; } };
+  const watcher = watchTickErrors(s);
+  onTestFinished(() => watcher.check());
+  const watch = (scheduler: Scheduler) => { const w = watchTickErrors(scheduler); onTestFinished(() => w.check()); return scheduler; };
+  return { s, deps, gh, notifications, allowErrors: watcher.allow, watch, started, paths, pair, setNow: (d: Date) => { now = d; }, setMono: (m: number) => { mono = m; } };
 }
 
 describe('Telegram answers and watchdog fallback',()=>{
@@ -152,7 +158,7 @@ describe("Scheduler.tick plain files (spec 072)", () => {
 
 describe("Scheduler.tick", () => {
   it("records a completed main check once across two service instances", async () => {
-    const { s, deps, paths, gh } = await setup([
+    const { s, deps, paths, gh, watch } = await setup([
       ...routes([]),
       { method: "GET", path: /^\/repos\/o\/r\/commits\/[^/]+\/check-runs$/, reply: () => ({ body: { total_count: 1, check_runs: [{ id: 42, name: "test", status: "completed", conclusion: "success" }] } }) },
     ]);
@@ -164,7 +170,7 @@ describe("Scheduler.tick", () => {
     for (const def of Object.values(deps.registry)) def.trigger = def.name === "action-audit" ? { events: ["ci_failure_main"] } : def.trigger;
     deps.cfg.required_checks = ["test"];
     await s.tick(); s.stop("restart test");
-    const restarted = new Scheduler(deps);
+    const restarted = watch(new Scheduler(deps));
     await restarted.tick(); restarted.stop("test done");
     expect(gh.calls.filter(c => c.url.includes("/check-runs"))).toHaveLength(2);
     const db = openIndex(paths);
@@ -263,7 +269,7 @@ describe("Scheduler.tick", () => {
   it("removes needs-design-stage from a parked issue once, with one comment, and claims it (spec 029 AC-8)", async () => {
     const parked = issue(4, ["validated", "class:product", "needs-design-stage"]);
     const rs = routes([parked]);
-    const { s, gh, paths, deps } = await setup(rs, 1, undefined, uiSpec());
+    const { s, gh, paths, deps, watch } = await setup(rs, 1, undefined, uiSpec());
     const t = await s.tick();
     expect(gh.calls.filter((c) => c.method === "DELETE").map((c) => c.url)).toEqual(["/repos/o/r/issues/4/labels/needs-design-stage"]);
     expect(gh.calls.filter((c) => c.url === "/repos/o/r/issues/4/comments" && c.method === "POST")).toHaveLength(1);
@@ -275,7 +281,7 @@ describe("Scheduler.tick", () => {
     rs[1] = { method: "GET", path: /^\/repos\/o\/r\/issues$/, reply: (_m, _b, url) => ({ body: [parked], headers: pageLink(url, 1, 1) }) };
     for (const c of await listClaims(paths)) await rm(join(paths.claims, `${c.issue}.json`), { force: true });
     gh.calls.length = 0;
-    const again = new Scheduler(deps, { driveChain: async (_d, claim) => claim });
+    const again = watch(new Scheduler(deps, { driveChain: async (_d, claim) => claim }));
     await again.tick();
     expect(gh.calls.filter((c) => c.method === "DELETE")).toEqual([]);
     expect(gh.calls.filter((c) => c.url === "/repos/o/r/issues/4/comments" && c.method === "POST")).toEqual([]);
@@ -291,7 +297,8 @@ describe("Scheduler.tick", () => {
   it("does not claim when the issue list is incomplete (review focus 1)", async () => {
     const rs = routes([issue(1)]);
     rs[2] = { method: "POST", path: /^\/graphql$/, reply: () => ({ body: { data: { repository: { issues: { totalCount: 3 } } } } }) };
-    const { s } = await setup(rs);
+    const { s, allowErrors } = await setup(rs);
+    allowErrors(/^issue list incomplete/);
     const t = await s.tick();
     expect(t.claimed).toEqual([]);
     expect(t.errors[0]).toMatch(/incomplete/);
@@ -388,21 +395,21 @@ describe("Scheduler.tick", () => {
 
   it("keeps the failure count across a restart: a new Scheduler reads it from the claim (C7)", async () => {
     let calls = 0;
-    const { deps, paths, pair } = await setup(routes([]), 1, async () => { calls++; throw new Error("boom"); });
+    const { deps, paths, pair, watch } = await setup(routes([]), 1, async () => { calls++; throw new Error("boom"); });
     await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
     for (let i = 0; i < 2; i++) {
-      await new Scheduler(deps, { driveChain: async () => { calls++; throw new Error(`boom ${i}`); } }).tick();
+      await watch(new Scheduler(deps, { driveChain: async () => { calls++; throw new Error(`boom ${i}`); } })).tick();
       await new Promise((r) => setTimeout(r, 100));
     }
     expect((await listClaims(paths))[0].state.chainFailures).toEqual({ count: 2, last: "boom 1" });
     expect(JSON.parse(readFileSync(join(paths.escalations, "7.json"), "utf8")).chainFailures).toEqual({ count: 2, last: "boom 1" });
     // A drive that returns resets the count.
-    await new Scheduler(deps, { driveChain: async (_d, c) => c }).tick();
+    await watch(new Scheduler(deps, { driveChain: async (_d, c) => c })).tick();
     await new Promise((r) => setTimeout(r, 100));
     expect((await listClaims(paths))[0].state.chainFailures).toBeNull();
     expect(calls).toBe(2);
     // Tm6: the error kept is clipped like a history entry.
-    await new Scheduler(deps, { driveChain: async () => { throw new Error("x".repeat(HISTORY_ENTRY_MAX + 50)); } }).tick();
+    await watch(new Scheduler(deps, { driveChain: async () => { throw new Error("x".repeat(HISTORY_ENTRY_MAX + 50)); } })).tick();
     await new Promise((r) => setTimeout(r, 100));
     expect((await listClaims(paths))[0].state.chainFailures?.last).toHaveLength(HISTORY_ENTRY_MAX);
   }, 30_000);
@@ -421,7 +428,8 @@ describe("Scheduler.tick", () => {
   }, 30_000);
 
   it("records a failed children scan and still completes the tick (spec 031 AC-3)", async () => {
-    const { s, deps, paths } = await setup(routes([issue(1)]));
+    const { s, deps, paths, allowErrors } = await setup(routes([issue(1)]));
+    allowErrors(/^children scan: /);
     deps.scanChildren = async () => { throw new Error("github down"); };
     const t = await s.tick();
     expect(t.errors).toContain("children scan: github down");
@@ -430,23 +438,27 @@ describe("Scheduler.tick", () => {
   }, 30_000);
 
   it("does not scan when the fast-forward failed (spec 031 AC-3)", async () => {
-    const { s, deps } = await setup(routes([]));
+    const { s, deps, allowErrors } = await setup(routes([]));
+    allowErrors(/^freshness: /);
     let scans = 0;
     deps.scanChildren = async () => { scans++; };
     deps.fastForward = async () => { throw new Error("not a fast-forward"); };
-    await s.tick();
+    const t = await s.tick();
+    expect(t.errors).toEqual([expect.stringMatching(/^freshness: /)]);
     expect(scans).toBe(0);
   }, 30_000);
 
   it("records a freshness error and still lists and claims when fast-forward fails (ruling 7c)", async () => {
-    const { s, deps } = await setup(routes([issue(1)]));
+    const { s, deps, allowErrors } = await setup(routes([issue(1)]));
+    allowErrors(/^freshness: /);
     deps.fastForward = async () => { throw new Error("not a fast-forward"); };
     const t = await s.tick();
     expect(t.errors[0]).toMatch(/freshness/);
     expect(t.claimed).toEqual([1]);
   }, 30_000);
   it("writes the claim file before the claim label, so a failed claim leaves no orphaned in-progress (review fix 1)", async () => {
-    const { s, gh, paths } = await setup(routes([issue(1)]));
+    const { s, gh, paths, allowErrors } = await setup(routes([issue(1)]));
+    allowErrors(/^claim 1: /);
     rmSync(paths.worktrees, { recursive: true, force: true });
     writeFileSync(paths.worktrees, "not a directory\n");
     const t = await s.tick();
@@ -1374,6 +1386,7 @@ describe("Scheduler.tick: fair slot scheduling, failure and crash windows (spec 
     const log = grantLog();
     const failLabel: Route = { method: "POST", path: /^\/repos\/o\/r\/issues\/1\/labels$/, reply: () => ({ status: 422, body: { message: "Validation Failed" } }) };
     const h = await setup([failLabel, ...routes([issue(1), issue(2)])], 1, log.drive);
+    h.allowErrors(/^claim 1: /);
     const t = await h.s.tick();
     await settle();
     expect(t.claimed).toEqual([]);
@@ -1678,11 +1691,27 @@ describe("Scheduler.tick: the disk sweep step (spec 064)", () => {
   }, 30_000);
 
   it("a failing sweep is reported in errors and the tick still finishes", async () => {
-    const { s, deps } = await setup(routes([issue(1)]));
+    const { s, deps, allowErrors } = await setup(routes([issue(1)]));
+    allowErrors(/^sweep: /);
     deps.agentsDir = join(deps.agentsDir, "missing");
     const t = await s.tick();
     expect(t.errors.some((e) => e.startsWith("sweep: "))).toBe(true);
     expect(t.eligible).toBe(1);
+  }, 30_000);
+
+  it("a tick with the checked-in registry lists check runs for origin/main and reports no error (spec 081 AC-4)", async () => {
+    const { s, deps, gh, pair } = await setup(routes([]));
+    const { loadRegistry } = await import("../src/standing/registry.ts");
+    const { EVENT_NAMES } = await import("../src/standing/events.ts");
+    const { registryActionsCheck } = await import("../src/actions/index.ts");
+    deps.registry = loadRegistry(join(agentsDir, "standing"), EVENT_NAMES, registryActionsCheck(join(agentsDir, "actions.yaml")));
+    deps.cfg.required_checks = ["test"];
+    const sha = git(pair.repo, "rev-parse", "origin/main").trim();
+    const t = await s.tick();
+    expect(t.errors).toEqual([]);
+    const listed = gh.calls.filter((c) => c.method === "GET" && c.url.includes("/check-runs"));
+    expect(listed.map((c) => c.url)).toEqual([expect.stringContaining(`/commits/${sha}/check-runs`)]);
+    expect(gh.unmatched.filter((u) => JSON.stringify(u).includes("/check-runs"))).toEqual([]);
   }, 30_000);
 });
 
