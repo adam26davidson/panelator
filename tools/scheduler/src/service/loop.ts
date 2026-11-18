@@ -43,6 +43,7 @@ import type { StatePaths } from "../state/paths.ts";
 import { schedulerChanged } from "./git.ts";
 import { fileDesignChildren } from "../children/scan.ts";
 import { loadDesignTree } from "../gates/design-tree.ts";
+import { neutraliseMarkers } from "../github/markers.ts";
 
 export interface SchedulerDeps extends DriverDeps {
   registry?:Record<string,StandingDefinition>;
@@ -424,7 +425,7 @@ export class Scheduler {
       if(d.telegram&&rec.telegram?.message_id){
         const id=await d.telegram.sendReply(reminderText(rec),rec.telegram.message_id,questionMessage({number:rec.issue,title:''},rec,'').reply_markup);
         rec={...rec,reminded:true,telegram:{...rec.telegram,reminder_message_id:id,thread_message_ids:[...rec.telegram.thread_message_ids,id]}};await writePaused(d.paths,rec);
-      }else await d.gh.comment(rec.issue, text);
+      }else await d.gh.comment(rec.issue, neutraliseMarkers(text));
       await d.notifier.notify({ issue: rec.issue, gate: "question-reminder", label: NEEDS_DECISION_LABEL, text });
       await appendQuestionLog(d.paths, { issue: rec.issue, at: d.now().toISOString(), event: "reminded", asking_stage: rec.asking_stage,channel:rec.telegram?.message_id?'telegram':'issue',...(rec.telegram?.reminder_message_id?{telegram_message_id:rec.telegram.reminder_message_id}:{}), ...(rec.question_comment_id === null ? {} : { question_comment_id: rec.question_comment_id }) }, rec.question.question);
     }

@@ -28,6 +28,7 @@ import { appendQuestionLog } from "../src/state/questions.ts";
 import type { Claim } from "../src/state/claims.ts";
 import type { Question } from "../src/types.ts";
 import type { Notification } from "../src/notify/types.ts";
+import { ALL, matches } from "./helpers/markers.ts";
 import { mockGitHub, pageLink, type Route } from "./helpers/mock-github.ts";
 import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
 
@@ -97,6 +98,13 @@ describe('Telegram answers and watchdog fallback',()=>{
    expect(logs.some(l=>l.kind==='telegram-outage'||l.kind==='telegram-recovered')).toBe(false);expect(waits).toEqual([2000]);
    expect(gh.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/comments'))).toHaveLength(2);expect(server.sent).toHaveLength(1);expect((await listPaused(paths))[0].phase).toBe('resuming');
   }finally{await poll.stop();await server.close();}
+ },30000);
+ it('the answer comment neutralises every marker but its own, and the resumed answer is the maintainer\'s exact text (spec 076 AC-2)',async()=>{
+  const {s,deps,paths,gh}=await setup(routes([waiting()]),1,firstStep);const server=await fakeTelegram();deps.telegram=telegramChannel(new TelegramClient('SECRET',42,server.url));
+  try{await writePaused(paths,tgRecord());const u=message(901,ALL);await s.handleTelegramUpdate(u);await s.confirmTelegramUpdate(u);
+   const posted=gh.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/comments')).map(c=>(c.body as {body:string}).body);
+   expect(posted).toHaveLength(1);expect(matches(posted[0]!)).toHaveLength(1);expect(posted[0]!.trimEnd().endsWith('<!-- panelator-telegram-answer:901 -->')).toBe(true);
+   expect((await listPaused(paths))[0].answer).toBe(ALL);}finally{await server.close();}
  },30000);
  it('keeps free text while two questions are open, then a selection answers the right one',async()=>{
   const {s,deps,paths}=await setup(routes([]));const server=await fakeTelegram();deps.telegram=telegramChannel(new TelegramClient('secret',42,server.url));
@@ -710,6 +718,15 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     expect(gh.calls.filter((c) => c.method === "POST" && c.url.endsWith("/comments"))).toEqual([]);
   }, 30_000);
 
+  it("the reminder comment neutralises a question carrying every family (spec 076 AC-2)", async () => {
+    const { s, paths, gh } = await setup(routes([waiting()]));
+    await writePaused(paths, record({ asked_at: "2026-10-11T11:00:00Z", question: { ...Q, question: ALL } }));
+    await s.tick();
+    const posted = gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues/7/comments").map((c) => (c.body as { body: string }).body);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("Still waiting on your answer");
+    expect(matches(posted[0]!)).toEqual([]);
+  });
   it("sends one reminder after 24 hours: the reminded mark first, one comment, one notification (AC-16, C15)", async () => {
     const { s, paths, gh, notifications } = await setup(routes([waiting()]));
     await writePaused(paths, record({ asked_at: "2026-10-11T11:00:00Z" }));

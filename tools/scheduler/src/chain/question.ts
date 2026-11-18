@@ -1,4 +1,5 @@
 import type { Question } from "../types.ts";
+import { neutraliseMarkers } from "../github/markers.ts";
 
 /** C9: a leaf module, so the paused-record code and the driver share the comment format without importing the machine. */
 
@@ -38,7 +39,7 @@ export function questionBody(q: Question, maintainer: string): string {
 /** The issue comment of AC-13: heading, mention, question, options with costs, recommendation, and the nonce last. */
 export function formatQuestion(q: Question, maintainer: string, nonce: string, channel:'telegram'|'issue'='issue'): string {
   const body=channel==='telegram'?questionBody(q,maintainer).replace(`@${maintainer}\n`,'').replace('Reply in a comment on this issue; the scheduler resumes on your reply.','This question was asked on Telegram. Reply there or comment here to resume the work.'):questionBody(q,maintainer);
-  return `${body}\n\n${questionMarker(nonce)}`;
+  return `${neutraliseMarkers(body)}\n\n${questionMarker(nonce)}`;
 }
 
 /** Spec 067 AC-1: the fields of each request type, in the order a reason names them. */

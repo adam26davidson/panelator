@@ -13,6 +13,7 @@ import {
   type PendingSelection,
 } from "./questions.ts";
 import { saveJson } from "./poller.ts";
+import { neutraliseMarkers } from "../github/markers.ts";
 interface Journal {
   ignored_issue_comments?: number[];
   selection: PendingSelection | null;
@@ -157,10 +158,10 @@ export class TelegramAnswers {
             existing ??
             (await d.gh.comment(
               r.issue,
-              `Answer from the maintainer (Telegram)\n\n${match.text
+              `${neutraliseMarkers(`Answer from the maintainer (Telegram)\n\n${match.text
                 .split("\n")
                 .map((l) => "> " + l)
-                .join("\n")}\n\n${marker}`,
+                .join("\n")}`)}\n\n${marker}`,
             ));
           r = {
             ...r,

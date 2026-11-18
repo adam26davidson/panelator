@@ -10,6 +10,7 @@ import type { Config } from "../config.ts";
 import { ROOT, TOP_DESIGNS } from "../gates/design-tree.ts";
 import { designScopeGate, isSensitive, scopeGate, specPresentGate, specScopeGate, uiDesignGate, type ScopeResult } from "../gates/index.ts";
 import type { GitHubClient } from "../github/client.ts";
+import { neutraliseMarkers } from "../github/markers.ts";
 import type { PullRequestInfo } from "../github/types.ts";
 import type { Notifier } from "../notify/types.ts";
 import { listProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
@@ -1333,7 +1334,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         }
         break;
       case "comment":
-        await deps.gh.comment(claim.issue, claim.state.stage === "abandoned" ? `${a.text}\n\n${await runRecordList(deps, claim.issue)}` : a.text);
+        await deps.gh.comment(claim.issue, neutraliseMarkers(claim.state.stage === "abandoned" ? `${a.text}\n\n${await runRecordList(deps, claim.issue)}` : a.text));
         break;
       case "notify":
         await deps.notifier.notify({ issue: claim.issue, gate: a.gate, label: a.label, text: a.text });
@@ -1370,7 +1371,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
           return "";
         });
         const saved = await savePatch(deps.paths, claim.issue, commits, deps.now(), "closed-pr");
-        await deps.gh.comment(a.pr, a.comment);
+        await deps.gh.comment(a.pr, neutraliseMarkers(a.comment));
         await deps.gh.closePullRequest(a.pr);
         await deps.gh.deleteBranch(a.branch);
         deps.log({ kind: "pr-closed", issue: claim.issue, pr: a.pr, branch: a.branch, patch: saved });
@@ -1399,7 +1400,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         break;
       }
       case "close_issue":
-        await deps.gh.closeIssue(claim.issue, a.comment);
+        await deps.gh.closeIssue(claim.issue, neutraliseMarkers(a.comment));
         break;
       case "rerun_checks":
         await rerunChecks(deps, claim, a.sha);
