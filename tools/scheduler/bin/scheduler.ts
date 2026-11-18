@@ -47,7 +47,7 @@ const serviceLog = new ServiceLog(paths.serviceLog);
 const binDir = dirname(fileURLToPath(import.meta.url));
 const credStore=storeFromConfig(cfg);
 if(args[0]==='telegram-check'){
- try{console.log(await telegramCheck(cfg,credStore));process.exit(0);}catch(e){console.error((e as Error).message);process.exit(1);}
+ try{console.log(await telegramCheck(cfg,undefined,credStore));process.exit(0);}catch(e){console.error((e as Error).message);process.exit(1);}
 }
 
 /** I7: a configuration error the service cannot recover from by restarting; the unit's RestartPreventExitStatus=78 stops the loop. */
@@ -172,12 +172,11 @@ const gh = new GitHubClient(app.octokit, cfg.repo);
 const inhibitor = new SleepInhibitor({ enabled: cfg.systemd.inhibit, log: (rec) => serviceLog.write(rec) });
 // The lock never outlives the process, whatever path ends it.
 process.on("exit", () => inhibitor.release());
-const started=await startTelegram(cfg,credStore,rec=>serviceLog.write(rec));
-const telegram=started?.channel??null;
+const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec),undefined,credStore);
 // Spec 072 AC-2: the credentials this process reads from the store, fixed for its life.
 const fromStore=new Set<string>();
 if(appKeySource==='store')fromStore.add('github-app-key');
-if(started?.source==='store')fromStore.add('telegram-bot');
+if(telegram?.source==='store')fromStore.add('telegram-bot');
 let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({

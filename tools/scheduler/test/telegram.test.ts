@@ -625,7 +625,7 @@ describe("Telegram credentials from the store (spec 072 AC-1)", () => {
   it("reads the stored secret with the file absent", async () => {
     const t = await setup();
     await t.store.writeSecret("telegram-bot", JSON.stringify({ bot_token: "STORED-TOKEN", chat_id: 7 }), "maintainer");
-    const started = await startTelegram(t.cfg, t.store, t.log);
+    const started = await startTelegram(t.cfg, t.log, undefined, t.store);
     expect(started?.source).toBe("store");
   });
   it("is off with the reason, and no token in the log, when the blob will not decrypt or has the wrong shape", async () => {
@@ -633,16 +633,16 @@ describe("Telegram credentials from the store (spec 072 AC-1)", () => {
     await writeFile(t.path, JSON.stringify({ bot_token: "FILE-TOKEN", chat_id: 1 }));
     await t.store.writeSecret("telegram-bot", JSON.stringify({ bot_token: "STORED-TOKEN", chat_id: 7 }), "maintainer");
     process.env.FAKE_SYSTEMD_CREDS_FAIL = "1";
-    expect(await startTelegram(t.cfg, t.store, t.log)).toBeNull();
+    expect(await startTelegram(t.cfg, t.log, undefined, t.store)).toBeNull();
     delete process.env.FAKE_SYSTEMD_CREDS_FAIL;
     await t.store.writeSecret("telegram-bot", '{"bot_token":"STORED-TOKEN","chat_id":"x"}', "maintainer");
-    expect(await startTelegram(t.cfg, t.store, t.log)).toBeNull();
+    expect(await startTelegram(t.cfg, t.log, undefined, t.store)).toBeNull();
     expect(t.logs.map((l) => l.reason)).toEqual(["stored telegram-bot credential unreadable", "stored telegram-bot credential has an invalid shape"]);
     expect(JSON.stringify(t.logs)).not.toContain("TOKEN");
   });
   it("reads the file while the index has no entry", async () => {
     const t = await setup();
     await writeFile(t.path, JSON.stringify({ bot_token: "FILE-TOKEN", chat_id: 1 }));
-    expect((await startTelegram(t.cfg, t.store, t.log))?.source).toBe("file");
+    expect((await startTelegram(t.cfg, t.log, undefined, t.store))?.source).toBe("file");
   });
 });

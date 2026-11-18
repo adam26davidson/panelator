@@ -1,5 +1,4 @@
 import {startTelegram,telegramCheck} from '../src/service/telegram-start.ts';
-import {CredentialStore} from '../src/credentials/store.ts';
 import {TelegramClient} from '../src/telegram/client.ts';
 import {loadConfig,defaultConfigPath} from '../src/config.ts';
 import {fakeTelegram} from './helpers/fake-telegram.ts';
@@ -15,13 +14,13 @@ import { git, repoPair } from "./helpers/repo-pair.ts";
 
 describe('Telegram startup and delivery check',()=>{
  it('fails closed for missing/unauthorized credentials and never logs the token',async()=>{
-  const dir=mkdtempSync(join(tmpdir(),'tg-start-'));const path=join(dir,'telegram.json');const cfg={...loadConfig(defaultConfigPath),telegram:{credentials_path:path,long_poll_timeout_s:50}};const logs:unknown[]=[];const store=new CredentialStore({dir:join(dir,'store')});
-  expect(await startTelegram(cfg,store,r=>logs.push(r))).toBeNull();
+  const dir=mkdtempSync(join(tmpdir(),'tg-start-'));const path=join(dir,'telegram.json');const cfg={...loadConfig(defaultConfigPath),telegram:{credentials_path:path,long_poll_timeout_s:50}};const logs:unknown[]=[];
+  expect(await startTelegram(cfg,r=>logs.push(r))).toBeNull();
   writeFileSync(path,JSON.stringify({bot_token:'PRIVATE-TOKEN',chat_id:42}));const server=await fakeTelegram();try{
-   const started=await startTelegram(cfg,store,r=>logs.push(r),server.url);expect(started).not.toBeNull();expect(started!.channel.client).toBeInstanceOf(TelegramClient);expect(server.requests).toEqual([]);
-   expect(await telegramCheck(cfg,store,server.url)).toBe('bot @test_bot, chat 42');expect(server.sent[0].text).toBe('panelator: Telegram channel connected');
-   expect(await startTelegram(cfg,store,r=>logs.push(r),server.url)).not.toBeNull();expect(JSON.stringify(logs)).not.toContain('PRIVATE-TOKEN');
-   server.fail('sendMessage',500);await expect(telegramCheck(cfg,store,server.url)).rejects.toThrow('sendMessage');
+   const started=await startTelegram(cfg,r=>logs.push(r),server.url);expect(started).not.toBeNull();expect(started!.client).toBeInstanceOf(TelegramClient);expect(server.requests).toEqual([]);
+   expect(await telegramCheck(cfg,server.url)).toBe('bot @test_bot, chat 42');expect(server.sent[0].text).toBe('panelator: Telegram channel connected');
+   expect(await startTelegram(cfg,r=>logs.push(r),server.url)).not.toBeNull();expect(JSON.stringify(logs)).not.toContain('PRIVATE-TOKEN');
+   server.fail('sendMessage',500);await expect(telegramCheck(cfg,server.url)).rejects.toThrow('sendMessage');
   }finally{await server.close();}
  });
 });

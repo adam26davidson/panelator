@@ -21,14 +21,14 @@ export async function readTelegramCredentials(
   }
   return shaped(raw) ?? { off: "invalid credentials shape" };
 }
-/** Spec 072 AC-1: the stored `telegram-bot` secret once the index holds it (never falling back to the file), else the file. */
+/** Spec 072 AC-1: the stored `telegram-bot` secret once the index holds it (never falling back to the file), else the file; without a store, the file. */
 export async function telegramCredentials(
   path: string,
-  store: CredentialStore,
+  store?: CredentialStore,
 ): Promise<(TelegramCredentials & { source: "store" | "file" }) | { off: string }> {
   let held: boolean;
   try {
-    held = !!(await store.readIndex())["telegram-bot"];
+    held = !!store && !!(await store.readIndex())["telegram-bot"];
   } catch {
     return { off: "stored telegram-bot credential unreadable" };
   }
@@ -38,7 +38,7 @@ export async function telegramCredentials(
   }
   let text: string;
   try {
-    text = await store.readSecret("telegram-bot");
+    text = await store!.readSecret("telegram-bot");
   } catch {
     return { off: "stored telegram-bot credential unreadable" };
   }
