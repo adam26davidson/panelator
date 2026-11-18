@@ -14,7 +14,12 @@ the beta publication are the firmware's own verification and build, written
 with the firmware against section 8's contract. Amends
 [060-out-of-scope-check-failure-blocks-on-main](../060-out-of-scope-check-failure-blocks-on-main/spec.md)
 AC-4 (the actions of a block), AC-7 (the conditions the loop tests) and AC-8
-(the resume), each marked as section 4 records. *(agent's call)*
+(the resume), each marked as section 4 records. *(agent's call)* Revised
+2026-11-18 after the first implementation: AC-9 derives a release's `hil`
+and `soak` from every result read, so a HIL result read before its release
+is recorded is not lost, and section 5 names `schema/validate.ts`,
+`schemas/scheduler/claim.json` and the `firmware/` directory whole, which
+the implementation needs. *(agent's call)*
 Class: tooling. Domain: automation (sensitive path, process-spec section 5).
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
@@ -257,17 +262,31 @@ the one test board, with its state in `board.json` (AC-4).
 - AC-9. **HIL results on the board are followed per build.** In the same
   step, for `origin/main`'s head and each beta release's `sha`, the tick
   lists the HIL check runs on that commit (all of them, not only the
-  latest), reads each completed one not yet read (its id kept in
-  `firmware/hil-read.json`), applies it to the board (AC-4) and records the
-  `hil.result` event. For a beta release, `hil` is the first completed HIL
-  check of `kind: "main"` on its own `sha`; when it concluded `success`,
-  `soak.started_at` is its completion time. Each later result (any `kind`)
-  whose `board.firmware_sha` is the release's `sha` updates `soak`:
-  `results` counts them, `last_at` is the latest, `resets` is the latest
-  result's `board.resets`, and `clean` becomes `false` for good on any such
-  result whose `outcome` is not `pass`. Given `hil` concluded `failure`,
-  then the release is never promoted (the failure on `main` is already spec
-  008's `ci_failure_main` event).
+  latest), reads each completed one not yet read, applies it to the board
+  (AC-4), records the `hil.result` event, and appends to
+  `firmware/hil-read.json` one entry for it, validating against
+  `schemas/scheduler/firmware-release.json` `$defs/hil-read`: `{
+  check_run_id, sha, kind, conclusion, completed_at, outcome, firmware_sha,
+  resets }` (an invalid result is kept with `kind`, `outcome`,
+  `firmware_sha` and `resets` null). The entry's id is what stops a result
+  being applied to the board or recorded as an event twice; it does nothing
+  else. A release's `hil` and `soak` are not set when a result is read:
+  after reading, the step derives them for every beta release from all the
+  entries of `hil-read.json`, so a result read before its release was
+  recorded counts exactly as one read after it (the HIL run on a merge
+  commit and the release workflow start together, and either may finish
+  first). For a beta release, `hil` is the entry with `kind: "main"` on its
+  own `sha` with the earliest `completed_at`; when it concluded `success`,
+  `soak.started_at` is that `completed_at`. The entries completed after it
+  (any `kind`) whose `firmware_sha` is the release's `sha` make `soak`:
+  `results` counts them, `last_at` is the latest `completed_at`, `resets`
+  is the latest one's `resets`, and `clean` is `false` when any of them has
+  an `outcome` other than `pass`. Given `hil` concluded `failure`, then the
+  release is never promoted (the failure on `main` is already spec 008's
+  `ci_failure_main` event). A test publishes a release after its `main`
+  HIL result has been read and asserts `hil` and `soak` are set from it.
+  *(agent's call: derived, not accumulated, so the order of publication
+  and result cannot lose a result; review of the first implementation.)*
 - AC-10. **Promotion is automatic under these criteria, and only these.**
   Given `firmware.promotion_enabled` is true and a beta release for which
   all of the following hold at a tick, then the scheduler promotes it: it
@@ -382,14 +401,19 @@ This list is the implementation's file scope: the plan's tasks name these
 files (a whole directory, written with a trailing slash, where the list
 gives one) and no other.
 
-- **The scheduler, under `tools/scheduler/src/`.** `firmware/` as a new
-  directory: `board.ts` (`board.json`, AC-4; the board message and reminder,
-  AC-7; the recovery steps text of section 8), `hil.ts` (reading HIL check
-  runs and their output, validation, the `hil.result` event, the fix lines
-  of AC-2), `releases.ts` (`releases.json`, `hil-read.json`, the listing and
-  soak bookkeeping, AC-8 and AC-9), `promote.ts` (the criteria, promotion
+- **The scheduler, under `tools/scheduler/src/`.** `firmware/`, a new
+  directory named whole, holding at least: `board.ts` (`board.json`, AC-4;
+  the board message and reminder, AC-7; the recovery steps text of section
+  8), `hil.ts` (reading HIL check runs and their output, validation, the
+  `hil.result` event, the fix lines of AC-2), `releases.ts`
+  (`releases.json`, `hil-read.json`, the listing and the derivation of
+  `hil` and `soak`, AC-8 and AC-9), `promote.ts` (the criteria, promotion
   and demotion, AC-10), `paths.ts` (the firmware PR match and the spec's
-  interfaces match, AC-1 and AC-5). `config.ts` (the `firmware` block and
+  interfaces match, AC-1 and AC-5); further modules the implementation
+  splits out go in the same directory. `schema/validate.ts` (the three new
+  schema names, `board-state`, `firmware-release` and `hil-result`, added
+  to `SchemaName` and `NAMES`; the scheduler's one validator, not a second
+  one under `firmware/`). `config.ts` (the `firmware` block and
   `bounds.board_bricks`); `chain/machine.ts`, `chain/driver.ts` and
   `chain/types.ts` (the HIL check in verify, the blocks of AC-3 and AC-5,
   `board_bricks`, the terminal step at the bound, the re-run of AC-6);
@@ -410,6 +434,8 @@ gives one) and no other.
   `firmware.promotion_enabled`); `agents/actions.yaml` (the four kinds);
   `schemas/scheduler/`: `board-state.json`, `firmware-release.json`,
   `hil-result.json` (section 8), `blocked.json` (the `board` condition),
+  `claim.json` (the chain state's `board` condition, its `board_bricks`
+  count and the HIL run to re-run, AC-5 and AC-6),
   `escalation-ledger.json` (`board_bricks`), `event.json` (the five kinds).
 - **Other specs.** `specs/060-out-of-scope-check-failure-blocks-on-main/spec.md`
   carries the marks of this spec's PR; the implementation does not change it.
@@ -448,7 +474,8 @@ under `.github/` is added or changed.
   - an `absent` result, then a soak result that sees the board: ok again
     without a command (AC-4);
   - a beta release appearing: recorded, its `main` HIL check read, the soak
-    followed; after `soak_hours`: promoted, the release edited once, the
+    followed; the same with the `main` HIL check completed and read at an
+    earlier tick than the release first listed: `hil` and `soak` the same; after `soak_hours`: promoted, the release edited once, the
     event and the message; each criterion false in turn: not promoted and
     `waiting_on` names it; a newer build supersedes an older;
     `promotion_enabled` false: evaluated, not edited (AC-8 to AC-10);
