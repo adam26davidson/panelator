@@ -2,6 +2,8 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export interface StatePaths {
+  /** Spec 072 AC-4: when the plain-credential-file reminder last went out, and for which files. */
+  plainFilesReminder: string;
   telegramOffset: string;
   telegramPending: string;
   root: string;
@@ -48,6 +50,7 @@ export function statePaths(root: string): StatePaths {
   return {
     root,
     telegramOffset:join(root,'telegram','offset.json'),
+    plainFilesReminder: join(root, "plain-files-reminder.json"),
     telegramPending:join(root,'telegram','pending.json'),
     parameters: join(root, 'parameters.json'),
     parametersHistory: join(root, 'parameters', 'history.jsonl'),

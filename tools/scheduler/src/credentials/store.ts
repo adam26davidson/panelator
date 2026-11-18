@@ -92,19 +92,23 @@ export function storeFromConfig(cfg: Pick<Config, "credentials">, env: NodeJS.Pr
   return new CredentialStore({ dir: cfg.credentials.dir, systemdCreds: env.PANELATOR_SYSTEMD_CREDS || undefined });
 }
 
-/** Spec 069 AC-9: the App key comes from the store once `github-app-key` is set, else from `app.private_key_path`. */
-export async function appPrivateKey(cfg: Pick<Config, "app">, store: CredentialStore): Promise<string> {
+/** Spec 069 AC-9: the App key comes from the store once `github-app-key` is set, else from `app.private_key_path`; the source is reported for spec 072 AC-2. */
+export async function appPrivateKeySource(cfg: Pick<Config, "app">, store: CredentialStore): Promise<{ key: string; source: "store" | "file" }> {
   const index = await store.readIndex();
   if (index["github-app-key"]) {
     try {
-      return await store.readSecret("github-app-key");
+      return { key: await store.readSecret("github-app-key"), source: "store" };
     } catch (e) {
       throw new Error(`cannot read the stored GitHub App key: ${(e as Error).message}`);
     }
   }
   try {
-    return readFileSync(cfg.app.private_key_path, "utf8");
+    return { key: readFileSync(cfg.app.private_key_path, "utf8"), source: "file" };
   } catch (e) {
     throw new Error(`cannot read the GitHub App private key at ${cfg.app.private_key_path}: ${(e as Error).message}`);
   }
+}
+
+export async function appPrivateKey(cfg: Pick<Config, "app">, store: CredentialStore): Promise<string> {
+  return (await appPrivateKeySource(cfg, store)).key;
 }

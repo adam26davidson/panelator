@@ -1,4 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import { startTelegram } from "../src/service/telegram-start.ts";
+import { CredentialStore } from "../src/credentials/store.ts";
+import { loadConfig, defaultConfigPath } from "../src/config.ts";
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -603,5 +608,41 @@ describe("Telegram poller connect step (spec 043)", () => {
     } finally {
       await r.server.close();
     }
+  });
+});
+
+describe("Telegram credentials from the store (spec 072 AC-1)", () => {
+  const fakeCreds = join(dirname(fileURLToPath(import.meta.url)), "helpers", "fake-systemd-creds");
+  afterEach(() => { delete process.env.FAKE_SYSTEMD_CREDS_FAIL; });
+  async function setup() {
+    const dir = await mkdtemp(join(tmpdir(), "tg-store-"));
+    const path = join(dir, "telegram.json");
+    const cfg = { ...loadConfig(defaultConfigPath), telegram: { credentials_path: path, long_poll_timeout_s: 50 } };
+    const store = new CredentialStore({ dir: join(dir, "store"), systemdCreds: fakeCreds });
+    const logs: Record<string, unknown>[] = [];
+    return { path, cfg, store, logs, log: (r: Record<string, unknown>) => logs.push(r) };
+  }
+  it("reads the stored secret with the file absent", async () => {
+    const t = await setup();
+    await t.store.writeSecret("telegram-bot", JSON.stringify({ bot_token: "STORED-TOKEN", chat_id: 7 }), "maintainer");
+    const started = await startTelegram(t.cfg, t.store, t.log);
+    expect(started?.source).toBe("store");
+  });
+  it("is off with the reason, and no token in the log, when the blob will not decrypt or has the wrong shape", async () => {
+    const t = await setup();
+    await writeFile(t.path, JSON.stringify({ bot_token: "FILE-TOKEN", chat_id: 1 }));
+    await t.store.writeSecret("telegram-bot", JSON.stringify({ bot_token: "STORED-TOKEN", chat_id: 7 }), "maintainer");
+    process.env.FAKE_SYSTEMD_CREDS_FAIL = "1";
+    expect(await startTelegram(t.cfg, t.store, t.log)).toBeNull();
+    delete process.env.FAKE_SYSTEMD_CREDS_FAIL;
+    await t.store.writeSecret("telegram-bot", '{"bot_token":"STORED-TOKEN","chat_id":"x"}', "maintainer");
+    expect(await startTelegram(t.cfg, t.store, t.log)).toBeNull();
+    expect(t.logs.map((l) => l.reason)).toEqual(["stored telegram-bot credential unreadable", "stored telegram-bot credential has an invalid shape"]);
+    expect(JSON.stringify(t.logs)).not.toContain("TOKEN");
+  });
+  it("reads the file while the index has no entry", async () => {
+    const t = await setup();
+    await writeFile(t.path, JSON.stringify({ bot_token: "FILE-TOKEN", chat_id: 1 }));
+    expect((await startTelegram(t.cfg, t.store, t.log))?.source).toBe("file");
   });
 });
