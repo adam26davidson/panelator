@@ -228,14 +228,17 @@ before its bold title:
 - `tools/scheduler/src/credentials/commands.ts`: the `cred import` lines of
   AC-7.
 - Tests: `tools/scheduler/test/plain-files.test.ts` (new; AC-3 to AC-6),
-  `test/telegram.test.ts` (AC-1), `test/credentials.test.ts` (AC-2's source
-  reporting, AC-7), `test/loop.test.ts` (the hourly call and that a failure
+  `tools/scheduler/test/telegram.test.ts` (AC-1),
+  `tools/scheduler/test/credentials.test.ts` (AC-2's source reporting, AC-7),
+  `tools/scheduler/test/loop.test.ts` (the hourly call and that a failure
   does not stop the tick).
 - The four marked specs (section 4) and the `## Children` section of
   `docs/delivery-system-design.md`.
 
-No sensitive path is touched: `agents/sensitive-paths.txt`, the gates and the
-review criteria are unchanged, and no schema or agent file changes.
+`tools/scheduler/` and `docs/delivery-system-design.md` are sensitive paths,
+listed here so the scope gate accepts them, and the security review runs.
+`agents/sensitive-paths.txt`, the gates and the review criteria are unchanged,
+and no schema or agent file changes.
 
 ## 6. Verification
 
