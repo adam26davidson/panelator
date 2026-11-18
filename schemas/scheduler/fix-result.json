@@ -84,11 +84,6 @@
                 "required": [
                   "addressed"
                 ]
-              },
-              {
-                "required": [
-                  "spec_path"
-                ]
               }
             ]
           },
@@ -96,7 +91,7 @@
             "escalation": true,
             "head_sha": true,
             "addressed": true,
-            "spec_path": true
+            "spec_path": false
           }
         }
       ]
