@@ -454,7 +454,7 @@ spec 030 writes them; section 1, "How this reaches `main`")
   the store and a different key at the path, the first `GET /app` the
   started scheduler makes (`botLogin()`) carries a JWT the test key
   verifies.
-- AC-10. **The commands of spec 030 AC-4, as amended.** `panelator-scheduler
+- AC-10. Amended by [072-plain-credential-file-reminder](../072-plain-credential-file-reminder/spec.md) AC-7: `cred import` prints both files as safe to delete after the service has restarted, with the scheduler reminding the maintainer while one remains. **The commands of spec 030 AC-4, as amended.** `panelator-scheduler
   cred set <name>` (stdin only; the name must be in the catalogue; stores,
   writes the index entry with `set_by: maintainer`, runs `runCheck`, prints
   the result and exits as AC-3 says), `cred list` (each entry with set or

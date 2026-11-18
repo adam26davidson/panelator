@@ -246,7 +246,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   stage environment of spec 001 (`GH_TOKEN` empty, no SSH) is unchanged. A
   test asserts that the environment of a wrapped child carries the variable
   and the stage's own environment does not.
-- AC-4. Amended by [069-github-app-key-check-signs-with-the-stored-key](../069-github-app-key-check-signs-with-the-stored-key/spec.md) AC-3: `cred set` runs the check over the secret it just stored and exits 1 when the check fails; `cred check` exits 1 when any check it ran failed. Amended by [069-github-app-key-check-signs-with-the-stored-key](../069-github-app-key-check-signs-with-the-stored-key/spec.md) AC-10: the action-log row is written by the kinds `cred_set`, `cred_check`, `cred_import` and `cred_remove` through `applyAction`, one row per credential acted on, and `cred list`, which reads only, is not logged. **The maintainer's commands.** `panelator-scheduler cred set <name>`
+- AC-4. Amended by [069-github-app-key-check-signs-with-the-stored-key](../069-github-app-key-check-signs-with-the-stored-key/spec.md) AC-3: `cred set` runs the check over the secret it just stored and exits 1 when the check fails; `cred check` exits 1 when any check it ran failed. Amended by [069-github-app-key-check-signs-with-the-stored-key](../069-github-app-key-check-signs-with-the-stored-key/spec.md) AC-10: the action-log row is written by the kinds `cred_set`, `cred_check`, `cred_import` and `cred_remove` through `applyAction`, one row per credential acted on, and `cred list`, which reads only, is not logged. Amended by [072-plain-credential-file-reminder](../072-plain-credential-file-reminder/spec.md) AC-4: a plain file still present after the service reads its credential from the store is a weekly reminder the scheduler sends the maintainer, not a finding of the credential check. **The maintainer's commands.** `panelator-scheduler cred set <name>`
   reads the secret from stdin (never an argument, so it is not in the shell
   history), requires the name to be in the catalogue, encrypts it, writes
   the index entry with `set_by: maintainer`, runs the entry's `check` and
@@ -394,7 +394,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
 
 **Credential check agent** (design section 6.1)
 
-- AC-13. **The credential check is a standing agent.**
+- AC-13. Amended by [072-plain-credential-file-reminder](../072-plain-credential-file-reminder/spec.md) AC-6: the credential check's input has no plain configuration files and its result files no finding for a plain file. **The credential check is a standing agent.**
   `agents/standing/credential-check.md`: standard tier, Claude, `worktree:
   none`, schedule `1d`, events `credential_expiry`, credentials none,
   actions `renew_credential`, output `credential-check-result`. That schema,
