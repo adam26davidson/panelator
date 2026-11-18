@@ -195,9 +195,10 @@ export class GitHubClient {
   async createIssue(title:string,body:string,labels:string[]):Promise<number> {
     const {data}=await this.octokit.request('POST /repos/{owner}/{repo}/issues',{...this.base,title,body,labels,request:{retries:0}}); return data.number;
   }
-  async listOpenIssuesByLabel(label:string):Promise<IssueData[]> {return (await this.listOpenIssues()).filter(i=>i.labels.includes(label));}
-  async listOpenIssuesByAuthor(login:string):Promise<IssueData[]> {return (await this.listOpenIssues()).filter(i=>i.author===login);}
-  async searchOpenIssuesByMarker(marker:string):Promise<IssueData[]> {return (await this.listOpenIssues()).filter(i=>i.body.includes(marker));}
+  // Spec 082: the filer's listings read no label events, so they skip the per-issue timeline call.
+  async listOpenIssuesByLabel(label:string):Promise<IssueData[]> {return (await this.listIssues({state:"open",labelEvents:false})).filter(i=>i.labels.includes(label));}
+  async listOpenIssuesByAuthor(login:string):Promise<IssueData[]> {return (await this.listIssues({state:"open",labelEvents:false})).filter(i=>i.author===login);}
+  async searchOpenIssuesByMarker(marker:string):Promise<IssueData[]> {return (await this.listIssues({state:"open",labelEvents:false})).filter(i=>i.body.includes(marker));}
   /** An empty comment closes without commenting (a caller that already posted its comment, spec 014). */
   async closeIssue(n:number,comment:string):Promise<void> {
     if(comment)await this.comment(n,comment);
