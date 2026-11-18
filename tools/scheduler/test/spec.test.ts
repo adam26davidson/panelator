@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { specPathFromIssueBody } from "../src/spec/link.ts";
+import { specPathFromIssueBody, withSpecPath } from "../src/spec/link.ts";
 import { childSlugOfPath, parseChildEntries, parseChildren, parseSpec, stripChildren } from "../src/spec/parse.ts";
 
 const fx = (n: string) => readFileSync(join(import.meta.dirname, "fixtures", "specs", n), "utf8");
@@ -125,5 +125,15 @@ describe("planned children (spec 031 AC-1)", () => {
   it("childSlugOfPath reads the slug of a spec path", () => {
     expect(childSlugOfPath("specs/031-design-files-children/spec.md")).toBe("design-files-children");
     expect(childSlugOfPath("docs/designs/x.md")).toBeNull();
+  });
+});
+
+describe("withSpecPath (spec 071 AC-4)", () => {
+  it("replaces the Spec: line and keeps every other byte", () => {
+    const body = "Intro  \n\nSpec: specs/030-x/spec.md\nTail\r\n\n";
+    expect(withSpecPath(body, "specs/031-x/spec.md")).toBe("Intro  \n\nSpec: specs/031-x/spec.md\nTail\r\n\n");
+  });
+  it("returns a body with no line unchanged", () => {
+    expect(withSpecPath("no link", "specs/031-x/spec.md")).toBe("no link");
   });
 });

@@ -361,6 +361,15 @@ describe("standing definition schema", () => {
 
 describe("spec 060 schemas", () => {
   const fix = { head_sha: "a".repeat(40), addressed: [] };
+  it("fix-result accepts an optional spec_path beside head_sha only, in the spec result's pattern (spec 071 AC-5)", () => {
+    const fix = { head_sha: "a".repeat(40), addressed: [0] };
+    expect(validate("fix-result", fix).ok).toBe(true);
+    expect(validate("fix-result", { ...fix, spec_path: "specs/031-x/spec.md" }).ok).toBe(true);
+    expect(validate("fix-result", { ...fix, spec_path: "specs/31-x/spec.md" }).ok).toBe(false);
+    expect(validate("fix-result", { ...fix, spec_path: "docs/x.md" }).ok).toBe(false);
+    const q = { kind: "product", question: "q", options: [{ label: "a", cost: "c" }], recommendation: "a" };
+    expect(validate("fix-result", { escalation: q, spec_path: "specs/031-x/spec.md" }).ok).toBe(false);
+  });
   it("fix-result accepts out_of_scope with a cause and at least one path, and rejects an empty list or a missing cause", () => {
     const ok = { ...fix, out_of_scope: { cause: "chromium is missing", paths: [".github/workflows/ci.yml"] } };
     expect(validate("fix-result", ok)).toEqual({ ok: true });

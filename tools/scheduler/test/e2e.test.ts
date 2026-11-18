@@ -275,7 +275,7 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     // The second bound needs a PR to close (AC-2): a fix fails (AC-1's "a fix run has failed"), then its rescue fails.
     w = await chainWorld({
       files: repoFiles(),
-      results: { plan: [PLAN, PLAN], implement: [a.implement(9), a.implement(10)], review: [CHANGES, APPROVE], fix: [FAIL, FAIL] },
+      results: { plan: [PLAN, PLAN], implement: [a.implement(9), a.implement(10)], review: [CHANGES, APPROVE, APPROVE], fix: [FAIL, FAIL] },
     });
     await w.tick();
     await expectSettled(w);
@@ -1013,6 +1013,138 @@ describe("end to end: spec and ADR numbers are reserved by the scheduler (spec 0
 });
 
 // ---------------------------------------------------------------------------------------------------------------
+// Spec 071 AC-7: a spec PR moves its spec; the result names the path and the scheduler rewrites the issue's Spec: line.
+
+describe("end to end: a spec PR moves its spec (spec 071 AC-7)", () => {
+  const parentWith = (...specs: string[]) => `# Product spec\n\nParent: docs/charter.md\n\n## Children\n\n- \`specs/010-thing/spec.md\`\n${specs.map((s) => `- \`${s}\`\n`).join("")}`;
+  const bodyOf = (line: string) => `Do the thing.\n\nSpec: ${line}\n\nTrailer`;
+  const reservedInClaim = () => JSON.parse(readFileSync(join(w!.paths.claims, "7.json"), "utf8")).state.reserved.spec as number | null;
+  let w: ChainWorld | undefined;
+  /** The spec stage's first run: the spec at `path`, its parent listing it, PR 12. */
+  const writes = (world: () => ChainWorld, path: string, mainTakes = false) => (run: StageRun) => {
+    // main takes the number while the spec stage runs, as #112 did for #41.
+    if (mainTakes) world().moveMain({ "specs/030-other/spec.md": "# other\n" });
+    const sha = world().push(run, { [path]: specOf(), [PARENT]: parentWith(path) }, "spec");
+    world().openPr(run, 12, sha, "A new spec");
+    return { verdict: "revised", spec_path: path, pr_number: 12, head_sha: sha };
+  };
+  /** The fix: `git mv` (or copy) the directory, update the parent's bullet, push, and report `report` as spec_path. */
+  const moves = (world: () => ChainWorld, from: string, to: string, o: { copy?: boolean; report?: string | null; during?: () => void } = {}) => (run: StageRun) => {
+    o.during?.();
+    if (o.copy) execFileSync("cp", ["-r", join(run.worktree, from), join(run.worktree, to)]);
+    else git(run.worktree, "mv", from, to);
+    const head_sha = world().push(run, { [PARENT]: parentWith(`${to}/spec.md`) }, "move");
+    const report = o.report === undefined ? `${to}/spec.md` : o.report;
+    return { head_sha, addressed: [0], ...(report === null ? {} : { spec_path: report }) };
+  };
+  const keeps = (run: StageRun) => {
+    git(run.worktree, "commit", "-q", "--allow-empty", "-m", "keep");
+    const branch = git(run.worktree, "rev-parse", "--abbrev-ref", "HEAD").trim();
+    git(run.worktree, "push", "-q", "-f", "origin", `HEAD:refs/heads/${branch}`);
+    return { head_sha: rev(run), addressed: [0], spec_path: "specs/031-x/spec.md" };
+  };
+  const rest = { plan: [PLAN], implement: [] as Scripted[], review: [APPROVE, APPROVE] };
+  type Scripted = Parameters<typeof scripted>[0][string][number];
+  const fixInput = (n: number) => runsOf(w!, "fix")[n].input;
+
+  it("issue #41's sequence: main takes 030, the fix is given 031 (in the claim too), moves the directory and the scope passes; the line is rewritten", async () => {
+    let seenInClaim: number | null | undefined;
+    w = await chainWorld({
+      files: repoFiles({ spec: null }), issueBody: bodyOf("specs/030-x/spec.md"),
+      results: {
+        ...rest,
+        spec: [writes(() => w!, "specs/030-x/spec.md", true)],
+        review: [CHANGES, APPROVE, APPROVE],
+        fix: [
+          moves(() => w!, "specs/030-x", "specs/031-x", { report: null, during: () => { seenInClaim = reservedInClaim(); } }),
+          keeps,
+        ],
+      },
+    });
+    await w.tick();
+    expect(runsOf(w, "fix")).toHaveLength(2);
+    expect(fixInput(0).spec_number).toBe("031");
+    expect(seenInClaim).toBe(31);
+    // The rename without spec_path: #41's three violations, then the retry names the path and passes.
+    const violations = fixInput(1).fix_input ?? "";
+    expect(violations).toContain("specs/030-x/spec.md: no Parent line");
+    expect(violations).toContain("docs/product-spec.md: outside spec PR scope");
+    expect(violations).toContain("specs/031-x/spec.md: another spec; specs/030-x/spec.md does not link to it");
+    expect(w.issueBody).toBe(bodyOf("specs/031-x/spec.md"));
+    expect(w.gh.calls.filter((c) => c.method === "PATCH" && c.url === "/repos/o/r/issues/7" && (c.body as { body?: string }).body !== undefined).map((c) => (c.body as { body: string }).body)).toEqual([bodyOf("specs/031-x/spec.md")]);
+    expect(w.logs.filter((r) => r.kind === "spec-moved")).toEqual([expect.objectContaining({ kind: "spec-moved", issue: 7, from: "specs/030-x/spec.md", to: "specs/031-x/spec.md" })]);
+    expect(w.logs.filter((r) => r.kind === "number-reserved" && r.spec !== undefined).map((r) => r.spec)).toEqual(["031"]);
+    expect(w.mergeRequests).toContain(12);
+    expect(w.onMain("specs/031-x/spec.md")).toBe(specOf());
+    expect(w.onMain("specs/030-x/spec.md")).toBeNull();
+  }, 120_000);
+
+  it("a slug-only move on a free number reserves nothing and rewrites the line", async () => {
+    w = await chainWorld({
+      files: repoFiles({ spec: null }), issueBody: bodyOf("specs/072-a/spec.md"),
+      results: { ...rest, spec: [writes(() => w!, "specs/072-a/spec.md")], review: [CHANGES, APPROVE, APPROVE], fix: [moves(() => w!, "specs/072-a", "specs/072-b")] },
+    });
+    await w.tick();
+    expect(fixInput(0).spec_number ?? "(none)").toBe("(none)");
+    expect(w.logs.filter((r) => r.kind === "number-reserved" && r.spec !== undefined)).toEqual([]);
+    expect(w.issueBody).toBe(bodyOf("specs/072-b/spec.md"));
+    expect(w.logs.filter((r) => r.kind === "spec-moved")).toHaveLength(1);
+    expect(w.onMain("specs/072-b/spec.md")).toBe(specOf());
+  }, 120_000);
+
+  it("a rename to 033 while 031 is reserved fails the result and the issue body still names 030", async () => {
+    w = await chainWorld({
+      files: repoFiles({ spec: null }), issueBody: bodyOf("specs/030-x/spec.md"),
+      results: { ...rest, spec: [writes(() => w!, "specs/030-x/spec.md", true)], review: [CHANGES], fix: [moves(() => w!, "specs/030-x", "specs/033-x", {}), FAIL] },
+    });
+    await w.tick();
+    expect(fixInput(0).spec_number).toBe("031");
+    expect(fixInput(1).history).toContain("fix attempt 1 failed: result: spec number 033 is not the issue's 030 or the reserved 031");
+    expect(w.issueBody).toBe(bodyOf("specs/030-x/spec.md"));
+    expect(w.logs.filter((r) => r.kind === "spec-moved")).toEqual([]);
+  }, 120_000);
+
+  it("a copy that leaves both directories fails the result and the issue body is unchanged", async () => {
+    w = await chainWorld({
+      files: repoFiles({ spec: null }), issueBody: bodyOf("specs/030-x/spec.md"),
+      results: { ...rest, spec: [writes(() => w!, "specs/030-x/spec.md")], review: [CHANGES], fix: [moves(() => w!, "specs/030-x", "specs/031-x", { copy: true }), FAIL] },
+    });
+    await w.tick();
+    expect(fixInput(1).history).toContain("fix attempt 1 failed: result: spec moved to specs/031-x/spec.md but specs/030-x/ still holds files");
+    expect(w.issueBody).toBe(bodyOf("specs/030-x/spec.md"));
+  }, 120_000);
+
+  it("a spec-stage revise of a spec on main that names a new path fails and the body is unchanged", async () => {
+    const moved = (run: StageRun) => {
+      const sha = w!.push(run, { "specs/011-y/spec.md": specOf() }, "spec");
+      w!.openPr(run, 12, sha, "Spec revision for the thing");
+      return { verdict: "revised", spec_path: "specs/011-y/spec.md", pr_number: 12, head_sha: sha };
+    };
+    const a = agents(() => w!);
+    w = await chainWorld({
+      files: repoFiles(), issueBody: bodyOf("specs/010-thing/spec.md"),
+      results: { plan: [PLAN, PLAN], implement: [a.implement(9), FAIL, FAIL], review: [CHANGES], fix: [FAIL, FAIL], spec: [moved, FAIL] },
+    });
+    await w.tick();
+    expect(runsOf(w, "spec").length).toBeGreaterThanOrEqual(2);
+    expect(runsOf(w, "spec")[1].input.history).toContain("spec attempt 1 failed: result: the spec at specs/010-thing/spec.md is on main and cannot move");
+    expect(w.issueBody).toBe(bodyOf("specs/010-thing/spec.md"));
+    expect(w.logs.filter((r) => r.kind === "spec-moved")).toEqual([]);
+  }, 120_000);
+
+  it("a spec-track fix on a spec nothing else holds is given no number and reserves none", async () => {
+    w = await chainWorld({
+      files: repoFiles({ spec: null }), issueBody: bodyOf("specs/030-x/spec.md"),
+      results: { ...rest, spec: [writes(() => w!, "specs/030-x/spec.md")], review: [CHANGES, APPROVE, APPROVE], fix: [(run: StageRun) => ({ head_sha: w!.push(run, { "specs/030-x/notes.md": "n\n" }, "fix"), addressed: [0] })] },
+    });
+    await w.tick();
+    expect(fixInput(0).spec_number ?? "(none)").toBe("(none)");
+    expect(w.logs.filter((r) => r.kind === "number-reserved" && r.spec !== undefined)).toEqual([]);
+    expect(w.issueBody).toBe(bodyOf("specs/030-x/spec.md"));
+  }, 120_000);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
 // Spec 059 AC-6: a full volume postpones runs; it is not the work's failure.
 
 describe("end to end: a full volume postpones runs (spec 059 AC-6)", () => {
@@ -1069,7 +1201,7 @@ describe("end to end: a full volume postpones runs (spec 059 AC-6)", () => {
     const a = agents(() => w);
     w = await chainWorld({
       files: repoFiles(),
-      results: { plan: [PLAN], implement: [a.implement(9)], review: [CHANGES, APPROVE], fix: [FAIL, HOST_REFUSED, a.fix({ "a.txt": "fixed\n" })], "question-check": [SEND] },
+      results: { plan: [PLAN], implement: [a.implement(9)], review: [CHANGES, APPROVE, APPROVE], fix: [FAIL, HOST_REFUSED, a.fix({ "a.txt": "fixed\n" })], "question-check": [SEND] },
     });
     const c = clock(w);
     await w.tick();

@@ -189,6 +189,8 @@ export interface FixResult {
   addressed: number[];
   /** Spec 060 AC-5: the failure's cause lies outside the PR's scope; `paths` are the files whose change would clear it. */
   out_of_scope?: { cause: string; paths: string[] };
+  /** Spec 071 AC-5: the spec's new path when this fix moved it. */
+  spec_path?: string;
   escalation?: Question;
   findings?: Finding[];
 }
