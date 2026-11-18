@@ -2,7 +2,7 @@ import type { GitHubClient } from "../github/client.ts";
 import type { StatePaths } from "../state/paths.ts";
 import { record } from "./store.ts";
 
-/** Every issue the scheduler creates goes through here, so `issue.filed` is recorded beside it (spec 012 AC-2). */
+/** Every issue the scheduler creates goes through here, so `issue.filed` is recorded beside it (spec 026 AC-2). */
 export async function createIssueRecorded(
   gh: Pick<GitHubClient, "createIssue">, paths: StatePaths,
   input: { title: string; body: string; labels: string[]; by: string; class: string; marker: string },

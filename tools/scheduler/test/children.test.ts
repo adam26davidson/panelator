@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -117,6 +117,45 @@ describe("fileDesignChildren (spec 031 AC-4 to AC-7)", () => {
     const r4 = await run(gh);
     expect(r4.unblocked).toEqual([]);
     expect(two!.labels).toContain("blocked");
+  });
+
+  const filedEvents = () => {
+    if (!existsSync(paths.events)) return [];
+    return readdirSync(paths.events)
+      .filter((f) => f.endsWith(".jsonl"))
+      .flatMap((f) => readFileSync(join(paths.events, f), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)))
+      .filter((e) => e.kind === "issue.filed");
+  };
+
+  it("records issue.filed for each child it files, once (spec 074 AC-1)", async () => {
+    const gh = new FakeGh([{ number: 50 }]);
+    const r1 = await run(gh);
+    expect(r1.filed).toHaveLength(2);
+    const events = filedEvents();
+    expect(events).toHaveLength(2);
+    for (const [i, slug] of ["one", "two"].entries()) {
+      const issue = gh.get(r1.filed[i]!);
+      expect(events[i]).toMatchObject({
+        kind: "issue.filed",
+        issue: issue.number,
+        payload: { number: issue.number, by: BOT, class: "class:tooling", labels: issue.labels, marker: childMarker(D, slug), body: issue.body },
+      });
+    }
+    expect(events[0].payload.labels).toEqual(["class:tooling", "validated"]);
+    expect(events[1].payload.labels).toEqual(["class:tooling", "validated", "blocked"]);
+    expect(events[1].payload.marker).toBe(`<!-- panelator-child:${D}:two -->`);
+
+    await run(gh);
+    expect(filedEvents()).toHaveLength(2);
+  });
+
+  it("records no issue.filed when the creation fails (spec 074 AC-2)", async () => {
+    const gh = new FakeGh([{ number: 50 }]);
+    gh.failCreate = true;
+    const r = await run(gh);
+    expect(r.filed).toEqual([]);
+    expect(kinds()).toContain("child-filing-failed");
+    expect(filedEvents()).toEqual([]);
   });
 
   it("does not unblock while a sibling is open or closed abandoned", async () => {
