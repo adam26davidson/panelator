@@ -71,7 +71,7 @@ credentials file of AC-1 is present and valid at service start.
 
 **Credentials and connection**
 
-- AC-1. Amended by [043-telegram-connects-with-backoff](../043-telegram-connects-with-backoff/spec.md) AC-1: the `getMe` check runs in the poller, retried with the AC-2 backoff; only an authorization error turns Telegram off, and a connection failure is logged once as `telegram: connecting` and retried. **Credentials live outside the repository.** `agents/scheduler.yaml`
+- AC-1. Amended by [043-telegram-connects-with-backoff](../043-telegram-connects-with-backoff/spec.md) AC-1: the `getMe` check runs in the poller, retried with the AC-2 backoff; only an authorization error turns Telegram off, and a connection failure is logged once as `telegram: connecting` and retried. Amended by [072-plain-credential-file-reminder](../072-plain-credential-file-reminder/spec.md) AC-1: once the index holds `telegram-bot`, the credentials are the stored secret and the file is not read. **Credentials live outside the repository.** `agents/scheduler.yaml`
   gains a `telegram` block: `credentials_path` (default
   `~/.config/panelator/telegram.json`) and `long_poll_timeout_s` (default
   50). The file holds `{ "bot_token": "<token>", "chat_id": <integer> }`.
