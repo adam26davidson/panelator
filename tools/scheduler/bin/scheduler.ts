@@ -29,7 +29,7 @@ import {registryActionsCheck,loadActionLevels,applyAction} from '../src/actions/
 import {ActionLog} from '../src/actions/log.ts';
 import {undoAction} from '../src/actions/undo.ts';
 import {loadCatalogue,profileNames} from '../src/credentials/catalogue.ts';
-import {storeFromConfig,appPrivateKey} from '../src/credentials/store.ts';
+import {storeFromConfig,appPrivateKey,appPrivateKeySource} from '../src/credentials/store.ts';
 import {credCommand} from '../src/credentials/commands.ts';
 import {loadMetricDefinitions,assertReadOnlySelect} from '../src/metrics/definitions.ts';
 import {computeMetrics,historyRange,recordSnapshot,weekStart} from '../src/metrics/compute.ts';
@@ -45,8 +45,9 @@ const paths = statePaths(cfg.state_dir);
 await ensureStateDirs(paths);
 const serviceLog = new ServiceLog(paths.serviceLog);
 const binDir = dirname(fileURLToPath(import.meta.url));
+const credStore=storeFromConfig(cfg);
 if(args[0]==='telegram-check'){
- try{console.log(await telegramCheck(cfg));process.exit(0);}catch(e){console.error((e as Error).message);process.exit(1);}
+ try{console.log(await telegramCheck(cfg,undefined,credStore));process.exit(0);}catch(e){console.error((e as Error).message);process.exit(1);}
 }
 
 /** I7: a configuration error the service cannot recover from by restarting; the unit's RestartPreventExitStatus=78 stops the loop. */
@@ -56,7 +57,6 @@ function fail(reason: string): never {
   process.exit(78);
 }
 
-const credStore=storeFromConfig(cfg);
 const {registry,parameters,levels,catalogue,metrics}=(()=>{try {
   const kinds=registryActionsCheck(join(agentsDir,'actions.yaml'));
   const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,kinds);
@@ -142,8 +142,9 @@ await actionLog.markStalePending();
 
 if (cfg.app.id === 0 || cfg.app.installation_id === 0) fail("GitHub App ids not set in agents/scheduler.yaml");
 let privateKey: string;
+let appKeySource: "store" | "file";
 try {
-  privateKey = await appPrivateKey(cfg, credStore);
+  ({ key: privateKey, source: appKeySource } = await appPrivateKeySource(cfg, credStore));
 } catch (e) {
   fail((e as Error).message);
 }
@@ -171,11 +172,15 @@ const gh = new GitHubClient(app.octokit, cfg.repo);
 const inhibitor = new SleepInhibitor({ enabled: cfg.systemd.inhibit, log: (rec) => serviceLog.write(rec) });
 // The lock never outlives the process, whatever path ends it.
 process.on("exit", () => inhibitor.release());
-const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec));
+const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec),undefined,credStore);
+// Spec 072 AC-2: the credentials this process reads from the store, fixed for its life.
+const fromStore=new Set<string>();
+if(appKeySource==='store')fromStore.add('github-app-key');
+if(telegram?.source==='store')fromStore.add('telegram-bot');
 let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
-  cfg, paths, gh, telegram: null,registry, parameters, notifier: rateLimited(recordedNotifier(new LogNotifier(paths.serviceLog), paths), cfg.notify_rate_limit_hours),
+  cfg, paths, gh, telegram: null,registry,plainFiles:{store:credStore,paths:{'github-app-key':cfg.app.private_key_path,...(cfg.telegram?{'telegram-bot':cfg.telegram.credentials_path}:{})},fromStore}, parameters, notifier: rateLimited(recordedNotifier(new LogNotifier(paths.serviceLog), paths), cfg.notify_rate_limit_hours),
   stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: repoRoot, binDir,
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),

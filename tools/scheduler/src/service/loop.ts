@@ -32,6 +32,8 @@ import { answeredEntry, appendQuestionLog } from "../state/questions.ts";
 import { recentMerges } from "../state/merges.ts";
 import { savePatch } from "../state/patches.ts";
 import { pruneUsage } from "../state/runs.ts";
+import { checkPlainFiles } from "../credentials/plain-files.ts";
+import type { CredentialStore } from "../credentials/store.ts";
 import { sweepVolumes } from "./sweep.ts";
 import { readToken } from "../state/token.ts";
 import type { SleepInhibitor } from "./inhibit.ts";
@@ -48,6 +50,8 @@ export interface SchedulerDeps extends DriverDeps {
   runStanding?:typeof runStandingAgent;
   botLogin: string;
   serviceLog: ServiceLog;
+  /** Spec 072: the store, the two configured plain-file paths and the credentials this process read from the store. */
+  plainFiles?: { store: CredentialStore; paths: Partial<Record<"github-app-key" | "telegram-bot", string>>; fromStore: ReadonlySet<string> };
   inhibitor: SleepInhibitor;
   fastForward: () => Promise<{ moved: boolean; changedPaths: string[] }>;
   sleep: (ms: number) => Promise<void>;
@@ -114,6 +118,7 @@ export class Scheduler {
   #deps: SchedulerDeps;
   #drive: DriveFn;
   #active = new Map<number, Promise<void>>();
+  #plainFilesCheckedAt: number | null = null;
   #activeStanding = new Map<string,Promise<void>>();
   #stopping = false;
   #stopReason = "";
@@ -627,6 +632,13 @@ export class Scheduler {
       await pruneUsage(d.paths, d.now()).catch((e) => info.errors.push(`prune: ${(e as Error).message}`));
       // Spec 064 AC-1, AC-2: the scheduler's own sweep of the temp and state volumes; a failure never stops the tick.
       await sweepVolumes({ paths: d.paths, repoDir: d.repoDir, agentsDir: d.agentsDir, now: d.now, gh: d.gh, parameters: d.parameters, freeSpace: d.freeSpace, log: (rec) => d.serviceLog.write(rec), notifier: d.notifier, emitEvent: d.emitEvent, activeIssues: () => [...this.#active.keys()] }).catch((e) => info.errors.push(`sweep: ${(e as Error).message}`));
+
+      // Spec 072 AC-3: at most hourly, the first time on the first tick; a failure is logged and never stops the tick.
+      if (d.plainFiles && (this.#plainFilesCheckedAt === null || d.now().getTime() - this.#plainFilesCheckedAt >= 3_600_000)) {
+        this.#plainFilesCheckedAt = d.now().getTime();
+        await checkPlainFiles({ ...d.plainFiles, statePath: d.paths.plainFilesReminder, telegram: d.telegram ?? null, notifier: d.notifier, now: d.now, log: (rec) => d.serviceLog.write(rec) })
+          .catch((e) => d.serviceLog.write({ kind: "plain-files-check-failed", error: (e as Error).message }));
+      }
 
       if(d.telegram)await this.#serializeQuestions(async()=>this.telegramAnswers.auditLateIssueReplies((await listClaims(d.paths)).map(c=>c.issue))).catch(()=>d.log({kind:'telegram-issue-audit-failed'}));
       // Step 2 owns the claims of paused issues (a crash mid-pause or mid-resume); a claim carrying pending work is the driver's.

@@ -50,8 +50,7 @@ export async function credCommand(verb: string, name: string | undefined, deps: 
     for (const n of name ? [name] : Object.keys(cr.catalogue)) await run("cred_check", n);
   } else if (verb === "import") {
     for (const n of ["github-app-key", "telegram-bot"]) await run("cred_import", n);
-    lines.push(`${cr.configPaths["github-app-key"]}: safe to delete after the service has restarted and minted from the store`);
-    lines.push(`${cr.configPaths["telegram-bot"]}: still read by the Telegram poller until a later spec moves it`);
+    for (const n of ["github-app-key", "telegram-bot"] as const) lines.push(`${cr.configPaths[n]}: safe to delete after the service has restarted; the scheduler reminds you while it remains`);
   } else if (verb === "remove") {
     if (!name) return { lines: ["usage: cred remove <name>"], exitCode: 1 };
     if (!known()) return { lines: [`unknown credential ${name}`], exitCode: 1 };
