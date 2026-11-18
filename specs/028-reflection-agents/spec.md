@@ -164,7 +164,7 @@ scheduler (spec 008 AC-5).
   before the run, as spec 008 does; a failure is a failed run. The agent
   also reads the repository in its fresh worktree with read-only tools; it
   has no GitHub tool.
-- AC-6. **A result is a plan, and the plan is a record.**
+- AC-6. Amended by [076-one-marker-neutraliser](../076-one-marker-neutraliser/spec.md) AC-5: model-written text in the plan issue and its comments passes through neutraliseMarkers before the reflection marker is appended. **A result is a plan, and the plan is a record.**
   `reflection-result` is `standing-result` plus `plan: { title, summary,
   observations: [{ what, evidence }], items: [{ title, body, class, kind,
   existing_issue? }], metrics_note, open_questions_note, deferred: [{ title,
@@ -242,7 +242,7 @@ scheduler (spec 008 AC-5).
   attempts: a thrown error after the plan issue (the retry path), and a
   process death after the plan issue with `failures` still 0 (the restart
   path, the state record carrying `running` and `reflection`).
-- AC-7. **Plan items are validated issues the shortlist works.** Given an
+- AC-7. Amended by [076-one-marker-neutraliser](../076-one-marker-neutraliser/spec.md) AC-5: an item issue's model-written title and body pass through neutraliseMarkers before the reflection marker is appended. **Plan items are validated issues the shortlist works.** Given an
   item, then the scheduler creates the issue as the App with the item's
   class label and `validated`, a body that opens with `Plan: #<plan issue>`
   and the item's `kind`, carries the item's body, and ends with the hidden

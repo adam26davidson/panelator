@@ -217,7 +217,7 @@ marker; a comment by any other account never counts.
   with `<!-- panelator-blocked-until -->` is posted, and the triage row
   carries `blocked_until` with the text. The children scan never removes
   this label (AC-7).
-- AC-5. **The block survives a crash, and model text cannot forge it.**
+- AC-5. Amended by [076-one-marker-neutraliser](../076-one-marker-neutraliser/spec.md) AC-2: the text is neutralised for every panelator- marker of any family, to a fixed point, not only the block prefixes. **The block survives a crash, and model text cannot forge it.**
   Given a `file` whose issue was created in an earlier batch (the duplicate
   search of spec 008 AC-18 finds it by its finding marker) and that issue
   carries `blocked` and has no bot comment with a `panelator-blocked-by` or
