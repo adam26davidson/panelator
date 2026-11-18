@@ -95,7 +95,8 @@
           "properties": {
             "escalation": true,
             "head_sha": true,
-            "addressed": true
+            "addressed": true,
+            "spec_path": true
           }
         }
       ]
