@@ -314,6 +314,19 @@ describe("renderPrompt", () => {
     expect(read("spec")).toContain("specs/{{spec_number}}-<slug>/spec.md");
     for (const n of ["spec", "implement", "fix"]) expect(read(n), n).toContain("docs/decisions/{{adr_number}}-<slug>.md");
   });
+  it("tells the fix and spec stages how to move a spec and that the issue body is the scheduler's (spec 071 AC-6)", () => {
+    const read = (n: string) => readFileSync(join(agentsDir, "stages", `${n}.md`), "utf8");
+    const fix = read("fix");
+    expect(fix).toContain("**Moving the spec.**");
+    expect(fix).toContain("`git mv`");
+    expect(fix).toContain('"spec_path"');
+    expect(fix).toContain("Never edit the issue body");
+    expect(renderPrompt(fix, { ...input, spec_number: "031" })).toContain("the scheduler reserved `031`");
+    const spec = read("spec");
+    expect(spec).toContain("then it names the new path and the scheduler rewrites the line");
+    expect(spec).toContain("then the spec moves to `specs/{{spec_number}}-<slug>/spec.md`");
+    expect(`${fix}\n${spec}`.split("\n").filter((l) => /edit the issue body/i.test(l)).every((l) => /never edit/i.test(l))).toBe(true);
+  });
   it("renders held_work, (none) when absent, in the four stages that carry it (spec 011 AC-4)", () => {
     const read = (n: string) => readFileSync(join(agentsDir, "stages", `${n}.md`), "utf8");
     expect(renderPrompt("{{held_work}}", input)).toBe("(none)");
