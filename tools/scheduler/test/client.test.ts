@@ -77,6 +77,24 @@ describe("listOpenIssues (process-spec 6.4)", () => {
     expect((await c.listOpenIssues()).map((i) => i.number)).toEqual([1, 2]);
     expect(waits).toEqual([5]);
   });
+  it("the filer's wrappers list without fetching any timeline (spec 082 AC-1)", async () => {
+    const page = [
+      issue(1, ["abandoned"], { body: "has <!-- marker:x -->" }),
+      issue(2, ["validated"], { user: { login: "someone", type: "User" } }),
+      issue(3, ["abandoned", "validated"], { user: { login: "someone", type: "User" } }),
+      { ...issue(4, ["abandoned"]), pull_request: { url: "x" } },
+    ];
+    const { c, gh } = client([issuesRoute([page]), total(3)]);
+    const byLabel = await c.listOpenIssuesByLabel("abandoned");
+    const byAuthor = await c.listOpenIssuesByAuthor("someone");
+    const byMarker = await c.searchOpenIssuesByMarker("<!-- marker:x -->");
+    expect(byLabel.map((i) => i.number)).toEqual([1, 3]);
+    expect(byAuthor.map((i) => i.number)).toEqual([2, 3]);
+    expect(byMarker.map((i) => i.number)).toEqual([1]);
+    for (const i of [...byLabel, ...byAuthor, ...byMarker]) expect(i.labelEvents).toEqual([]);
+    expect(gh.calls.some((x) => x.url.includes("/timeline"))).toBe(false);
+    expect(gh.unmatched).toEqual([]);
+  });
 });
 
 describe("listIssues (spec 031 AC-3)", () => {
