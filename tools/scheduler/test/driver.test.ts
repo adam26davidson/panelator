@@ -2602,6 +2602,7 @@ describe("driver: a spec PR moves its spec (spec 071)", () => {
     expect(inputOf(bad.paths, "7-fix-1-").spec_number).toBe("031");
     expect(r0.claim.state.pendingFixInput).toContain("specs/030-x/spec.md: no Parent line");
     expect(r0.claim.state.pendingFixInput).toContain("docs/top.md: outside spec PR scope");
+    expect(r0.claim.state.pendingFixInput).toContain("specs/031-x/spec.md: another spec; specs/030-x/spec.md does not link to it");
     expect(bodyPatch(bad.gh)).toBeUndefined();
 
     const t = await env(() => ({ fix: [moveFix("specs/030-x", "specs/031-x")] }), "specs/030-x/spec.md", { mainHas: "specs/030-other" });
