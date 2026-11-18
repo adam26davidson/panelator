@@ -562,3 +562,4 @@ are stale and are corrected as part of B.
 - `specs/070-test-board/spec.md` (row G, issue #132; supersedes issue #40; the HIL workflow, suite and beta publication are the firmware's own, written against its section 8, ADR 0013)
 - `specs/071-spec-pr-moves-its-spec/spec.md` (issue #133; a spec PR can move its spec: the result names the new path and the scheduler rewrites the issue's `Spec:` line)
 - `specs/072-plain-credential-file-reminder/spec.md` (issue #139; a plain credential file left after its import is a weekly reminder to the maintainer, not a credential check finding; the Telegram poller reads `telegram-bot` from the store)
+- `specs/074-children-scan-records-issue-filed/spec.md` (issue #142; the children scan's issue filing is one of spec 026's recorded creations: spec 026 AC-2 and section 5 name it, and a test asserts its `issue.filed`)
