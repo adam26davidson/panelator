@@ -114,6 +114,34 @@ describe('Telegram answers and watchdog fallback',()=>{
  },30000);
 });
 
+describe("Scheduler.tick plain files (spec 072)", () => {
+  it("checks on the first tick, not at +30 minutes, again at +1 hour, and survives a failing check", async () => {
+    const { s, deps, paths, setNow } = await setup(routes([]));
+    const { CredentialStore } = await import("../src/credentials/store.ts");
+    const store = new CredentialStore({ dir: join(paths.root, "cred-store"), systemdCreds: join(import.meta.dirname, "helpers", "fake-systemd-creds") });
+    mkdirSync(store.dir, { recursive: true });
+    const file = join(paths.root, "app.pem");
+    writeFileSync(file, "x");
+    await store.writeSecret("github-app-key", "k", "import");
+    deps.plainFiles = { store, paths: { "github-app-key": file }, fromStore: new Set(["github-app-key"]) };
+    const notes = () => deps.notifier && existsSync(paths.plainFilesReminder);
+    await s.tick();
+    expect(notes()).toBe(true);
+    rmSync(paths.plainFilesReminder);
+    setNow(new Date("2026-10-12T12:30:00Z"));
+    await s.tick();
+    expect(existsSync(paths.plainFilesReminder)).toBe(false);
+    setNow(new Date("2026-10-12T13:00:00Z"));
+    await s.tick();
+    expect(existsSync(paths.plainFilesReminder)).toBe(true);
+    writeFileSync(join(store.dir, "index.json"), "{");
+    setNow(new Date("2026-10-12T14:00:00Z"));
+    const info = await s.tick();
+    expect(info.errors).toEqual([]);
+    expect(readFileSync(paths.serviceLog, "utf8")).toContain('"kind":"plain-files-check-failed"');
+  });
+});
+
 describe("Scheduler.tick", () => {
   it("records a completed main check once across two service instances", async () => {
     const { s, deps, paths, gh } = await setup([
