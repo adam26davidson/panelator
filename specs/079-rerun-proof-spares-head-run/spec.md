@@ -47,8 +47,9 @@ after the proof.
 
 ### Where it stands
 
-Spec 033 is implemented: PR #147 merged on 2026-11-05 and closed issue #53
-(the issue's report that #53 is open predates that). Its proof avoided the
+Spec 033 is implemented: PR #147 merged on 2026-11-05, and issue #53, its
+implementation issue, is no longer open (the issue's report that it is open
+predates the merge). Its proof avoided the
 flaw by chance of order: the run it used, 42104785369, is the `ci` run of the
 branch's first commit `0ba6a3ff`, and the PR's head `fe613dfc` kept its own
 green `test` run (`gh api /repos/{owner}/{repo}/actions/runs/42104785369`
@@ -168,7 +169,7 @@ that a sensitive path must be listed in the spec.
 - Reading check: `grep -n "079-rerun-proof-spares-head-run" specs/033-rerun-workflow-permission/spec.md`
   finds exactly two lines, one starting `- AC-3. Amended by` and one starting
   `> Amended by` directly under the section 5 heading (AC-1, AC-2); each link
-  resolves to this file.
+  points to this file.
 
 ## 6. Open decisions
 
