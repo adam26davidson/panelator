@@ -14,7 +14,6 @@ import { Octokit } from "octokit";
 import { mockGitHub } from "./helpers/mock-github.ts";
 import { applyFilerResult } from "../src/filer/apply.ts";
 import type { FilerDeps, FilerInput } from "../src/filer/input.ts";
-import type { GitHubClient } from "../src/github/client.ts";
 import { ALL, matches } from "./helpers/markers.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 
@@ -153,7 +152,7 @@ describe("the children scan (spec 076 AC-2, AC-3)", () => {
   const D = "docs/designs/x.md";
   const designs = (brief: string) => new Map([[D, `Parent: docs/charter.md\n## Children\n- planned: a\n  title: Title\n  brief: ${brief}\n`]]);
   function fake(issues: Record<string, unknown>[] = [], seed: Record<number, string[]> = {}) {
-    const list = [...issues] as never[] as { number: number; title: string; author: string; body: string; labels: string[] }[];
+    const list = [...issues] as never[] as { number: number; title: string; author: string; body: string; labels: string[]; state?: string }[];
     const comments: Record<number, string[]> = { ...seed };
     const removed: [number, string][] = [];
     const gh = {
