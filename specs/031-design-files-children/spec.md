@@ -169,7 +169,7 @@ is re-triaged by the filer into a new issue, so it is not finished work)*.
   failure of the scan is an entry in the tick's `errors` and the service log
   (`kind: "children-scan-failed"`), and the next scan runs on the next move
   of `main`; it never stops the tick.
-- AC-4. **One issue per planned child, once.** For every planned child of
+- AC-4. Amended by [076-one-marker-neutraliser](../076-one-marker-neutraliser/spec.md) AC-2: the brief, the title and the blocked and unblocked comments have every panelator- marker of any family neutralised, not only the child prefix. **One issue per planned child, once.** For every planned child of
   every design, in file order then bullet order, the scan resolves the
   child's issue: the entry's `issue:` when present, else the issue whose body
   carries the marker `<!-- panelator-child:<design path>:<slug> -->`
