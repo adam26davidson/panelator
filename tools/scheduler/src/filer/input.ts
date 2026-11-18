@@ -30,7 +30,6 @@ export const CAPABILITY_TITLE='The GitHub App cannot create draft security advis
 export const CAPABILITY_CLOSED_MARKER='<!-- panelator-capability-closed -->';
 /** The capability issue is the bot's issue with the fixed title and the marker; model-written text cannot carry the marker (spec 014 AC-6). */
 export const isCapabilityIssue=(i:{author:string;title:string;body:string},botLogin:string)=>i.author===botLogin&&i.title===CAPABILITY_TITLE&&i.body.includes(CAPABILITY_MARKER);
-export const stripCapabilityMarkers=(text:string)=>text.replace(/<!--\s*panelator-capability[:-]/gi,'<!-- ');
 export const isFailedAdvisory=(t:TriageEntry|undefined):t is TriageEntry=>!!t&&t.outcome==='security'&&!!t.failed;
 /** Consecutive failed advisory attempts, of any kind. A held ref resumes one short of the bound, so its next failure of any kind holds it again (spec 014 AC-5). */
 export function advisoryAttempts(t:TriageEntry|undefined):number {

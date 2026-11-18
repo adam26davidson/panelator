@@ -122,7 +122,7 @@ body carries the marker `<!-- panelator-capability:security-advisories -->`.
   holds it again: a held ref costs at most one batch slot a day. A probe
   that fails again sends no notification; a new hold, or a hold that files a
   new issue, sends one, with the full error (notifications are private).
-- AC-6. **A held permission failure becomes a capability question.** Given
+- AC-6. Amended by [076-one-marker-neutraliser](../076-one-marker-neutraliser/spec.md) AC-2: text the filer model wrote has every panelator- marker of any family neutralised, not only the capability prefix. **A held permission failure becomes a capability question.** Given
   a ref held by a permission failure and no capability issue open, then the
   scheduler files, as the App, the capability issue: it looks the issue up
   at most once per batch and remembers the one it creates, so two holds in a

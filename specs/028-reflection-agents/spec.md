@@ -58,7 +58,7 @@ The reflection agents run through spec 008's registry, runner, bounds, retry
 and failure handling (spec 008 AC-3), and their results are applied by the
 scheduler (spec 008 AC-5).
 
-- AC-1. **Delivery reflection is a standing agent.**
+- AC-1. Amended by [073-reflection-reads-planned-children](../073-reflection-reads-planned-children/spec.md) AC-3: the design-tree walk also files a plan item for every planned child with no issue or a dead one. **Delivery reflection is a standing agent.**
   `agents/standing/delivery-reflection.md`: strong tier, Claude, `worktree:
   fresh` (it reads the charter, the designs, the specs, the metric
   definitions and the code), `trigger: { schedule: 7d, events: [merge],
@@ -106,7 +106,7 @@ scheduler (spec 008 AC-5).
   clears what it received as spec 008 AC-3 says. The registry test of spec
   008 AC-1 accepts the key and rejects `min_events` under 1 or without
   `events`. The filer and the audit keep the default and are unchanged.
-- AC-5. **The scheduler builds the input.** `reflection-input` is built by
+- AC-5. Amended by [073-reflection-reads-planned-children](../073-reflection-reads-planned-children/spec.md) AC-2: `design_tree` is built from `designTreeReport` with the issue listing, so each design's planned children carry their issue, `done` and `dead` beside the file children's `exists`. **The scheduler builds the input.** `reflection-input` is built by
   `tools/scheduler/src/reflection/input.ts` for the period from the agent's
   last successful run (or 28 days back on the first run) to now:
   - `period`, `agent`, `parameters` (the store), `agents` (every standing
@@ -164,7 +164,7 @@ scheduler (spec 008 AC-5).
   before the run, as spec 008 does; a failure is a failed run. The agent
   also reads the repository in its fresh worktree with read-only tools; it
   has no GitHub tool.
-- AC-6. **A result is a plan, and the plan is a record.**
+- AC-6. Amended by [076-one-marker-neutraliser](../076-one-marker-neutraliser/spec.md) AC-5: model-written text in the plan issue and its comments passes through neutraliseMarkers before the reflection marker is appended. **A result is a plan, and the plan is a record.**
   `reflection-result` is `standing-result` plus `plan: { title, summary,
   observations: [{ what, evidence }], items: [{ title, body, class, kind,
   existing_issue? }], metrics_note, open_questions_note, deferred: [{ title,
@@ -242,7 +242,7 @@ scheduler (spec 008 AC-5).
   attempts: a thrown error after the plan issue (the retry path), and a
   process death after the plan issue with `failures` still 0 (the restart
   path, the state record carrying `running` and `reflection`).
-- AC-7. **Plan items are validated issues the shortlist works.** Given an
+- AC-7. Amended by [076-one-marker-neutraliser](../076-one-marker-neutraliser/spec.md) AC-5: an item issue's model-written title and body pass through neutraliseMarkers before the reflection marker is appended. **Plan items are validated issues the shortlist works.** Given an
   item, then the scheduler creates the issue as the App with the item's
   class label and `validated`, a body that opens with `Plan: #<plan issue>`
   and the item's `kind`, carries the item's body, and ends with the hidden

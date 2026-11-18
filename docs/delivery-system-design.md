@@ -557,9 +557,15 @@ are stale and are corrected as part of B.
     least 44 CSS pixels on mobile, WCAG AA contrast, and the design's tokens used throughout),
     and an empty or seeded `skills/`; it updates `tools/scheduler/test/profiles.test.ts`,
     which asserts the profile list. `agents/` and `tools/scheduler/` are sensitive paths, so
-    the security review runs. It leaves the `widget`, `firmware` and `infra` profiles, and the
-    plan prompt's list of offered domains (issue #145), to their own work.
+    the security review runs. It also adds `web-ui` to the plan prompt's sentence naming the
+    domains with an implementation profile (spec 077 AC-1), which spec 077 AC-4's test requires
+    of every new implementation profile. It leaves the `widget`, `firmware` and `infra`
+    profiles to their own work.
 - `specs/070-test-board/spec.md` (row G, issue #132; supersedes issue #40; the HIL workflow, suite and beta publication are the firmware's own, written against its section 8, ADR 0013)
 - `specs/071-spec-pr-moves-its-spec/spec.md` (issue #133; a spec PR can move its spec: the result names the new path and the scheduler rewrites the issue's `Spec:` line)
 - `specs/072-plain-credential-file-reminder/spec.md` (issue #139; a plain credential file left after its import is a weekly reminder to the maintainer, not a credential check finding; the Telegram poller reads `telegram-bot` from the store)
+- `specs/073-reflection-reads-planned-children/spec.md` (issue #141; the delivery reflection reads planned children from `designTreeReport`, which reports a file child's `exists` and a planned child's `dead`; amends spec 028 AC-1 and AC-5)
 - `specs/074-children-scan-records-issue-filed/spec.md` (issue #142; the children scan's issue filing is one of spec 026's recorded creations: spec 026 AC-2 and section 5 name it, and a test asserts its `issue.filed`)
+- `specs/075-spec-006-split-closes-issue/spec.md` (issue #143; spec 006 AC-4 and its chain table name spec 031 AC-9's split, which closes the issue `done` instead of escalating; marks on spec 006)
+- `specs/076-one-marker-neutraliser/spec.md` (issue #144; one neutraliser for every `panelator-` marker, to a fixed point, applied by every scheduler writer of an App-authored body or comment; the filer's merge guard matches the whole marker; marks on specs 014, 028, 031 and 066)
+- `specs/077-plan-names-its-implementation-profiles/spec.md` (issue #145; the plan prompt names each domain's area and the domains with an implementation profile, `backend` for `tools/`, `agents/` and the scheduler; the plan's domain check accepts only an implementation profile and its reason names them; marks on spec 001 section 9)

@@ -113,6 +113,10 @@ export interface ReportEntry extends ChildEntry {
   /** Planned children: the recorded issue (`issue:` or the bot-authored marker), when the caller passed the issues. */
   recordedIssue?: number;
   done?: boolean;
+  /** Planned children, when the caller passed the issues: the recorded issue is absent from them or closed with `abandoned`. */
+  dead?: boolean;
+  /** File children: whether the path exists under the root. */
+  exists?: boolean;
   /** Planned children: the class label, the entry's or the default by top ancestor. */
   effectiveClass?: string;
 }
@@ -145,12 +149,14 @@ export function designTreeReport(
     if (!TOP_DESIGNS.includes(path) && !path.startsWith("docs/designs/")) continue;
     const entries: ReportEntry[] = (parseChildEntries(text) ?? []).map((e) => ({ ...e }));
     for (const e of entries) {
+      if (e.kind === "file") e.exists = existsSync(join(root, e.path!));
       if (e.kind !== "planned") continue;
       e.effectiveClass = childClass(files, path, e);
       if (!opts.issues) continue;
       const r = resolveChildIssue(e, path, opts.issues, opts.botLogin ?? "");
       if (r.number !== null) e.recordedIssue = r.number;
       e.done = !!r.issue && !r.dead && isDone(r.issue);
+      e.dead = r.number !== null && (!r.issue || (r.issue.state === "closed" && r.issue.labels.includes("abandoned")));
     }
     out.set(path, entries);
   }

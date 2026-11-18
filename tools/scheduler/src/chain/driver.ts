@@ -10,9 +10,10 @@ import type { Config } from "../config.ts";
 import { ROOT, TOP_DESIGNS } from "../gates/design-tree.ts";
 import { designScopeGate, isSensitive, scopeGate, specPresentGate, specScopeGate, uiDesignGate, type ScopeResult } from "../gates/index.ts";
 import type { GitHubClient } from "../github/client.ts";
+import { neutraliseMarkers } from "../github/markers.ts";
 import type { PullRequestInfo } from "../github/types.ts";
 import type { Notifier } from "../notify/types.ts";
-import { listProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
+import { implementationProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
 import { afterFallback, harnessForModel, retryDecision } from "../runner/retry.ts";
 import type { ParameterStore } from "../parameters/store.ts";
 import { modelLimitFallback, planLaunch, quotaParams, readBook, waitAfterLimit } from "../quota/book.ts";
@@ -945,7 +946,8 @@ async function stageEvent(deps: DriverDeps, claim: Claim, stage: AgentStageName,
       if (!("escalation" in plan && plan.escalation)) {
         // I4: a domain with no profile fails the plan rather than running under another profile.
         const domain = (plan as { domain: string }).domain;
-        if (!listProfiles(deps.agentsDir).includes(domain)) return { type: "stage_failed", stage: "plan", reason: `profile not available: ${domain}` };
+        const impl = implementationProfiles(deps.agentsDir);
+        if (!impl.includes(domain)) return { type: "stage_failed", stage: "plan", reason: `profile not available: ${domain} (implementation profiles: ${impl.join(", ")})` };
       }
       if ("escalation" in plan && plan.escalation) return { type: "stage_ok", stage: "plan", result: plan, head: await holdWork(deps, claim, "plan") };
       return { type: "stage_ok", stage: "plan", result: plan };
@@ -1333,7 +1335,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         }
         break;
       case "comment":
-        await deps.gh.comment(claim.issue, claim.state.stage === "abandoned" ? `${a.text}\n\n${await runRecordList(deps, claim.issue)}` : a.text);
+        await deps.gh.comment(claim.issue, neutraliseMarkers(claim.state.stage === "abandoned" ? `${a.text}\n\n${await runRecordList(deps, claim.issue)}` : a.text));
         break;
       case "notify":
         await deps.notifier.notify({ issue: claim.issue, gate: a.gate, label: a.label, text: a.text });
@@ -1370,7 +1372,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
           return "";
         });
         const saved = await savePatch(deps.paths, claim.issue, commits, deps.now(), "closed-pr");
-        await deps.gh.comment(a.pr, a.comment);
+        await deps.gh.comment(a.pr, neutraliseMarkers(a.comment));
         await deps.gh.closePullRequest(a.pr);
         await deps.gh.deleteBranch(a.branch);
         deps.log({ kind: "pr-closed", issue: claim.issue, pr: a.pr, branch: a.branch, patch: saved });
@@ -1399,7 +1401,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         break;
       }
       case "close_issue":
-        await deps.gh.closeIssue(claim.issue, a.comment);
+        await deps.gh.closeIssue(claim.issue, neutraliseMarkers(a.comment));
         break;
       case "rerun_checks":
         await rerunChecks(deps, claim, a.sha);

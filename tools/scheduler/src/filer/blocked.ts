@@ -23,8 +23,6 @@ export function parseBlockedBy(body: string): number[] | null {
 export const hasUnblockedByMarker = (body: string) => /<!-- panelator-unblocked-by:/.test(body);
 export const hasBlockedUntilMarker = (body: string) => body.includes(BLOCKED_UNTIL_MARKER);
 
-/** Free text must not carry a block marker: only the scheduler's own does (as stripCapabilityMarkers does). */
-export const neutraliseBlockMarkers = (text: string) => text.replace(/<!--\s*panelator-(?:un)?blocked[:-]/gi, "<!-- ");
 
 const list = (nums: number[]) => ascending(nums).map((n) => `#${n}`).join(", ");
 

@@ -45,8 +45,15 @@ directory: list the directory when a task adds tests, fixtures or helpers whose 
 not yet known (for example `tools/scheduler/test/`), and name a file exactly when the task
 changes only files it already knows. The implementation may touch only what the plan lists
 (lockfiles and `schemas/` excepted), so a helper under an unlisted directory fails the
-scope gate. Classify the issue's domain as one of backend, web-ui, widget,
-firmware, infra. If the spec cannot be implemented as written, set verdict to spec_gap and
+scope gate. Set `domain` to the profile the implement, fix and review stages run
+under, by where the work lies: `web-ui` for `web/`, `widget` for
+`widgets/` and `sdk/`, `firmware` for `firmware/`, and `backend` for
+everything else, including `backend/`, `tools/` (the scheduler among
+them), `agents/`, `schemas/` and `docs/`. The domains with an
+implementation profile today are: `backend`. A plan whose domain has no
+implementation profile fails with `profile not available`; that is
+intended, so do not put work that belongs to another domain under
+`backend` to avoid it. If the spec cannot be implemented as written, set verdict to spec_gap and
 list precise questions; the spec stage answers them. Do not guess past a gap in the spec.
 
 Write the JSON result to {{result_path}} with the shape

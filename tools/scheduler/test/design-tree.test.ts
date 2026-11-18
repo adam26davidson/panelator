@@ -154,6 +154,51 @@ describe("designTreeReport (spec 031 AC-10)", () => {
     expect(entries[1]!.recordedIssue).toBeUndefined();
     expect(entries[1]!.done).toBe(false);
   });
+
+  describe("exists and dead (spec 073 AC-1)", () => {
+    const design = "docs/delivery-system-design.md";
+    const build = () => {
+      const root = mkdtempSync(join(tmpdir(), "report-"));
+      mkdirSync(join(root, "docs"), { recursive: true });
+      mkdirSync(join(root, "specs/010-a"), { recursive: true });
+      writeFileSync(join(root, "specs/010-a/spec.md"), "Parent: docs/delivery-system-design.md\n");
+      writeFileSync(
+        join(root, design),
+        "Parent: docs/charter.md\n## Children\n- `specs/010-a/spec.md`\n- `specs/011-gone/spec.md`\n" +
+          planned("a") + planned("b") + planned("c", "  issue: #7\n") + planned("d", "  issue: #8\n") + planned("e") + planned("f", "  issue: #9\n"),
+      );
+      return root;
+    };
+    const issues = [
+      issue(5, { body: childMarker(design, "a") }),
+      issue(8, { state: "closed", labels: ["abandoned"] }),
+      issue(10, { body: childMarker(design, "e"), state: "closed", labels: ["abandoned"] }),
+      issue(9, { state: "closed" }),
+    ];
+
+    it("reports exists for file children and dead for planned children", () => {
+      const entries = designTreeReport(build(), { issues, botLogin: bot }).get(design)!;
+      expect(entries.slice(0, 2).map((e) => e.exists)).toEqual([true, false]);
+      const [a, b, c, d, e, f] = entries.slice(2);
+      expect(a!.recordedIssue).toBe(5);
+      expect([a!.done, a!.dead]).toEqual([false, false]);
+      expect(b!.recordedIssue).toBeUndefined();
+      expect([b!.done, b!.dead]).toEqual([false, false]);
+      expect(c).toMatchObject({ recordedIssue: 7, dead: true });
+      expect(d).toMatchObject({ recordedIssue: 8, dead: true, done: false });
+      expect(e).toMatchObject({ recordedIssue: 10, dead: true, done: false });
+      expect(f).toMatchObject({ recordedIssue: 9, done: true, dead: false });
+    });
+
+    it("without an issue list, planned children carry neither done nor dead", () => {
+      const entries = designTreeReport(build(), { botLogin: bot }).get(design)!;
+      expect(entries.slice(0, 2).map((e) => e.exists)).toEqual([true, false]);
+      for (const e of entries.slice(2)) {
+        expect(e.done).toBeUndefined();
+        expect(e.dead).toBeUndefined();
+      }
+    });
+  });
 });
 
 describe("checkUniqueNumbers", () => {
