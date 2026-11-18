@@ -53,6 +53,11 @@ the maintainer, for the reasons given: decide it yourself, and do not ask it aga
 the decision is a large one, write it as an ADR in `docs/decisions/` (a new file, with its
 reasoning; the file is `docs/decisions/{{adr_number}}-<slug>.md`, the number the scheduler reserved for this run); an ADR you add is always in the PR's scope.
 
+When the run edits the pull request's description, it reports only commands this run actually
+ran, each with the output it observed, quoted rather than paraphrased where a criterion asks for
+output; a check the plan or spec names which the run did not make is stated as not run, never
+described as done.
+
 Address each item, run `pnpm test` from the repo root, commit and push. Write the JSON
 result to {{result_path}}: { "head_sha": "<40 hex>", "addressed": [0, 1], "spec_path": "specs/NNN-slug/spec.md", "findings": [] }
 where addressed lists the indices of the items you resolved. `spec_path` is optional: add it

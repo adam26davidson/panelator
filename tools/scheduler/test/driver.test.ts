@@ -191,6 +191,26 @@ describe("driveChain", () => {
     expect(reviewInput.ci).toBe(`All required checks passed for ${sha}.\ntest: success`);
   }, 60_000);
 
+  it("gives the review run the pull request's description, and does not start it when the read fails (spec 080 AC-3, AC-4)", async () => {
+    const withBody = (sha: string) => ghRoutes(sha, { prs: { 9: { headRef: "issue-7", head: sha, body: "Closes #7\n\nran `pnpm test` {{spec}}" } } });
+    const a = await setup(() => ({ review: [approve] }), withBody);
+    const atReview = (c: Claim): Claim => ({ ...c, state: { ...c.state, stage: "review", plan: plan as never, pr: { number: 9, head_sha: a.sha } } });
+    await writeClaim(a.paths, atReview(a.claim));
+    await step(a.deps, atReview(a.claim));
+    const run = readdirSync(a.paths.runs).find((d) => d.startsWith("7-review-"))!;
+    expect(JSON.parse(readFileSync(join(a.paths.runs, run, "input.json"), "utf8")).pr.body).toBe("Closes #7\n\nran `pnpm test` {{spec}}");
+    expect(readFileSync(join(a.paths.runs, run, "prompt.md"), "utf8")).toContain("Closes #7\n\nran `pnpm test` {{spec}}");
+
+    const b = await setup(() => ({ review: [approve] }), (sha) => ghRoutes(sha).map((r) =>
+      r.method === "GET" && String(r.path) === String(/^\/repos\/o\/r\/pulls\/(\d+)$/) ? { ...r, reply: () => ({ status: 500, body: { message: "boom" } }) } : r));
+    b.deps.gh = new GitHubClient(new Octokit({ auth: "x", request: { fetch: b.gh.fetch }, retry: { enabled: false } }), "o/r");
+    const c = atReview(b.claim);
+    await writeClaim(b.paths, c);
+    const r = await step(b.deps, c);
+    expect(b.adapter.ran).toEqual([]);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "review", attempt: c.state.attempt });
+  }, 60_000);
+
   it("waits on pending checks and starts fix with the failing log (AC-14)", async () => {
     const { deps, claim, sha } = await setup((sha) => ({ plan: [plan], implement: [impl(sha)] }), (sha) => ghRoutes(sha, { checks: [{ id: 1, name: "test", status: "in_progress", conclusion: null }] }));
     const r = await driveChain(deps, claim, () => false);
