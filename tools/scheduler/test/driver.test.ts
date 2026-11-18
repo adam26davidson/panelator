@@ -2662,6 +2662,13 @@ describe("driver: a spec PR moves its spec (spec 071)", () => {
     }, 60_000);
   }
 
+  it("fails a move onto a spec directory on main, even with the line path's number (AC-2 item 6)", async () => {
+    const t = await env(() => ({ fix: [(run: StageRun) => { git(run.worktree, "rm", "-q", "-r", "specs/030-x"); return { head_sha: commitIn(run.worktree, { "specs/030-other/spec.md": "changed\n" }), addressed: [], spec_path: "specs/030-other/spec.md" }; }] }), "specs/030-x/spec.md", { mainHas: "specs/030-other" });
+    const r = await step(t.deps, t.c);
+    expect(r.claim.state.history.join()).toContain("result: spec number 030 is held by origin/main");
+    expect(bodyPatch(t.gh)).toBeUndefined();
+  }, 60_000);
+
   it("fails a move with no spec at the new path, an issue-track move, and a move of a spec on main (AC-2 items 4, 1, 2)", async () => {
     const none = await env(() => ({ fix: [(run: StageRun) => { git(run.worktree, "rm", "-q", "-r", "specs/072-a"); return { head_sha: commitIn(run.worktree, { "b.txt": "b\n" }), addressed: [], spec_path: "specs/031-x/spec.md" }; }] }), "specs/072-a/spec.md");
     const r1 = await step(none.deps, none.c);

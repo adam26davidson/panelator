@@ -274,6 +274,8 @@ export async function specMoveReason(deps: DriverDeps, claim: Claim, linePath: s
   if (number !== specNumber(linePath) && number !== state.reserved.spec) {
     return `result: spec number ${fmtSpec(number)} is not the issue's ${fmtSpec(specNumber(linePath))} or the reserved ${state.reserved.spec === null ? "(none)" : fmtSpec(state.reserved.spec)}`;
   }
+  // The target directory itself: a landed spec's directory is never a move target, though the branch only modifies its files.
+  if (specDirOnMain(deps.repoDir, specPath)) return `result: spec number ${fmtSpec(number)} is held by origin/main`;
   return heldNumberReason(deps, claim, ["spec", "adr"], ...more);
 }
 
