@@ -169,7 +169,7 @@ is re-triaged by the filer into a new issue, so it is not finished work)*.
   failure of the scan is an entry in the tick's `errors` and the service log
   (`kind: "children-scan-failed"`), and the next scan runs on the next move
   of `main`; it never stops the tick.
-- AC-4. Amended by [076-one-marker-neutraliser](../076-one-marker-neutraliser/spec.md) AC-2: the brief, the title and the blocked and unblocked comments have every panelator- marker of any family neutralised, not only the child prefix. **One issue per planned child, once.** For every planned child of
+- AC-4. Amended by [078-children-scan-repairs-blocked-comment](../078-children-scan-repairs-blocked-comment/spec.md) AC-3: within a design, planned children are filed in dependency order (after the planned siblings their after: names), bullet order otherwise. Amended by [076-one-marker-neutraliser](../076-one-marker-neutraliser/spec.md) AC-2: the brief, the title and the blocked and unblocked comments have every panelator- marker of any family neutralised, not only the child prefix. **One issue per planned child, once.** For every planned child of
   every design, in file order then bullet order, the scan resolves the
   child's issue: the entry's `issue:` when present, else the issue whose body
   carries the marker `<!-- panelator-child:<design path>:<slug> -->`
@@ -202,7 +202,7 @@ is re-triaged by the filer into a new issue, so it is not finished work)*.
   cannot be filed, `where`: the design path and slug, `evidence`: the last
   error) and the counter resets, so the filer carries it to the maintainer
   as any failure finding (spec 020).
-- AC-5. **`after:` is the `blocked` label.** Given a planned child being filed
+- AC-5. Amended by [078-children-scan-repairs-blocked-comment](../078-children-scan-repairs-blocked-comment/spec.md) AC-1: given the blocked comment failed after the issue was filed with the App's blocked label, a later scan posts it. **`after:` is the `blocked` label.** Given a planned child being filed
   whose `after:` names at least one sibling that is not done (a planned
   sibling's issue, which the same scan filed just before when it had none;
   a file sibling's `issue #<n>`), then the issue is filed with `blocked` as a
@@ -218,7 +218,7 @@ is re-triaged by the filer into a new issue, so it is not finished work)*.
   the child unblocked *(agent's call: a wrongly early issue is cheaper than
   an issue blocked for ever)*. The design-tree check does not require the
   issue number, so a design can be written before the number is known.
-- AC-6. Amended by [066-filer-files-blocked-issues](../066-filer-files-blocked-issues/spec.md) AC-7: the scan also lifts a blocked set by the filer with a panelator-blocked-by marker comment once every issue it names is done; a hand-set blocked and a blocked_until block are still never removed. **Unblocking is the scan's too.** On every scan, for every planned
+- AC-6. Amended by [078-children-scan-repairs-blocked-comment](../078-children-scan-repairs-blocked-comment/spec.md) AC-1: a blocked the App put on the scan's own issue without its marker comment gets that comment first and is then judged here; any other blocked without the marker comment is still never removed. Amended by [066-filer-files-blocked-issues](../066-filer-files-blocked-issues/spec.md) AC-7: the scan also lifts a blocked set by the filer with a panelator-blocked-by marker comment once every issue it names is done; a hand-set blocked and a blocked_until block are still never removed. **Unblocking is the scan's too.** On every scan, for every planned
   child whose issue is open, carries `blocked`, has the blocked marker
   comment of AC-5 and no comment with
   `<!-- panelator-child-unblocked:<design path>:<slug> -->`, both posted by
