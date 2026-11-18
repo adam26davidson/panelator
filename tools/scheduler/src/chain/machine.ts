@@ -739,7 +739,7 @@ function proceedToPlan(state: ChainState, fresh: Partial<ChainState>, after: (ne
   return after(toPlan({ ...base, pr: null, plan: null }));
 }
 
-/** AC-4: after a spec PR merges, spec-present and the UI-design gate ran again on origin/main. The chain is not done. */
+/** AC-4: after a spec PR merges, spec-present and the UI-design gate ran again on origin/main. The chain is not done, except for a split (spec 031 AC-9, spec 075), which closes the issue and ends done. */
 function specMerged(state: ChainState, gate: PostMergeGate): Step {
   const deleteBranch: Action = { type: "delete_branch", branch: branchOf(state) };
   // T4: a merged spec PR on this chain carried the unrecorded answer (the driver refused one without its mark).
