@@ -560,3 +560,4 @@ are stale and are corrected as part of B.
     the security review runs. It leaves the `widget`, `firmware` and `infra` profiles, and the
     plan prompt's list of offered domains (issue #145), to their own work.
 - `specs/070-test-board/spec.md` (row G, issue #132; supersedes issue #40; the HIL workflow, suite and beta publication are the firmware's own, written against its section 8, ADR 0013)
+- `specs/071-spec-pr-moves-its-spec/spec.md` (issue #133; a spec PR can move its spec: the result names the new path and the scheduler rewrites the issue's `Spec:` line)

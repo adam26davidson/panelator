@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "metric-definition.json",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "goal": {
+      "enum": [
+        "speed",
+        "delivery",
+        "quality",
+        "spend",
+        "autonomy"
+      ]
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\n]+$"
+    },
+    "unit": {
+      "type": "string",
+      "minLength": 1
+    },
+    "direction": {
+      "enum": [
+        "lower",
+        "higher"
+      ]
+    },
+    "introduced": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 200
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1
+    },
+    "replaces": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "retired": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    }
+  },
+  "required": [
+    "name",
+    "goal",
+    "description",
+    "unit",
+    "direction",
+    "introduced",
+    "rationale",
+    "query"
+  ],
+  "additionalProperties": false
+}

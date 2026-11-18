@@ -1,0 +1,17 @@
+name: cost_per_merged_issue_usd
+goal: spend
+description: Token cost per merged issue
+unit: USD
+direction: lower
+introduced: 2026-10-28
+rationale: >-
+  The charter asks for the work to be done within a sensible spend, and the cost that matters is what
+  it takes to land one change, not what a stage costs. Summing the cost of every run recorded against
+  an issue, rescues and rejected attempts included, and dividing by the issues merged in the week,
+  charges the failures to the merges that needed them. AWS cost is not recorded yet, so this is token
+  cost only. It drives the model-tier and bound choices: a rise with steady merges says effort is
+  being wasted.
+query: |-
+  WITH m AS (SELECT issue, at AS merged_at, date(at, 'weekday 0', '-6 days') AS bucket FROM events WHERE kind = 'merge' AND at >= :from AND at < :to),
+  c AS (SELECT issue, sum(coalesce(json_extract(payload, '$.cost_usd'), 0)) AS cost FROM events WHERE kind = 'run.ended' AND issue IS NOT NULL GROUP BY issue)
+  SELECT m.bucket AS bucket, sum(coalesce(c.cost, 0)) * 1.0 / count(*) AS value, count(*) AS n FROM m LEFT JOIN c ON c.issue = m.issue GROUP BY m.bucket

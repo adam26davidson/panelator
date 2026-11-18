@@ -122,3 +122,18 @@ A line that fails to parse is skipped and reported once in the service log.
   finding and parameter logs) as events, once. A second run records nothing. A record whose shape fails its payload
   schema is kept as it is and counted as `old_shape`. The service runs it at its first start after this code lands
   (`events/backfilled.json` holds the time and counts).
+
+## Metrics (spec 027)
+
+A metric is `agents/metrics/<name>.yaml`: `name` (the file name), `goal` (`speed`, `delivery`, `quality`, `spend` or
+`autonomy`), `description`, `unit`, `direction` (`lower` or `higher` is better), `introduced`, `rationale` (at least 200
+characters: the decision it drives and why it tracks the goal), `query`, and optionally `replaces` and `retired`. The
+query is one read-only `SELECT` (or `WITH ... SELECT`) over the `events` table only, taking `:from` and `:to` and
+returning `(bucket, value, n)` per ISO week (the bucket is the week's Monday, `YYYY-MM-DD`). A bad definition fails the
+registry test and exits the service with 78. A definition with `replaces: <old>` keeps `<old>` computed and present for
+28 days after its `introduced` date, and its rationale must differ from the old one's. Changes go through a reviewed PR.
+
+- `panelator-scheduler metrics [--weeks <n>] [--json] [--snapshot] [--all]` prints the last `n` weeks (default 12) as a
+  table or JSON; `--all` includes retired metrics; `--snapshot` records the report as a `metrics.snapshot` event.
+- `panelator-scheduler metrics show <name>` prints one definition and its history from the earliest event in the index.
+- `panelator-scheduler events query "<sql>"` runs one read-only `SELECT` against the index and prints the rows as JSON.
