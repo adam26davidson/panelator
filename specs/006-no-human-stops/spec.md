@@ -498,7 +498,7 @@ AC-10 second sentence, AC-13)
   the result is a failed run. Given it has none, then the scheduler appends
   `Spec: <spec_path>` to the issue body.
 
-  **Branch.** The PR is from branch `spec-<issue>` into `main`. Every entry
+  **Branch.** Amended by [084-spec-006-branch-left-at-held-head](../084-spec-006-branch-left-at-held-head/spec.md) AC-1: when held work names spec-<issue>, the branch is left at the held head instead of being created from origin/main (spec 011 section 4). The PR is from branch `spec-<issue>` into `main`. Every entry
   into the spec stage puts the chain on the spec track, so the spec stage, a
   question check it asks and its spec PR all use `spec-<issue>`. The
   scheduler creates that branch from `origin/main` and checks it out in the
