@@ -359,6 +359,8 @@ auth, the WASM sandbox host, provisioning, the relay, `tools/scheduler/`,
 
 ## 9. Profiles
 
+> Amended by [077-plan-names-its-implementation-profiles](../077-plan-names-its-implementation-profiles/spec.md) AC-2: the plan's domain is validated against the implementation profiles, the profile list less the stage profiles `design`, `security` and `spec`.
+
 A profile is a domain package attached to a stage run: `agents/profiles/
 <name>/` with `profile.yaml` (tool allowlist, credential hook, review
 criteria file), `instructions.md` (appended to the prompt), and `skills/`
