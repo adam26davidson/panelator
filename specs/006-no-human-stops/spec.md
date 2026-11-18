@@ -102,7 +102,7 @@ AC-10 second sentence, AC-13)
 - AC-3. **A third bound triggers a spec revision.** Given a re-plan has run,
   when a bound from AC-1 is hit again, then the spec stage runs in `revise`
   mode with the history as input.
-- AC-4. **A merged spec PR is checked again, then the work goes on.** Given
+- AC-4. Amended by [075-spec-006-split-closes-issue](../075-spec-006-split-closes-issue/spec.md) AC-1: when spec-present fails after a split of spec 031 AC-9, the issue is closed `done` instead of the bound hit. **A merged spec PR is checked again, then the work goes on.** Given
   the spec stage returns `revised` with a PR, then that PR goes through the
   scope check of AC-22, verify, review and merge. Review uses the `spec`
   profile; when the diff touches a sensitive path, the `security` review
@@ -619,6 +619,8 @@ AC-10 second sentence, AC-13)
   - a spec PR that touches the charter, never merged (AC-22).
 
 ## 4. Chain changes
+
+> Amended by [075-spec-006-split-closes-issue](../075-spec-006-split-closes-issue/spec.md) AC-2: before the row "merge, spec track | merged, spec-present fails on `origin/main`", a split of spec 031 AC-9 deletes `spec-<issue>`, comments, closes the issue, removes the claim label and ends `done`.
 
 The spec 001 section 5 table, as amended. Rows not listed are unchanged. This
 table is the single source for the chain's transitions; the plan implements

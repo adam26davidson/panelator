@@ -563,3 +563,4 @@ are stale and are corrected as part of B.
 - `specs/071-spec-pr-moves-its-spec/spec.md` (issue #133; a spec PR can move its spec: the result names the new path and the scheduler rewrites the issue's `Spec:` line)
 - `specs/072-plain-credential-file-reminder/spec.md` (issue #139; a plain credential file left after its import is a weekly reminder to the maintainer, not a credential check finding; the Telegram poller reads `telegram-bot` from the store)
 - `specs/073-reflection-reads-planned-children/spec.md` (issue #141; the delivery reflection reads planned children from `designTreeReport`, which reports a file child's `exists` and a planned child's `dead`; amends spec 028 AC-1 and AC-5)
+- `specs/075-spec-006-split-closes-issue/spec.md` (issue #143; spec 006 AC-4 and its chain table name spec 031 AC-9's split, which closes the issue `done` instead of escalating; marks on spec 006)
