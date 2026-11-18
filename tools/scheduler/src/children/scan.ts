@@ -8,7 +8,8 @@ import { appendFindings } from "../state/findings.ts";
 import type { StatePaths } from "../state/paths.ts";
 import type { IssueData } from "../types.ts";
 import { liftFilerBlocks } from "../filer/blocked.ts";
-import { blockedMarker, childMarker, isDone, neutraliseChildMarkers, resolveChildIssue, unblockedMarker } from "./markers.ts";
+import { neutraliseMarkers } from "../github/markers.ts";
+import { blockedMarker, childMarker, isDone, resolveChildIssue, unblockedMarker } from "./markers.ts";
 
 const BLOCKED = "blocked";
 const VALIDATED = "validated";
@@ -120,19 +121,21 @@ export async function fileDesignChildren(d: ChildrenDeps): Promise<ChildrenResul
       const siblings = entry.after.map((ref) => ({ ref, ...sibling(design, all, slug, ref, false) }));
       const blocked = siblings.some((s) => !s.done);
       const afterLine = siblings.length ? `After: ${siblings.map((s) => s.label).join(", ")}\n\n` : "";
-      const brief = neutraliseChildMarkers((entry.brief ?? "").replace(/^\s*Spec:.*$/gm, ""));
+      const brief = (entry.brief ?? "").replace(/^\s*Spec:.*$/gm, "");
       const body =
+        neutraliseMarkers(
         `${brief}\n\n` +
         `Parent design: \`${design}\` (planned child \`${slug}\`).\n\n` +
         `The spec for this work names \`${design}\` on its \`Parent:\` line, lives at \`specs/NNN-${slug}/spec.md\` with the next free number, ` +
         `and replaces the planned entry with the spec's path in the design's \`## Children\` section.\n\n` +
-        afterLine +
+        afterLine,
+        ) +
         childMarker(design, slug);
       const labels = [childClass(d.designs, design, entry), VALIDATED, ...(blocked ? [BLOCKED] : [])];
       const key = `${design}:${slug}`;
       let number: number;
       try {
-        number = await createIssueRecorded(d.gh, d.paths, { title: neutraliseChildMarkers(entry.title ?? slug), body, labels, by: d.botLogin, class: labels[0]!, marker: childMarker(design, slug) });
+        number = await createIssueRecorded(d.gh, d.paths, { title: neutraliseMarkers(entry.title ?? slug), body, labels, by: d.botLogin, class: labels[0]!, marker: childMarker(design, slug) });
       } catch (e) {
         const error = message(e);
         d.log({ kind: "child-filing-failed", design, slug, error });
@@ -156,7 +159,7 @@ export async function fileDesignChildren(d: ChildrenDeps): Promise<ChildrenResul
         try {
           await d.gh.comment(
             number,
-            `Blocked until ${waiting.map((s) => s.label).join(", ")} are done (after: ${entry.after.join(", ")} in ${design}).\n\n${blockedMarker(design, slug)}`,
+            neutraliseMarkers(`Blocked until ${waiting.map((s) => s.label).join(", ")} are done (after: ${entry.after.join(", ")} in ${design}).`) + `\n\n${blockedMarker(design, slug)}`,
           );
         } catch (e) {
           d.log({ kind: "child-filing-failed", design, slug, error: `blocked comment: ${message(e)}` });
@@ -183,7 +186,7 @@ export async function fileDesignChildren(d: ChildrenDeps): Promise<ChildrenResul
         if (siblings.some((s) => !s.done)) continue;
         await d.gh.removeLabel(issue.number, BLOCKED);
         issue.labels = issue.labels.filter((l) => l !== BLOCKED);
-        await d.gh.comment(issue.number, `Unblocked: ${siblings.map((s) => s.label).join(", ") || "its siblings"} are done.\n\n${unblockedMarker(design, slug)}`);
+        await d.gh.comment(issue.number, neutraliseMarkers(`Unblocked: ${siblings.map((s) => s.label).join(", ") || "its siblings"} are done.`) + `\n\n${unblockedMarker(design, slug)}`);
         result.unblocked.push(issue.number);
         d.log({ kind: "child-unblocked", design, slug, issue: issue.number });
       } catch (e) {

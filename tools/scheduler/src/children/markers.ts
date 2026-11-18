@@ -8,9 +8,6 @@ export const blockedMarker = (design: string, slug: string) => `<!-- panelator-c
 /** On the comment saying the scan removed the block (AC-6). */
 export const unblockedMarker = (design: string, slug: string) => `<!-- panelator-child-unblocked:${design}:${slug} -->`;
 
-/** Free text must not carry a marker: only the scan's own does (as stripCapabilityMarkers does for the filer). */
-export const neutraliseChildMarkers = (text: string) => text.replace(/<!--\s*panelator-child[:-]/gi, "<!-- ");
-
 /** True when the issue is the App's record of the planned child; an issue by any other account never is. */
 export const isChildIssue = (issue: IssueData, design: string, slug: string, botLogin: string) =>
   issue.author === botLogin && issue.body.includes(childMarker(design, slug));
