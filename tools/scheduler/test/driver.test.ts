@@ -2450,6 +2450,32 @@ describe("driver: a run that cannot reach the API waits out the outage (spec 092
     expect((await readClaim(b.paths, 7))!.state.heldWork).toEqual([]);
     expect(b.logs.some((l) => l.kind === "held-work")).toBe(false);
   }, 120_000);
+
+  describe("a conversation turn (AC-2)", () => {
+    const q: Question = { kind: "product", question: "Which layout?", options: [{ label: "second", cost: "none" }], recommendation: "second" };
+    async function turn(script: Scripted) {
+      const w = await run(judgedAs({ plan: [script] }, null, UNREACHABLE));
+      const paused = { ...w.c.state, stage: "paused" as const, question: q, askingStage: "plan" as const, resumeSession: { harness: "fake" as const, model: "m", session_id: "s", worktree: w.claim.worktree } };
+      w.c.state = transition(paused, { type: "answered", answer: "second", questionId: 1 }).state;
+      return w;
+    }
+
+    it("a transient turn that changed the worktree is restored and fails with the worktree reason", async () => {
+      const w = await turn((r: StageRun) => { writeFileSync(join(r.worktree, "a.txt"), "forbidden\n"); return undefined; });
+      writeFileSync(join(w.claim.worktree, "a.txt"), "kept\n");
+      const r = await step(w.deps, w.c);
+      expect(readFileSync(join(w.claim.worktree, "a.txt"), "utf8")).toBe("kept\n");
+      expect(r.claim.state.conversation?.retried).toBe(true);
+      expect(w.logs.some((l) => l.kind === "stage-transient")).toBe(false);
+    }, 60_000);
+
+    it("a transient turn that changed nothing rejects the step and does not spend the retry", async () => {
+      const w = await turn(() => undefined);
+      await expect(step(w.deps, w.c)).rejects.toThrow(/could not reach the model API/);
+      expect(w.logs.some((l) => l.kind === "stage-transient")).toBe(true);
+      expect((await readClaim(w.paths, 7))?.state.conversation?.retried).toBeFalsy();
+    }, 60_000);
+  });
 });
 
 describe("driver: a check failing outside the PR's scope (spec 060)", () => {
