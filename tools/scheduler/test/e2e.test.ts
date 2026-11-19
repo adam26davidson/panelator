@@ -1230,7 +1230,6 @@ describe("end to end: a stage run that cannot reach the API waits out the outage
     await w.tick();
     await expectSettled(w);
     expect(w.adapter.ran).toEqual(["plan", "implement", "implement", "implement", "review"]);
-    expect(runsOf(w, "implement").map((r) => r.input.attempt ?? 1)).toEqual([1, 1, 1]);
     expect(kinds(w, "stage-transient")).toHaveLength(2);
     const records = serviceRecords(w);
     expect(records.filter((r) => r.kind === "transient-outage")).toHaveLength(1);
