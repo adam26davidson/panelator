@@ -227,7 +227,8 @@ function rerun(state: ChainState, stuck: Stuck, fixInput: string, patch: Partial
 function escalate(state: ChainState, stuck: Stuck, reason: string, fixInput: string = reason): Step {
   const s = note({ ...state, heldWork: [] }, `${stuck}: ${reason}`);
   if (s.track === "spec" || stuck === "spec") {
-    if (s.specRescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { specRescues: s.specRescues + 1, rescueRun: true, track: "spec" });
+    // Spec 085 AC-1: the rescue starts the recording on spec-<n> again, so only that branch's hold goes; other branches' holds are kept.
+    if (s.specRescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { specRescues: s.specRescues + 1, rescueRun: true, track: "spec", heldWork: state.heldWork.filter((h) => h.branch !== `spec-${state.issue}`) });
     return abandon(s, stuck);
   }
   // Spec 029 AC-4: the design track gets one rescue, then the spec agent revises the UI design section, then the issue is abandoned.
