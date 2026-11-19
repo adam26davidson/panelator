@@ -435,8 +435,8 @@ describe("driveChain", () => {
     expect(gh.calls.find((call) => call.method === "PUT")).toBeUndefined();
   }, 60_000);
 
-  it("fails a plain review run returning the conversation shape as a run, not a chain failure (spec 044 AC-2)", async () => {
-    const { deps, claim, gh, sha } = await setup(() => ({ review: [settled, approve] }), undefined);
+  it("fails a plain review run returning the conversation shape as a run, not a chain failure, then continues on approve (spec 044 AC-2, spec 091 AC-2)", async () => {
+    const { deps, claim, gh, adapter, sha } = await setup(() => ({ review: [settled, approve] }), undefined);
     const logs: Record<string, unknown>[] = [];
     deps.log = (r) => { logs.push(r); };
     const c: Claim = { ...claim, state: { ...claim.state, stage: "review", attempt: 1, plan: plan as never, pr: { number: 9, head_sha: sha } } };
@@ -446,7 +446,9 @@ describe("driveChain", () => {
     expect(logs.filter((l) => l.kind === "chain-error" || l.kind === "pending-work-failing")).toEqual([]);
     expect(gh.calls.some((x) => /\/pulls\/9\/(reviews|merge)/.test(x.url))).toBe(false);
     const r2 = await step(deps, r.claim);
-    expect(r2.claim.state.history).not.toContain("review attempt 2 failed: result: invalid");
+    expect(adapter.ran.filter((x: string) => x.startsWith("review:"))).toHaveLength(2);
+    expect(r2.claim.state.history.some((h: string) => h.startsWith("review attempt 2 failed"))).toBe(false);
+    expect(r2.claim.state).toMatchObject({ stage: "merge", chainFailures: null, chainErrors: 0 });
   }, 60_000);
 
   it("fails an implement run returning the conversation shape with the same reason, not pr mismatch (spec 044 AC-3)", async () => {
