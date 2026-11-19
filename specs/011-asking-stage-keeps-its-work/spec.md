@@ -64,6 +64,8 @@ nothing.
 
 ## 2. Out of scope
 
+> Amended by [085-spec-rescue-keeps-issue-hold](../085-spec-rescue-keeps-issue-hold/spec.md) AC-1: a spec-track rescue starts again on `spec-<n>` only and keeps work held on any other branch.
+
 - Uncommitted changes at the moment a stage asks. They are saved as a patch
   and discarded before the next stage, as spec 005 says: the question check
   and the resumed stage start from a clean tree. The stage prompts tell the
@@ -174,7 +176,7 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
   plan then runs with `held_work` in its input and implement continues from
   the branch (AC-3, AC-4). The chain's fresh stage counters (spec 006 AC-4)
   are unchanged.
-- AC-7. Amended by [053-incomplete-implement-run-keeps-its-work](../053-incomplete-implement-run-keeps-its-work/spec.md) AC-2 and AC-3: an implement failure of an incomplete run sets a carried hold on `issue-<n>`, and the escalate to its rescue keeps it. Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) AC-2 to AC-4: a bound PR and the asking stage's failure clear the hold on the chain's branch only; the other clears empty the list. **Held work is cleared when the work is bound or discarded, and only
+- AC-7. Amended by [085-spec-rescue-keeps-issue-hold](../085-spec-rescue-keeps-issue-hold/spec.md) AC-1: the escalate to a spec-track rescue clears only the hold on `spec-<n>`. Amended by [053-incomplete-implement-run-keeps-its-work](../053-incomplete-implement-run-keeps-its-work/spec.md) AC-2 and AC-3: an implement failure of an incomplete run sets a carried hold on `issue-<n>`, and the escalate to its rescue keeps it. Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) AC-2 to AC-4: a bound PR and the asking stage's failure clear the hold on the chain's branch only; the other clears empty the list. **Held work is cleared when the work is bound or discarded, and only
   then.** The machine clears `heldWork` on:
   - a `stage_ok` of implement or spec (`revised`) that binds a PR on the
     held branch: the work is then the PR's, and spec 005 AC-3 applies;
