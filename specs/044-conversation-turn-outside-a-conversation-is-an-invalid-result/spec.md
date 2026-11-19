@@ -108,7 +108,7 @@ signal for one. The change is small and reversible; no ADR (design section
 request: every run that is not the conversation turn of spec 007 AC-13,
 including a resumed session that continues its work with an answer.
 
-- AC-1. **A plain run returning the conversation shape is an invalid
+- AC-1. Amended by [091-spec-044-result-errors-text-and-review-retry-test](../091-spec-044-result-errors-text-and-review-retry-test/spec.md) AC-1: the one `resultErrors` entry is the bare text `conversation turn outside a conversation`, and only the reason carries the `result: invalid: ` prefix. **A plain run returning the conversation shape is an invalid
   result.** Given a plain run of any agent stage (spec, design, plan,
   implement, review or fix) whose result file holds a result that validates
   against its stage's schema and carries `conversation`, when the run ends
