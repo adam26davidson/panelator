@@ -23,7 +23,7 @@ import { rankIssues, classifyWork, classOf } from "../shortlist/rank.ts";
 import type { IssueData } from "../types.ts";
 import { selectEligible } from "../shortlist/select.ts";
 import { listClaims, readClaim, removeClaim, writeClaim, type Claim, type Outage } from "../state/claims.ts";
-import { CEILING_MIN_FAILURES, CEILING_MIN_SPAN_MS, DISK_FULL, forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, PAST_CEILING, transientCause } from "../chain/transient.ts";
+import { CEILING_MIN_FAILURES, CEILING_MIN_SPAN_MS, DISK_FULL, forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, PAST_CEILING, failureCause, transientCause } from "../chain/transient.ts";
 import { readLedger, writeLedger } from "../state/ledger.ts";
 import { listBlocked, removeBlocked, writeBlocked, type BlockedRecord } from "../state/blocked.ts";
 import { recordChecks } from "../events/ci.ts";
@@ -259,7 +259,7 @@ export class Scheduler {
       d.serviceLog.write({ kind: "pending-work-failing", issue, failures: chainFailures.count, error });
       // CM3: a problem the system must be able to resolve: a finding, as well as the notification.
       await appendFindings(d.paths, { issue, stage: stuckStage(claim.state), run_id: "chain-error", timestamp: d.now().toISOString() }, [{
-        what: "pending work keeps failing", where: `issue #${issue}, ${claim.pendingEvent ? `pending ${claim.pendingEvent.type} event` : "pending abandonment actions"}`,
+        what: `pending work keeps failing: ${failureCause(error, null)}`, where: `issue #${issue}, ${claim.pendingEvent ? `pending ${claim.pendingEvent.type} event` : "pending abandonment actions"}`,
         evidence: chainFailures.last, noticed_how: "scheduler chain error",
       }]);
       await d.notifier.notify({ issue, gate: "chain_error", label: "", text });
@@ -310,7 +310,7 @@ export class Scheduler {
         const what = claim.pendingEvent ? `the ${claim.pendingEvent.type} event` : "an abandonment";
         d.serviceLog.write({ kind: "pending-work-failing", issue, failures: count, error: last });
         await appendFindings(d.paths, { issue, stage: stuckStage(claim.state), run_id: "chain-error", timestamp: now.toISOString() }, [{
-          what: "pending work keeps failing", where: `issue #${issue}, ${claim.pendingEvent ? `pending ${claim.pendingEvent.type} event` : "pending abandonment actions"}`,
+          what: `pending work keeps failing: ${failureCause(last, cause)}`, where: `issue #${issue}, ${claim.pendingEvent ? `pending ${claim.pendingEvent.type} event` : "pending abandonment actions"}`,
           evidence: last, noticed_how: "scheduler chain error",
         }]);
         await d.notifier.notify({ issue, gate: "chain_error", label: "", text: `Issue #${issue}: a network outage past its 24-hour ceiling keeps the scheduler from finishing work it must not drop (${what}); it keeps retrying. Last error: ${outage.last}` });

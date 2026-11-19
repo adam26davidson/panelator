@@ -98,6 +98,18 @@ it('marks repeat discards with the earlier reason',async()=>{
  await appendFile(paths.findingsQueue,JSON.stringify({finding})+'\n'+JSON.stringify({finding})+'\n');
  const next=await buildFilerInput(d);expect(next.records[0].ref).toBe('2');expect(next.records[0].repeat).toBe('already fixed');
 });
+// Spec 093 AC-4: a repeat matches only the same cause.
+it.each([
+ ['standing agent findings-filer failed twice','agents/standing/findings-filer.md'],
+ ['pending work keeps failing','issue #7, pending chain_error event'],
+])('marks a %s record as a repeat only when its cause matches (spec 093 AC-4)',async(prefix,where)=>{
+ const {d,paths}=await setup();
+ const f=(cause:string,evidence:string)=>({what:`${prefix}: ${cause}`,where,evidence,noticed_how:'scheduler'});
+ await appendFile(paths.findingsTriage,row('9',{reason:'R',at:'2026-10-20T00:00:00Z',finding:f('rate limited (429)','429 once')} as Partial<TriageEntry>));
+ await queue(paths,[f('EAI_AGAIN','dns'),f('rate limited (429)','429 again, other run')]);
+ const input=await buildFilerInput(d);
+ expect(input.records).toHaveLength(2);expect(input.records[0].repeat).toBeUndefined();expect(input.records[1].repeat).toBe('R');
+});
 // Spec 014 (issues #33 and #26).
 const queue=async(paths:{findingsQueue:string},findings:object[])=>{for(const f of findings)await appendFile(paths.findingsQueue,JSON.stringify({finding:f})+'\n');};
 const row=(ref:string,extra:Partial<TriageEntry>={})=>JSON.stringify({ref,outcome:'discard',reason:'r',run_id:'old',at:'2026-10-26T00:00:00Z',...extra})+'\n';
