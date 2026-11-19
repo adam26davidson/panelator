@@ -3,48 +3,30 @@
   "$id": "parameter-definition.json",
   "type": "object",
   "properties": {
-    "name": {
-      "type": "string",
-      "minLength": 1
-    },
-    "type": {
-      "enum": [
-        "number",
-        "boolean",
-        "string",
-        "duration"
-      ]
-    },
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$" },
+    "type": { "enum": ["number", "boolean", "string", "duration"] },
     "default": {},
-    "min": {
-      "type": [
-        "number",
-        "string"
-      ]
-    },
-    "max": {
-      "type": [
-        "number",
-        "string"
-      ]
-    },
-    "mode": {
-      "enum": [
-        "auto",
-        "locked"
-      ]
-    },
-    "description": {
-      "type": "string",
-      "minLength": 1
-    }
+    "min": { "anyOf": [{ "type": "number" }, { "type": "string" }] },
+    "max": { "anyOf": [{ "type": "number" }, { "type": "string" }] },
+    "mode": { "enum": ["auto", "locked"] },
+    "description": { "type": "string", "minLength": 1 }
   },
-  "required": [
-    "name",
-    "type",
-    "default",
-    "mode",
-    "description"
-  ],
-  "additionalProperties": false
+  "required": ["name", "type", "default", "mode", "description"],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "type": "object", "properties": { "type": { "const": "number" } }, "required": ["type"] },
+      "then": { "type": "object", "properties": { "min": { "type": "number" }, "max": { "type": "number" } } }
+    },
+    {
+      "if": { "type": "object", "properties": { "type": { "const": "duration" } }, "required": ["type"] },
+      "then": {
+        "type": "object",
+        "properties": {
+          "min": { "type": "string", "pattern": "^\\d+(\\.\\d+)?[mhd]$" },
+          "max": { "type": "string", "pattern": "^\\d+(\\.\\d+)?[mhd]$" }
+        }
+      }
+    }
+  ]
 }

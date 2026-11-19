@@ -748,6 +748,53 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
       }
     });
 
+    describe("a spec-track rescue while recording an answer keeps issue-7's work (spec 085 AC-5)", () => {
+      for (const how of ["the recording spec stage fails twice", "the question check fails twice"] as const) {
+        it(`${how}: issue-7's work is kept and continued after the rescued spec PR merges`, async () => {
+          let w!: ChainWorld;
+          const a = agents(() => w);
+          const held = { head: "" };
+          const starts: string[] = [];
+          const marks = () => w.questions().map((q) => `(maintainer answer, question #${q.id})`).join(", ");
+          const asks = (run: StageRun) => {
+            w.push(run, { "specs/010-thing/spec.md": specOf().replace("Do a thing.", `Do a thing, half written ${marks()}.`) }, "recording");
+            return { verdict: "question", question: ask("capability", "Does the board have a second flash chip?") };
+          };
+          const revises = (run: StageRun) => a.spec(12, { "specs/010-thing/spec.md": specOf().replace("Do a thing.", `Do a thing, in RAM ${marks()}.`) })(run);
+          const failing = how === "the recording spec stage fails twice";
+          w = await chainWorld({
+            files: repoFiles(),
+            results: {
+              plan: [PLAN, PLAN],
+              implement: [asksAfterPushing(() => w, ask("technical", "Cache the frames in RAM or in flash?"), held), a.implement(9, { "a.txt": "pr 9\n" }, (run) => starts.push(rev(run)))],
+              review: [APPROVE, APPROVE],
+              "question-check": failing ? [SEND] : [SEND, FAIL, FAIL],
+              spec: failing ? [FAIL, FAIL, revises] : [asks, revises],
+            },
+          });
+          await w.tick();
+          w.reply("RAM.");
+          await w.tick();
+          await expectSettled(w);
+
+          expect(w.adapter.ran).toEqual(failing
+            ? ["plan", "implement", "question-check", "spec", "spec", "spec", "review", "plan", "implement", "review"]
+            : ["plan", "implement", "question-check", "spec", "question-check", "question-check", "spec", "review", "plan", "implement", "review"]);
+          expect(runsOf(w, "spec").filter((r) => r.model === w.cfg.rescue_model)).toHaveLength(1);
+          expect(kinds(w, "stale-branch-dropped").filter((r) => r.branch === "issue-7")).toEqual([]);
+          expect(kinds(w, "recovered-commits").filter((r) => r.branch === "issue-7")).toEqual([]);
+          for (const k of kinds(w, "held-work-kept").filter((r) => r.branch === "issue-7")) expect(k.head).toBe(held.head);
+          expect(kinds(w, "held-work-kept").some((r) => r.branch === "issue-7")).toBe(true);
+          expect(inputsOf(w, "plan")[1].held_work).toContain("issue-7");
+          expect(inputsOf(w, "plan")[1].held_work).toContain(held.head);
+          expect(starts).toEqual([held.head]);
+          expect(runsOf(w, "implement")[1].branch).toBe("issue-7");
+          expect(w.writes()).not.toContain("DELETE /repos/o/r/git/refs/heads/issue-7");
+          expect(w.mergeRequests).toEqual([12, 9]);
+        }, 180_000);
+      }
+    });
+
     it("decide_yourself after a question: the stage in decide mode continues from the held head", async () => {
       let w!: ChainWorld;
       const a = agents(() => w);

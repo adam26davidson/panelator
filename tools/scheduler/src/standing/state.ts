@@ -3,6 +3,7 @@ import {join} from 'node:path';
 import type {StatePaths} from '../state/paths.ts';
 import type {StandingDefinition} from '../types.ts';
 import {withStateLock,type ParameterStore} from '../parameters/store.ts';
+import {validate} from '../schema/validate.ts';
 import {parseDuration} from './registry.ts';
 export interface StandingEvent {event:string; payload:unknown; at:string}
 export interface AgentState {
@@ -50,6 +51,7 @@ export async function writeAgentState(paths:StatePaths,name:string,state:AgentSt
  await withStateLock(join(paths.agents,`${name}.json`),()=>writeUnlocked(paths,name,state));
 }
 async function writeUnlocked(paths:StatePaths,name:string,state:AgentState):Promise<void> {
+ const v=validate('agent-state',state);if(!v.ok)throw new Error(`invalid agent state ${name}: ${v.errors.join('; ')}`);
  const p=join(paths.agents,`${name}.json`);await writeFile(p+'.tmp',JSON.stringify(state,null,2));await rename(p+'.tmp',p);
 }
 export async function listAgentStates(paths:StatePaths):Promise<Record<string,AgentState>> {

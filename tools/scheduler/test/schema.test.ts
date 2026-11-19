@@ -385,3 +385,42 @@ describe("spec 060 schemas", () => {
     expect(validate("blocked", { ...base, condition: { kind: "paths", paths: [], main_sha: "a" } }).ok).toBe(false);
   });
 });
+
+describe("scheduler records use their schemas (spec 086)", () => {
+  const at = "2026-11-19T00:00:00.000Z";
+  const msgs = (r: ReturnType<typeof validate>) => (r.ok ? "" : r.errors.join("; "));
+  it("accepts every definition of agents/parameters.yaml (AC-3)", () => {
+    const defs = parse(readFileSync("agents/parameters.yaml", "utf8")) as unknown[];
+    for (const d of defs) expect(validate("parameter-definition", d)).toEqual({ ok: true });
+  });
+  it("accepts a full agent state (AC-6)", () => {
+    const state = {
+      last_run: { at, run_id: "r", outcome: "done" }, next_run: at, pending_events: [{ event: "e", payload: { a: 1 }, at }, { event: "f", at }],
+      paused: true, paused_by: "maintainer", failures: 1, summary: "s", removed_at: at, running: { run_id: "r", started_at: at }, postponed_until: at,
+      outage: { since: at, count: 2, last: at, alarmed: false, past_ceiling: { since: at, failures: 1 }, ceiling: true },
+    };
+    expect(validate("agent-state", state)).toEqual({ ok: true });
+  });
+  it("checks proposed actions through standing-result (AC-7)", () => {
+    const r = (a: unknown) => ({ summary: "s", actions: [a] });
+    const act = { kind: "run_agent", args: { name: "x" }, why: "a reason of twenty chars or more" };
+    expect(validate("standing-result", r(act))).toEqual({ ok: true });
+    expect(msgs(validate("standing-result", r({ ...act, why: "short" })))).toBe('/actions/0/why must NOT have fewer than 20 characters {"limit":20}');
+    expect(msgs(validate("standing-result", r({ ...act, args: [] })))).toBe('/actions/0/args must be object {"type":"object"}');
+  });
+  it("accepts representative parameters and action-log-entry records", () => {
+    expect(validate("parameters", { x: { value: 1, mode: "auto", set_by: "default", at } })).toEqual({ ok: true });
+    const row = { id: "i", at, agent: "a", run_id: "r", kind: "k", args: {}, why: "x", status: "applied", undo: { kind: "k", args: {} }, undoes: "j" };
+    expect(validate("action-log-entry", row)).toEqual({ ok: true });
+    expect(validate("action-log-entry", { ...row, undo: null })).toEqual({ ok: true });
+  });
+  it("describes every triage-entry field (AC-10)", () => {
+    const min = { ref: "1", outcome: "file", reason: "r", run_id: "x", at };
+    const full = { ...min, issue: 1, advisory: "a", failed: false, finding: { what: "w" }, attempt: 1, failure: "error", held: false, capability_issue: 2, rests_on_pr: 3, stops_pipeline: true, blocked_by: [1], blocked_until: at, rests_on_pr_state: "merged", reoffered: true };
+    expect(validate("triage-entry", min)).toEqual({ ok: true });
+    expect(validate("triage-entry", full)).toEqual({ ok: true });
+    expect(msgs(validate("triage-entry", { ...min, foo: 1 }))).toBe('/ must NOT have additional properties {"additionalProperty":"foo"}');
+    expect(msgs(validate("triage-entry", { ...min, failure: "other" }))).toMatch(/^\/failure must be equal to one of the allowed values/);
+    expect(msgs(validate("triage-entry", { ...min, blocked_by: [0] }))).toBe('/blocked_by/0 must be >= 1 {"comparison":">=","limit":1}');
+  });
+});

@@ -25,7 +25,24 @@ it('enforces locks, maintainer-only modes, types and ranges, persists history', 
 it('rejects malformed parameter definitions and serializes mode/value changes',async()=>{
  const root=await mkdtemp(join(tmpdir(),'defs-')),file=join(root,'parameters.yaml');
  const base={name:'test',type:'number',default:1,min:0,max:2,mode:'auto',description:'test'};
- for(const defs of [[{...base,unknown:true}],[{...base,default:3}],[base,base]]){await writeFile(file,JSON.stringify(defs));expect(()=>loadParameterDefinitions(file,{slots:1},{})).toThrow();}
+ const x={...base,name:'x'};
+ const cases:[unknown,string][]=[
+  [[{...x,unknown:true}],`${file}: parameter 0: / must NOT have additional properties {"additionalProperty":"unknown"}`],
+  [[{...x,name:'Bad Name'}],`${file}: parameter 0: /name must match pattern "^[a-z][a-z0-9_.-]*$"`],
+  [[{...x,type:'text'}],`${file}: parameter 0: /type must be equal to one of the allowed values`],
+  [[{...x,mode:'frozen'}],`${file}: parameter 0: /mode must be equal to one of the allowed values`],
+  [[{...x,description:''}],`${file}: parameter 0: /description must NOT have fewer than 1 characters {"limit":1}`],
+  [[(({default:_d,...r})=>r)(x)],`${file}: parameter 0: / must have required property 'default' {"missingProperty":"default"}`],
+  [[{...x,min:'1'}],`${file}: parameter 0: /min must be number {"type":"number"}`],
+  [[{...x,type:'duration',default:'1h',min:undefined,max:'soon'}],`${file}: parameter 0: /max must match pattern`],
+  [[x,{...x,name:'y',unknown:1}],`${file}: parameter 1: / must NOT have additional properties`],
+  [{a:1},`${file}: expected list`],
+  [[x,x],`${file}: duplicate name x`],
+  [[{...x,default:3,max:2}],`${file}: x: out of range`],
+ ];
+ for(const [defs,msg] of cases){await writeFile(file,JSON.stringify(defs));expect(()=>loadParameterDefinitions(file,{slots:1},{})).toThrow(msg);}
+ await writeFile(file,JSON.stringify([{...x,name:'schedule.a',type:'duration',default:'1h',min:undefined,max:undefined}]));
+ expect(()=>loadParameterDefinitions(file,{slots:1},{a:{name:'a',trigger:{schedule:'1d'}}} as never)).toThrow(`${file}: duplicate name schedule.a`);
  await writeFile(file,JSON.stringify([base]));const paths=statePaths(root);await ensureStateDirs(paths);
  const store=new ParameterStore(paths,loadParameterDefinitions(file,{slots:1},{}));
  const results=await Promise.allSettled([store.setParameterMode('test','locked','maintainer'),store.setParameter('test',2,'system')]);
@@ -61,4 +78,12 @@ it('param mode records in the parameter history only and prints the new state',a
  await expect(setParameterModeCommand(store,'system_work_share','frozen')).rejects.toThrow('mode must be auto or locked');
  expect([await readFile(paths.parameters,'utf8'),await readFile(paths.parametersHistory,'utf8')]).toEqual(before);
  expect(existsSync(paths.actionsLog)).toBe(false);
+});
+it('the store refuses to write an invalid parameters.json and leaves no trace',async()=>{
+ const paths=statePaths(await mkdtemp(join(tmpdir(),'params-')));await ensureStateDirs(paths);
+ const store=new ParameterStore(paths,loadParameterDefinitions('agents/parameters.yaml',{slots:1},{}));
+ await store.setParameter('system_work_share',0.5,'test');
+ const before=await readFile(paths.parameters,'utf8'),hist=await readFile(paths.parametersHistory,'utf8');
+ await expect(store.setParameter('system_work_share',0.6,'')).rejects.toThrow('invalid parameters: /system_work_share/set_by must NOT have fewer than 1 characters {"limit":1}');
+ expect(await readFile(paths.parameters,'utf8')).toBe(before);expect(await readFile(paths.parametersHistory,'utf8')).toBe(hist);
 });

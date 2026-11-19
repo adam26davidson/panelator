@@ -1321,13 +1321,20 @@ describe("chain: every event in every stage (AC-27)", () => {
                 if (heldWork.length) cleared++;
                 continue;
               }
-              if (JSON.stringify(after) === JSON.stringify(heldWork)) { if (heldWork.length) carried++; continue; }
-              // Changed: an escalation clears every entry; a bound PR and the asking stage's failure remove the chain's branch's entry.
+              // An escalation is checked against the oracle whether or not the list changed.
               if (ledger(r.state) > ledger(state)) {
+                // Spec 085 AC-1: the escalate to a spec-track rescue removes only the spec-1 hold; AC-2: every other one clears.
+                if (r.state.specRescues > state.specRescues) {
+                  expect(after, label).toEqual(heldWork.filter((x) => x.branch !== "spec-1"));
+                  if (heldWork.length) { if (after.length) carried++; else cleared++; }
+                  continue;
+                }
                 expect(after, label).toEqual([]);
-                cleared++;
+                if (heldWork.length) cleared++;
                 continue;
               }
+              if (JSON.stringify(after) === JSON.stringify(heldWork)) { if (heldWork.length) carried++; continue; }
+              // Changed: a bound PR and the asking stage's failure remove the chain's branch's entry.
               const bound = event.type === "stage_ok" && (event.stage === "implement" || event.stage === "fix" || event.stage === "spec") && r.state.pr !== null;
               const askerFailed = (event.type === "stage_failed" && !event.postpone && event.stage === state.askingStage)
                 // An unmarked question in decide mode counts as a failed run.
@@ -1384,6 +1391,17 @@ describe("chain: every event in every stage (AC-27)", () => {
     it("a spec PR merging on the spec track carries held work back to the issue track", () => {
       const r = transition(at("merge", { track: "spec", pr: pr8, heldWork: held }), { type: "merge_result", status: "merged", specGate: { ok: true } });
       expect(r.state).toMatchObject({ stage: "plan", track: "issue", heldWork: held });
+    });
+    it("a spec-track rescue keeps the issue-1 hold and drops spec-1's; abandonment clears every hold (spec 085 AC-1, AC-2)", () => {
+      const record = at("spec", { track: "spec", specMode: "record", heldWork: held });
+      const first = transition(record, { type: "stage_failed", stage: "spec", reason: "t1" });
+      const second = transition(first.state, { type: "stage_failed", stage: "spec", reason: "t2" });
+      expect(second.state).toMatchObject({ stage: "spec", specRescues: 1, rescueRun: true, heldWork: held });
+      const check = at("question-check", { track: "spec", specMode: "record", question: qCapability, askingStage: "spec", attempt: 2, heldWork: [held[0], specHeld] });
+      const qc = transition(check, { type: "stage_failed", stage: "question-check", reason: "boom" });
+      expect(qc.state).toMatchObject({ stage: "spec", specRescues: 1, heldWork: held });
+      const used = at("spec", { track: "spec", specMode: "record", specRescues: 1, rescueRun: true, attempt: 2, heldWork: [held[0], specHeld] });
+      expect(transition(used, { type: "stage_failed", stage: "spec", reason: "t2" }).state).toMatchObject({ stage: "abandoned", heldWork: [] });
     });
     it("a spec question in record mode holds spec-1 beside issue-1; a second question replaces in place (spec 040 AC-1)", () => {
       const record = at("spec", { track: "spec", specMode: "record", heldWork: held });

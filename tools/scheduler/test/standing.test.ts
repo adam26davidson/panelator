@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {statePaths,ensureStateDirs} from '../src/state/paths.ts';
-import {initializeAgents,readAgentState,writeAgentState,pruneRemovedAgents} from '../src/standing/state.ts';
+import {initializeAgents,readAgentState,writeAgentState,updateAgentState,pruneRemovedAgents} from '../src/standing/state.ts';
 import {emit,EVENT_NAMES,watchMainChecks} from '../src/standing/events.ts';
 import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
 import {ParameterStore} from '../src/parameters/store.ts';
@@ -130,4 +130,23 @@ it('emit with an excluded agent delivers to every other subscriber and changes n
  await emit(paths,registry,'finding_queued',{count:1,offset:0},now);
  expect(await events('second-filer')).toHaveLength(1);expect(await events('findings-filer')).toHaveLength(1);
  await expect(emit(paths,registry,'nope',{},now,'findings-filer')).rejects.toThrow('unknown event nope');
+});
+
+describe('agent state is checked before it is written (spec 086 AC-5)',()=>{
+ const good={last_run:null,next_run:null,pending_events:[],paused:false,paused_by:null,failures:0};
+ it('rejects invalid states and leaves the file unchanged',async()=>{
+  const paths=statePaths(await mkdtemp(join(tmpdir(),'state-')));await ensureStateDirs(paths);
+  await writeAgentState(paths,'test',good);
+  const file=join(paths.agents,'test.json'),before=await readFile(file,'utf8');
+  const bad:[Record<string,unknown>,string][]=[
+   [{...good,bogus:1},'/ must NOT have additional properties {"additionalProperty":"bogus"}'],
+   [{...good,running:{run_id:'r'}},"/running must have required property 'started_at' {\"missingProperty\":\"started_at\"}"],
+   [{...good,failures:-1},'/failures must be >= 0 {"comparison":">=","limit":0}'],
+  ];
+  for(const [s,msg] of bad){
+   await expect(writeAgentState(paths,'test',s as never)).rejects.toThrow(`invalid agent state test: ${msg}`);
+   await expect(updateAgentState(paths,'test',()=>s as never)).rejects.toThrow(`invalid agent state test: ${msg}`);
+   expect(await readFile(file,'utf8')).toBe(before);
+  }
+ });
 });

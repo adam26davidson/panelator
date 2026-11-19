@@ -578,7 +578,8 @@ async function keepHeldWork(deps: DriverDeps, claim: Claim, branch: string): Pro
 
 /**
  * Fetch, keep any leftovers as a patch, then put the worktree where the next step must see it: with no PR, the
- * chain's branch (`issue-<n>` or `spec-<n>`) fresh from origin/main (C1, AC-21); with a PR, that PR's branch at its
+ * chain's branch (`issue-<n>` or `spec-<n>`) at its held head when held work names it (spec 011 AC-2, AC-5),
+ * otherwise fresh from origin/main (C1, AC-21); with a PR, that PR's branch at its
  * remote head (R1), so the diffs the gates judge (sensitivity, scope) are of the commit GitHub holds. Commits the
  * reset or sync discards are saved as a patch first (spec 005), like the uncommitted leftovers.
  */
