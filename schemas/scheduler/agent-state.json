@@ -7,16 +7,56 @@
       "type": [
         "object",
         "null"
-      ]
+      ],
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "at",
+        "run_id",
+        "outcome"
+      ],
+      "additionalProperties": false
     },
     "next_run": {
       "type": [
         "string",
         "null"
-      ]
+      ],
+      "format": "date-time"
     },
     "pending_events": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "string",
+            "minLength": 1
+          },
+          "payload": {},
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "event",
+          "at"
+        ],
+        "additionalProperties": false
+      }
     },
     "paused": {
       "type": "boolean"
@@ -34,21 +74,76 @@
     "outage": {
       "type": "object",
       "properties": {
-        "since": { "type": "string" },
-        "count": { "type": "integer", "minimum": 0 },
-        "last": { "type": "string" },
-        "alarmed": { "type": "boolean" },
+        "since": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last": {
+          "type": "string"
+        },
+        "alarmed": {
+          "type": "boolean"
+        },
         "past_ceiling": {
           "type": "object",
           "properties": {
-            "since": { "type": "string" },
-            "failures": { "type": "integer", "minimum": 0 }
+            "since": {
+              "type": "string"
+            },
+            "failures": {
+              "type": "integer",
+              "minimum": 0
+            }
           },
-          "required": ["since", "failures"]
+          "required": [
+            "since",
+            "failures"
+          ],
+          "additionalProperties": false
         },
-        "ceiling": { "type": "boolean" }
+        "ceiling": {
+          "type": "boolean"
+        }
       },
-      "required": ["since", "count", "last", "alarmed"]
+      "required": [
+        "since",
+        "count",
+        "last",
+        "alarmed"
+      ],
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "string"
+    },
+    "removed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "postponed_until": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "running": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "run_id",
+        "started_at"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
@@ -59,5 +154,5 @@
     "paused_by",
     "failures"
   ],
-  "additionalProperties": true
+  "additionalProperties": false
 }

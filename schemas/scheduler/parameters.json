@@ -13,7 +13,8 @@
         ]
       },
       "set_by": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       },
       "at": {
         "type": "string",

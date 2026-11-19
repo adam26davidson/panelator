@@ -199,6 +199,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   // `reoffered` is the copy's own: a new record riding on a re-offered entry has not used up a re-offer.
   const {reoffered:_entryReoffered,...shared}=row;
   const copies=row.failed?[]:(record?.duplicate_refs??[]).filter(ref=>!settled.has(ref)||reopened(ref)).map(ref=>({...shared,ref,reason:`same record as ref ${dec.ref}: ${row.reason}`,...(reopened(ref)?{reoffered:true}:{})}));
+  for(const c of [row,...copies]){const v=validate('triage-entry',c);if(!v.ok)throw new Error(`invalid triage entry ${c.ref}: ${v.errors.join('; ')}`);}
   await appendFile(d.paths.findingsTriage,[row,...copies].map(c=>JSON.stringify(c)+'\n').join(''));triage.push(row,...copies);
   for(const c of [row,...copies])await recordEvt(d.paths,'finding.triaged',c.at,c as unknown as Record<string,unknown>,{run_id:runId});
   // Logged once the decision is kept, so a settled ref or a batch that aborts earlier logs nothing (spec 018 AC-3).

@@ -4,10 +4,12 @@
   "type": "object",
   "properties": {
     "ref": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "outcome": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "reason": {
       "type": "string"
@@ -31,6 +33,51 @@
     },
     "reoffered": {
       "type": "boolean"
+    },
+    "issue": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "capability_issue": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "advisory": {
+      "type": "string"
+    },
+    "blocked_until": {
+      "type": "string",
+      "minLength": 1
+    },
+    "failed": {
+      "type": "boolean"
+    },
+    "held": {
+      "type": "boolean"
+    },
+    "stops_pipeline": {
+      "type": "boolean"
+    },
+    "failure": {
+      "enum": [
+        "permission",
+        "error"
+      ]
+    },
+    "blocked_by": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "minItems": 1
+    },
+    "finding": {
+      "type": "object"
     }
   },
   "required": [
@@ -40,5 +87,5 @@
     "run_id",
     "at"
   ],
-  "additionalProperties": true
+  "additionalProperties": false
 }
