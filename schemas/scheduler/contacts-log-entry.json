@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contacts-log-entry.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["at", "event", "actor", "run_id", "party", "command"],
+      "additionalProperties": false,
+      "properties": {
+        "at": { "type": "string", "format": "date-time" },
+        "event": { "const": "refused" },
+        "actor": { "type": "string", "minLength": 1 },
+        "run_id": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "party": { "type": "string", "minLength": 1 },
+        "command": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["at", "event", "actor", "party", "entry"],
+      "additionalProperties": false,
+      "properties": {
+        "at": { "type": "string", "format": "date-time" },
+        "event": { "const": "removed" },
+        "actor": { "const": "maintainer" },
+        "party": { "type": "string", "minLength": 1 },
+        "entry": {
+          "type": "object",
+          "required": ["party", "channel", "approved_at", "question_comment_id", "issue"],
+          "additionalProperties": false,
+          "properties": {
+            "party": { "type": "string" },
+            "channel": { "type": "string" },
+            "approved_at": { "type": "string" },
+            "question_comment_id": { "anyOf": [{ "type": "integer" }, { "type": "string" }, { "type": "null" }] },
+            "issue": { "anyOf": [{ "type": "integer" }, { "type": "null" }] }
+          }
+        }
+      }
+    }
+  ]
+}

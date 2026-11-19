@@ -11,6 +11,7 @@ if (process.env.SPAWN_GRANDCHILD === "1") {
   const child = spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{}); setInterval(()=>{}, 1000)"], { stdio: "ignore" });
   writeFileSync(process.env.GRANDCHILD_PID_FILE ?? "/dev/null", String(child.pid));
 }
+if (process.env.ENV_DUMP_FILE) writeFileSync(process.env.ENV_DUMP_FILE, JSON.stringify({ actor: process.env.PANELATOR_ACTOR, run_id: process.env.PANELATOR_RUN_ID }));
 const ms = Number(sleepMs ?? 0);
 if (ms > 0) setTimeout(() => process.exit(Number(exitCode)), ms);
 else process.exit(Number(exitCode));

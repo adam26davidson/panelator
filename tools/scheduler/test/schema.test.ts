@@ -424,3 +424,17 @@ describe("scheduler records use their schemas (spec 086)", () => {
     expect(msgs(validate("triage-entry", { ...min, blocked_by: [0] }))).toBe('/blocked_by/0 must be >= 1 {"comparison":">=","limit":1}');
   });
 });
+
+describe("contacts-log-entry (spec 083 AC-3)", () => {
+  const at = "2026-11-19T00:00:00.000Z";
+  const refused = { at, event: "refused", actor: "implement", run_id: null, party: "github:other", command: ["issue", "create"] };
+  const entry = { party: "github:other", channel: "github", approved_at: at, question_comment_id: 5, issue: 3 };
+  const removed = { at, event: "removed", actor: "maintainer", party: "github:other", entry };
+  it("accepts both shapes and rejects a mix or extra fields", () => {
+    expect(validate("contacts-log-entry", refused)).toEqual({ ok: true });
+    expect(validate("contacts-log-entry", removed)).toEqual({ ok: true });
+    expect(validate("contacts-log-entry", { ...refused, entry }).ok).toBe(false);
+    expect(validate("contacts-log-entry", { ...removed, actor: "x" }).ok).toBe(false);
+    expect(validate("contacts-log-entry", { ...refused, at: "yesterday" }).ok).toBe(false);
+  });
+});

@@ -25,6 +25,8 @@ export interface StatePaths {
   parameters: string;
   parametersHistory: string;
   actionsLog: string;
+  /** Spec 083: the first-contact gate's log (refused calls, removed parties). */
+  contactsLog: string;
   agents: string;
   mainChecks: string;
   findingsCursor: string;
@@ -55,6 +57,7 @@ export function statePaths(root: string): StatePaths {
     parameters: join(root, 'parameters.json'),
     parametersHistory: join(root, 'parameters', 'history.jsonl'),
     actionsLog: join(root, 'actions', 'log.jsonl'),
+    contactsLog: join(root, 'contacts', 'log.jsonl'),
     agents: join(root, 'agents'),
     mainChecks: join(root, 'main-checks.json'),
     findingsCursor: join(root, 'findings', 'cursor.json'),
