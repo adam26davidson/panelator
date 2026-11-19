@@ -140,7 +140,7 @@ and readable and the connect step of AC-1 has succeeded.
   process is not exited). The channel is never attached, so every behaviour
   of spec 006 stays as it is for the rest of the service's life, as spec
   007 AC-1 promises. The log line is written once per service start.
-- AC-3. **The channel is attached when connected, and not before.** Given
+- AC-3. Amended by [090-telegram-attach-failure-and-pause-test](../090-telegram-attach-failure-and-pause-test/spec.md) AC-1: a hook that rejects is logged as `telegram-attach-failed` and called again with the connect backoff, without another getMe, and the channel counts as attached only once it resolves. **The channel is attached when connected, and not before.** Given
   the poller is still connecting (AC-1, no connected line yet) and a pause
   completes (spec 006 AC-13), then the question is sent as with Telegram
   off: the spec 006 issue comment with the mention, `channel: issue` in the
@@ -184,6 +184,8 @@ changes: AC-3 to AC-15 and section 8 (the maintainer's setup steps, whose
 step 5 still ends with the `telegram: connected` line) hold as written.
 
 ## 5. Interfaces and files
+
+> Amended by [090-telegram-attach-failure-and-pause-test](../090-telegram-attach-failure-and-pause-test/spec.md) AC-1: the hook is called after the getMe loop, and retried alone until it resolves rather than invoked exactly once.
 
 - `tools/scheduler/src/telegram/poller.ts`: `loop()` gains the connect step
   of AC-1 and AC-2 before the `while` loop: `getMe` in a loop of its own,
