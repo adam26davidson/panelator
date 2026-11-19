@@ -46,6 +46,7 @@ import type {
   AgentStageName, FixOutcome, Harness, ImplementOutcome, ImplementResult, IssueData, PlanOutcome, Profile, SpecResult, DesignResult, StageDefinition,
 } from "../types.ts";
 import { CLAIM_LABEL, NEEDS_DECISION_LABEL, POSTPONE_WAIT_S, branchOf, heldOn, initialChainState, ledgerOf, transition } from "./machine.ts";
+import { transientRun } from "./transient.ts";
 import { formatQuestion, questionBody, questionMarker } from "./question.ts";
 import type { Action, ChainEvent, ChainState } from "./types.ts";
 import type { ReviewResult } from "../types.ts";
@@ -842,6 +843,7 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
   const beforePatch=state.conversation?await uncommittedPatch(claim.worktree):'';
   const beforeIndex=state.conversation?await gitOut(claim.worktree,'diff','--cached','--binary'):'';
   const attempt = state.attempt;
+  const resumeBefore = state.resumeSession;
   const exec = async (model?: string, harness?: Harness, tag?: string): Promise<StageOutcome> => {
     const h = harness ?? def.harness;
     // I2: the real run id, persisted before the run, so a restart can find the run's scope unit. A rescue or a
@@ -885,10 +887,31 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
     deps.log({ kind: "stage-host-refused", issue: claim.issue, stage, attempt, run_id: r.runId, cause: r.hostRefusal });
     throw Object.assign(new Error(`host refused every shell command in run ${r.runId}`), { code: DISK_FULL });
   };
+  /**
+   * Spec 092 AC-1 to AC-3: a run whose harness could not reach the model API is no result of the work: undo, keep an implement
+   * run's commits, restore the session, log, and reject the step as a transient error (spec 015 AC-5's path).
+   */
+  const rejectTransient = async (r: StageOutcome): Promise<void> => {
+    const cause = transientRun(r.judgement);
+    if (cause === null) return;
+    await undoRebase();
+    const reason = r.reason ?? r.outcome;
+    if (stage === "implement" && state.pr === null && (await commitsPatch(claim.worktree, "origin/main")).trim()) {
+      const head = await holdWork(deps, claim, stage, reason);
+      const branch = `issue-${claim.issue}`;
+      state.heldWork = [...state.heldWork.filter((h) => h.branch !== branch), { branch, head, carried: reason }];
+    }
+    state.resumeSession = resumeBefore;
+    deps.log({ kind: "stage-transient", issue: claim.issue, stage, attempt, run_id: r.runId, cause });
+    await writeClaim(deps.paths, { ...claim, last_activity_at: deps.now().toISOString() });
+    const status = r.judgement.apiErrorStatus;
+    throw Object.assign(new Error(`run ${r.runId} could not reach the model API: ${reason}`), status !== null && status >= 500 && status <= 599 ? { status } : {});
+  };
   let out = firstRun ? await exec(firstRun.model, firstRun.harness, state.rescueRun ? "rescue-fallback" : "fallback")
     : state.rescueRun ? await exec(deps.cfg.rescue_model, harnessForModel(deps.cfg.rescue_model), "rescue") : await exec();
   deps.log({ kind: "stage", issue: claim.issue, stage, attempt, outcome: out.outcome, reason: out.reason, run_id: out.runId, rescue: state.rescueRun || undefined, ...(firstRun ? { fallback: firstRun.model } : {}) });
   await rejectHostRefused(out);
+  if (!state.conversation) await rejectTransient(out);
   if (out.limit) deps.log({ kind: "quota-limit", issue: claim.issue, stage, run_id: out.runId, key: out.limit.key, scope: out.limit.scope, resets_at: out.limit.resets_at, source: out.limit.source });
   if(state.conversation){
     if((await worktreeHead(claim.worktree))!==start||(await uncommittedPatch(claim.worktree))!==beforePatch||(await gitOut(claim.worktree,'diff','--cached','--binary'))!==beforeIndex){
@@ -897,6 +920,7 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
       if(beforeIndex){const path=join(deps.paths.patches,`conversation-index-${randomUUID()}.patch`);await writeFile(path,beforeIndex);await gitOut(claim.worktree,'apply','--cached',path);}
       return {type:'stage_failed',stage,reason:'conversation: worktree changed'};
     }
+    await rejectTransient(out);
     return out.outcome==='ok'?{type:'stage_ok',stage,result:out.result} as ChainEvent:{type:'stage_failed',stage,reason:out.reason??out.outcome};
   }
   if (out.outcome !== "ok") {
@@ -915,6 +939,7 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
         out = await exec(retry.model, retry.harness, state.rescueRun ? "rescue-fallback" : "fallback");
         deps.log({ kind: "stage", issue: claim.issue, stage, attempt, outcome: out.outcome, reason: out.reason, run_id: out.runId, rescue: state.rescueRun || undefined, fallback: retry.model });
         await rejectHostRefused(out);
+        await rejectTransient(out);
         if (out.limit) deps.log({ kind: "quota-limit", issue: claim.issue, stage, run_id: out.runId, key: out.limit.key, scope: out.limit.scope, resets_at: out.limit.resets_at, source: out.limit.source });
         // Only afterFallback judges the fallback run (AC-26).
         if (out.outcome !== "ok" && afterFallback(retryDef, out.judgement).kind === "postpone") return postponed(out.reason ?? out.outcome);

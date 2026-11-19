@@ -76,7 +76,7 @@ function labelOf(text: string): string | null {
 const CLAUDE_UNREACHABLE = /can[\u0027\u2019]t reach the api server/i;
 
 /**
- * Spec 045 AC-1: the label of a transient failed run of a standing agent, else null. A judgement is transient when it
+ * Spec 045 AC-1: the label of a transient failed run of a standing agent (spec 045) or of a chain stage run (spec 092), else null. A judgement is transient when it
  * failed with no HTTP status (and its reason names the network) or a 5xx; a 4xx (a 429 included) is never transient.
  */
 export function transientRun(judgement: Judgement): string | null {
