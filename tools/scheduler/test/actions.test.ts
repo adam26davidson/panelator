@@ -8,7 +8,7 @@ import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
 import {ActionLog} from '../src/actions/log.ts';
 import {readAgentState,writeAgentState} from '../src/standing/state.ts';
 import {readJsonLines} from '../src/filer/input.ts';
-import {readdirSync,readFileSync} from 'node:fs';
+import {readdirSync,readFileSync,existsSync} from 'node:fs';
 import {buildAuditInput} from '../src/standing/audit-input.ts';
 import {applyAction,KINDS,registryActionsCheck,loadActionLevels,type ActionContext} from '../src/actions/index.ts';
 it('logs allowed actions, refuses locks and permissions, undoes and recovers pending',async()=>{
@@ -68,4 +68,16 @@ it('audit input: effects carry defined kinds, refusals carry what was asked',asy
  expect(g).toMatchObject({refused:1,applied:0,failed:0,undone:0});
  expect(g.entries[0].reason).toBe('unknown action kind');
  expect((input.kinds as any).set_parameter.undone).toBe(1);expect((input.kinds as any).undo.applied).toBe(1);
+});
+
+it('refuses to log a malformed action row and records nothing (spec 086 AC-8)',async()=>{
+ const paths=statePaths(await mkdtemp(join(tmpdir(),'actions-'))); await ensureStateDirs(paths);
+ const log=new ActionLog(paths.actionsLog,paths);
+ const req={agent:'test',run_id:'run',kind:'k',args:{},why:'a reason long enough to log'};
+ await expect(log.writePending({...req,undo:{kind:'k'} as never})).rejects.toThrow(/^invalid action log entry: \/undo must be null/);
+ expect(existsSync(paths.actionsLog)).toBe(false);
+ const row=await log.writePending({...req,undo:null});
+ const before=readFileSync(paths.actionsLog,'utf8');
+ await expect(log.settle(row.id,'applied',undefined,{kind:'k'} as never)).rejects.toThrow(/^invalid action log entry: \/undo must be null/);
+ expect(readFileSync(paths.actionsLog,'utf8')).toBe(before);
 });

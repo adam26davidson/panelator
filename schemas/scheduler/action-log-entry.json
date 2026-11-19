@@ -41,13 +41,32 @@
       "type": "string"
     },
     "undo": {
-      "type": [
-        "object",
-        "null"
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "args": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "args"
+          ],
+          "additionalProperties": false
+        }
       ]
     },
     "undoes": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     }
   },
   "required": [

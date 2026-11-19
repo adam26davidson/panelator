@@ -1,5 +1,6 @@
 import {appendFile, readFile, rename, writeFile, open, unlink, stat} from 'node:fs/promises';
 import type {StatePaths} from '../state/paths.ts';
+import {validate} from '../schema/validate.ts';
 import {record} from '../events/store.ts';
 import {checkParameter, type ParameterDefinition} from './definitions.ts';
 const operations=new Map<string,Promise<unknown>>();
@@ -59,10 +60,14 @@ export class ParameterStore {
   await this.change(name,old,{...old,mode,set_by:actor,at:new Date().toISOString()},'mode',actor);
   });
  }
- private async change(name:string,old:ParameterValue,next:ParameterValue,field:'value'|'mode',actor:string):Promise<void> {
-  const all=await this.stored(); all[name]=next;
+ private async write(all:Record<string,ParameterValue>):Promise<void> {
+  const v=validate('parameters',all); if(!v.ok) throw new Error(`invalid parameters: ${v.errors.join('; ')}`);
   await writeFile(this.paths.parameters+'.tmp',JSON.stringify(all,null,2));
   await rename(this.paths.parameters+'.tmp',this.paths.parameters);
+ }
+ private async change(name:string,old:ParameterValue,next:ParameterValue,field:'value'|'mode',actor:string):Promise<void> {
+  const all=await this.stored(); all[name]=next;
+  await this.write(all);
   const entry={name,old:old[field],new:next[field],field,actor,at:next.at};
   await appendFile(this.paths.parametersHistory,JSON.stringify(entry)+'\n');
   await record(this.paths,'parameter.changed',next.at,entry);
@@ -71,8 +76,8 @@ export class ParameterStore {
   await withStateLock(this.paths.parameters,async()=>{
    const all=await this.stored();let changed=false;
    for(const d of Object.values(this.definitions))if(!Object.hasOwn(all,d.name)){all[d.name]={value:d.default,mode:d.mode,set_by:'default',at:new Date().toISOString()};changed=true;}
-   if(changed){await writeFile(this.paths.parameters+'.tmp',JSON.stringify(all,null,2));await rename(this.paths.parameters+'.tmp',this.paths.parameters);}
+   if(changed){await this.write(all);}
   });
  }
- async prune(name:string):Promise<void> {await withStateLock(this.paths.parameters,async()=>{const all=await this.stored(); delete all[name]; await writeFile(this.paths.parameters+'.tmp',JSON.stringify(all,null,2)); await rename(this.paths.parameters+'.tmp',this.paths.parameters);});}
+ async prune(name:string):Promise<void> {await withStateLock(this.paths.parameters,async()=>{const all=await this.stored(); delete all[name]; await this.write(all);});}
 }

@@ -1,6 +1,7 @@
 import {readFileSync} from 'node:fs';
 import {parse} from 'yaml';
 import {parseDuration} from '../standing/registry.ts';
+import {validate} from '../schema/validate.ts';
 import type {StandingDefinition} from '../types.ts';
 export interface ParameterDefinition {
  name:string; type:'number'|'boolean'|'string'|'duration'; default:unknown;
@@ -22,11 +23,10 @@ export function loadParameterDefinitions(path:string,cfg:{slots:number},registry
   const raw:unknown=parse(readFileSync(path,'utf8'));
   if(!Array.isArray(raw)) throw new Error('expected list');
   const out:Record<string,ParameterDefinition>=Object.create(null);
-  for(const d of raw as ParameterDefinition[]) {
-   for(const k of Object.keys(d)) if(!['name','type','default','min','max','mode','description'].includes(k)) throw new Error(`${d.name}: unknown key ${k}`);
-   if(!d.name || !/^[a-z][a-z0-9_.-]*$/.test(d.name) || !['number','boolean','string','duration'].includes(d.type) || !['auto','locked'].includes(d.mode) || !d.description || !Object.hasOwn(d,'default')) throw new Error('missing or invalid parameter key');
+  for(const [i,item] of (raw as unknown[]).entries()) {
+   const v=validate('parameter-definition',item); if(!v.ok) throw new Error(`parameter ${i}: ${v.errors.join('; ')}`);
+   const d=item as ParameterDefinition;
    if(out[d.name]) throw new Error(`duplicate name ${d.name}`);
-   if(d.type === 'number' && [d.min,d.max].some(v=>v!==undefined && (typeof v !== 'number'||!Number.isFinite(v)))) throw new Error(`${d.name}: min/max must be numbers`);
    checkParameter(d,d.default);
    if(d.name==='slots') d.default=cfg.slots;
    checkParameter(d,d.default); out[d.name]=d;
