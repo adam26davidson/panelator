@@ -1261,18 +1261,32 @@ describe("end to end: a stage run that cannot reach the API waits out the outage
   it("implement that commits then loses the API keeps its commits as held work for the retry", async () => {
     let w!: ChainWorld;
     const a = agents(() => w);
+    let held = "";
+    const starts: string[] = [];
+    const rev = (run: StageRun) => git(run.worktree, "rev-parse", "HEAD").trim();
     w = await chainWorld({
       files: repoFiles(),
-      results: { plan: [PLAN], implement: [(run: StageRun) => { w.push(run, { "a.txt": "held\n" }, "held"); return NETWORK_DOWN; }, a.implement(9)], review: [APPROVE] },
+      results: {
+        plan: [PLAN],
+        implement: [(run: StageRun) => { held = w.push(run, { "a.txt": "held\n" }, "held"); return NETWORK_DOWN; }, a.implement(9, undefined, (run) => starts.push(rev(run)))],
+        review: [APPROVE],
+      },
     });
     const c = clock(w);
     await w.tick();
     const claim = (await listClaims(w.paths))[0];
-    expect(claim.state.heldWork).toEqual([expect.objectContaining({ branch: "issue-7", carried: expect.stringContaining("reach the API") })]);
-    expect(kinds(w, "held-work")).toHaveLength(1);
+    expect(claim.state.heldWork).toEqual([{ branch: "issue-7", head: held, carried: expect.stringContaining("reach the API") }]);
+    expect(kinds(w, "held-work")).toMatchObject([{ stage: "implement", branch: "issue-7", head: held }]);
+    expect(w.adapter.ran).toEqual(["plan", "implement"]);
     c.offset += 61_000;
     await w.tick();
     await expectSettled(w);
+    // AC-3: the retry is prepared from the hold, not from origin/main.
+    expect(w.adapter.ran).toEqual(["plan", "implement", "implement", "review"]);
+    expect(starts).toEqual([held]);
+    expect(kinds(w, "held-work-kept")).toMatchObject([{ issue: 7, branch: "issue-7", head: held }]);
+    expect(kinds(w, "held-work-restored")).toEqual([]);
+    expect(kinds(w, "stale-branch-dropped")).toEqual([]);
     expect(patchesOf(w, "recovered")).toEqual([]);
     expect(kinds(w, "recovered-commits")).toEqual([]);
   }, 180_000);
