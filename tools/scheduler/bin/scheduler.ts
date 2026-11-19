@@ -23,6 +23,7 @@ import {loadRegistry} from '../src/standing/registry.ts';
 import {EVENT_NAMES} from '../src/standing/events.ts';
 import {initializeAgents,listAgentStates} from '../src/standing/state.ts';
 import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
+import {readContactLog} from '../src/contacts/log.ts';
 import {ParameterStore} from '../src/parameters/store.ts';
 import {setParameterModeCommand} from '../src/parameters/command.ts';
 import {registryActionsCheck,loadActionLevels,applyAction} from '../src/actions/index.ts';
@@ -105,7 +106,7 @@ if(args[0]==='quota') {
   console.log(JSON.stringify({...book,summary:await quotaSummary(paths,new Date())},null,2));
   process.exit(0);
 }
-if(['param','agent','action','cred'].includes(args[0])) {
+if(['param','agent','action','cred','contacts'].includes(args[0])) {
   let client:GitHubClient|undefined;
   const remote=async()=>client??=new GitHubClient(createAppClient(cfg.app,await appPrivateKey(cfg,credStore)).octokit,cfg.repo);
   const ctx={paths,parameters,log:actionLog,levels,now:()=>new Date(),gh:{rerunWorkflowRun:async(id:number)=>(await remote()).rerunWorkflowRun(id),cancelWorkflowRun:async(id:number)=>(await remote()).cancelWorkflowRun(id)},
@@ -120,6 +121,7 @@ if(['param','agent','action','cred'].includes(args[0])) {
       for(const line of out.lines)console.log(line);
       process.exit(out.exitCode);
     }
+    else if(command==='contacts'&&verb==='log')console.log(JSON.stringify(await readContactLog(paths,flag('--since')),null,2));
     else if(command==='action'&&verb==='list')console.log(JSON.stringify(await actionLog.list(flag('--since')),null,2));
     else if(command==='param'&&verb==='set') {
       const def=parameters.definitions[name];if(!def)throw new Error(`undefined parameter ${name}`);
@@ -134,7 +136,7 @@ if(['param','agent','action','cred'].includes(args[0])) {
       if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
     } else if(command==='action'&&verb==='undo') {
       const row=await undoAction(ctx,name,'maintainer');if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
-    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; cred set|list|check|import|remove; quota');
+    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; contacts log [--since time]; cred set|list|check|import|remove; quota');
     process.exit(0);
   }catch(e){console.error((e as Error).message);process.exit(1);}
 }

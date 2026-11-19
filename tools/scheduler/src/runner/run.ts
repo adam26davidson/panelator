@@ -148,7 +148,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
       spawned = await spawnBounded({
         argv: cmd.argv,
         stdin: cmd.stdin,
-        env: { ...cmd.env, ...stageEnv(ctx.binDir, ctx.paths.root, ctx.gitIdentity) },
+        env: { ...cmd.env, ...stageEnv(ctx.binDir, ctx.paths.root, ctx.gitIdentity, { actor: req.def.name, runId }) },
         cwd: req.worktree,
         timeoutMs: req.def.bounds.timeout_min * 60_000,
         scope: { enabled: ctx.systemdScope, unitName: `panelator-stage-${runId}`, systemdRunBin: ctx.systemdRunBin, runtimeMaxSec: req.def.bounds.timeout_min * 60 + 600 },
