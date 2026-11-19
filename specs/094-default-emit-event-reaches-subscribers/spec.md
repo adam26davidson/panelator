@@ -104,8 +104,11 @@ assigns nothing to `w.deps.emitEvent` at any point; the constructor has set it.
   chain world of the test `abandonment (spec 006 AC-28)` in
   `test/e2e.test.ts`, which leaves `deps.emitEvent` to the constructor, when
   the chain has settled, then the test asserts that `findings-filer`'s
-  `pending_events` (read with `readAgentState`) equals one entry `{ event:
-  "issue_abandoned", payload: { issue: 7 }, at: <ISO instant> }` and that
+  `pending_events` (read with `readAgentState`), filtered to `issue_abandoned`,
+  equals one entry `{ event: "issue_abandoned", payload: { issue: 7 }, at:
+  <ISO instant> }` (the filter is needed because the escalation's queued
+  finding also reaches the filer as a `finding_queued` entry through the
+  constructor's listener, which this spec does not test: section 2) and that
   `infra-health`'s `pending_events` is `[]`. Every assertion the test makes
   on `main` is kept.
 - AC-2. **A standing outage alarm reaches infra health through the default.**
@@ -207,7 +210,7 @@ listed in the spec.
 - Checked by hand once while writing the tests, not committed: with the
   default's `exclude` argument dropped (`emit(..., deps.now())`), AC-5's
   excluded case fails; with the default's `emit` call not awaited, AC-5's
-  first case fails or AC-1 reads an empty list; with the default removed
+  first case fails or AC-1's filtered list is empty; with the default removed
   (`deps.emitEvent` left undefined), AC-1 to AC-5 all fail.
 - `git diff main -- tools/scheduler/src tools/scheduler/bin` is empty (AC-6).
 - `grep -n "deps.emitEvent *=" tools/scheduler/test/e2e.test.ts` matches
