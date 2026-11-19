@@ -1192,6 +1192,93 @@ describe("end to end: a spec PR moves its spec (spec 071 AC-7)", () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------
+// Spec 092 AC-6: a stage run that cannot reach the API waits out the outage; it is not the stage's failure.
+
+describe("end to end: a stage run that cannot reach the API waits out the outage (spec 092 AC-6)", () => {
+  const clock = (w: ChainWorld) => {
+    const c = { offset: 0 };
+    w.deps.now = () => new Date(Date.now() + c.offset);
+    return c;
+  };
+
+  it("implement unreachable twice then succeeding: no attempt is spent, the backoff doubles, the chain goes on", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: [NETWORK_DOWN, NETWORK_DOWN, a.implement(9)], review: [APPROVE] } });
+    const c = clock(w);
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["plan", "implement"]);
+    let claim = (await listClaims(w.paths))[0];
+    expect(claim.state.history.filter((h) => /^implement attempt/.test(h))).toEqual([]);
+    expect(claim.outage?.count).toBe(1);
+    const first = Date.parse(claim.outage!.retry_at!) - Date.now();
+    expect(first).toBeGreaterThan(50_000);
+    expect(first).toBeLessThanOrEqual(60_000);
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["plan", "implement"]);
+
+    c.offset += 61_000;
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["plan", "implement", "implement"]);
+    claim = (await listClaims(w.paths))[0];
+    expect(claim.outage?.count).toBe(2);
+    const second = Date.parse(claim.outage!.retry_at!) - (Date.now() + c.offset);
+    expect(second).toBeGreaterThan(110_000);
+    expect(second).toBeLessThanOrEqual(120_000);
+
+    c.offset += 121_000;
+    await w.tick();
+    await expectSettled(w);
+    expect(w.adapter.ran).toEqual(["plan", "implement", "implement", "implement", "review"]);
+    expect(runsOf(w, "implement").map((r) => r.input.attempt ?? 1)).toEqual([1, 1, 1]);
+    expect(kinds(w, "stage-transient")).toHaveLength(2);
+    const records = serviceRecords(w);
+    expect(records.filter((r) => r.kind === "transient-outage")).toHaveLength(1);
+    expect(records.filter((r) => r.kind === "transient-outage-over")).toHaveLength(1);
+    expect(records.filter((r) => r.kind === "chain-error")).toEqual([]);
+    expect(w.mergeRequests).toEqual([9]);
+  }, 180_000);
+
+  it("a rescue run that cannot reach the API is still the rescue after the wait, with no re-plan", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({
+      files: repoFiles(),
+      results: { plan: [PLAN], implement: [a.implement(9)], review: [CHANGES, APPROVE, APPROVE], fix: [FAIL, NETWORK_DOWN, a.fix({ "a.txt": "fixed\n" })], "question-check": [SEND] },
+    });
+    const c = clock(w);
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["plan", "implement", "review", "fix", "fix"]);
+    expect((await listClaims(w.paths))[0].state).toMatchObject({ stage: "fix", rescueRun: true, rescues: 1 });
+    c.offset += 1000_000;
+    await w.tick();
+    await expectSettled(w);
+    expect(w.adapter.ran.filter((r) => r === "plan")).toHaveLength(1);
+    expect(runsOf(w, "fix").at(-1)!.model).toBe(w.cfg.rescue_model);
+    expect(runsOf(w, "fix").at(-2)!.model).toBe(w.cfg.rescue_model);
+    expect(kinds(w, "stage-transient")).toEqual([expect.objectContaining({ stage: "fix" })]);
+  }, 180_000);
+
+  it("implement that commits then loses the API keeps its commits as held work for the retry", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({
+      files: repoFiles(),
+      results: { plan: [PLAN], implement: [(run: StageRun) => { w.push(run, { "a.txt": "held\n" }, "held"); return NETWORK_DOWN; }, a.implement(9)], review: [APPROVE] },
+    });
+    const c = clock(w);
+    await w.tick();
+    const claim = (await listClaims(w.paths))[0];
+    expect(claim.state.heldWork).toEqual([expect.objectContaining({ branch: "issue-7", carried: expect.stringContaining("reach the API") })]);
+    expect(kinds(w, "held-work")).toHaveLength(1);
+    c.offset += 61_000;
+    await w.tick();
+    await expectSettled(w);
+    expect(patchesOf(w, "recovered")).toEqual([]);
+    expect(kinds(w, "recovered-commits")).toEqual([]);
+  }, 180_000);
+});
+
 // Spec 059 AC-6: a full volume postpones runs; it is not the work's failure.
 
 describe("end to end: a full volume postpones runs (spec 059 AC-6)", () => {
