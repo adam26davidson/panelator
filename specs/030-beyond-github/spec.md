@@ -365,7 +365,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
 
 **The first-contact gate** (design section 8, "First contact")
 
-- AC-11. **No outbound contact without an approved party, in code.**
+- AC-11. Amended by [083-contact-records-leave-the-action-log](../083-contact-records-leave-the-action-log/spec.md) AC-1: a refused call is one `refused` line in `contacts/log.jsonl`, not an action-log row. **No outbound contact without an approved party, in code.**
   `checkContact(ctx, party)` in `tools/scheduler/src/contacts/gate.ts`
   returns `allowed` when `first_contact_needs_approval` is `false`, or when
   `party` is in `contacts/parties.json`; else `refused` with a text that
@@ -386,7 +386,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   call; the system cannot change it (spec 008 AC-12). A test asserts a
   `gh issue create -R other/repo` is refused and makes no API call, and the
   same call after an approval of AC-8 goes through.
-- AC-12. **Approved parties are visible and only the maintainer removes
+- AC-12. Amended by [083-contact-records-leave-the-action-log](../083-contact-records-leave-the-action-log/spec.md) AC-2: `contacts remove` is recorded as a `removed` line with `actor: maintainer` in `contacts/log.jsonl`, not in the action log. **Approved parties are visible and only the maintainer removes
   them.** `panelator-scheduler contacts list` prints the parties with their
   approval time, issue and question id; `contacts remove <party>` deletes an
   entry and is logged as `maintainer`. No action kind writes
@@ -553,6 +553,8 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
 
 ## 5. Interfaces and files
 
+> Amended by [083-contact-records-leave-the-action-log](../083-contact-records-leave-the-action-log/spec.md) section 4: the contacts records are written by `src/contacts/log.ts`, not under `src/actions/`.
+
 - `tools/scheduler/src/credentials/`: `catalogue.ts` (`agents/credentials.yaml`,
   its checks, AC-2), `store.ts` (`readSecret`, `writeSecret`, `index.json`,
   the `systemd-creds` spawn with the command path injectable, AC-1),
@@ -623,6 +625,8 @@ list, the security criteria, or what routes a sensitive diff to the security
 review.
 
 ## 6. Verification
+
+> Amended by [083-contact-records-leave-the-action-log](../083-contact-records-leave-the-action-log/spec.md) section 4: the refused first-contact call leaves one `refused` line in `contacts/log.jsonl` and no action-log row.
 
 > Amended by [067-incomplete-request-is-sent-back-for-completion](../067-incomplete-request-is-sent-back-for-completion/spec.md) AC-5: the recorded run "a credential question without setup" ends with the stage asked again holding its work and the completed request sent, not with decide_yourself.
 
