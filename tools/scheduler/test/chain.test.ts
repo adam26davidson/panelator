@@ -1321,20 +1321,20 @@ describe("chain: every event in every stage (AC-27)", () => {
                 if (heldWork.length) cleared++;
                 continue;
               }
-              if (JSON.stringify(after) === JSON.stringify(heldWork)) { if (heldWork.length) carried++; continue; }
-              // Changed: an escalation clears every entry; a bound PR and the asking stage's failure remove the chain's branch's entry.
+              // An escalation is checked against the oracle whether or not the list changed.
               if (ledger(r.state) > ledger(state)) {
                 // Spec 085 AC-1: the escalate to a spec-track rescue removes only the spec-1 hold; AC-2: every other one clears.
                 if (r.state.specRescues > state.specRescues) {
                   expect(after, label).toEqual(heldWork.filter((x) => x.branch !== "spec-1"));
-                  if (after.length) carried++;
-                  else cleared++;
+                  if (heldWork.length) { if (after.length) carried++; else cleared++; }
                   continue;
                 }
                 expect(after, label).toEqual([]);
-                cleared++;
+                if (heldWork.length) cleared++;
                 continue;
               }
+              if (JSON.stringify(after) === JSON.stringify(heldWork)) { if (heldWork.length) carried++; continue; }
+              // Changed: a bound PR and the asking stage's failure remove the chain's branch's entry.
               const bound = event.type === "stage_ok" && (event.stage === "implement" || event.stage === "fix" || event.stage === "spec") && r.state.pr !== null;
               const askerFailed = (event.type === "stage_failed" && !event.postpone && event.stage === state.askingStage)
                 // An unmarked question in decide mode counts as a failed run.
