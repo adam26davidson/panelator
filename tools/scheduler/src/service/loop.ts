@@ -259,7 +259,7 @@ export class Scheduler {
       d.serviceLog.write({ kind: "pending-work-failing", issue, failures: chainFailures.count, error });
       // CM3: a problem the system must be able to resolve: a finding, as well as the notification.
       await appendFindings(d.paths, { issue, stage: stuckStage(claim.state), run_id: "chain-error", timestamp: d.now().toISOString() }, [{
-        what: `pending work keeps failing: ${failureCause(error, null)}`, where: `issue #${issue}, ${claim.pendingEvent ? `pending ${claim.pendingEvent.type} event` : "pending abandonment actions"}`,
+        what: `pending work keeps failing: ${failureCause(chainFailures.last, null)}`, where: `issue #${issue}, ${claim.pendingEvent ? `pending ${claim.pendingEvent.type} event` : "pending abandonment actions"}`,
         evidence: chainFailures.last, noticed_how: "scheduler chain error",
       }]);
       await d.notifier.notify({ issue, gate: "chain_error", label: "", text });
