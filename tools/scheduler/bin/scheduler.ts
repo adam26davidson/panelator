@@ -40,6 +40,8 @@ const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 const has = (name: string) => args.includes(name);
 
+// Spec 088: --agents-dir exists for tests; the default is the checkout's agents/.
+const agentsRoot = flag("--agents-dir") ?? agentsDir;
 const cfg = loadConfig(flag("--config") ?? defaultConfigPath);
 const paths = statePaths(cfg.state_dir);
 await ensureStateDirs(paths);
@@ -58,11 +60,11 @@ function fail(reason: string): never {
 }
 
 const {registry,parameters,levels,catalogue,metrics}=(()=>{try {
-  const kinds=registryActionsCheck(join(agentsDir,'actions.yaml'));
-  const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,kinds);
-  const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),cfg,registry));
-  const catalogue=loadCatalogue(join(agentsDir,'credentials.yaml'),{profiles:profileNames(agentsDir),agents:Object.keys(registry)});
-  return {registry,parameters,levels:loadActionLevels(join(agentsDir,'actions.yaml')),catalogue,metrics:loadMetricDefinitions(join(agentsDir,'metrics'))};
+  const kinds=registryActionsCheck(join(agentsRoot,'actions.yaml'));
+  const registry=loadRegistry(join(agentsRoot,'standing'),EVENT_NAMES,kinds);
+  const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsRoot,'parameters.yaml'),cfg,registry));
+  const catalogue=loadCatalogue(join(agentsRoot,'credentials.yaml'),{profiles:profileNames(agentsRoot),agents:Object.keys(registry)});
+  return {registry,parameters,levels:loadActionLevels(join(agentsRoot,'actions.yaml')),catalogue,metrics:loadMetricDefinitions(join(agentsRoot,'metrics'))};
 }catch(e){fail((e as Error).message);}})();
 await initializeAgents(paths,registry,parameters,new Date());
 const actionLog=new ActionLog(paths.actionsLog,paths);
@@ -181,7 +183,7 @@ let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
   cfg, paths, gh, telegram: null,registry,plainFiles:{store:credStore,paths:{'github-app-key':cfg.app.private_key_path,...(cfg.telegram?{'telegram-bot':cfg.telegram.credentials_path}:{})},fromStore}, parameters, notifier: rateLimited(recordedNotifier(new LogNotifier(paths.serviceLog), paths), cfg.notify_rate_limit_hours),
-  stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: repoRoot, binDir,
+  stages: loadStageDefinitions(join(agentsRoot, "stages")), agentsDir: agentsRoot, repoDir: repoRoot, binDir,
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),
   stopUnit: (unit) => systemdStopUnit(unit, { enabled: cfg.systemd.scope }),
