@@ -8,7 +8,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readTelegramCredentials } from "../src/telegram/credentials.ts";
-import { TelegramClient } from "../src/telegram/client.ts";
+import { TelegramApiError, TelegramClient, isAuthError } from "../src/telegram/client.ts";
 import { UpdateDeferred } from "../src/telegram/answers.ts";
 import { TelegramPoller } from "../src/telegram/poller.ts";
 import { fakeTelegram } from "./helpers/fake-telegram.ts";
@@ -215,6 +215,42 @@ describe("Telegram", () => {
       expect(await c.sendMessage({ text: "hello" })).toBe(1);
       server.fail("getMe", 401);
       await expect(c.getMe()).rejects.not.toThrow("secret");
+    } finally {
+      await server.close();
+    }
+  });
+  it("spec 089 AC-1, AC-2: only a Bot API 401 or 404 is an authorization error", async () => {
+    const server = await fakeTelegram();
+    try {
+      const c = new TelegramClient("secret", 42, server.url);
+      const fail = async (code: number, body?: string) => {
+        server.fail("getMe", code, 1, body);
+        const e = await c.getMe().then(
+          () => undefined,
+          (x: unknown) => x,
+        );
+        expect(e).toBeInstanceOf(TelegramApiError);
+        expect(JSON.stringify(e) + String((e as Error).message)).not.toContain("secret");
+        return e as TelegramApiError;
+      };
+      for (const code of [401, 404]) {
+        const e = await fail(code);
+        expect(e.error_code).toBe(code);
+        expect(e.bot_api).toBe(true);
+        expect(isAuthError(e)).toBe(true);
+      }
+      for (const [code, body, description] of [
+        [401, "<html>portal</html>", "invalid response"],
+        [404, "<html>portal</html>", "invalid response"],
+        [404, "null", "invalid response"],
+        [404, "{}", "request failed"],
+      ] as const) {
+        const e = await fail(code, body);
+        expect(e.error_code).toBe(code);
+        expect(e.description).toBe(description);
+        expect(e.bot_api).toBe(false);
+        expect(isAuthError(e)).toBe(false);
+      }
     } finally {
       await server.close();
     }
@@ -593,6 +629,30 @@ describe("Telegram poller connect step (spec 043)", () => {
         await r.poll.stop();
         await r.server.close();
       }
+    }
+  });
+  it("spec 089 AC-3: a non-Bot-API 404 then 401 is retried as connecting", async () => {
+    const html = "<html>captive portal</html>";
+    const holder: { server?: Awaited<ReturnType<typeof fakeTelegram>> } = {};
+    const waits: number[] = [];
+    const r = await rig(async () => {
+      if (waits.length === 1) holder.server!.fail("getMe", 401, 1, html);
+    }, waits);
+    holder.server = r.server;
+    r.server.fail("getMe", 404, 1, html);
+    r.poll.start();
+    try {
+      await until(() => r.server.requests.some((q) => q.method === "getUpdates"));
+      expect(r.logs).toEqual([
+        { kind: "telegram", status: "connecting", reason: "getMe: connection failed" },
+        connected,
+      ]);
+      expect(waits).toEqual([1000, 2000]);
+      expect(r.hook()).toBe(1);
+      expect(r.logs.some((l) => l.status === "off")).toBe(false);
+    } finally {
+      await r.poll.stop();
+      await r.server.close();
     }
   });
   it("AC-1: a stop during the connecting wait issues no getUpdates", async () => {

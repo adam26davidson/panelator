@@ -22,14 +22,18 @@ export interface SendMessage {
 export class TelegramApiError extends Error {
   error_code: number;
   description: string;
-  constructor(error_code: number, description: string) {
+  readonly bot_api: boolean;
+  constructor(error_code: number, description: string, bot_api = false) {
     super(`Telegram API ${error_code}: ${description}`);
     this.error_code = error_code;
     this.description = description;
+    this.bot_api = bot_api;
   }
 }
 export const isAuthError = (e: unknown) =>
-  e instanceof TelegramApiError && [401, 404].includes(e.error_code);
+  e instanceof TelegramApiError &&
+  e.bot_api &&
+  [401, 404].includes(e.error_code);
 export class TelegramClient {
   private token: string;
   readonly chatId: number;
@@ -59,25 +63,34 @@ export class TelegramClient {
     } catch {
       throw new TelegramApiError(0, "connection failed");
     }
-    let data: {
-      ok: boolean;
-      result: T;
-      error_code?: number;
-      description?: string;
-    };
+    let parsed: unknown;
     try {
-      data = (await response.json()) as typeof data;
+      parsed = await response.json();
     } catch {
-      throw new TelegramApiError(response.status, "invalid response");
+      throw new TelegramApiError(response.status, "invalid response", false);
     }
-    if (!response.ok || !data.ok)
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+      throw new TelegramApiError(response.status, "invalid response", false);
+    const data = parsed as {
+      ok?: unknown;
+      result?: T;
+      error_code?: unknown;
+      description?: unknown;
+    };
+    if (!response.ok || data.ok !== true) {
+      const botApi = data.ok === false && typeof data.error_code === "number";
       throw new TelegramApiError(
-        data.error_code ?? response.status,
-        (data.description ?? "request failed")
+        botApi ? (data.error_code as number) : response.status,
+        (typeof data.description === "string"
+          ? data.description
+          : "request failed"
+        )
           .split(this.token)
           .join("[redacted]"),
+        botApi,
       );
-    return data.result;
+    }
+    return data.result as T;
   }
   getMe(signal?: AbortSignal) {
     return this.call<{ id: number; username: string }>("getMe", {}, signal);
