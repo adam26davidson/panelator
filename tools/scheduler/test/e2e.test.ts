@@ -1650,7 +1650,7 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   st=(await readAgentState(w.paths,'operator'))!;
   expect(st).toMatchObject({failures:0,last_run:{outcome:'failed'}});
   const queue=await readJsonLines<{finding:{what:string;evidence:string}}>(w.paths.findingsQueue);
-  expect(queue).toHaveLength(1);expect(queue[0].finding.evidence.startsWith('outage past ceiling: ')).toBe(true);
+  expect(queue).toHaveLength(1);expect(queue[0].finding.evidence.startsWith('outage past ceiling: ')).toBe(true);expect(queue[0].finding.what).toBe('standing agent operator failed twice: EAI_AGAIN');
   expect(w.notifications).toHaveLength(1);expect(st.next_run).not.toBeNull();expect(st.pending_events).toEqual([]);
  },60000);
  it('a GitHub 404 while applying a filer result is a genuine failure, not an outage (spec 045 AC-1)',async()=>{
@@ -1667,7 +1667,7 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   const w=await failFilerTwice();
   expect(await readAgentState(w.paths,'findings-filer')).toMatchObject({failures:0,next_run:'2026-10-02T00:00:00.000Z',pending_events:[],last_run:{outcome:'failed'}});
   const queue=await readJsonLines<{finding:{what:string}}>(w.paths.findingsQueue);
-  expect(queue.map(r=>r.finding.what)).toEqual([FAILED_TWICE]);expect(w.notifications).toHaveLength(1);
+  expect(queue).toHaveLength(1);expect(queue[0].finding.what.startsWith(FAILED_TWICE+': ')).toBe(true);expect(queue[0].finding.what).toBe(FAILED_TWICE+': exit');expect(w.notifications).toHaveLength(1);
   const runs=readdirSync(w.paths.runs).length;
   for(let i=1;i<=3;i++){w.setNow(new Date(w.deps.now().getTime()+i*2*60_000));await w.scheduler.tick();await idle(w);}
   expect(w.adapter.ran.filter(s=>s==='findings-filer')).toHaveLength(2);

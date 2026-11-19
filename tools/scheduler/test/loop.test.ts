@@ -716,7 +716,7 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
       expect.objectContaining({ issue: 7, text: expect.stringContaining("an abandonment") }),
     ]);
     const findings = readFileSync(paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l));
-    expect(findings).toEqual([expect.objectContaining({ issue: 7, finding: expect.objectContaining({ what: "pending work keeps failing", evidence: "boom", noticed_how: "scheduler chain error" }) })]);
+    expect(findings).toEqual([expect.objectContaining({ issue: 7, finding: expect.objectContaining({ what: "pending work keeps failing: boom", evidence: "boom", noticed_how: "scheduler chain error" }) })]);
   }, 30_000);
 
   it("never expires a claim in stage paused or abandoned, whose liveness_expired is invalid", async () => {
@@ -958,6 +958,10 @@ describe("Scheduler.tick: transient failures (spec 015)", () => {
     expect(t.notifications.filter((n) => n.gate === "chain_error")).toHaveLength(1);
     expect(t.notifications.find((n) => n.gate === "chain_error")?.text).toContain("past its 24-hour ceiling");
     expect(serviceRecords(t.paths).filter((r) => r.kind === "pending-work-failing")).toHaveLength(1);
+    const queued = readFileSync(t.paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l).finding).filter((f) => f.what.startsWith("pending work keeps failing"));
+    expect(queued).toHaveLength(1);
+    expect(queued[0].what).toBe("pending work keeps failing: EAI_AGAIN");
+    expect(queued[0].evidence.startsWith("outage past ceiling: ")).toBe(true);
     expect(await t.claim()).toBeTruthy();
   }, 60_000);
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RequestError } from "octokit";
-import { forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, transientCause, transientRun } from "../src/chain/transient.ts";
+import { forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, failureCause, transientCause, transientRun } from "../src/chain/transient.ts";
 import { ledgerOf, initialChainState, POSTPONE_WAIT_S } from "../src/chain/machine.ts";
 
 const errno = (code: string, message = `${code} x`) => Object.assign(new Error(message), { code });
@@ -151,5 +151,24 @@ describe("ENOSPC (spec 059 AC-1)", () => {
     const r = forgiveTransientChainErrors(ledger);
     expect(r.forgiven).toBe(1);
     expect(r.ledger.chainErrors).toBe(0);
+  });
+});
+
+describe("failureCause (spec 093 AC-3)", () => {
+  it("returns the transient label, else the first line cut to 60 code points", () => {
+    expect(failureCause("result: invalid", null)).toBe("result: invalid");
+    expect(failureCause("outage past ceiling: API Error: Can't reach the API server (EAI_AGAIN)", "EAI_AGAIN")).toBe("EAI_AGAIN");
+    const long = "standing input: /records/0 must have required property 'where'; /records/1 ...";
+    expect(failureCause(long, null)).toBe(Array.from(long).slice(0, 60).join("").trim());
+    expect(failureCause("exit 1\nstack ...", null)).toBe("exit 1");
+    expect(failureCause("", null)).toBe("unknown error");
+    expect(failureCause("  \n", null)).toBe("unknown error");
+    expect(failureCause("boom", "")).toBe("boom");
+  });
+  it("does not split an astral character at the cut", () => {
+    const text = `${"a".repeat(59)}😀${"b".repeat(10)}`;
+    const out = failureCause(text, null);
+    expect(Array.from(out)).toHaveLength(60);
+    expect(Array.from(out).at(-1)).toBe("😀");
   });
 });
