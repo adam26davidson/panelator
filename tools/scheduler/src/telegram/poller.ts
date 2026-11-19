@@ -66,7 +66,6 @@ export class TelegramPoller {
       try {
         const me = await this.client.getMe(this.controller.signal);
         this.log({ kind: "telegram", status: "connected", username: me.username });
-        await this.onConnected?.();
         break;
       } catch (e) {
         if (this.controller.signal.aborted) return;
@@ -83,6 +82,28 @@ export class TelegramPoller {
       }
     }
     if (this.controller.signal.aborted) return;
+    if (this.onConnected) {
+      backoff = 1;
+      let attachFailed = false;
+      while (!this.controller.signal.aborted) {
+        try {
+          await this.onConnected();
+          break;
+        } catch (e) {
+          if (this.controller.signal.aborted) return;
+          if (!attachFailed) {
+            attachFailed = true;
+            this.log({
+              kind: "telegram-attach-failed",
+              error: e instanceof Error ? e.message : String(e),
+            });
+          }
+          await this.pause(backoff * 1000);
+          backoff = Math.min(60, backoff * 2);
+        }
+      }
+      if (this.controller.signal.aborted) return;
+    }
     backoff = 1;
     let outage = false;
     while (!this.controller.signal.aborted) {

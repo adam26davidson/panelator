@@ -562,6 +562,7 @@ describe("Telegram poller connect step (spec 043)", () => {
   const rig = async (
     sleep: ((ms: number) => Promise<void>) | undefined,
     waits: number[] = [],
+    onHook?: (n: number) => void | Promise<void>,
   ) => {
     const server = await fakeTelegram();
     const dir = await mkdtemp(join(tmpdir(), "connect-"));
@@ -580,6 +581,7 @@ describe("Telegram poller connect step (spec 043)", () => {
       undefined,
       () => {
         hook++;
+        return onHook?.(hook);
       },
     );
     return { server, poll, logs, hook: () => hook };
@@ -664,6 +666,64 @@ describe("Telegram poller connect step (spec 043)", () => {
       const t = Date.now();
       await r.poll.stop();
       expect(Date.now() - t).toBeLessThan(1500);
+      expect(r.server.requests.some((q) => q.method === "getUpdates")).toBe(false);
+    } finally {
+      await r.server.close();
+    }
+  });
+  it("spec 090 AC-1: a rejecting hook is retried alone, without another getMe", async () => {
+    const waits: number[] = [];
+    const seen: number[] = [];
+    const holder: { r?: Awaited<ReturnType<typeof rig>> } = {};
+    const r = await rig(async () => {}, waits, async (n) => {
+      seen.push(holder.r!.server.requests.length);
+      if (n === 1) throw new Error("attach one");
+      if (n === 2) return Promise.reject(new Error("attach two"));
+    });
+    holder.r = r;
+    r.poll.start();
+    try {
+      await until(() => r.server.requests.some((q) => q.method === "getUpdates"));
+      expect(r.logs).toEqual([
+        connected,
+        { kind: "telegram-attach-failed", error: "attach one" },
+      ]);
+      expect(waits).toEqual([1000, 2000]);
+      expect(r.hook()).toBe(3);
+      expect(r.server.requests.slice(0, 2).map((q) => q.method)).toEqual(["getMe", "getUpdates"]);
+      expect(r.server.requests.filter((q) => q.method === "getMe")).toHaveLength(1);
+      expect(seen).toEqual([1, 1, 1]);
+    } finally {
+      await r.poll.stop();
+      await r.server.close();
+    }
+  });
+  it("spec 090 AC-2: a stop while the hook is failing ends the loop", async () => {
+    const waits: number[] = [];
+    let release: () => void = () => {};
+    let blocked = false;
+    const r = await rig(
+      async () => {
+        if (waits.length >= 3) {
+          blocked = true;
+          await new Promise<void>((res) => (release = res));
+        }
+      },
+      waits,
+      async () => {
+        throw new Error("always");
+      },
+    );
+    r.poll.start();
+    try {
+      await until(() => blocked);
+      const calls = r.hook();
+      const stopped = r.poll.stop();
+      release();
+      await stopped;
+      expect(r.hook()).toBe(calls);
+      expect(calls).toBe(3);
+      expect(r.logs.filter((l) => l.kind === "telegram-attach-failed")).toHaveLength(1);
       expect(r.server.requests.some((q) => q.method === "getUpdates")).toBe(false);
     } finally {
       await r.server.close();
