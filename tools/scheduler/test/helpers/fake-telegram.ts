@@ -6,7 +6,7 @@ export async function fakeTelegram() {
   const edits: unknown[] = [];
   const answeredCallbacks: unknown[] = [];
   const updates: TelegramUpdate[] = [];
-  const failures = new Map<string, { code: number; times: number }>();
+  const failures = new Map<string, { code: number; times: number; body?: string }>();
   let flush: (() => void) | undefined;
   const server = createServer(async (req, res) => {
     let raw = "";
@@ -21,6 +21,11 @@ export async function fakeTelegram() {
     if (failure) {
       if (--failure.times <= 0) failures.delete(method);
       res.statusCode = failure.code;
+      if (failure.body !== undefined) {
+        res.setHeader("content-type", "text/html");
+        res.end(failure.body);
+        return;
+      }
       res.end(
         JSON.stringify({
           ok: false,
@@ -80,8 +85,11 @@ export async function fakeTelegram() {
       flush?.();
     },
     // times = 0 clears a pending failure
-    fail: (method: string, code: number, times = 1) =>
-      times > 0 ? failures.set(method, { code, times }) : failures.delete(method),
+    // body sends a raw text/html body instead of the Bot API error object
+    fail: (method: string, code: number, times = 1, body?: string) =>
+      times > 0
+        ? failures.set(method, { code, times, body })
+        : failures.delete(method),
     close: async () => {
       server.closeAllConnections();
       await new Promise<void>((r) => server.close(() => r()));
