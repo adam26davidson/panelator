@@ -19,7 +19,7 @@ import { listClaims, readClaim, writeClaim } from "../src/state/claims.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import { writeToken } from "../src/state/token.ts";
 import { HISTORY_ENTRY_MAX, initialChainState, ledgerOf } from "../src/chain/machine.ts";
-import { step, completePause } from "../src/chain/driver.ts";
+import { step, applyActions } from "../src/chain/driver.ts";
 import { questionMarker } from "../src/chain/question.ts";
 import { writeLedger } from "../src/state/ledger.ts";
 import { listBlocked, writeBlocked, type BlockedRecord } from "../src/state/blocked.ts";
@@ -1487,35 +1487,61 @@ describe('Scheduler.tick: main check watcher (spec 036)',()=>{
 });
 
 describe("Telegram attaches when connected (spec 043)", () => {
-  const pausing = (): PausedRecord => ({ issue: 7, phase: "pausing", nonce: "nonce", state: initialChainState(7), question: { kind: "product", question: "Which layout?", options: [{ label: "second", cost: "none" }], recommendation: "second" }, asking_stage: "plan", question_comment_id: null, asked_at: null, reminded: false, answer: null, reply_comment_id: null, telegram: emptyTelegram() });
   const poller = async (s: Scheduler, server: Awaited<ReturnType<typeof fakeTelegram>>, logs: Record<string, unknown>[], hook: () => void = () => {}) => {
     const { TelegramPoller } = await import("../src/telegram/poller.ts");
     const client = new TelegramClient("secret", 42, server.url);
     return new TelegramPoller(client, join(tmpdir(), `tg-offset-${Math.random()}.json`), 1, async () => {}, (r) => logs.push(r), async () => { await new Promise((r) => setTimeout(r, 5)); }, undefined, () => { s.setTelegram(telegramChannel(client)); hook(); });
   };
   const until = async (f: () => boolean) => { for (let i = 0; i < 400 && !f(); i++) await new Promise((r) => setTimeout(r, 10)); expect(f()).toBe(true); };
-  it("AC-3: a pause before the connection is an issue question; after it, a Telegram one", async () => {
-    const { s, deps, paths } = await setup(routes([waiting()]), 1, firstStep);
+  const question = { kind: "product" as const, question: "Which layout?", options: [{ label: "second", cost: "none" }], recommendation: "second" };
+  const claimFor = async (h: Awaited<ReturnType<typeof setup>>, n: number) => {
+    const claim = { issue: n, state: { ...initialChainState(n), stage: "plan" as const }, worktree: join(h.pair.worktrees, `issue-${n}`), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null };
+    await writeClaim(h.paths, claim);
+    return claim;
+  };
+  const pause = (h: Awaited<ReturnType<typeof setup>>, claim: Awaited<ReturnType<typeof claimFor>>) =>
+    applyActions(h.deps, claim, [{ type: "pause", question, asking: "plan" }]);
+  it("spec 090 AC-3/AC-4: a pause before the connection is an issue question with telegram null; after it, a Telegram one", async () => {
+    const h = await setup(routes([waiting(), issue(8)]), 1, firstStep);
+    const { s, deps, paths, gh } = h;
+    const driverLog: Record<string, unknown>[] = [];
+    deps.log = (r) => { driverLog.push(r as Record<string, unknown>); };
     const server = await fakeTelegram(); const logs: Record<string, unknown>[] = []; let hooked = 0;
     server.fail("getMe", 500, 1000);
     const p1 = await poller(s, server, logs, () => hooked++);
     p1.start();
     try {
       await until(() => logs.some((l) => l.status === "connecting"));
-      await completePause(deps, pausing());
-      const [r] = await listPaused(paths);
-      expect(r.telegram).toMatchObject({ sent: false, message_id: null });
-      expect(server.sent).toEqual([]);
+      expect(deps.telegram).toBeFalsy();
+      await pause(h, await claimFor(h, 7));
       expect(hooked).toBe(0);
+      const first = (await listPaused(paths)).find((x) => x.issue === 7);
+      expect(first?.telegram).toBeNull();
+      const posts = gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues/7/comments").map((c) => (c.body as { body: string }).body);
+      expect(posts).toHaveLength(1);
+      expect(posts[0]).toContain(`@${deps.cfg.maintainer}`);
+      expect(posts[0]).toContain("Reply in a comment on this issue; the scheduler resumes on your reply.");
+      const sent7 = logLines(paths).filter((e) => e.issue === 7 && e.event === "sent");
+      expect(sent7).toHaveLength(1);
+      expect(sent7[0].channel).toBe("issue");
+      expect(sent7[0]).not.toHaveProperty("telegram_message_id");
+      expect(driverLog.some((l) => l.kind === "telegram-send-failed")).toBe(false);
+      expect(server.requests.some((q) => q.method === "sendMessage")).toBe(false);
       await p1.stop();
       server.fail("getMe", 200, 0);
       const p2 = await poller(s, server, logs, () => hooked++);
       p2.start();
       await until(() => hooked === 1);
       await p2.stop();
-      await completePause(deps, { ...pausing(), nonce: "n2", issue: 8 });
+      await pause(h, await claimFor(h, 8));
       expect(server.sent).toHaveLength(1);
-      expect((await listPaused(paths)).find((x) => x.issue === 8)?.telegram?.sent).toBe(true);
+      const second = (await listPaused(paths)).find((x) => x.issue === 8);
+      expect(second?.telegram?.sent).toBe(true);
+      expect(second?.telegram?.message_id).toBeTruthy();
+      const sent8 = logLines(paths).filter((e) => e.issue === 8 && e.event === "sent");
+      expect(sent8).toHaveLength(1);
+      expect(sent8[0].channel).toBe("telegram");
+      expect((await listPaused(paths)).find((x) => x.issue === 7)?.telegram).toBeNull();
     } finally { await p1.stop(); await server.close(); }
   }, 30000);
   it("AC-4: a tick completes while getMe is failing", async () => {
