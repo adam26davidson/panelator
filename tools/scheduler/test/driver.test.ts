@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
 import type { Adapter, StageRun } from "../src/adapters/types.ts";
+import { transientCause } from "../src/chain/transient.ts";
 import { initialChainState, ledgerOf, transition } from "../src/chain/machine.ts";
 import type { Action, ChainState } from "../src/chain/types.ts";
 import { applyActions, CHARTER_REVERT_LINE, CLOSING_KEYWORD, designTop, driveChain, step, type DriverDeps } from "../src/chain/driver.ts";
@@ -2353,6 +2354,128 @@ describe("driver: a full volume postpones runs (spec 059)", () => {
     // The usage record was written: the tokens were spent.
     expect(readdirSync(paths.usage)).toHaveLength(1);
   }, 60_000);
+});
+
+/** A scripted adapter whose failing runs are judged as `outcome` with `status` and `reason`. */
+function judgedAs(results: Record<string, Scripted[]>, status: number | null, reason: string, outcome: "failed" | "timeout" | "bounds" = "failed"): ReturnType<typeof scriptedAdapter> {
+  const a = scriptedAdapter(results);
+  return { ...a, judge: (e, exit, timedOut) => exit === 0 ? a.judge(e, exit, timedOut) : { outcome, reason, apiErrorStatus: status, finalText: null } };
+}
+const UNREACHABLE = "API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)";
+
+describe("driver: a run that cannot reach the API waits out the outage (spec 092)", () => {
+  async function run(adapter: ReturnType<typeof scriptedAdapter>, patch: Partial<ChainState> = { stage: "review" }, prepare = prBehindMain) {
+    const w = await setup(() => ({}), undefined, prepare);
+    w.deps.adapterFor = () => adapter;
+    const logs: Record<string, unknown>[] = [];
+    w.deps.log = (r) => { logs.push(r); };
+    const c = at(w.claim, { plan: plan as never, pr: { number: 9, head_sha: w.sha }, ...patch });
+    await writeClaim(w.paths, c);
+    return { ...w, logs, c };
+  }
+
+  it("rejects the step with the cause, undoes the rebase, records no result and keeps resumeSession (AC-1)", async () => {
+    const adapter = judgedAs({ review: [undefined] }, null, UNREACHABLE);
+    const { deps, c, logs, paths, sha, claim } = await run(adapter, { stage: "review" });
+    const error = await step(deps, c).catch((e: unknown) => e as Error);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(`run ${(logs.find((l) => l.kind === "stage-transient") as { run_id: string }).run_id} could not reach the model API: ${UNREACHABLE}`);
+    expect(transientCause(error)).toBe("EAI_AGAIN");
+    expect(logs.find((l) => l.kind === "stage-transient")).toMatchObject({ issue: 7, stage: "review", attempt: 1, cause: "EAI_AGAIN" });
+    expect(logs.find((l) => l.kind === "rebase-undone")).toMatchObject({ to: sha });
+    expect(head(claim.worktree)).toBe(sha);
+    const saved = await readClaim(paths, 7);
+    expect(saved?.stageRun).toBeUndefined();
+    expect(saved?.run_id).toBeNull();
+    expect(saved?.state.history).toEqual([]);
+    expect(adapter.ran).toHaveLength(1);
+    expect(readdirSync(paths.usage)).toHaveLength(1);
+  }, 60_000);
+
+  it("leaves resumeSession on the claim as it was, so the retry resumes the same session (AC-1)", async () => {
+    const adapter = judgedAs({ review: [undefined] }, null, UNREACHABLE);
+    const resumeSession = { harness: "fake", model: "m", session_id: "s1", worktree: "/tmp/wt" } as never;
+    const { deps, c, paths } = await run(adapter, { stage: "review", resumeSession });
+    await expect(step(deps, c)).rejects.toThrow(/could not reach the model API/);
+    expect((await readClaim(paths, 7))?.state.resumeSession).toEqual(resumeSession);
+  }, 60_000);
+
+  it("a 5xx run carries its status; no fallback runs on an independent stage (AC-1)", async () => {
+    const adapter = judgedAs({ review: [undefined, approve] }, 503, "overloaded");
+    const { deps, c } = await run(adapter);
+    const error = await step(deps, c).catch((e: unknown) => e as Error & { status?: number });
+    expect((error as { status?: number }).status).toBe(503);
+    expect(transientCause(error)).not.toBeNull();
+    expect(adapter.ran).toHaveLength(1);
+  }, 60_000);
+
+  it("a rescue run rejects too, and a host-refused run still throws ENOSPC first (AC-1, AC-2)", async () => {
+    const adapter = judgedAs({ review: [undefined] }, null, UNREACHABLE);
+    const { deps, c } = await run(adapter, { stage: "review", rescueRun: true });
+    await expect(step(deps, c)).rejects.toMatchObject({ message: expect.stringMatching(/could not reach the model API/) });
+    const refused = { ...judgedAs({ review: [approve] }, null, UNREACHABLE), hostRefusal: () => "ENOSPC" };
+    const w = await run(refused);
+    await expect(step(w.deps, w.c)).rejects.toMatchObject({ code: "ENOSPC" });
+  }, 60_000);
+
+  it("a 429 still takes the rate-limit rules; genuine runs still fail the stage (AC-2, AC-4)", async () => {
+    const cases: [number | null, string, "failed" | "timeout" | "bounds"][] = [
+      [401, "ECONNRESET on login", "failed"], [null, "exit 1", "failed"], [null, UNREACHABLE, "timeout"], [null, UNREACHABLE, "bounds"],
+    ];
+    for (const [status, reason, outcome] of cases) {
+      const adapter = judgedAs({ review: [undefined] }, status, reason, outcome);
+      const { deps, c, logs } = await run(adapter);
+      const r = await step(deps, c);
+      expect(r.claim.state.history.some((h) => /^review attempt 1 failed/.test(h)) || r.claim.state.stage !== "review").toBe(true);
+      expect(logs.some((l) => l.kind === "stage-transient")).toBe(false);
+    }
+    const limited = rateLimited({ review: [undefined] });
+    const w = await run(limited);
+    const r = await step(w.deps, w.c);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "review" });
+    expect(w.logs.some((l) => l.kind === "stage-transient")).toBe(false);
+  }, 120_000);
+
+  it("a transient implement run keeps the commits it left as held work, and nothing without commits (AC-3)", async () => {
+    const withCommit = judgedAs({ implement: [(run: StageRun) => { commitIn(run.worktree, { "w.txt": "w\n" }); return undefined; }] }, null, UNREACHABLE);
+    const a = await run(withCommit, { stage: "implement", pr: null });
+    await expect(step(a.deps, a.c)).rejects.toThrow(/could not reach the model API/);
+    const kept = (await readClaim(a.paths, 7))!;
+    expect(kept.state.heldWork).toEqual([{ branch: "issue-7", head: head(a.claim.worktree), carried: UNREACHABLE }]);
+    expect(a.logs.find((l) => l.kind === "held-work")).toMatchObject({ stage: "implement", carried: UNREACHABLE });
+
+    const bare = judgedAs({ implement: [undefined] }, null, UNREACHABLE);
+    const b = await run(bare, { stage: "implement", pr: null });
+    await expect(step(b.deps, b.c)).rejects.toThrow(/could not reach the model API/);
+    expect((await readClaim(b.paths, 7))!.state.heldWork).toEqual([]);
+    expect(b.logs.some((l) => l.kind === "held-work")).toBe(false);
+  }, 120_000);
+
+  describe("a conversation turn (AC-2)", () => {
+    const q: Question = { kind: "product", question: "Which layout?", options: [{ label: "second", cost: "none" }], recommendation: "second" };
+    async function turn(script: Scripted) {
+      const w = await run(judgedAs({ plan: [script] }, null, UNREACHABLE));
+      const paused = { ...w.c.state, stage: "paused" as const, question: q, askingStage: "plan" as const, resumeSession: { harness: "fake" as const, model: "m", session_id: "s", worktree: w.claim.worktree } };
+      w.c.state = transition(paused, { type: "answered", answer: "second", questionId: 1 }).state;
+      return w;
+    }
+
+    it("a transient turn that changed the worktree is restored and fails with the worktree reason", async () => {
+      const w = await turn((r: StageRun) => { writeFileSync(join(r.worktree, "a.txt"), "forbidden\n"); return undefined; });
+      writeFileSync(join(w.claim.worktree, "a.txt"), "kept\n");
+      const r = await step(w.deps, w.c);
+      expect(readFileSync(join(w.claim.worktree, "a.txt"), "utf8")).toBe("kept\n");
+      expect(r.claim.state.conversation?.retried).toBe(true);
+      expect(w.logs.some((l) => l.kind === "stage-transient")).toBe(false);
+    }, 60_000);
+
+    it("a transient turn that changed nothing rejects the step and does not spend the retry", async () => {
+      const w = await turn(() => undefined);
+      await expect(step(w.deps, w.c)).rejects.toThrow(/could not reach the model API/);
+      expect(w.logs.some((l) => l.kind === "stage-transient")).toBe(true);
+      expect((await readClaim(w.paths, 7))?.state.conversation?.retried).toBeFalsy();
+    }, 60_000);
+  });
 });
 
 describe("driver: a check failing outside the PR's scope (spec 060)", () => {
