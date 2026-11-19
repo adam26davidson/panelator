@@ -9,7 +9,7 @@ import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
 import { agentsDir, defaultConfigPath, loadConfig } from "../src/config.ts";
 import { GitHubClient } from "../src/github/client.ts";
-import { Scheduler, type SchedulerDeps } from "../src/service/loop.ts";
+import { MAX_CHAIN_FAILURES, Scheduler, type SchedulerDeps } from "../src/service/loop.ts";
 import { ServiceLog } from "../src/service/log.ts";
 import { SleepInhibitor } from "../src/service/inhibit.ts";
 import { loadStageDefinitions } from "../src/stages/definition.ts";
@@ -18,7 +18,7 @@ import { CHARTER_REVERT_LINE } from "../src/chain/driver.ts";
 import { initialChainState, ledgerOf, MAX_BLOCKS } from "../src/chain/machine.ts";
 import type { BlockedRecord } from "../src/state/blocked.ts";
 import { writeLedger } from "../src/state/ledger.ts";
-import { listClaims } from "../src/state/claims.ts";
+import { listClaims, writeClaim } from "../src/state/claims.ts";
 import { writePaused,listPaused, type PausedRecord } from "../src/state/paused.ts";
 import type { Question } from "../src/types.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
@@ -1275,6 +1275,86 @@ describe("end to end: a stage run that cannot reach the API waits out the outage
     await expectSettled(w);
     expect(patchesOf(w, "recovered")).toEqual([]);
     expect(kinds(w, "recovered-commits")).toEqual([]);
+  }, 180_000);
+
+  it("a review with an independent fallback that cannot reach the API starts no fallback run and retries on its own model", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: [a.implement(9)], review: [NETWORK_DOWN, APPROVE] } });
+    const own = w.deps.stages.review.model;
+    w.deps.stages.review = { ...w.deps.stages.review, independent: true, fallback: "claude-fable-5-1", tier: "standard" };
+    const c = clock(w);
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["plan", "implement", "review"]);
+    expect(kinds(w, "stage-transient")).toHaveLength(1);
+    c.offset += 61_000;
+    await w.tick();
+    await expectSettled(w);
+    expect(w.adapter.ran).toEqual(["plan", "implement", "review", "review"]);
+    expect(runsOf(w, "review").map((r) => r.model)).toEqual([own, own]);
+  }, 180_000);
+
+  it("a conversation turn that cannot reach the API does not spend the conversation's retry, then settles", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({
+      files: repoFiles(),
+      results: { plan: [PLAN], implement: [a.implement(9)], review: [ESCALATE(ask("technical", "Which cache?")), NETWORK_DOWN, { conversation: "settled", decision: "Use option one for bounded memory" }, APPROVE], fix: [a.adr()], "question-check": [SEND] },
+    });
+    const server = await fakeTelegram();
+    w.deps.telegram = telegramChannel(new TelegramClient("SECRET", 42, server.url));
+    const c = clock(w);
+    try {
+      await w.tick();
+      const date = () => Math.floor((Date.now() + c.offset) / 1000) + 1;
+      const u = { update_id: 1, message: { message_id: 1000, date: date(), chat: { id: 42 }, text: "Use option one" } };
+      await w.scheduler.handleTelegramUpdate(u);
+      await w.scheduler.confirmTelegramUpdate(u);
+      await w.tick();
+      expect(w.adapter.runs.filter((r) => r.conversation)).toHaveLength(1);
+      expect(kinds(w, "stage-transient")).toEqual([expect.objectContaining({ stage: "review" })]);
+      const claim = (await listClaims(w.paths))[0];
+      expect(claim.state.conversation).toMatchObject({ retried: false });
+      expect(claim.outage?.count).toBe(1);
+      c.offset += 61_000;
+      await w.tick();
+      await expectSettled(w);
+      expect(w.adapter.runs.filter((r) => r.conversation)).toHaveLength(2);
+      expect(runsOf(w, "fix").at(-1)!.input.decision).toBe("Use option one for bounded memory");
+      expect(w.mergeRequests).toEqual([9]);
+    } finally {
+      await server.close();
+    }
+  }, 180_000);
+
+  it("an outage past its 24-hour ceiling counts a stage run's rejections as chain failures, alarms once, and releases with chain_error (AC-5)", async () => {
+    let w!: ChainWorld;
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: Array.from({ length: 12 }, () => NETWORK_DOWN) } });
+    const c = clock(w);
+    await w.tick();
+    const c0 = (await listClaims(w.paths))[0];
+    const outageSince = (hours: number) => new Date(Date.now() + c.offset - hours * 3600_000).toISOString();
+    // Three hours in: the next rejection raises the alarm, once.
+    const young = outageSince(3);
+    await writeClaim(w.paths, { ...c0, outage: { since: young, count: 5, last: c0.outage!.last, retry_at: young, alarmed: false } });
+    await w.tick();
+    expect(serviceRecords(w).filter((r) => r.kind === "transient-outage-alarm")).toHaveLength(1);
+    // A day on: past the ceiling the rejections count, and the alarm is not raised again.
+    const old = outageSince(25);
+    const c1 = (await listClaims(w.paths))[0];
+    await writeClaim(w.paths, { ...c1, outage: { ...c1.outage!, since: old, retry_at: old } });
+    for (let i = 0; i < 12 && !serviceRecords(w).some((r) => r.kind === "chain-error"); i++) {
+      c.offset += 1801_000;
+      await w.tick();
+      const cl = (await listClaims(w.paths))[0];
+      if (cl?.state.chainFailures) expect(cl.state.chainFailures.last.startsWith("outage past ceiling: ")).toBe(true);
+    }
+    const records = serviceRecords(w);
+    expect(records.filter((r) => r.kind === "chain-error")).toHaveLength(1);
+    expect(records.filter((r) => r.kind === "transient-outage-ceiling")).toHaveLength(1);
+    expect(records.filter((r) => r.kind === "transient-outage-alarm")).toHaveLength(1);
+    expect(w.notifications.filter((n) => n.gate === "infra")).toHaveLength(1);
+    expect(w.adapter.ran.filter((r) => r === "implement").length).toBeGreaterThan(MAX_CHAIN_FAILURES);
   }, 180_000);
 });
 
