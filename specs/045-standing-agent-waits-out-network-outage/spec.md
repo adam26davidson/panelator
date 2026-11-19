@@ -83,6 +83,8 @@ one state file, cheap to reverse; no ADR (design section 3, item 2).
 
 ## 2. Out of scope
 
+> Amended by [092-chain-stage-waits-out-network-outage](../092-chain-stage-waits-out-network-outage/spec.md) AC-1: the chain stage run whose harness cannot reach the API is no longer out of scope anywhere; spec 092 makes it reject the driver step as a transient error through `transientRun` in `chain/driver.ts`.
+
 - The quota postponement of spec 013 AC-7 (a 429, or a blocked model when the
   agent is due): unchanged, and checked before this spec's classification.
   A 429 is never transient here.
