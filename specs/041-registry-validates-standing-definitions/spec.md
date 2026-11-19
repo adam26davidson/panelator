@@ -270,7 +270,7 @@ spec under `## Children` in `docs/delivery-system-design.md`, and prepends
 the mark `Amended by [041-registry-validates-standing-definitions](../041-registry-validates-standing-definitions/spec.md) AC-7: the frontmatter's shape is checked against standing-definition.json before the loader's own checks.`
 to spec 008 AC-1.
 
-`tools/scheduler/` and `schemas/` are sensitive paths
+`tools/scheduler/` is a sensitive path
 (`agents/sensitive-paths.txt`); the security review applies to the
 implementation PR (spec 006 AC-9). The change touches no gate, bound, label
 rule or permission. The property worth the reviewer's glance: every
