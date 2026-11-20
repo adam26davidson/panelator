@@ -86,7 +86,7 @@ describe('standing registry', () => {
   it('rejects unknown placeholders', () => expect(() => renderStandingPrompt('{{oops}}', {})).toThrow());
   it('loads every real agent and cross-checks action code', () => {
     const kinds=registryActionsCheck('agents/actions.yaml');
-    expect(Object.keys(loadRegistry('agents/standing',EVENT_NAMES,kinds)).sort()).toEqual(['action-audit','findings-filer','infra-health']);
+    expect(Object.keys(loadRegistry('agents/standing',EVENT_NAMES,kinds)).sort()).toEqual(['action-audit','charter-reflection','delivery-reflection','findings-filer','infra-health','meta-reflection']);
   });
   it('still loads an agent that names a kind raised to level 2', async()=>{
     const dir=await mkdtemp(join(tmpdir(),'level2-'));
@@ -163,4 +163,23 @@ describe('agent state is checked before it is written (spec 086 AC-5)',()=>{
    expect(await readFile(file,'utf8')).toBe(before);
   }
  });
+});
+
+describe('the reflection agents (spec 028 AC-1 to AC-3)', () => {
+  const r = loadRegistry(join(agentsDir, 'standing'), EVENT_NAMES, Object.keys(KINDS));
+  const bounds = { timeout_min: 45, max_turns: 80, max_cost_usd: 8 };
+  it('registers the six standing agents', () => {
+    expect(Object.keys(r).sort()).toEqual(['action-audit', 'charter-reflection', 'delivery-reflection', 'findings-filer', 'infra-health', 'meta-reflection']);
+  });
+  it('delivery waits for ten merges, charter weekly, meta monthly', () => {
+    expect(r['delivery-reflection']).toMatchObject({ tier: 'strong', harness: 'claude', worktree: 'fresh', trigger: { schedule: '7d', events: ['merge'], min_events: 10 }, bounds, actions: ['set_parameter', 'pause_agent', 'resume_agent', 'run_agent'], input: 'reflection-input', output: 'reflection-result' });
+    expect(r['charter-reflection']).toMatchObject({ trigger: { schedule: '7d' }, bounds, actions: ['set_parameter', 'pause_agent', 'resume_agent', 'run_agent'] });
+    expect(r['meta-reflection']).toMatchObject({ trigger: { schedule: '30d' }, bounds, actions: [] });
+  });
+  it('every prompt renders and forbids posting to GitHub', () => {
+    for (const n of ['delivery-reflection', 'charter-reflection', 'meta-reflection']) {
+      const out = renderStandingPrompt(r[n]!.prompt, { agent: n, events: '{}', parameters: '{}', profile_instructions: '', since: 'x', result_path: '/r.json' });
+      expect(out).toContain('never post to GitHub');
+    }
+  });
 });

@@ -11,7 +11,7 @@ Run the service from a dedicated clone of the repository, checked out on `main` 
 
 The scheduler acts as a GitHub App installed on the repository with the permissions of spec section 12: issues, pull requests and contents (write), checks and actions (read), metadata (read), plus repository security advisories (write) once the filing agent (design spec C) lands. Set `app.id`, `app.installation_id`, `app.private_key_path` and `app.bot_login` in `agents/scheduler.yaml`; `repo`, `maintainer`, `slots`, `poll_interval_s`, `required_checks` and `state_dir` live in the same file. A missing App id, an unreadable private key, a checkout that is not on `main` or an origin that is not https makes the scheduler log a `config-error` record and exit 78, which the unit does not restart.
 
-These labels must exist in the repository: `validated`, `in-progress`, `needs-decision`, `abandoned`, `blocked`, `priority`, `class:product`, `class:bug`, `class:tooling`, `class:dependency`. `needs-design-stage` may still exist in the repository but no code path applies it any more (spec 029): once per issue, the scheduler removes it from an issue parked with it and comments that the design stage now exists. The old `needs-spec`, `needs-design`, `needs-clarification`, `needs-human` and `security-review` labels are no longer applied (spec 006). Enable branch protection on `main` requiring the `test` check, so a PR the scheduler merges has passed CI.
+These labels must exist in the repository: `validated`, `in-progress`, `needs-decision`, `abandoned`, `blocked`, `priority`, `class:product`, `class:bug`, `class:tooling`, `class:dependency`, and the reflection labels `reflection`, `reflection:delivery`, `reflection:charter` and `reflection:meta` (GitHub creates a label on its first use; the scheduler does not create labels). `needs-design-stage` may still exist in the repository but no code path applies it any more (spec 029): once per issue, the scheduler removes it from an issue parked with it and comments that the design stage now exists. The old `needs-spec`, `needs-design`, `needs-clarification`, `needs-human` and `security-review` labels are no longer applied (spec 006). Enable branch protection on `main` requiring the `test` check, so a PR the scheduler merges has passed CI.
 
 The first run is `node tools/scheduler/bin/scheduler.ts --check-auth`, which prints the bot login and token expiry, then `--once`, which runs one tick and waits for the chains it started. Only then enable the service.
 
@@ -138,3 +138,31 @@ registry test and exits the service with 78. A definition with `replaces: <old>`
   table or JSON; `--all` includes retired metrics; `--snapshot` records the report as a `metrics.snapshot` event.
 - `panelator-scheduler metrics show <name>` prints one definition and its history from the earliest event in the index.
 - `panelator-scheduler events query "<sql>"` runs one read-only `SELECT` against the index and prints the rows as JSON.
+
+## Reflection agents and plan issues (spec 028)
+
+Three standing agents in `agents/standing/` mirror the delivery system: `delivery-reflection` (weekly, or after ten
+merges: `trigger.min_events: 10`) looks for bottlenecks, metric trends and design-tree gaps; `charter-reflection`
+(weekly) judges the system against each charter clause and reviews every maintainer contact, filing one item per
+recurring kind; `meta-reflection` (monthly) judges the metrics and the reflections themselves. `min_events` is an
+optional integer (at least 1, default 1) on a trigger that has `events`: the agent is due on events only once that
+many are pending (a due schedule, or the retry after a first failure, still runs it with what is pending).
+
+The scheduler builds each agent's input (`tools/scheduler/src/reflection/input.ts`, validated against
+`schemas/scheduler/reflection-input.json`) for the period from the agent's last successful run (28 days back on the
+first run), and records that run's `metrics.snapshot`. Before the first attempt for a period it writes
+`reflection: {period_from, plan_key}` into the agent's state record; every retry, and a rerun after the process died,
+reuses it, and it is cleared only when an attempt succeeds. The agent has read-only tools and no GitHub tool.
+
+A **plan issue** is the record of a plan: an issue the App creates, titled `<Agent> plan <date>`, labelled
+`reflection` and `reflection:<delivery|charter|meta>`, never `validated`, so the shortlist ignores it. Its body carries
+the summary, observations, metrics note, the open questions (built from the events, never from the agent's note), the
+items with links, the direct actions applied and the deferred items, and ends with
+`<!-- panelator-reflection:<plan key>:plan -->`. The plan is also written to `reflections/<agent>/<plan key>.json`.
+Each item becomes a `validated` issue authored by the App (class label, `Plan: #<plan>` first line, any `Spec:` line
+removed, ending `<!-- panelator-reflection:<plan key>:<index> -->`); an item pointing at an `existing_issue` gets one
+comment linking the plan instead. At most `reflection_max_issues` (`agents/scheduler.yaml`, default 8) items are filed
+per plan, counting those a crashed attempt already filed; the rest are listed as deferred ("over the plan bound"), as
+are items with an unknown class, a body under 200 characters, or a `metric_change` without a `## Rationale`. The
+previous plan issue of the same agent (the `plan_issue` of its latest `reflection.plan` event) is closed with a link
+to the new one, only when it is open and authored by the App.
