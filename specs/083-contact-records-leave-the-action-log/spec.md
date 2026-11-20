@@ -128,7 +128,7 @@ contacts half calls. If spec 030's contacts half is built first, its PR
 builds AC-3 to AC-5 as given here and this spec's implementation adds only
 what is missing.
 
-- AC-1. **A refused call is a line in the contacts log.** Given
+- AC-1. Amended by [099-beyond-github-rest-on-the-credential-store](../099-beyond-github-rest-on-the-credential-store/spec.md) AC-8: the `gh` shim calls no gate and writes no `refused` line; the line's shape and writer stay for the first wrapper that calls `checkContact`. **A refused call is a line in the contacts log.** Given
   `first_contact_needs_approval` is `true` and `contacts/parties.json` has
   no `github:other`, when the `gh` shim runs `gh issue create -R other/repo
   --title T --body B` in a run whose environment has `PANELATOR_ACTOR=implement`

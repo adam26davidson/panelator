@@ -73,7 +73,7 @@ handling a secret, spending unasked, or speaking to a stranger unasked:
   (outages, chain errors, security advisories, agent failures, and the AWS
   alerts once spec 022 produces them) is sent to the Telegram chat as well
   as the service log.
-- **A first-contact gate in code.** The one outbound channel that exists, the
+- **A first-contact gate in code.** Amended by [099-beyond-github-rest-on-the-credential-store](../099-beyond-github-rest-on-the-credential-store/spec.md) section 1: the gate for GitHub is the App installation's scope, verified by spec 099 AC-11; the `gh` shim parses nothing (ADR 0014). The one outbound channel that exists, the
   `gh` wrapper, refuses to create anything in a repository outside
   `adam26davidson/panelator` whose owner is not an approved party, and tells
   the agent how to ask. Later channels (email, support cases) plug into the
@@ -230,7 +230,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   `credential_hook` field, unused since spec 001, is replaced by
   `credentials: [<name>, ...]`; a standing agent definition gains the same
   optional key; a name not in the catalogue fails loading.
-- AC-3. **Wrappers are generated, and only they see the secret.** Given a
+- AC-3. Amended by [099-beyond-github-rest-on-the-credential-store](../099-beyond-github-rest-on-the-credential-store/spec.md) AC-2: the shim calls `tools/scheduler/bin/cred-exec.ts`, a separate entry point that loads no registry or state, and `wrapper.command` has no slash. **Wrappers are generated, and only they see the secret.** Given a
   stage or standing agent whose profile or definition lists credentials,
   then its `PATH` begins with a per-run directory holding one shim per
   listed credential with a `wrapper`: the shim calls the scheduler's
@@ -306,7 +306,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   the `maintainer.contact` event for the send (`kind` equal to the request
   type, `payload.request`) is the follow-up spec's (section 2). *(agent's
   call)*
-- AC-8. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-3: the answer is recorded as one `maintainer.contact` event with the request and its outcome. **The scheduler acts on the answer, then the stage resumes.** Given
+- AC-8. Amended by [099-beyond-github-rest-on-the-credential-store](../099-beyond-github-rest-on-the-credential-store/spec.md) AC-5: a `first_contact` approval is recorded but no channel can act on it yet and the stage is told so; a credential "Done" whose check is skipped or whose name is not in the catalogue is answered as spec 099 AC-5 says. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-3: the answer is recorded as one `maintainer.contact` event with the request and its outcome. **The scheduler acts on the answer, then the stage resumes.** Given
   an answer (button or text) to a question with a request, then before the
   asking session resumes (spec 007 AC-13):
   - `first_contact`: given the "Approve" button, or a text whose first word
@@ -365,7 +365,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
 
 **The first-contact gate** (design section 8, "First contact")
 
-- AC-11. Amended by [083-contact-records-leave-the-action-log](../083-contact-records-leave-the-action-log/spec.md) AC-1: a refused call is one `refused` line in `contacts/log.jsonl`, not an action-log row. **No outbound contact without an approved party, in code.**
+- AC-11. Superseded by [099-beyond-github-rest-on-the-credential-store](../099-beyond-github-rest-on-the-credential-store/spec.md) AC-8, AC-10 and AC-11: Amended by [083-contact-records-leave-the-action-log](../083-contact-records-leave-the-action-log/spec.md) AC-1: a refused call is one `refused` line in `contacts/log.jsonl`, not an action-log row. **No outbound contact without an approved party, in code.**
   `checkContact(ctx, party)` in `tools/scheduler/src/contacts/gate.ts`
   returns `allowed` when `first_contact_needs_approval` is `false`, or when
   `party` is in `contacts/parties.json`; else `refused` with a text that
@@ -394,7 +394,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
 
 **Credential check agent** (design section 6.1)
 
-- AC-13. Amended by [072-plain-credential-file-reminder](../072-plain-credential-file-reminder/spec.md) AC-6: the credential check's input has no plain configuration files and its result files no finding for a plain file. **The credential check is a standing agent.**
+- AC-13. Amended by [099-beyond-github-rest-on-the-credential-store](../099-beyond-github-rest-on-the-credential-store/spec.md) AC-12: the credential check's pre-run gains `checkInstallationScope` and its result is part of the check's input. Amended by [072-plain-credential-file-reminder](../072-plain-credential-file-reminder/spec.md) AC-6: the credential check's input has no plain configuration files and its result files no finding for a plain file. **The credential check is a standing agent.**
   `agents/standing/credential-check.md`: standard tier, Claude, `worktree:
   none`, schedule `1d`, events `credential_expiry`, credentials none,
   actions `renew_credential`, output `credential-check-result`. That schema,
@@ -553,6 +553,8 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
 
 ## 5. Interfaces and files
 
+> Amended by [099-beyond-github-rest-on-the-credential-store](../099-beyond-github-rest-on-the-credential-store/spec.md) section 5: `bin/gh` is unchanged, `src/contacts/` gains `scope.ts` and no shim calls the gate, and `bin/cred-exec.ts` is new.
+
 > Amended by [083-contact-records-leave-the-action-log](../083-contact-records-leave-the-action-log/spec.md) section 4: the contacts records are written by `src/contacts/log.ts`, not under `src/actions/`.
 
 - `tools/scheduler/src/credentials/`: `catalogue.ts` (`agents/credentials.yaml`,
@@ -625,6 +627,8 @@ list, the security criteria, or what routes a sensitive diff to the security
 review.
 
 ## 6. Verification
+
+> Amended by [099-beyond-github-rest-on-the-credential-store](../099-beyond-github-rest-on-the-credential-store/spec.md) section 6: the first-contact recorded run is a question approved by button, the party registered, the resumed stage told no channel can reach the party, and no write to another repository attempted; no `gh issue create -R` goes through and none is refused.
 
 > Amended by [083-contact-records-leave-the-action-log](../083-contact-records-leave-the-action-log/spec.md) section 4: the refused first-contact call leaves one `refused` line in `contacts/log.jsonl` and no action-log row.
 
