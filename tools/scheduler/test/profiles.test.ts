@@ -7,16 +7,27 @@ import { implementationProfiles, listProfiles, readSensitiveGlobs, resolveProfil
 
 describe("profiles", () => {
   it("lists the committed v0 profiles", () => {
-    expect(listProfiles(agentsDir)).toEqual(["backend", "design", "security", "spec"]);
+    expect(listProfiles(agentsDir)).toEqual(["backend", "design", "security", "spec", "web-ui"]);
   });
-  it("lists only backend as an implementation profile (spec 077 AC-4)", () => {
-    expect(implementationProfiles(agentsDir)).toEqual(["backend"]);
+  it("lists backend and web-ui as implementation profiles (spec 077 AC-4)", () => {
+    expect(implementationProfiles(agentsDir)).toEqual(["backend", "web-ui"]);
   });
   it("resolves backend with its skills dir, instructions and tools", () => {
     const p = resolveProfile(agentsDir, "backend");
     expect(p.skillsDir.endsWith("agents/profiles/backend/skills")).toBe(true);
     expect(p.instructions.length).toBeGreaterThan(10);
     expect(p.tools).toContain("Bash");
+  });
+  it("resolves web-ui with the UI review criteria (spec 098 AC-3)", () => {
+    const p = resolveProfile(agentsDir, "web-ui");
+    expect(p.tools).toEqual(resolveProfile(agentsDir, "backend").tools);
+    expect(p.credentialHook).toBeUndefined();
+    for (const s of ["390x844", "820x1180", "1440x900", "44 CSS pixels", "14 CSS pixels", "WCAG AA", "tokens.html", "flow.md", "catalog:"]) {
+      expect(p.reviewCriteria).toContain(s);
+    }
+    for (const s of ["design/", "flow.md", "catalog:", "pnpm test"]) {
+      expect(p.instructions).toContain(s);
+    }
   });
   it("resolves security with review criteria", () => {
     const p = resolveProfile(agentsDir, "security");

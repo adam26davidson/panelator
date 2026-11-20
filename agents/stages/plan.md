@@ -50,7 +50,7 @@ under, by where the work lies: `web-ui` for `web/`, `widget` for
 `widgets/` and `sdk/`, `firmware` for `firmware/`, and `backend` for
 everything else, including `backend/`, `tools/` (the scheduler among
 them), `agents/`, `schemas/` and `docs/`. The domains with an
-implementation profile today are: `backend`. A plan whose domain has no
+implementation profile today are: `backend`, `web-ui`. A plan whose domain has no
 implementation profile fails with `profile not available`; that is
 intended, so do not put work that belongs to another domain under
 `backend` to avoid it. If the spec cannot be implemented as written, set verdict to spec_gap and
