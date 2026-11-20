@@ -9,7 +9,8 @@ AC-10, AC-11 and AC-12 (AC-11 as decided in [ADR 0014](../../docs/decisions/0014
 AC-13 and AC-14; AC-16 and AC-17 need nothing built (section 1). Supersedes
 spec 030 AC-11's `gh`-argument gate and amends spec 030 section 1 (the gate
 paragraph), AC-3 (`cred exec` is its own entry point), AC-8 (what a
-`first_contact` approval does today) and section 5 (the files), and amends
+`first_contact` approval does today) section 5 (the files), section 6 (the recorded first-contact run) and AC-13 (the
+credential check's pre-run and input), and amends
 [083-contact-records-leave-the-action-log](../083-contact-records-leave-the-action-log/spec.md)
 AC-1 (the `gh` shim writes no `refused` line), each marked as section 4
 records. *(agent's call)*
@@ -192,8 +193,11 @@ AC-11 says.
   - `funds`: passed through.
 
   The outcome (`approved`, `denied`, `verified`, `check_failed`, `declined`
-  or `text`) is written as `outcome` on the entry's answer record (spec 007
-  AC-9); the rest of the pause, resume and record path is unchanged.
+  or `text`; the six of spec 068 AC-3, no seventh) is written as `outcome` on the entry's answer record (spec 007
+  AC-9); `done (not checked: <reason>)` and `done (unverified: <name> is not in the
+  catalogue)` are written as `text`: nothing was verified and nothing failed,
+  so the maintainer's own words stand as the answer. The rest of the pause,
+  resume and record path is unchanged.
 
 **Alerts** (spec 030 AC-9, AC-10)
 
@@ -318,6 +322,12 @@ AC-11 says.
 - Spec 030 section 5: `Amended by 099 section 5: bin/gh is unchanged;
   src/contacts/ gains scope.ts and loses the gate's shim call; bin/cred-exec.ts
   is new.`
+- Spec 030 section 6, the recorded-run bullet for first contact: `Amended by
+  099 section 6: the run is a first-contact question approved by button, the
+  party registered, the resumed stage told no channel can reach the party,
+  and no write to another repository attempted; the shim refuses nothing.`
+- Spec 030 AC-13: `Amended by 099 AC-12: the credential check's pre-run
+  gains checkInstallationScope and its result is part of the check's input.`
 - Spec 083 AC-1: `Amended by 099 AC-8: the gh shim calls no gate and writes
   no refused line; the line's shape and writer stay for the first wrapper
   that calls checkContact.`
