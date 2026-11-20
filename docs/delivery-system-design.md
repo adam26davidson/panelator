@@ -500,7 +500,7 @@ are stale and are corrected as part of B.
 - `specs/024-rebase-respects-merged-main/spec.md`
 - `specs/025-filer-results-and-wakes/spec.md`
 - `specs/029-design-stage/spec.md` (row E, issue #38)
-- `specs/030-beyond-github/spec.md` (row F2, issue #39, abandoned 2026-11-05 with its work unmerged; its store, catalogue, App-key rule and `cred` commands (AC-1, AC-2, AC-3's key rule, AC-4) are built by issue #131 through spec 069; its remaining criteria await an issue filed from spec 069's finding)
+- `specs/030-beyond-github/spec.md` (row F2, issue #39, abandoned 2026-11-05 with its work unmerged; its store, catalogue, App-key rule and `cred` commands (AC-1, AC-2, AC-3's key rule, AC-4) are built by issue #131 through spec 069; its remaining criteria are built by issue #257 through spec 099)
 - `specs/031-design-files-children/spec.md`
 - `specs/032-spec-008-lists-advisory-lookup/spec.md`
 - `specs/033-rerun-workflow-permission/spec.md` (issue #53)
@@ -569,3 +569,4 @@ are stale and are corrected as part of B.
 - `specs/095-issue-claimed-event-drops-slot/spec.md` (issue #199; the `issue.claimed` event's payload is `{}` instead of `{ slot }`, the schema stops knowing `slot`, and stored lines that carry it stay as they are: ADR 0007 removed the slot from the claim, and the held-count the recording call substituted is the pseudo-slot that ADR rejected)
 - `specs/096-stale-claim-drop-records-issue-released/spec.md` (issue #204; the service loop's stale-claim drop records `issue.released` with reason `stopped` after removing the claim, and only when the event index holds an open `issue.claimed` for the issue, so a label removed by hand closes the claimed interval and a claim whose labelling failed leaves no release without a claim; marks on spec 026 AC-2)
 - `specs/097-verify-rebases-conflicting-pr/spec.md` (issue #366; a verify poll that finds a required check with no run reads the PR, and a PR GitHub reports not mergeable is rebased onto main and pushed through spec 060's `rebase_push` at once instead of waiting out the six-hour pending bound; a conflict goes to the fix as spec 024's `rebase_conflict`, `mergeable: null` keeps waiting; marks on spec 006 AC-17 and spec 060 AC-8)
+- `specs/099-beyond-github-rest-on-the-credential-store/spec.md` (issue #257; the rest of spec 030 on spec 069's store: the shims and `cred exec`, the `credentials` profile field, the expiry producer, the request buttons and the "Done" path, the `TelegramNotifier`, `checkContact` and the `contacts` commands, the credential check agent and `renew_credential`; first contact on GitHub is enforced by the App installation's scope, verified daily, with no `gh`-argument gate, ADR 0014; marks on spec 030 section 1, AC-3, AC-8, AC-11 and section 5 and on spec 083 AC-1)
