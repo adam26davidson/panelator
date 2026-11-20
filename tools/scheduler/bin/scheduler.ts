@@ -23,6 +23,8 @@ import {loadRegistry} from '../src/standing/registry.ts';
 import {EVENT_NAMES} from '../src/standing/events.ts';
 import {initializeAgents,listAgentStates} from '../src/standing/state.ts';
 import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
+import {contactsCommand} from '../src/contacts/commands.ts';
+import {checkInstallationScope,SCOPE_FIX} from '../src/contacts/scope.ts';
 import {readContactLog} from '../src/contacts/log.ts';
 import {ParameterStore} from '../src/parameters/store.ts';
 import {setParameterModeCommand} from '../src/parameters/command.ts';
@@ -140,6 +142,7 @@ if(['param','agent','action','cred','contacts'].includes(args[0])) {
       for(const line of out.lines)console.log(line);
       process.exit(out.exitCode);
     }
+    else if(command==='contacts'&&(verb==='list'||verb==='remove')){const out=await contactsCommand(verb,name,{paths,now:()=>new Date()});for(const l of out.lines)console.log(l);process.exit(out.exitCode);}
     else if(command==='contacts'&&verb==='log')console.log(JSON.stringify(await readContactLog(paths,flag('--since')),null,2));
     else if(command==='action'&&verb==='list')console.log(JSON.stringify(await actionLog.list(flag('--since')),null,2));
     else if(command==='param'&&verb==='set') {
@@ -155,7 +158,7 @@ if(['param','agent','action','cred','contacts'].includes(args[0])) {
       if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
     } else if(command==='action'&&verb==='undo') {
       const row=await undoAction(ctx,name,'maintainer');if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
-    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; contacts log [--since time]; cred set|list|check|import|remove; quota');
+    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; contacts list|remove <party>|log [--since time]; cred set|list|check|import|remove; quota');
     process.exit(0);
   }catch(e){console.error((e as Error).message);process.exit(1);}
 }
@@ -183,8 +186,11 @@ if (!origin.startsWith("https://")) fail(`origin must be an https URL (stages ca
 const app = createAppClient(cfg.app, privateKey);
 const token = await app.refreshTokenFile(paths);
 const botLogin = await app.botLogin();
+const scope = await checkInstallationScope({ app, installationId: cfg.app.installation_id, repo: cfg.repo }).catch((e): { status: "failed"; reason: string } => ({ status: "failed", reason: `scope check failed: ${(e as Error).message}` }));
+if (scope.status === "failed") serviceLog.write({ kind: "contact-scope", reason: scope.reason });
 if (has("--check-auth")) {
   console.log(`bot ${botLogin}, token expires ${token.expires_at}`);
+  console.log(scope.status === "ok" ? `installation scope ok (${cfg.repo} only)` : `installation scope FAILED: ${scope.reason}; ${SCOPE_FIX}`);
   process.exit(0);
 }
 const stopRefresh = app.startTokenRefresh(paths);
