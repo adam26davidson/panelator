@@ -25,6 +25,16 @@ export interface CheckSummary {
   failed: { name: string; id: number }[];
 }
 
+/** Spec 028: one issue read by number, with the pull requests merged against it (from its timeline). */
+export interface IssueState {
+  number: number;
+  author: string;
+  state: "open" | "closed";
+  labels: string[];
+  closedAt: string | null;
+  pullRequests: number[];
+}
+
 export interface IssueComment {
   id: number;
   author: string;

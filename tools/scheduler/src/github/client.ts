@@ -1,6 +1,6 @@
 import type { Octokit } from "octokit";
 import type { IssueData, LabelEvent } from "../types.ts";
-import type { CheckRun, CheckSummary, IssueComment, PullRequestInfo } from "./types.ts";
+import type { CheckRun, CheckSummary, IssueComment, IssueState, PullRequestInfo } from "./types.ts";
 import { cleanJobLog } from "./job-log.ts";
 
 type Rec = Record<string, unknown>;
@@ -152,6 +152,29 @@ export class GitHubClient {
       if (status === 404 || status === 409 || status === 422) return false;
       throw e;
     }
+  }
+
+  /** One issue's state, author and merged linked pull requests; null for a missing issue or a pull request (spec 028 AC-6, AC-5). */
+  async issue(n: number): Promise<IssueState | null> {
+    let data: Rec;
+    try {
+      data = (await this.octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}", { ...this.base, issue_number: n })).data as Rec;
+    } catch (e) {
+      if ((e as { status?: number }).status === 404) return null;
+      throw e;
+    }
+    if (data.pull_request) return null;
+    const timeline = (await this.octokit.paginate("GET /repos/{owner}/{repo}/issues/{issue_number}/timeline", { ...this.base, issue_number: n, per_page: 100 })) as Rec[];
+    const pullRequests = timeline
+      .filter((e) => e.event === "cross-referenced" || e.event === "connected")
+      .map((e) => rec(rec(rec(e.source).issue)))
+      .filter((i) => i.pull_request && rec(i.pull_request).merged_at)
+      .map((i) => Number(i.number));
+    return {
+      number: Number(data.number), author: String(rec(data.user).login ?? ""), state: String(data.state) === "closed" ? "closed" : "open",
+      labels: ((data.labels as unknown[]) ?? []).map((l) => (typeof l === "string" ? l : String(rec(l).name))),
+      closedAt: data.closed_at ? String(data.closed_at) : null, pullRequests: [...new Set(pullRequests)],
+    };
   }
 
   async issueLabels(issue: number): Promise<string[]> {

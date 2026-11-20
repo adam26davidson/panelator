@@ -310,3 +310,19 @@ describe("spec 006 calls", () => {
     expect((await c.pullRequest(9)).body).toBe("Closes #12");
   });
 });
+
+describe("issue(n) (spec 028 AC-6)", () => {
+  const one = (n: number, extra: Record<string, unknown> = {}): Route => ({ method: "GET", path: new RegExp(`^/repos/o/r/issues/${n}$`), reply: () => ({ body: { ...issue(n), state: "closed", closed_at: "2026-10-05T00:00:00Z", ...extra } }) });
+  it("returns null for a 404 and for a pull request", async () => {
+    const { c } = client([one(9, { pull_request: { url: "x" } })]);
+    expect(await c.issue(8)).toBeNull();
+    expect(await c.issue(9)).toBeNull();
+  });
+  it("reads author, state and labels, and pages the timeline for merged linked pull requests", async () => {
+    const pr = (n: number, merged: boolean) => ({ event: "cross-referenced", source: { issue: { number: n, pull_request: { merged_at: merged ? "2026-10-04T00:00:00Z" : null } } } });
+    const pages = [[pr(30, true), { event: "commented" }], [pr(31, false), pr(32, true)]];
+    const { c, gh } = client([one(5), { method: "GET", path: /^\/repos\/o\/r\/issues\/5\/timeline$/, reply: (_m, _b, url) => { const p = Number(url.searchParams.get("page") ?? 1); return { body: pages[p - 1], headers: pageLink(url, p, 2) }; } }]);
+    expect(await c.issue(5)).toEqual({ number: 5, author: BOT.login, state: "closed", labels: ["validated"], closedAt: "2026-10-05T00:00:00Z", pullRequests: [30, 32] });
+    expect(gh.calls.filter((x) => x.url.includes("/timeline")).length).toBe(2);
+  });
+});
