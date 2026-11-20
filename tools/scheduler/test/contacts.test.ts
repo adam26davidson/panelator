@@ -108,3 +108,15 @@ describe("the gh shim is unchanged (spec 099 AC-10)", () => {
     if (head.status === 0) expect(readFileSync(join(here, "..", "bin", "gh"), "utf8")).toBe(head.stdout);
   });
 });
+
+describe("stage prompts (spec 099 AC-14)", () => {
+  it("each of the five says the token reaches one repository and what a 404 means", () => {
+    for (const f of ["plan", "implement", "fix", "review", "spec"]) {
+      const text = readFileSync(join(agentsDir, "stages", `${f}.md`), "utf8");
+      expect(text, f).toContain("`adam26davidson/panelator`\nonly");
+      expect(text, f).toContain("`404` or `403`");
+      expect(text, f).toContain("`first_contact` request");
+    }
+    expect(readFileSync(join(agentsDir, "standing", "credential-check.md"), "utf8")).toContain("renew_credential");
+  });
+});
