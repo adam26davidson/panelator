@@ -1159,7 +1159,12 @@ async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> 
     const pending = required.length
       ? required.filter((n) => summary.runs.find((r) => r.name === n)?.status !== "completed")
       : summary.runs.filter((r) => r.status !== "completed").map((r) => r.name);
-    return { type: "checks", status: "pending", sensitive, at: deps.now().toISOString(), pending };
+    // Spec 097 AC-1: a required check with no run may be a PR GitHub runs no workflow on, one that conflicts with main.
+    // Only then is the PR read; `mergeable: null` (still computing) is not a conflict.
+    const noRun = required.length ? required.some((n) => !summary.runs.some((r) => r.name === n)) : summary.runs.length === 0;
+    const conflicts = noRun && (await deps.gh.pullRequest(pr.number)).mergeable === false;
+    if (conflicts) deps.log({ kind: "verify-not-mergeable", issue: claim.issue, pr: pr.number, sha: pr.head_sha });
+    return { type: "checks", status: "pending", sensitive, at: deps.now().toISOString(), pending, ...(conflicts ? { conflicts } : {}) };
   }
   return { type: "checks", status: summary.status, sensitive, at: deps.now().toISOString() };
 }
@@ -1308,6 +1313,7 @@ async function blockIssue(deps: DriverDeps, claim: Claim, a: Extract<Action, { t
 /**
  * Spec 060 AC-8: after a block, the worktree is put at the PR's remote head and rebased onto origin/main; a moved head is
  * pushed with a lease and becomes the PR's head. A conflict goes to the machine as spec 024's `rebase_conflict`.
+ * Spec 097 AC-2: verify applies it too, to a PR that conflicts with main; a pushed head starts a new pending window.
  */
 async function rebasePush(deps: DriverDeps, claim: Claim): Promise<void> {
   const pr = claim.state.pr;
@@ -1324,7 +1330,7 @@ async function rebasePush(deps: DriverDeps, claim: Claim): Promise<void> {
   const after = await worktreeHead(claim.worktree);
   const branch = branchOf(claim.state);
   await gitOut(claim.worktree, "push", `--force-with-lease=${branch}:${before}`, "origin", `HEAD:refs/heads/${branch}`);
-  claim.state = { ...claim.state, pr: { ...pr, head_sha: after } };
+  claim.state = { ...claim.state, pr: { ...pr, head_sha: after }, pendingSince: null };
   deps.log({ kind: "rebase-pushed", issue: claim.issue, from: before, to: after });
 }
 
