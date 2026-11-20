@@ -104,6 +104,7 @@ describe("reflection input (spec 028 AC-5)", () => {
     const input = await buildReflectionInput(deps(paths, {}, [issueData(41, { state: "closed", labels: ["abandoned"] }), issueData(42, { labels: ["in-progress"] }), issueData(43, { author: "someone" })]), registry()["delivery-reflection"]!, "r", FROM, mkdtempSync(join(tmpdir(), "root-")));
     const [p] = input.previous_plans as { plan_issue: number; filed: { issue: number; state: string }[] }[];
     expect(p!.filed).toEqual([{ issue: 41, state: "abandoned" }, { issue: 42, state: "in progress" }]);
+    expect(p).toHaveProperty("plan", plan);
     expect((input.open_bot_issues as { number: number }[]).map((i) => i.number)).toEqual([42]);
   });
 
@@ -340,7 +341,7 @@ describe("reflection apply (spec 028 AC-6 to AC-9)", () => {
 import { ALL, matches } from "./helpers/markers.ts";
 describe("the reflection writers neutralise model text (spec 076 AC-2, spec 028 AC-6, AC-7)", () => {
   it("leaves only the writer's own markers in the plan issue, its items and its comments", async () => {
-    const w = await applyWorld({}, [{ number: 5, title: "old", body: "b", labels: [], author: "bot", state: "open", comments: [] }]);
+    const w = await applyWorld({ applyDirect: async () => [`set_parameter ${ALL}: refused`] }, [{ number: 5, title: "old", body: "b", labels: [], author: "bot", state: "open", comments: [] }]);
     const out = await w.run(resultOf([item(0, { title: `T ${ALL}`, body: body(ALL) }), item(1, { existing_issue: 5, title: `E ${ALL}` })], {
       summary: ALL, metrics_note: ALL, open_questions_note: ALL, observations: [{ what: ALL, evidence: ALL }], deferred: [{ title: ALL, why: ALL }],
     }), { questions: [{ issue: 3, stage: "plan", sent_at: "2026-11-05T00:00:00.000Z", question: ALL }] });

@@ -77,7 +77,7 @@ export async function applyReflectionResult(d: ApplyDeps, a: { def: StandingDefi
       "## Metrics", n(plan.metrics_note) || "None.", "",
       "## Open questions", input.open_questions.length ? input.open_questions.map((q) => `- #${q.issue} (${q.stage}, sent ${q.sent_at}): ${n(q.question)}`).join("\n") : "None.", "", n(plan.open_questions_note), "",
       "## Items", plan.items.length ? list(items) : "This plan has no items.", "",
-      "## Direct actions applied", list(actions), "",
+      "## Direct actions applied", list(actions.map(n)), "",
       "## Deferred", list(deferred.map((x) => `${n(x.title)}: ${n(x.why)}`)), "",
       planMarker(planKey),
     ].join("\n");

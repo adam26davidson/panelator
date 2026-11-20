@@ -59,7 +59,7 @@ export async function fate(d: Pick<ReflectionDeps, "gh">, db: DatabaseSync, issu
 async function planWithFates(d: Pick<ReflectionDeps, "gh">, db: DatabaseSync, p: PlanEvent) {
   const filed = [];
   for (const n of p.filed) filed.push(await fate(d, db, n));
-  return { agent: p.agent, plan_key: p.plan_key, at: p.at, plan_issue: p.plan_issue, title: p.plan.title, filed, deferred: p.deferred ?? [] };
+  return { agent: p.agent, plan_key: p.plan_key, at: p.at, plan_issue: p.plan_issue, title: p.plan.title, plan: p.plan, filed, deferred: p.deferred ?? [] };
 }
 
 /** One issue's timeline from its events (AC-5 `issues`). */
@@ -114,7 +114,7 @@ export function questionOutcomes(db: DatabaseSync, since: string) {
   const m = (at: string) => { const k = at.slice(0, 7); const v = months.get(k) ?? { month: k, sent: 0, answered: 0, decide_yourself: 0, hours: [] }; months.set(k, v); return v; };
   const sentAt = new Map<string, string>();
   for (const e of rows(db, "SELECT * FROM events WHERE kind = 'question' AND at >= ? ORDER BY at, rowid", since)) {
-    const key = `${e.issue}:${e.payload.asking_stage}`;
+    const key = `${e.issue}:${e.payload.question_comment_id ?? e.payload.asking_stage}`;
     if (e.payload.event === "sent") { m(e.at).sent++; sentAt.set(key, e.at); }
     else if (e.payload.event === "checked" && e.payload.verdict === "decide_yourself") m(e.at).decide_yourself++;
     else if (e.payload.event === "answered") {
