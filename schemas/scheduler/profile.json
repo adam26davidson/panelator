@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "profile.json",
+  "type": "object",
+  "properties": {
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "tools": { "type": "array", "items": { "type": "string" } },
+    "credentials": { "type": "array", "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" } },
+    "review_criteria": { "type": ["string", "null"] }
+  },
+  "required": ["name", "tools", "credentials"],
+  "additionalProperties": false
+}

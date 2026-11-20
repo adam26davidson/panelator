@@ -29,7 +29,8 @@ import {setParameterModeCommand} from '../src/parameters/command.ts';
 import {registryActionsCheck,loadActionLevels,applyAction} from '../src/actions/index.ts';
 import {ActionLog} from '../src/actions/log.ts';
 import {undoAction} from '../src/actions/undo.ts';
-import {loadCatalogue,profileNames} from '../src/credentials/catalogue.ts';
+import {resolveProfile} from '../src/profiles/resolve.ts';
+import {loadCatalogue,profileNames,checkCredentialNames} from '../src/credentials/catalogue.ts';
 import {storeFromConfig,appPrivateKey,appPrivateKeySource} from '../src/credentials/store.ts';
 import {credCommand} from '../src/credentials/commands.ts';
 import {awsCli} from '../src/aws/cli.ts';
@@ -69,6 +70,7 @@ const {registry,parameters,levels,catalogue,metrics}=(()=>{try {
   const registry=loadRegistry(join(agentsRoot,'standing'),EVENT_NAMES,kinds);
   const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsRoot,'parameters.yaml'),cfg,registry));
   const catalogue=loadCatalogue(join(agentsRoot,'credentials.yaml'),{profiles:profileNames(agentsRoot),agents:Object.keys(registry)});
+  checkCredentialNames(catalogue,{profiles:Object.fromEntries(profileNames(agentsRoot).map(n=>[n,resolveProfile(agentsRoot,n).credentials??[]])),agents:Object.fromEntries(Object.values(registry).map(d=>[d.name,d.credentials??[]]))});
   return {registry,parameters,levels:loadActionLevels(join(agentsRoot,'actions.yaml')),catalogue,metrics:loadMetricDefinitions(join(agentsRoot,'metrics'))};
 }catch(e){fail((e as Error).message);}})();
 await initializeAgents(paths,registry,parameters,new Date());

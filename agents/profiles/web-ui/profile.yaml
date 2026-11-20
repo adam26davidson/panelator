@@ -1,4 +1,4 @@
 name: web-ui
 tools: [Read, Edit, Write, Bash, Glob, Grep]
-credential_hook: null
+credentials: []
 review_criteria: review-criteria.md

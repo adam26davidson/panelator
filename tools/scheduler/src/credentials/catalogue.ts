@@ -56,3 +56,10 @@ export function loadCatalogue(path: string, known: { profiles: string[]; agents:
 export function profileNames(agentsDir: string): string[] {
   return readdirSync(join(agentsDir, "profiles")).filter((d) => existsSync(join(agentsDir, "profiles", d, "profile.yaml")));
 }
+
+/** Spec 099 AC-1: every name a profile or standing definition lists must be in the catalogue. */
+export function checkCredentialNames(catalogue: Record<string, CredentialEntry>, lists: { profiles: Record<string, string[]>; agents: Record<string, string[]> }): void {
+  for (const [kind, group] of [["profile", lists.profiles], ["agent", lists.agents]] as const)
+    for (const [who, names] of Object.entries(group))
+      for (const n of names) if (!catalogue[n]) throw new Error(`${kind} ${who}: credentials names ${n}, which is not in the catalogue`);
+}
