@@ -141,6 +141,12 @@ describe("result schemas", () => {
     expect(validate("claim", { ...base, slot: 0 }).ok).toBe(false);
   });
 
+  it("does not know an issue.claimed slot field (spec 095 AC-2)", () => {
+    const env = (payload: unknown) => ({ id: "e1", at: "2026-10-12T00:00:00.000Z", kind: "issue.claimed", issue: 7, payload });
+    expect(validate("event", env({})).ok).toBe(true);
+    expect(validate("event", env({ slot: 0 })).ok).toBe(false);
+  });
+
   it("validates a claim record and its chain state (spec 006 C12)", () => {
     const claim = (state: unknown) => validate("claim", {
       issue: 7, state, worktree: "/tmp/wt", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null,

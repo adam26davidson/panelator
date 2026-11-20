@@ -133,14 +133,8 @@
       },
       "issue.claimed": {
         "type": "object",
-        "properties": {
-          "slot": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "slot"
-        ]
+        "properties": {},
+        "additionalProperties": false
       },
       "issue.released": {
         "type": "object",

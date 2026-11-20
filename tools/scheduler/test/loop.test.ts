@@ -85,6 +85,13 @@ async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
   return { s, deps, gh, notifications, allowErrors: watcher.allow, watch, started, paths, pair, setNow: (d: Date) => { now = d; }, setMono: (m: number) => { mono = m; } };
 }
 
+function claimedPayloads(paths: ReturnType<typeof statePaths>, issue: number): unknown[] {
+  const db = openIndex(paths);
+  const rows = db.prepare("SELECT payload FROM events WHERE issue = ? AND kind = 'issue.claimed' ORDER BY at, rowid").all(issue) as { payload: string }[];
+  db.close();
+  return rows.map((r) => JSON.parse(r.payload));
+}
+
 function staleRows(paths: ReturnType<typeof statePaths>): [string, number, unknown][] {
   const db = openIndex(paths);
   const rows = db.prepare("SELECT kind, issue, payload FROM events WHERE issue = 7 AND kind IN ('chain.transition', 'issue.claimed', 'issue.released') ORDER BY at, rowid").all() as { kind: string; issue: number; payload: string }[];
@@ -234,6 +241,7 @@ describe("Scheduler.tick", () => {
     const parsed = JSON.parse(readFileSync(join(paths.claims, "3.json"), "utf8"));
     expect("slot" in parsed).toBe(false);
     for (const k of ["issue", "state", "worktree", "started_at", "last_activity_at", "run_id"]) expect(k in parsed).toBe(true);
+    expect(claimedPayloads(paths, 3)).toStrictEqual([{}]); // spec 095 AC-1
   }, 30_000);
 
   it("claims two with slots: 2", async () => {
@@ -316,13 +324,13 @@ describe("Scheduler.tick", () => {
   it("releases a stale claim whose issue lost in-progress on GitHub (review focus 2)", async () => {
     const { s, deps, paths, pair } = await setup(routes([], { 7: ["validated"] }));
     await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
-    await recordEvent(paths, "issue.claimed", deps.now(), { slot: 1 }, { issue: 7 });
+    await recordEvent(paths, "issue.claimed", deps.now(), {}, { issue: 7 });
     const t = await s.tick();
     expect(t.released).toEqual([7]);
     expect(await listClaims(paths)).toEqual([]);
     // Spec 096 AC-1: the drop records the release of the claim the store holds open.
     expect(staleRows(paths)).toEqual([
-      ["issue.claimed", 7, { slot: 1 }],
+      ["issue.claimed", 7, {}],
       ["issue.released", 7, { reason: "stopped" }],
     ]);
   }, 30_000);
@@ -338,14 +346,14 @@ describe("Scheduler.tick", () => {
 
   it("records nothing for a stale claim already closed by an earlier release (spec 096 AC-2)", async () => {
     const { s, deps, paths, pair } = await setup(routes([], { 7: ["validated"] }));
-    await recordEvent(paths, "issue.claimed", deps.now(), { slot: 1 }, { issue: 7 });
+    await recordEvent(paths, "issue.claimed", deps.now(), {}, { issue: 7 });
     await recordEvent(paths, "issue.released", deps.now(), { reason: "done" }, { issue: 7 });
     await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
     const t = await s.tick();
     expect(t.released).toEqual([7]);
     expect(await listClaims(paths)).toEqual([]);
     expect(staleRows(paths)).toEqual([
-      ["issue.claimed", 7, { slot: 1 }],
+      ["issue.claimed", 7, {}],
       ["issue.released", 7, { reason: "done" }],
     ]);
   }, 30_000);
@@ -570,6 +578,7 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     expect((await s.tick()).claimed).toEqual([7]);
     await settle();
     expect("slot" in JSON.parse(readFileSync(join(paths.claims, "7.json"), "utf8"))).toBe(false);
+    expect(claimedPayloads(paths, 7)).toStrictEqual([{}]); // spec 095 AC-1
   }, 30_000);
 
   it("closes a capability-hold issue on the maintainer's answer instead of resuming it (spec 014 AC-8)", async () => {
@@ -1653,6 +1662,7 @@ describe("Scheduler.tick: a chain blocked on main (spec 060)", () => {
     expect(await listBlocked(h.paths)).toEqual([]);
     const claim = (await readClaim(h.paths, 7))!;
     expect(claim.pendingEvent).toEqual({ type: "unblocked", main_sha: mainHead(h) });
+    expect(claimedPayloads(h.paths, 7)).toStrictEqual([{}]); // spec 095 AC-1
     expect(serviceRecords(h.paths).find((r) => r.kind === "unblocked")).toMatchObject({ issue: 7, condition: { kind: "paths" } });
     await log.release("chain:7");
   }, 30_000);
