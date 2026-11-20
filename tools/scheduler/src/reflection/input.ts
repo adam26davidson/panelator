@@ -66,7 +66,7 @@ async function planWithFates(d: Pick<ReflectionDeps, "gh">, db: DatabaseSync, p:
 export function timeline(db: DatabaseSync, issue: number) {
   const ev = rows(db, "SELECT * FROM events WHERE issue = ? ORDER BY at, rowid", issue);
   const of = (k: string) => ev.filter((e) => e.kind === k);
-  const runs = of("run.ended").map((e) => ({ run_id: e.run_id, stage: e.payload.stage, model: e.payload.model, outcome: e.payload.outcome, cost_usd: e.payload.cost_usd ?? 0 }));
+  const runs = of("run.ended").map((e) => ({ at: e.at, run_id: e.run_id, stage: e.payload.stage, model: e.payload.model, outcome: e.payload.outcome, cost_usd: e.payload.cost_usd ?? 0 }));
   return {
     issue,
     eligible_at: of("issue.eligible")[0]?.at ?? null,
@@ -81,13 +81,13 @@ export function timeline(db: DatabaseSync, issue: number) {
   };
 }
 
-/** Questions sent and not answered since (design section 3): the answer is the next `answered` event of the same issue and stage. */
+/** Questions sent and not answered (design section 3), matched by the recorded question comment id. */
 export function openQuestions(db: DatabaseSync) {
   const q = rows(db, "SELECT * FROM events WHERE kind = 'question' ORDER BY at, rowid");
   const contacts = rows(db, "SELECT * FROM events WHERE kind = 'maintainer.contact' AND json_extract(payload, '$.kind') = 'question'");
   return q
     .filter((e) => e.payload.event === "sent")
-    .filter((e) => !q.some((a) => a.payload.event === "answered" && a.issue === e.issue && a.payload.asking_stage === e.payload.asking_stage && a.at >= e.at))
+    .filter((e) => !q.some((a) => a.payload.event === "answered" && a.issue === e.issue && a.payload.question_comment_id === e.payload.question_comment_id && a.at >= e.at))
     .map((e) => ({
       issue: e.issue, stage: String(e.payload.asking_stage), sent_at: e.at,
       question: String(contacts.find((c) => c.issue === e.issue && c.payload.question_comment_id === e.payload.question_comment_id)?.payload.text

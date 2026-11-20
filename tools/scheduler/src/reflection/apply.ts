@@ -88,7 +88,8 @@ export async function applyReflectionResult(d: ApplyDeps, a: { def: StandingDefi
   // 3. The items. The bound counts the items of this plan key that exist on GitHub, found or created.
   const linked: Linked[] = [];
   const deferred = plan.deferred.map((x) => ({ ...x }));
-  let existing = 0;
+  const itemPrefix = `${PREFIX}${planKey}:`;
+  let existing = new Set(open.filter((i) => i.author === d.botLogin && i.body.split(itemPrefix).slice(1).some((s) => /^\d+ -->/.test(s))).map((i) => i.number)).size;
   for (const [index, item] of plan.items.entries()) {
     const defer = (why: string) => deferred.push({ title: item.title, why });
     const charter = /docs\/charter\.md/.test(`${item.title}\n${item.body}`);
@@ -109,8 +110,8 @@ export async function applyReflectionResult(d: ApplyDeps, a: { def: StandingDefi
       // The chain starts at the spec stage and the App is the author: an item cannot name a Spec: line (the filer does the same).
       const body = n(item.body.replace(/^[ \t]*Spec:.*$/gm, "").trim());
       number = await createIssueRecorded(d.gh, d.paths, { title: n(item.title), body: `Plan: #${planIssue}\nKind: ${item.kind}\n\n${body}\n\n${marker}`, labels: [item.class, "validated"], by: d.botLogin, class: item.class, marker });
+      existing++;
     }
-    existing++;
     linked.push({ index, title: item.title, kind: item.kind, issue: number, existing: false, charter });
   }
 

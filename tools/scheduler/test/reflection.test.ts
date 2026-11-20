@@ -71,6 +71,15 @@ describe("reflection input (spec 028 AC-5)", () => {
     expect(input.open_questions).toEqual([{ issue: 9, stage: "spec", sent_at: "2026-11-05T00:00:00.000Z", question: "Should we ship X?" }]);
   });
 
+  it("matches answers to the question comment, not merely the issue and stage", async () => {
+    const paths = await world();
+    await appendQuestionLog(paths, { issue: 9, at: "2026-11-05T00:00:00.000Z", event: "sent", asking_stage: "spec", question_comment_id: 55 }, "First question?");
+    await appendQuestionLog(paths, { issue: 9, at: "2026-11-05T01:00:00.000Z", event: "sent", asking_stage: "spec", question_comment_id: 56 }, "Follow-up?");
+    await appendQuestionLog(paths, { issue: 9, at: "2026-11-06T00:00:00.000Z", event: "answered", asking_stage: "spec", question_comment_id: 55 });
+    const input = await buildReflectionInput(deps(paths), registry()["delivery-reflection"]!, "r", FROM, mkdtempSync(join(tmpdir(), "root-")));
+    expect(input.open_questions).toEqual([{ issue: 9, stage: "spec", sent_at: "2026-11-05T01:00:00.000Z", question: "Follow-up?" }]);
+  });
+
   it("groups maintainer contacts by kind and label and marks a recurring kind (charter reflection)", async () => {
     const paths = await world();
     const c = (at: string, label: string, text: string) => record(paths, "maintainer.contact", at, { channel: "issue", kind: "question", label, text });
@@ -247,6 +256,15 @@ describe("reflection apply (spec 028 AC-6 to AC-9)", () => {
     expect(out.filed).toHaveLength(3);
     // the item found by its marker was left as it was
     expect(w.issues.get(out.filed[0]!)!.body).toContain(`Plan: #${out.planIssue}`);
+  });
+
+  it("counts all existing items of the key before creating anything on a changed retry", async () => {
+    const w = await applyWorld();
+    await w.run(resultOf(Array.from({ length: 8 }, (_, i) => item(i))));
+    w.advance();
+    const out = await w.run(resultOf([item(0, { class: "invalid" }), ...Array.from({ length: 8 }, (_, i) => item(i + 1))]));
+    expect([...w.issues.values()].filter((i) => i.labels.includes("validated"))).toHaveLength(8);
+    expect(out.deferred).toContainEqual({ title: "Item 8", why: "over the plan bound" });
   });
 
   it("applies the direct actions once per plan key, and lists them in the plan", async () => {
