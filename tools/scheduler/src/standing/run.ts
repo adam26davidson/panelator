@@ -128,7 +128,12 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   const applyDirect=async()=>{
    await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},body.findings??[]);
    const lines:string[]=[];
-   for(const action of body.actions??[]){const row=await applyAction(ctx,{...action,agent:def.name,run_id:runId},def.actions);lines.push(`${action.kind} ${JSON.stringify(action.args)}: ${row.status}${row.reason?` (${row.reason})`:''}`);}
+   for(const action of body.actions??[]){
+    const row=await applyAction(ctx,{...action,agent:def.name,run_id:runId},def.actions);
+    // Level-2 requests are already queued by applyAction; other reflection policy refusals also need a reviewed follow-up (028 AC-8).
+    if(reflective&&row.status==='refused'&&row.reason==='action not allowed')await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},[{what:`reflection action refused: ${action.kind}`,where:`agents/standing/${def.name}.md`,evidence:`${row.reason}: ${action.why}`,noticed_how:'reflection action policy enforcement'}]);
+    lines.push(`${action.kind} ${JSON.stringify(action.args)}: ${row.status}${row.reason?` (${row.reason})`:''}`);
+   }
    return lines;
   };
   const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog,d.paths),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now,repoDir:d.repoDir,serviceLog:d.log};

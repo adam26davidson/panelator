@@ -77,6 +77,7 @@ describe("recorded reflection agents (spec 028)", () => {
     expect(planIssue(w).body).toContain("a metric_change needs a ## Rationale section");
     expect(inputOf(w).metric_definitions.length).toBeGreaterThan(0);
     expect(events(w, "action").some((e) => e.payload.status === "refused")).toBe(true);
+    expect(readFileSync(w.paths.findingsQueue, "utf8")).toContain("reflection action refused: set_parameter");
   }, 90_000);
 
   it("refuses and queues a level-2 action from delivery reflection", async () => {
