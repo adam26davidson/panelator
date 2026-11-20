@@ -511,7 +511,7 @@ describe("driveChain", () => {
     const c = await steps(deps, claim, 3);
     expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1"]);
     expect(c.state).toMatchObject({ stage: "plan", rescues: 1, rescueRun: true });
-    expect(c.state.history.at(-1)).toContain("profile not available: firmware (implementation profiles: backend)");
+    expect(c.state.history.at(-1)).toContain("profile not available: firmware (implementation profiles: backend, web-ui)");
     expect(notifications).toEqual([]);
   }, 60_000);
 
