@@ -394,7 +394,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
 
 **Credential check agent** (design section 6.1)
 
-- AC-13. Amended by [072-plain-credential-file-reminder](../072-plain-credential-file-reminder/spec.md) AC-6: the credential check's input has no plain configuration files and its result files no finding for a plain file. **The credential check is a standing agent.**
+- AC-13. Amended by [099-beyond-github-rest-on-the-credential-store](../099-beyond-github-rest-on-the-credential-store/spec.md) AC-12: the credential check's pre-run gains `checkInstallationScope` and its result is part of the check's input. Amended by [072-plain-credential-file-reminder](../072-plain-credential-file-reminder/spec.md) AC-6: the credential check's input has no plain configuration files and its result files no finding for a plain file. **The credential check is a standing agent.**
   `agents/standing/credential-check.md`: standard tier, Claude, `worktree:
   none`, schedule `1d`, events `credential_expiry`, credentials none,
   actions `renew_credential`, output `credential-check-result`. That schema,
@@ -627,6 +627,8 @@ list, the security criteria, or what routes a sensitive diff to the security
 review.
 
 ## 6. Verification
+
+> Amended by [099-beyond-github-rest-on-the-credential-store](../099-beyond-github-rest-on-the-credential-store/spec.md) section 6: the first-contact recorded run is a question approved by button, the party registered, the resumed stage told no channel can reach the party, and no write to another repository attempted; no `gh issue create -R` goes through and none is refused.
 
 > Amended by [083-contact-records-leave-the-action-log](../083-contact-records-leave-the-action-log/spec.md) section 4: the refused first-contact call leaves one `refused` line in `contacts/log.jsonl` and no action-log row.
 
