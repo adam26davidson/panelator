@@ -7,8 +7,9 @@ payload is `{}`, not `{ slot }`), marked as section 4 records.
 Class: bug. Domain: backend.
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
-section 3 ("Recording": everything is recorded raw, which is what the
-scheduler has, not a number it invents at the recording call) and section 10
+section 7 ("Raw events, derived metrics": concurrency slot occupancy is a raw
+event, which is what `slots.sample` records, so a claim carries no count of its
+own) and section 10
 ("Small work skips layers": a bug spec hangs directly off a top design);
 [ADR 0007](../../docs/decisions/0007-claim-record-has-no-slot-field.md) (a
 claim has no slot and no slot identity is defined; this spec applies that
@@ -39,7 +40,7 @@ events already in the store keep their lines, as spec 026 AC-1 requires.
   reader's needs would define one).
 - A held-count field under another name. Occupancy at each change is already
   `slots.sample` (spec 026 AC-2), recorded in the same tick as the claim, so a
-  count on the claim event would duplicate it; see section 3 note.
+  count on the claim event would duplicate it; see design section 7.
 - The claim record, `Claim` type and `schemas/scheduler/claim.json` (spec 034
   did that work; `state/claims.ts` keeps dropping a legacy `slot` on read).
 - Rewriting, migrating or re-indexing stored event lines, and the backfill
