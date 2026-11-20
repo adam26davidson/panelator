@@ -11,6 +11,7 @@ import { buildSelectContext } from "../shortlist/fetch.ts";
 import {eventsWake,initializeAgents,readAgentState,runningUnits} from '../standing/state.ts';
 import {parseDuration} from '../standing/registry.ts';
 import {runStandingAgent} from '../standing/run.ts';
+import type {MetricDefinition} from '../metrics/definitions.ts';
 import {CAPABILITY_CLOSED_MARKER,isCapabilityIssue} from '../filer/input.ts';
 import type {StandingDefinition} from '../types.ts';
 import type {ParameterStore} from '../parameters/store.ts';
@@ -50,6 +51,8 @@ import { neutraliseMarkers } from "../github/markers.ts";
 
 export interface SchedulerDeps extends DriverDeps {
   registry?:Record<string,StandingDefinition>;
+  /** Spec 028: the metric definitions, for the reflection input. */
+  metrics?:Record<string,MetricDefinition>;
   parameters?:ParameterStore;
   runStanding?:typeof runStandingAgent;
   botLogin: string;
@@ -744,7 +747,7 @@ export class Scheduler {
         const debounceMs = parseDuration(String((await d.parameters.read("standing.event_debounce")).value));
         for (const s of states) {
           // Spec 025 AC-12: a routine event waits out the debounce; the schedule never does.
-          const due = (s.state.next_run && Date.parse(s.state.next_run) <= d.now().getTime()) || eventsWake(s.state, d.now().getTime(), debounceMs);
+          const due = (s.state.next_run && Date.parse(s.state.next_run) <= d.now().getTime()) || eventsWake(s.state, d.now().getTime(), debounceMs, s.def.trigger.min_events ?? 1);
           // Spec 013 AC-7: a standing agent postponed on a quota limit is skipped until then, whatever events arrive.
           if (s.state.postponed_until && Date.parse(s.state.postponed_until) > d.now().getTime()) continue;
           if (!s.state.paused && !this.#activeStanding.has(s.def.name) && due) dueStanding.push(s);

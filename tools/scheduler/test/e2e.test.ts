@@ -2277,9 +2277,22 @@ describe("end to end: a check failing outside the PR's scope waits for main (spe
   }, 120_000);
 });
 
+describe("end to end: a reflection run records its plan and its metrics snapshot (spec 028 AC-6)", () => {
+  it("a charter reflection with no items still files a plan issue", async () => {
+    const w = await standingWorld({ "charter-reflection": [{ summary: "nothing to change", plan: { title: "Plan", summary: "Nothing to change.", observations: [], items: [], metrics_note: "no data", open_questions_note: "none", deferred: [] } }] });
+    for (const name of Object.keys(w.registry)) await writeAgentState(w.paths, name, { ...(await readAgentState(w.paths, name))!, paused: name !== "charter-reflection", paused_by: name !== "charter-reflection" ? "maintainer" : null });
+    w.setNow(new Date("2026-10-09T00:00:00Z"));
+    await w.scheduler.tick();
+    for (let i = 0; i < 6000 && w.scheduler.active; i++) await new Promise((r) => setTimeout(r, 25));
+    expect(w.adapter.ran).toEqual(["charter-reflection"]);
+    expect(w.issues.map((i) => i.title)).toEqual(["Charter plan 2026-10-09"]);
+    expect(w.issues[0]!.body).toContain("This plan has no items.");
+  }, 60_000);
+});
+
 describe("every event kind is recorded across the recorded chains (spec 026 AC-2)", () => {
-  /** Kinds with no producer yet: spec 027 adds `metrics.snapshot`, spec 028 `reflection.plan` and empties this list. */
-  const NOT_YET_PRODUCED = ["metrics.snapshot", "reflection.plan"];
+  /** Every kind has a producer now: spec 027 added `metrics.snapshot`, spec 028 `reflection.plan`. */
+  const NOT_YET_PRODUCED: string[] = [];
   /** The AWS kinds (spec 022) are produced only with an `aws` block, and are asserted in aws.test.ts; the F2 contact kinds are not asserted either. */
   const RESERVED = ["aws.cost", "aws.reserve"];
   it("finds each kind at least once in the events/ files the runs above left", () => {

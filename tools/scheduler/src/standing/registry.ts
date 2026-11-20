@@ -19,6 +19,7 @@ export function parseStandingDefinition(markdown: string, events: readonly strin
   const t = fm.trigger as StandingDefinition['trigger'];
   if (t.schedule !== undefined && (parseDuration(t.schedule) < 3600000 || parseDuration(t.schedule) > 30*86400000)) throw new Error('trigger.schedule must be between 1h and 30d');
   if (t.events !== undefined && t.events.some(e => !events.includes(e))) throw new Error('trigger.events unknown or empty');
+  if (t.min_events !== undefined && t.events === undefined) throw new Error('trigger.min_events needs events');
   const allowed = (fm.actions ?? []) as string[];
   if (allowed.some(k => !actions.includes(k))) throw new Error('actions contains unknown kind');
   if (fm.profile === 'from-issue') throw new Error('profile must be none or a profile name');

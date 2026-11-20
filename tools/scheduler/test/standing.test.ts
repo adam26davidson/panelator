@@ -9,7 +9,7 @@ import {emit,EVENT_NAMES,watchMainChecks} from '../src/standing/events.ts';
 import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
 import {ParameterStore} from '../src/parameters/store.ts';
 import {buildAuditInput} from '../src/standing/audit-input.ts';
-import {registryActionsCheck} from '../src/actions/index.ts';
+import {registryActionsCheck,KINDS} from '../src/actions/index.ts';
 import type {GitHubClient} from '../src/github/client.ts';
 import { loadRegistry, parseDuration, renderStandingPrompt } from '../src/standing/registry.ts';
 import { agentsDir } from '../src/config.ts';
@@ -32,6 +32,20 @@ Hello {{agent}}
 it('the filer prompt carries the stops_pipeline rule and input name (spec 063 AC-3)',()=>{
  const text=readFileSync(join(agentsDir,'standing','findings-filer.md'),'utf8');
  expect(text).toContain('issue.stops_pipeline');expect(text).toContain('stops every run or every PR');expect(text).toContain('stops_pipeline_label');
+});
+describe('trigger.min_events (spec 028 AC-4)', () => {
+  const withTrigger = (t: string) => text.replace('trigger: {schedule: 1d, events: [merge]}', `trigger: ${t}`);
+  const load = (s: string) => { const dir = mkdtempSync(join(tmpdir(), 'registry-')); writeFileSync(join(dir, 'test.md'), s); return loadRegistry(dir, ['merge'], []); };
+  it('accepts min_events with events and rejects 0 or a missing events list', () => {
+    expect(load(withTrigger('{schedule: 7d, events: [merge], min_events: 10}')).test.trigger.min_events).toBe(10);
+    expect(() => load(withTrigger('{schedule: 7d, events: [merge], min_events: 0}'))).toThrow();
+    expect(() => load(withTrigger('{schedule: 7d, min_events: 3}'))).toThrow(/min_events needs events/);
+  });
+  it('leaves the filer and the audit on the default', () => {
+    const r = loadRegistry(join(agentsDir, 'standing'), EVENT_NAMES, Object.keys(KINDS));
+    expect(r['findings-filer']!.trigger.min_events).toBeUndefined();
+    expect(r['action-audit']!.trigger.min_events).toBeUndefined();
+  });
 });
 describe('standing registry', () => {
   function load(s = text) { const dir = mkdtempSync(join(tmpdir(), 'registry-')); writeFileSync(join(dir, 'test.md'), s); return loadRegistry(dir, ['merge'], []); }
@@ -72,7 +86,7 @@ describe('standing registry', () => {
   it('rejects unknown placeholders', () => expect(() => renderStandingPrompt('{{oops}}', {})).toThrow());
   it('loads every real agent and cross-checks action code', () => {
     const kinds=registryActionsCheck('agents/actions.yaml');
-    expect(Object.keys(loadRegistry('agents/standing',EVENT_NAMES,kinds)).sort()).toEqual(['action-audit','findings-filer','infra-health']);
+    expect(Object.keys(loadRegistry('agents/standing',EVENT_NAMES,kinds)).sort()).toEqual(['action-audit','charter-reflection','delivery-reflection','findings-filer','infra-health','meta-reflection']);
   });
   it('still loads an agent that names a kind raised to level 2', async()=>{
     const dir=await mkdtemp(join(tmpdir(),'level2-'));
@@ -149,4 +163,23 @@ describe('agent state is checked before it is written (spec 086 AC-5)',()=>{
    expect(await readFile(file,'utf8')).toBe(before);
   }
  });
+});
+
+describe('the reflection agents (spec 028 AC-1 to AC-3)', () => {
+  const r = loadRegistry(join(agentsDir, 'standing'), EVENT_NAMES, Object.keys(KINDS));
+  const bounds = { timeout_min: 45, max_turns: 80, max_cost_usd: 8 };
+  it('registers the six standing agents', () => {
+    expect(Object.keys(r).sort()).toEqual(['action-audit', 'charter-reflection', 'delivery-reflection', 'findings-filer', 'infra-health', 'meta-reflection']);
+  });
+  it('delivery waits for ten merges, charter weekly, meta monthly', () => {
+    expect(r['delivery-reflection']).toMatchObject({ tier: 'strong', harness: 'claude', worktree: 'fresh', trigger: { schedule: '7d', events: ['merge'], min_events: 10 }, bounds, actions: ['set_parameter', 'pause_agent', 'resume_agent', 'run_agent'], input: 'reflection-input', output: 'reflection-result' });
+    expect(r['charter-reflection']).toMatchObject({ trigger: { schedule: '7d' }, bounds, actions: ['set_parameter', 'pause_agent', 'resume_agent', 'run_agent'] });
+    expect(r['meta-reflection']).toMatchObject({ trigger: { schedule: '30d' }, bounds, actions: [] });
+  });
+  it('every prompt renders and forbids posting to GitHub', () => {
+    for (const n of ['delivery-reflection', 'charter-reflection', 'meta-reflection']) {
+      const out = renderStandingPrompt(r[n]!.prompt, { agent: n, events: '{}', parameters: '{}', profile_instructions: '', since: 'x', result_path: '/r.json' });
+      expect(out).toContain('never post to GitHub');
+    }
+  });
 });

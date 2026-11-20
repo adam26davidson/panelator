@@ -1027,6 +1027,27 @@
         },
         "type": "object"
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "reflection.plan"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "reflection-plan.json"
+          }
+        },
+        "type": "object"
+      }
     }
   ]
 }

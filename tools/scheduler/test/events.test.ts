@@ -38,6 +38,13 @@ describe("recordEvent (spec 026 AC-1)", () => {
     expect(readdirSync(p.events)).toEqual([]);
   });
 
+  it("validates the reflection.plan payload (spec 028 AC-6)", async () => {
+    const p = await fresh();
+    const plan = { title: "t", summary: "s", observations: [], items: [], metrics_note: "", open_questions_note: "", deferred: [] };
+    await expect(recordEvent(p, ev({ kind: "reflection.plan", agent: "delivery-reflection", payload: { run_id: "x", plan_issue: 5 } }))).rejects.toThrow(/invalid reflection.plan event/);
+    await recordEvent(p, ev({ kind: "reflection.plan", agent: "delivery-reflection", payload: { plan, plan_key: "delivery-reflection-1", plan_issue: 5, filed: [6, 7] } }));
+  });
+
   it("rejects a slot in an issue.claimed payload and accepts {} (spec 095 AC-2)", async () => {
     const p = await fresh();
     await expect(recordEvent(p, ev({ kind: "issue.claimed", issue: 7, payload: { slot: 0 } }))).rejects.toThrow(/invalid issue.claimed event/);

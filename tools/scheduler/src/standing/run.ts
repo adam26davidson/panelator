@@ -25,8 +25,18 @@ import {buildInfraHealthInput} from './infra-health-input.ts';
 import {updateAgentState,type AgentState} from './state.ts';
 import {parseDuration} from './registry.ts';
 import {record} from '../events/store.ts';
+import {openIndex} from '../events/index.ts';
+import {buildReflectionInput,periodStart} from '../reflection/input.ts';
+import {applyReflectionResult,type ReflectionResult} from '../reflection/apply.ts';
+import type {MetricDefinition} from '../metrics/definitions.ts';
 const exec=promisify(execFile);
-export interface StandingDeps extends DriverDeps {parameters:ParameterStore;botLogin:string}
+export interface StandingDeps extends DriverDeps {parameters:ParameterStore;botLogin:string;metrics?:Record<string,MetricDefinition>;registry?:Record<string,StandingDefinition>}
+/** The end of the agent's latest successful run: its state record, else its latest `ok` agent.run event (a failed pair of attempts leaves `last_run` failed). */
+function lastSuccess(d:StandingDeps,def:StandingDefinition,state:AgentState):string|null {
+ if(state.last_run?.outcome==='ok')return state.last_run.at;
+ const db=openIndex(d.paths,{readOnly:true});
+ try{return (db.prepare("SELECT max(at) AS at FROM events WHERE kind = 'agent.run' AND agent = ? AND json_extract(payload, '$.outcome') = 'ok'").get(def.name) as {at:string|null}).at;}finally{db.close();}
+}
 /** A repair turn only rewrites JSON it already has; the cap also keeps a session-lost fresh run from a full investigation. */
 const REPAIR_MAX_TURNS=5,REPAIR_MAX_ERRORS=40;
 const repairPrompt=(errors:string[])=>`Your result failed validation:\n${errors.slice(0,REPAIR_MAX_ERRORS).map(e=>`- ${e}`).join('\n')}${errors.length>REPAIR_MAX_ERRORS?`\n- and ${errors.length-REPAIR_MAX_ERRORS} more`:''}\n\nDo not investigate further and call no tools. Return the complete corrected result JSON as your final message, every decision included, changing only what these errors name. Keep your decisions as they are.`;
@@ -46,6 +56,15 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  let postponedUntil:string|null=null;
  const postpone=async(reason:string)=>{postponedUntil=await waitAfterLimit(d.paths,def.harness,def.model,d.now());throw new Error(`${reason}; postponed until ${postponedUntil}`);};
  const filer:FilerDeps={paths:d.paths,gh:d.gh,botLogin:d.botLogin,now:d.now,classes:[...d.cfg.labels.feature_classes,...d.cfg.labels.debt_classes],stopsPipelineLabel:d.cfg.labels.stops_pipeline,notify:(text,key)=>d.notifier.notify({issue:0,gate:'standing',label:`${def.name}:${key??text}`,text}),log:d.log};
+ // Spec 028 AC-6: a reflection's period start and plan key are fixed before its first attempt and reused by every later one.
+ const reflective=def.output==='reflection-result';
+ let reflection=state.reflection;
+ if(reflective&&!reflection) {
+  const from=periodStart(lastSuccess(d,def,state),now);
+  reflection={period_from:from.toISOString(),plan_key:`${def.name}-${from.getTime()}`};
+  const fixed=reflection;
+  await updateAgentState(d.paths,def.name,s=>({...s,reflection:fixed}));
+ }
  let worktree=d.repoDir,created=false;
  let summary='',outcome='failed',error='standing run failed',actionCount=0,findingCount=0;
  // Spec 045 AC-1: the outage cause label of a transient attempt; `judged` marks an error thrown for the run's own judgement, already classified.
@@ -63,7 +82,8 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
    await checkHostSpace(d.paths,d.paths.worktrees,{freeSpace:d.freeSpace,log:d.log});
    await exec('git',['worktree','add','--detach',worktree,'origin/main'],{cwd:d.repoDir});created=true;
   }
-  const input=def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):def.input==='infra-health-input'?await buildInfraHealthInput({paths:d.paths,freeSpace:d.freeSpace},received,state.last_run?.at??null,now):null;
+  const reflectionInput=reflective?await buildReflectionInput({paths:d.paths,gh:d.gh,botLogin:d.botLogin,parameters:d.parameters,metrics:d.metrics??{},agentsDir:d.agentsDir,reflectionAgents:Object.values(d.registry??{[def.name]:def}).filter(x=>x.output==='reflection-result').map(x=>x.name),now:d.now},def,runId,new Date(reflection!.period_from),worktree):null;
+  const input=reflectionInput??(def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):def.input==='infra-health-input'?await buildInfraHealthInput({paths:d.paths,freeSpace:d.freeSpace},received,state.last_run?.at??null,now):null);
   const parameters=await d.parameters.all();
   const inputCheck=validate(def.input as SchemaName,input??{events:received,since:state.last_run?.at??null,parameters});
   if(!inputCheck.ok)throw new Error(`standing input: ${inputCheck.errors.join('; ')}`);
@@ -105,9 +125,20 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   if(result.outcome!=='ok'||!result.result){judged=true;throw new Error(result.reason??result.resultErrors.join('; '));}
   const body=result.result as {summary:string;actions?:{kind:string;args:Record<string,unknown>;why:string}[];findings?:unknown[]};
   if(def.output==='filer-result')await applyFilerResult(filer,runId,input as Awaited<ReturnType<typeof buildFilerInput>>,body as FilerResult);
-  await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},body.findings??[]);
+  const applyDirect=async()=>{
+   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},body.findings??[]);
+   const lines:string[]=[];
+   for(const action of body.actions??[]){
+    const row=await applyAction(ctx,{...action,agent:def.name,run_id:runId},def.actions);
+    // Level-2 requests are already queued by applyAction; other reflection policy refusals also need a reviewed follow-up (028 AC-8).
+    if(reflective&&row.status==='refused'&&row.reason==='action not allowed')await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},[{what:`reflection action refused: ${action.kind}`,where:`agents/standing/${def.name}.md`,evidence:`${row.reason}: ${action.why}`,noticed_how:'reflection action policy enforcement'}]);
+    lines.push(`${action.kind} ${JSON.stringify(action.args)}: ${row.status}${row.reason?` (${row.reason})`:''}`);
+   }
+   return lines;
+  };
   const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog,d.paths),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now,repoDir:d.repoDir,serviceLog:d.log};
-  for(const action of body.actions??[])await applyAction(ctx,{...action,agent:def.name,run_id:runId},def.actions);
+  if(reflective)await applyReflectionResult({paths:d.paths,gh:d.gh,botLogin:d.botLogin,classes:filer.classes,maxIssues:d.cfg.reflection_max_issues,now:d.now,log:d.log,applyDirect},{def,result:body as unknown as ReflectionResult,planKey:reflection!.plan_key,runId,input:reflectionInput as never});
+  else await applyDirect();
   actionCount=body.actions?.length??0;findingCount=body.findings?.length??0;
   summary=body.summary;outcome='ok';
   await writeFile(join(d.paths.runs,result.runId,'summary.json'),JSON.stringify({summary}));
@@ -163,7 +194,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  if(outcome!=='ok'&&state.failures===0){await updateAgentState(d.paths,def.name,current=>{const n={...current,failures:1};if(over)delete n.outage;return n;});return;}
  const at=d.now().toISOString();
  const next=def.trigger.schedule?new Date(d.now().getTime()+parseDuration(String((await d.parameters.read(`schedule.${def.name}`)).value))).toISOString():null;
- await updateAgentState(d.paths,def.name,current=>{const n={...current,last_run:{at,run_id:runId,outcome},summary:summary||error,next_run:next,failures:0,pending_events:current.pending_events.filter(e=>!received.some(r=>JSON.stringify(r)===JSON.stringify(e)))};if(over)delete n.outage;return n;});
+ await updateAgentState(d.paths,def.name,current=>{const n={...current,last_run:{at,run_id:runId,outcome},summary:summary||error,next_run:next,failures:0,pending_events:current.pending_events.filter(e=>!received.some(r=>JSON.stringify(r)===JSON.stringify(e)))};if(over)delete n.outage;if(outcome==='ok')delete n.reflection;return n;});
  if(outcome!=='ok') {
   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:at},[{what:`standing agent ${def.name} failed twice: ${failureCause(error,transient)}`,where:`agents/standing/${def.name}.md`,evidence:error,noticed_how:'standing run retry exhausted'}],{exclude:def.name});
   await filer.notify(`Standing agent ${def.name} failed twice: ${error}`);
