@@ -11,6 +11,7 @@ import { buildSelectContext } from "../shortlist/fetch.ts";
 import {eventsWake,initializeAgents,readAgentState,runningUnits} from '../standing/state.ts';
 import {parseDuration} from '../standing/registry.ts';
 import {runStandingAgent} from '../standing/run.ts';
+import type {MetricDefinition} from '../metrics/definitions.ts';
 import {CAPABILITY_CLOSED_MARKER,isCapabilityIssue} from '../filer/input.ts';
 import type {StandingDefinition} from '../types.ts';
 import type {ParameterStore} from '../parameters/store.ts';
@@ -50,6 +51,8 @@ import { neutraliseMarkers } from "../github/markers.ts";
 
 export interface SchedulerDeps extends DriverDeps {
   registry?:Record<string,StandingDefinition>;
+  /** Spec 028: the metric definitions, for the reflection input. */
+  metrics?:Record<string,MetricDefinition>;
   parameters?:ParameterStore;
   runStanding?:typeof runStandingAgent;
   botLogin: string;

@@ -1,3 +1,4 @@
+import {loadMetricDefinitions} from '../../src/metrics/definitions.ts';
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -101,24 +102,30 @@ export async function standingWorld(results:Record<string,Scripted[]>,freeSpace:
   await writeAgentState(paths,'infra-health',{...(await readAgentState(paths,'infra-health'))!,paused:true,paused_by:'maintainer'});
   const issues:{number:number;title:string;body:string;user:{login:string};labels:{name:string}[];created_at:string}[]=[];
   const comments=new Map<number,unknown[]>();
+  const closed=new Map<number,(typeof issues)[number]>();
+  /** `failCreateAt`: the Nth issue creation after it is set answers 500 (spec 028's crash tests). */
+  const hooks={failCreateAt:0,creates:0};
+  let nextNumber=100;
   const routes:Route[]=[
     {method:'GET',path:/^\/repos\/o\/r\/issues$/,reply:()=>({body:issues})},
     {method:'POST',path:/^\/graphql$/,reply:()=>({body:{data:{repository:{issues:{totalCount:issues.length}}}}})},
     {method:'GET',path:/^\/repos\/o\/r\/issues\/(\d+)\/timeline$/,reply:()=>({body:[]})},
     {method:'GET',path:/^\/repos\/o\/r\/issues\/(\d+)\/comments$/,reply:m=>({body:comments.get(Number(m[1]))??[]})},
     {method:'POST',path:/^\/repos\/o\/r\/issues\/(\d+)\/comments$/,reply:(m,b)=>{const cs=comments.get(Number(m[1]))??[];const c={id:cs.length+1,body:(b as {body:string}).body,user:{login:BOT},created_at:now.toISOString()};cs.push(c);comments.set(Number(m[1]),cs);return {body:c};}},
-    {method:'POST',path:/^\/repos\/o\/r\/issues$/,reply:(_m,b)=>{const i=b as {title:string;body:string;labels:string[]};const number=100+issues.length;issues.push({number,title:i.title,body:i.body,user:{login:BOT},labels:i.labels.map(name=>({name})),created_at:now.toISOString()});return {status:201,body:{number}};}},
+    {method:'POST',path:/^\/repos\/o\/r\/issues$/,reply:(_m,b)=>{if(hooks.failCreateAt&&++hooks.creates===hooks.failCreateAt)return {status:422,body:{message:'mock: create failed'}};const i=b as {title:string;body:string;labels:string[]};const number=nextNumber++;issues.push({number,title:i.title,body:i.body,user:{login:BOT},labels:i.labels.map(name=>({name})),created_at:now.toISOString()});return {status:201,body:{number}};}},
     {method:'DELETE',path:/^\/repos\/o\/r\/issues\/(\d+)\/labels\/abandoned$/,reply:m=>{const i=issues.find(i=>i.number===Number(m[1]));if(i)i.labels=i.labels.filter(l=>l.name!=='abandoned');return {status:204,body:null};}},
-    {method:'PATCH',path:/^\/repos\/o\/r\/issues\/(\d+)$/,reply:m=>{const i=issues.findIndex(i=>i.number===Number(m[1]));if(i>=0)issues.splice(i,1);return {body:{}};}},
+    // Spec 028: a PATCH with a body sets it (setIssueBody); any other PATCH closes, which takes the issue out of the open list and keeps it for a read by number.
+    {method:'PATCH',path:/^\/repos\/o\/r\/issues\/(\d+)$/,reply:(m,b)=>{const i=issues.findIndex(i=>i.number===Number(m[1]));if(i<0)return {body:{}};if(typeof (b as {body?:string}).body==='string'){issues[i]!.body=(b as {body:string}).body;return {body:{}};}closed.set(issues[i]!.number,issues[i]!);issues.splice(i,1);return {body:{}};}},
+    {method:'GET',path:/^\/repos\/o\/r\/issues\/(\d+)$/,reply:m=>{const n=Number(m[1]);const i=issues.find(i=>i.number===n)??closed.get(n);if(!i)return {status:404,body:{message:'Not Found'}};return {body:{...i,number:n,state:closed.has(n)?'closed':'open',closed_at:closed.has(n)?now.toISOString():null}};}},
     {method:'POST',path:/^\/repos\/o\/r\/actions\/runs\/\d+\/(rerun|cancel)$/,reply:()=>({status:202,body:{}})},
     {method:'GET',path:/^\/repos\/o\/r\/security-advisories$/,reply:()=>({body:[]})},
     {method:'POST',path:/^\/repos\/o\/r\/security-advisories$/,reply:()=>({status:201,body:{ghsa_id:'GHSA-fixture'}})},
     {method:'GET',path:/^\/repos\/o\/r\/commits\/[^/]+\/check-runs$/,reply:()=>({body:{total_count:1,check_runs:[{id:1,name:'test',status:'completed',conclusion:'success'}]}})},
   ];
   const mock=mockGitHub(routes),gh=new GitHubClient(new Octokit({auth:'x',request:{fetch:mock.fetch}}),'o/r'),adapter=scripted(results),notifications:Notification[]=[];
-  const deps:SchedulerDeps={cfg,paths,registry,parameters,gh,botLogin:BOT,notifier:recordedNotifier({notify:async n=>{notifications.push(n);}},paths),stages:loadStageDefinitions(join(agentsDir,'stages')),agentsDir,repoDir:pair.repo,binDir:join(pair.root,'bin'),adapterFor:()=>adapter,systemdScope:false,now:()=>now,log:()=>{},freeSpace:(path)=>freeSpace(path),fetchOrigin:async()=>{},unitActive:async()=>false,stopUnit:async()=>{},serviceLog:new ServiceLog(paths.serviceLog),inhibitor:new SleepInhibitor({enabled:false}),fastForward:async()=>({moved:false,changedPaths:[]}),sleep:async()=>{},monotonic:()=>0,requestRestart:()=>{}};
+  const deps:SchedulerDeps={cfg,paths,registry,parameters,gh,botLogin:BOT,notifier:recordedNotifier({notify:async n=>{notifications.push(n);}},paths),stages:loadStageDefinitions(join(agentsDir,'stages')),agentsDir,metrics:loadMetricDefinitions(join(agentsDir,'metrics')),repoDir:pair.repo,binDir:join(pair.root,'bin'),adapterFor:()=>adapter,systemdScope:false,now:()=>now,log:()=>{},freeSpace:(path)=>freeSpace(path),fetchOrigin:async()=>{},unitActive:async()=>false,stopUnit:async()=>{},serviceLog:new ServiceLog(paths.serviceLog),inhibitor:new SleepInhibitor({enabled:false}),fastForward:async()=>({moved:false,changedPaths:[]}),sleep:async()=>{},monotonic:()=>0,requestRestart:()=>{}};
   const scheduler=new Scheduler(deps);
-  return {pair,paths,registry,parameters,deps,scheduler,adapter,mock,gh,issues,comments,notifications,setNow:(value:Date)=>{now=value;}};
+  return {pair,paths,registry,parameters,deps,scheduler,adapter,mock,gh,issues,closed,hooks,comments,notifications,setNow:(value:Date)=>{now=value;}};
 }
 
 export interface MockPr { number: number; head: string; sha: string; body: string; state: "open" | "closed"; merged: boolean }
