@@ -1960,3 +1960,50 @@ describe("the constructor's default emitEvent (spec 094 AC-5)", () => {
     expect(h.deps.emitEvent).toBeUndefined();
   }, 30_000);
 });
+
+describe("Scheduler.tick credential_expiry producer (spec 099 AC-3)", () => {
+  it("emits once per day for an entry near expiry, reads the index only, and survives a failing store", async () => {
+    const { s, deps, paths, setNow, allowErrors } = await setup(routes([]));
+    allowErrors(/^credential expiry/);
+    const { CredentialStore } = await import("../src/credentials/store.ts");
+    const { loadCatalogue } = await import("../src/credentials/catalogue.ts");
+    const store = new CredentialStore({ dir: join(paths.root, "cred-store"), systemdCreds: join(import.meta.dirname, "helpers", "fake-systemd-creds") });
+    await store.writeSecret("fake-token", "s", "maintainer");
+    const idx = await store.readIndex();
+    idx["fake-token"]!.expires_at = "2026-10-15T12:00:00Z";
+    writeFileSync(join(store.dir, "index.json"), JSON.stringify(idx));
+    const catalogue = loadCatalogue(join(import.meta.dirname, "fixtures", "test-catalogue.yaml"), { profiles: ["backend"], agents: [] });
+    const events: unknown[] = [];
+    deps.emitEvent = async (e: string, p: unknown) => { events.push([e, p]); };
+    deps.credentials = { store, catalogue, warnDays: 7 };
+    setNow(new Date("2026-10-12T12:00:00Z"));
+    await s.tick();
+    expect(events).toEqual([["credential_expiry", { name: "fake-token", expires_at: "2026-10-15T12:00:00Z", last_check: null }]]);
+    setNow(new Date("2026-10-12T14:00:00Z"));
+    await s.tick();
+    expect(events).toHaveLength(1);
+    setNow(new Date("2026-10-13T14:00:00Z"));
+    await s.tick();
+    expect(events).toHaveLength(2);
+    writeFileSync(join(store.dir, "index.json"), "{");
+    setNow(new Date("2026-10-13T16:00:00Z"));
+    const info = await s.tick();
+    expect(info.errors.some((e) => e.startsWith("credential expiry"))).toBe(true);
+  });
+  it("a failed last check produces an event, expiry none with ok or null never does", async () => {
+    const { expiryEvents } = await import("../src/credentials/check.ts");
+    const { CredentialStore } = await import("../src/credentials/store.ts");
+    const { loadCatalogue } = await import("../src/credentials/catalogue.ts");
+    const dir = join(tmpdir(), `exp-${Date.now()}`);
+    const store = new CredentialStore({ dir, systemdCreds: join(import.meta.dirname, "helpers", "fake-systemd-creds") });
+    await store.writeSecret("fake-token", "s", "maintainer");
+    const catalogue = loadCatalogue(join(import.meta.dirname, "fixtures", "test-catalogue.yaml"), { profiles: ["backend"], agents: [] });
+    const ctx = { store, catalogue, warnDays: 7, statePath: join(dir, "exp-state.json"), now: () => new Date("2026-10-12T12:00:00Z") };
+    expect(await expiryEvents(ctx)).toEqual([]);
+    await store.writeCheck("fake-token", { last_checked_at: "x", last_check: "ok" });
+    expect(await expiryEvents(ctx)).toEqual([]);
+    await store.writeCheck("fake-token", { last_checked_at: "x", last_check: "failed: 401" });
+    expect(await expiryEvents(ctx)).toHaveLength(1);
+    expect(await expiryEvents(ctx)).toEqual([]);
+  });
+});

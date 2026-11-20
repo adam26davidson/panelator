@@ -35,6 +35,8 @@ import { recentMerges } from "../state/merges.ts";
 import { savePatch } from "../state/patches.ts";
 import { pruneUsage } from "../state/runs.ts";
 import { checkPlainFiles } from "../credentials/plain-files.ts";
+import { expiryEvents } from "../credentials/check.ts";
+import type { CredentialEntry } from "../credentials/catalogue.ts";
 import type { CredentialStore } from "../credentials/store.ts";
 import { sweepVolumes } from "./sweep.ts";
 import { readToken } from "../state/token.ts";
@@ -59,6 +61,8 @@ export interface SchedulerDeps extends DriverDeps {
   serviceLog: ServiceLog;
   /** Spec 072: the store, the two configured plain-file paths and the credentials this process read from the store. */
   plainFiles?: { store: CredentialStore; paths: Partial<Record<"github-app-key" | "telegram-bot", string>>; fromStore: ReadonlySet<string> };
+  /** Spec 099 AC-3: the index reader of the hourly `credential_expiry` step. */
+  credentials?: { store: CredentialStore; catalogue: Record<string, CredentialEntry>; warnDays: number };
   inhibitor: SleepInhibitor;
   fastForward: () => Promise<{ moved: boolean; changedPaths: string[] }>;
   sleep: (ms: number) => Promise<void>;
@@ -130,6 +134,7 @@ export class Scheduler {
   #drive: DriveFn;
   #active = new Map<number, Promise<void>>();
   #plainFilesCheckedAt: number | null = null;
+  #expiryCheckedAt: number | null = null;
   #activeStanding = new Map<string,Promise<void>>();
   #stopping = false;
   #stopReason = "";
@@ -653,6 +658,16 @@ export class Scheduler {
         this.#plainFilesCheckedAt = d.now().getTime();
         await checkPlainFiles({ ...d.plainFiles, statePath: d.paths.plainFilesReminder, telegram: d.telegram ?? null, notifier: d.notifier, now: d.now, log: (rec) => d.serviceLog.write(rec) })
           .catch((e) => d.serviceLog.write({ kind: "plain-files-check-failed", error: (e as Error).message }));
+      }
+
+      // Spec 099 AC-3: the credential_expiry producer, at most hourly; reads the index only.
+      if (d.credentials && (this.#expiryCheckedAt === null || d.now().getTime() - this.#expiryCheckedAt >= 3_600_000)) {
+        this.#expiryCheckedAt = d.now().getTime();
+        try {
+          for (const payload of await expiryEvents({ ...d.credentials, statePath: d.paths.credentialsExpiryState, now: d.now })) await d.emitEvent?.("credential_expiry", payload);
+        } catch (e) {
+          info.errors.push(`credential expiry: ${(e as Error).message}`);
+        }
       }
 
       if(d.telegram)await this.#serializeQuestions(async()=>this.telegramAnswers.auditLateIssueReplies((await listClaims(d.paths)).map(c=>c.issue))).catch(()=>d.log({kind:'telegram-issue-audit-failed'}));

@@ -1,4 +1,6 @@
 import { createPrivateKey } from "node:crypto";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { Config } from "../config.ts";
 import { createAppClient } from "../github/auth.ts";
 import { TelegramClient, TelegramApiError } from "../telegram/client.ts";
@@ -74,4 +76,37 @@ export async function runCheck(entry: CredentialEntry, ctx: CheckContext): Promi
     last_check: result.status === "ok" ? "ok" : result.status === "failed" ? `failed: ${result.reason}` : null,
   });
   return result;
+}
+
+const DAY_MS = 86_400_000;
+export interface ExpiryState { [name: string]: string; }
+export async function readJsonFile<T>(path: string, fallback: T): Promise<T> {
+  try { return JSON.parse(await readFile(path, "utf8")) as T; } catch { return fallback; }
+}
+export async function writeJsonAtomic(path: string, data: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path + ".tmp", JSON.stringify(data, null, 2) + "\n");
+  await rename(path + ".tmp", path);
+}
+
+/** Spec 099 AC-3: `credential_expiry` payloads from the index alone (no check runs), at most one per name per day. */
+export async function expiryEvents(ctx: { store: CredentialStore; catalogue: Record<string, CredentialEntry>; warnDays: number; statePath: string; now: () => Date }): Promise<{ name: string; expires_at: string | null; last_check: string | null }[]> {
+  const index = await ctx.store.readIndex();
+  const now = ctx.now();
+  const raw = await readJsonFile<Record<string, unknown>>(ctx.statePath, {});
+  const state: ExpiryState = typeof raw.emitted === "object" && raw.emitted ? (raw.emitted as ExpiryState) : (Object.fromEntries(Object.entries(raw).filter(([k, v]) => k !== "notified" && typeof v === "string")) as ExpiryState);
+  const out: { name: string; expires_at: string | null; last_check: string | null }[] = [];
+  for (const name of Object.keys(ctx.catalogue)) {
+    const e = index[name];
+    if (!e) continue;
+    const expiring = e.expires_at !== null && Date.parse(e.expires_at) - now.getTime() <= ctx.warnDays * DAY_MS;
+    const failing = typeof e.last_check === "string" && e.last_check.startsWith("failed");
+    if (!expiring && !failing) continue;
+    const last = state[name] ? Date.parse(state[name]!) : NaN;
+    if (!Number.isNaN(last) && now.getTime() - last < DAY_MS) continue;
+    out.push({ name, expires_at: e.expires_at, last_check: e.last_check });
+    state[name] = now.toISOString();
+  }
+  if (out.length) await writeJsonAtomic(ctx.statePath, { ...raw, emitted: state });
+  return out;
 }
