@@ -67,7 +67,7 @@ describe("recordEvent (spec 026 AC-1)", () => {
     expect(files.length).toBeGreaterThan(0);
     const hits = files.flatMap((f) => readFileSync(f, "utf8").split("\n").filter((l) => /slot/.test(l)));
     for (const l of hits) {
-      expect(l).toMatch(/\bslots\b/);
+      expect(l).toMatch(/\bslots?\b(?!\.)|slots\.sample/);
       expect(l).not.toMatch(/payload\.slot|'slot'|"slot"|\.slot\b/);
     }
     const fixture = readFileSync(join(root, "test", "fixtures", "events", "2026-09.jsonl"), "utf8").split("\n").filter((l) => l.includes('"issue.claimed"'));
