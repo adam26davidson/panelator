@@ -1,4 +1,5 @@
 import type { PausedRecord } from "../state/paused.ts";
+import { REQUEST_BUTTONS, requestMessageLines } from "../chain/question.ts";
 import type { TelegramUpdate, Keyboard } from "./client.ts";
 export interface PendingSelection {
   message_id?: number;
@@ -13,21 +14,26 @@ export function questionMessage(
   r: PausedRecord,
   commentUrl: string,
 ) {
+  const request = r.question.request;
+  const labels = request ? REQUEST_BUTTONS[request.type as keyof typeof REQUEST_BUTTONS] : undefined;
   return {
     text: [
       `#${issue.number} ${issue.title}`,
       r.question.question,
+      ...(request ? [requestMessageLines(r.question).join("\n")] : []),
       ...r.question.options.map((o, i) => `${i + 1}. ${o.label} — ${o.cost}`),
       `Recommendation: ${r.question.recommendation}`,
       commentUrl,
     ].join("\n\n"),
     reply_markup: {
-      inline_keyboard: r.question.options.map((o, i) => {
-        const callback_data = `q:${r.nonce}:${i + 1}`;
-        if (Buffer.byteLength(callback_data) > 64)
-          throw Error("callback data too long");
-        return [{ text: `${i + 1}. ${o.label}`.slice(0, 64), callback_data }];
-      }),
+      // Spec 099 AC-4: a request's buttons are fixed; the stage's own options stay in the text.
+      inline_keyboard: labels
+        ? labels.map((label, i) => [{ text: label, callback_data: `r:${r.nonce}:${i + 1}` }])
+        : r.question.options.map((o, i) => {
+            const callback_data = `q:${r.nonce}:${i + 1}`;
+            if (Buffer.byteLength(callback_data) > 64) throw Error("callback data too long");
+            return [{ text: `${i + 1}. ${o.label}`.slice(0, 64), callback_data }];
+          }),
     },
   };
 }
@@ -116,6 +122,13 @@ export function matchUpdate(
       text: `${n}. ${o.label}`,
       viaCallback: { id: cb.id, message_id: cb.message?.message_id ?? 0, n },
     };
+  }
+  if (cb?.data?.startsWith("r:")) {
+    const [, nonce, option] = cb.data.split(":");
+    const r = records.find((r) => r.nonce === nonce);
+    const label = r?.question.request ? REQUEST_BUTTONS[r.question.request.type as keyof typeof REQUEST_BUTTONS]?.[Number(option) - 1] : undefined;
+    if (!r || !label) return { kind: "ignore" };
+    return { kind: "answer", record: r, text: label, viaCallback: { id: cb.id, message_id: cb.message?.message_id ?? 0, n: Number(option) } };
   }
   if (pending) {
     const picked = cb?.data?.startsWith("pick:")

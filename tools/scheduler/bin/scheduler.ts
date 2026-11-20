@@ -216,7 +216,7 @@ let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
   cfg, paths, gh, telegram: null,registry,metrics,credentials:{store:credStore,catalogue,warnDays:cfg.credentials.warn_days},plainFiles:{store:credStore,paths:{'github-app-key':cfg.app.private_key_path,...(cfg.telegram?{'telegram-bot':cfg.telegram.credentials_path}:{})},fromStore}, parameters, notifier,
-  stages: loadStageDefinitions(join(agentsRoot, "stages")), agentsDir: agentsRoot, repoDir: repoRoot, binDir, configPath: flag("--config") ?? defaultConfigPath, catalogue,
+  stages: loadStageDefinitions(join(agentsRoot, "stages")), agentsDir: agentsRoot, repoDir: repoRoot, binDir, configPath: flag("--config") ?? defaultConfigPath, catalogue, scope: () => checkInstallationScope({ app, installationId: cfg.app.installation_id, repo: cfg.repo }), checkContext: { store: credStore, app: cfg.app, now: () => new Date() },
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),
   stopUnit: (unit) => systemdStopUnit(unit, { enabled: cfg.systemd.scope }),

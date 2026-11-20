@@ -1,6 +1,6 @@
 import {TelegramAnswers} from '../telegram/answers.ts';
 import {questionMessage,reminderText} from '../telegram/questions.ts';
-import { applyActions, sendPausedQuestion, completePause, driveChain as defaultDriveChain, recordTransition, step, type DriverDeps } from "../chain/driver.ts";
+import { applyActions, applyRequestAnswer, sendPausedQuestion, completePause, driveChain as defaultDriveChain, recordTransition, step, type DriverDeps } from "../chain/driver.ts";
 import { CLAIM_LABEL, ENDED, HISTORY_ENTRY_MAX, NEEDS_DECISION_LABEL, initialChainState, ledgerOf, stuckOf as stuckStage, transition } from "../chain/machine.ts";
 import {emit} from '../standing/events.ts';
 import { quotaSummary } from "../quota/book.ts";
@@ -471,10 +471,12 @@ export class Scheduler {
     const d = this.#deps;
     if (rec.question_comment_id === null || rec.answer === null || rec.reply_comment_id === null) throw new Error("resuming record without its question or reply");
     const questionId = rec.question_comment_id;
+    const acted = await applyRequestAnswer(d, rec, rec.answer);
     if (!(await answeredEntry(d.paths, questionId))) {
       await appendQuestionLog(d.paths, {
         issue: rec.issue, at: d.now().toISOString(), event: "answered", asking_stage: rec.asking_stage,
-        question_comment_id: questionId, reply_comment_id: rec.reply_comment_id, answer: rec.answer, question: rec.question,channel:rec.telegram?.channel??'issue',
+        question_comment_id: questionId, reply_comment_id: rec.reply_comment_id, answer: acted.answer, question: rec.question,channel:rec.telegram?.channel??'issue',
+        ...(rec.question.request ? { request: rec.question.request } : {}), ...(acted.outcome ? { outcome: acted.outcome } : {}),
       });
     }
     // The closing comment carries a marker, so a close that failed after commenting does not comment again.
@@ -496,11 +498,15 @@ export class Scheduler {
     const d = this.#deps;
     if (rec.question_comment_id === null || rec.answer === null || rec.reply_comment_id === null) throw new Error("resuming record without its question or reply");
     const questionId = rec.question_comment_id;
+    // Spec 099 AC-5: the scheduler acts on a request's answer first; the stage receives the transformed text.
+    const acted = await applyRequestAnswer(d, rec, rec.answer);
+    const answerForStage = acted.answer;
     if (!(await answeredEntry(d.paths, questionId))) {
       // C8: the question text goes with the answer, for the review input of AC-10.
       await appendQuestionLog(d.paths, {
         issue: rec.issue, at: d.now().toISOString(), event: "answered", asking_stage: rec.asking_stage,
-        question_comment_id: questionId, reply_comment_id: rec.reply_comment_id, answer: rec.answer, question: rec.question,channel:rec.telegram?.channel??'issue',
+        question_comment_id: questionId, reply_comment_id: rec.reply_comment_id, answer: answerForStage, question: rec.question,channel:rec.telegram?.channel??'issue',
+        ...(rec.question.request ? { request: rec.question.request } : {}), ...(acted.outcome ? { outcome: acted.outcome } : {}),
       });
     }
     let claim = await readClaim(d.paths, rec.issue);
@@ -510,7 +516,7 @@ export class Scheduler {
         issue: rec.issue, state:{...rec.state,resumeSession:d.telegram?rec.session??null:null}, worktree: rec.session?.worktree??wt.path,
         telegram_thread:rec.telegram??null,
         started_at: d.now().toISOString(), last_activity_at: d.now().toISOString(), run_id: null,
-        pendingEvent: { type: "answered", answer: rec.answer, questionId },
+        pendingEvent: { type: "answered", answer: answerForStage, questionId },
       };
       await d.emitEvent?.('maintainer_reply',{issue:rec.issue,question_id:questionId});
       await writeClaim(d.paths, claim);

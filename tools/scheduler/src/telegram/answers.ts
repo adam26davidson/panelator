@@ -14,6 +14,7 @@ import {
   type PendingSelection,
 } from "./questions.ts";
 import { saveJson } from "./poller.ts";
+import { REQUEST_BUTTONS } from "../chain/question.ts";
 import { readAlertIds } from "../notify/telegram.ts";
 import { neutraliseMarkers } from "../github/markers.ts";
 interface Journal {
@@ -242,6 +243,11 @@ export class TelegramAnswers {
       this.wake();
       if (u.callback_query) {
         await this.d.telegram!.answerCallback(u.callback_query.id);
+        if (u.callback_query.data?.startsWith("r:")) {
+          const n = Number(u.callback_query.data.split(":")[2]);
+          const label = r.question.request ? REQUEST_BUTTONS[r.question.request.type as keyof typeof REQUEST_BUTTONS]?.[n - 1] : undefined;
+          await this.d.telegram!.replaceKeyboard(u.callback_query.message!.message_id, { inline_keyboard: [[{ text: `Chosen: ${label ?? ""}`.slice(0, 64), callback_data: "answered" }]] });
+        }
         if (u.callback_query.data?.startsWith("q:")) {
           const n = Number(u.callback_query.data.split(":")[2]);
           await this.d.telegram!.replaceKeyboard(

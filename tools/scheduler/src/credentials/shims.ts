@@ -19,3 +19,21 @@ export async function writeShims(runDir: string, entries: CredentialEntry[], opt
   }
   return dir;
 }
+
+export interface ShimOptions { configPath: string; binDir: string; cataloguePath?: string; runDir: string }
+
+/** Spec 099 AC-13: run `argv` (the first word is the wrapper's command) through the entry's shim. Output is returned for a failure reason only. */
+export async function runThroughShim(entry: CredentialEntry, argv: string[], opts: ShimOptions & { timeoutMs?: number }): Promise<{ code: number | null; output: string }> {
+  const { spawn } = await import("node:child_process");
+  const dir = await writeShims(opts.runDir, [entry], opts);
+  const env = { ...process.env, PATH: `${dir ? dir + ":" : ""}${process.env.PATH ?? ""}` };
+  return new Promise((resolve) => {
+    const child = spawn(argv[0]!, argv.slice(1), { env, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    child.stdout.on("data", (d) => (output += d));
+    child.stderr.on("data", (d) => (output += d));
+    const timer = setTimeout(() => child.kill("SIGKILL"), opts.timeoutMs ?? 600_000);
+    child.on("error", (e) => { clearTimeout(timer); resolve({ code: null, output: e.message }); });
+    child.on("close", (code) => { clearTimeout(timer); resolve({ code, output: output.trim().slice(-500) }); });
+  });
+}

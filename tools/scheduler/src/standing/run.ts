@@ -2,6 +2,9 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {join} from 'node:path';
 import {mkdir,writeFile} from 'node:fs/promises';
+import {SCOPE_FIX} from '../contacts/scope.ts';
+import {buildCredentialCheckInput} from './credential-check-input.ts';
+import {readJsonFile,writeJsonAtomic} from '../credentials/check.ts';
 import {entriesFor,type DriverDeps} from '../chain/driver.ts';
 import type {StandingDefinition,StageDefinition} from '../types.ts';
 import type {ParameterStore} from '../parameters/store.ts';
@@ -83,7 +86,8 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
    await exec('git',['worktree','add','--detach',worktree,'origin/main'],{cwd:d.repoDir});created=true;
   }
   const reflectionInput=reflective?await buildReflectionInput({paths:d.paths,gh:d.gh,botLogin:d.botLogin,parameters:d.parameters,metrics:d.metrics??{},agentsDir:d.agentsDir,reflectionAgents:Object.values(d.registry??{[def.name]:def}).filter(x=>x.output==='reflection-result').map(x=>x.name),now:d.now},def,runId,new Date(reflection!.period_from),worktree):null;
-  const input=reflectionInput??(def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):def.input==='infra-health-input'?await buildInfraHealthInput({paths:d.paths,freeSpace:d.freeSpace},received,state.last_run?.at??null,now):null);
+  const input=reflectionInput??(def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):def.input==='credential-check-input'&&d.checkContext&&d.catalogue?await buildCredentialCheckInput({paths:d.paths,catalogue:d.catalogue,probe:d.checkContext,warnDays:d.cfg.credentials.warn_days,scope:d.scope??(async()=>({status:'failed' as const,reason:'no scope check wired'})),now},received,state.last_run?.at??null):def.input==='infra-health-input'?await buildInfraHealthInput({paths:d.paths,freeSpace:d.freeSpace},received,state.last_run?.at??null,now):null);
+  if(def.input==='credential-check-input'&&(input as {scope?:{status:string;reason?:string}}|null)?.scope?.status==='failed')await d.notifier.notify({issue:0,gate:'infra',label:'contact-scope',text:`${(input as {scope:{reason:string}}).scope.reason}; ${SCOPE_FIX}`}).catch(()=>{});
   const parameters=await d.parameters.all();
   const inputCheck=validate(def.input as SchemaName,input??{events:received,since:state.last_run?.at??null,parameters});
   if(!inputCheck.ok)throw new Error(`standing input: ${inputCheck.errors.join('; ')}`);
@@ -125,6 +129,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   if(result.outcome!=='ok'||!result.result){judged=true;throw new Error(result.reason??result.resultErrors.join('; '));}
   const body=result.result as {summary:string;actions?:{kind:string;args:Record<string,unknown>;why:string}[];findings?:unknown[]};
   if(def.output==='filer-result')await applyFilerResult(filer,runId,input as Awaited<ReturnType<typeof buildFilerInput>>,body as FilerResult);
+  const renewFailures:{name:string;reason:string}[]=[];
   const applyDirect=async()=>{
    await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},body.findings??[]);
    const lines:string[]=[];
@@ -134,9 +139,23 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
     if(reflective&&row.status==='refused'&&row.reason==='action not allowed')await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:d.now().toISOString()},[{what:`reflection action refused: ${action.kind}`,where:`agents/standing/${def.name}.md`,evidence:`${row.reason}: ${action.why}`,noticed_how:'reflection action policy enforcement'}]);
     lines.push(`${action.kind} ${JSON.stringify(action.args)}: ${row.status}${row.reason?` (${row.reason})`:''}`);
    }
+   for(const f of renewFailures)await notifyCredential(f.name,null,d.catalogue?.[f.name]?.setup??[],`renewal failed: ${f.reason}`);
+   for(const w of (body as {warnings?:{name:string;expires_at:string|null;steps:string[]}[]}).warnings??[])await notifyCredential(w.name,w.expires_at,d.catalogue?.[w.name]?.setup??w.steps,'needs renewal by hand');
    return lines;
   };
-  const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog,d.paths),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now,repoDir:d.repoDir,serviceLog:d.log};
+  // Spec 099 AC-12, AC-13: one `credential-expiry` notification per credential per day (tracked in expiry-state.json under `notified`).
+  const notifyCredential=async(name:string,expires_at:string|null,steps:string[],why:string)=>{
+   const raw=await readJsonFile<Record<string,unknown>>(d.paths.credentialsExpiryState,{});
+   const notified=(raw.notified&&typeof raw.notified==='object'?raw.notified:{}) as Record<string,string>;
+   const last=notified[name]?Date.parse(notified[name]!):NaN;
+   if(!Number.isNaN(last)&&d.now().getTime()-last<86400000)return;
+   await d.notifier.notify({issue:0,gate:'credential-expiry',label:name,text:`${name}: ${why}${expires_at?` (expires ${expires_at})`:''}\n${steps.map((x,i)=>`${i+1}. ${x}`).join('\n')}`});
+   await writeJsonAtomic(d.paths.credentialsExpiryState,{...raw,notified:{...notified,[name]:d.now().toISOString()}});
+  };
+  const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog,d.paths),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now,repoDir:d.repoDir,serviceLog:d.log,
+   ...(d.catalogue&&d.checkContext?{credentials:{store:d.checkContext.store,catalogue:d.catalogue,probe:d.checkContext,configPaths:{'github-app-key':d.cfg.app.private_key_path,'telegram-bot':d.cfg.telegram?.credentials_path??''},
+    shim:{configPath:d.configPath??'',binDir:d.binDir,cataloguePath:d.cataloguePath,runDir:join(d.paths.runs,result.runId,'renew')},
+    onRenewFailure:(name:string,reason:string)=>{renewFailures.push({name,reason});}}}:{})};
   if(reflective)await applyReflectionResult({paths:d.paths,gh:d.gh,botLogin:d.botLogin,classes:filer.classes,maxIssues:d.cfg.reflection_max_issues,now:d.now,log:d.log,applyDirect},{def,result:body as unknown as ReflectionResult,planKey:reflection!.plan_key,runId,input:reflectionInput as never});
   else await applyDirect();
   actionCount=body.actions?.length??0;findingCount=body.findings?.length??0;

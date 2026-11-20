@@ -14,6 +14,11 @@ import { neutraliseMarkers } from "../github/markers.ts";
 import type { PullRequestInfo } from "../github/types.ts";
 import type { Notifier } from "../notify/types.ts";
 import type { CredentialEntry } from "../credentials/catalogue.ts";
+import { runCheck, type CheckContext } from "../credentials/check.ts";
+import type { Question } from "../types.ts";
+import { approveParty } from "../contacts/approve.ts";
+import { actOnAnswer, approvedAnswer, doneAnswer } from "./question.ts";
+import type { RequestOutcome } from "../state/questions.ts";
 import { implementationProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
 import { afterFallback, harnessForModel, retryDecision } from "../runner/retry.ts";
 import type { ParameterStore } from "../parameters/store.ts";
@@ -54,6 +59,29 @@ import type { ReviewResult } from "../types.ts";
 
 const execFileP = promisify(execFile);
 
+/**
+ * Spec 099 AC-5: the scheduler's side of an answer to a request, before the asking session resumes. Returns the answer
+ * the stage receives and the outcome for the answer record; a question with no request passes through unchanged.
+ */
+export async function applyRequestAnswer(deps: Pick<DriverDeps, "paths" | "catalogue" | "checkContext" | "now">, rec: { issue: number; question: Question; question_comment_id: number | null }, answer: string): Promise<{ answer: string; outcome?: RequestOutcome }> {
+  const request = rec.question.request as ({ type: string } & Record<string, unknown>) | undefined;
+  const act = actOnAnswer(request, answer);
+  if (!request || act.outcome === null) return { answer };
+  if (act.action === "approve_party") {
+    const party = String(request.party);
+    await approveParty(deps.paths, { party, channel: String(request.channel), approved_at: deps.now().toISOString(), question_comment_id: rec.question_comment_id, issue: rec.issue });
+    return { answer: approvedAnswer(party), outcome: "approved" };
+  }
+  if (act.action === "run_check") {
+    const name = String(request.name);
+    const entry = deps.catalogue?.[name];
+    if (!entry) return { ...doneAnswer({ status: "unknown", name }) };
+    if (!deps.checkContext) return { ...doneAnswer({ status: "skipped", reason: "no check context" }) };
+    return { ...doneAnswer(await runCheck(entry, deps.checkContext)) };
+  }
+  return { answer, outcome: act.outcome };
+}
+
 export function entriesFor(catalogue: Record<string, CredentialEntry> | undefined, names: string[] | undefined): CredentialEntry[] {
   return (names ?? []).flatMap((n) => (catalogue?.[n] ? [catalogue[n]!] : []));
 }
@@ -71,8 +99,13 @@ export interface DriverDeps {
   repoDir: string;
   binDir: string;
   configPath?: string;
+  cataloguePath?: string;
+  /** Spec 099 AC-12: the installation-scope check the credential check's pre-run calls. */
+  scope?: () => Promise<import("../contacts/scope.ts").ScopeResult>;
   /** Spec 099 AC-2: the loaded credential catalogue, to resolve a profile's `credentials` names. */
   catalogue?: Record<string, CredentialEntry>;
+  /** Spec 099 AC-5: what `runCheck` needs for a credential "Done". */
+  checkContext?: CheckContext;
   adapterFor: (harness: Harness) => Adapter;
   systemdScope: boolean;
   /** Test seam: a stand-in for systemd-run; production leaves it unset. */
@@ -1274,7 +1307,7 @@ export async function completePause(deps: DriverDeps, rec: PausedRecord, adoptBy
   await deps.gh.addLabels(rec.issue, [NEEDS_DECISION_LABEL]);
   await deps.gh.removeLabel(rec.issue, CLAIM_LABEL);
   await deps.notifier.notify({ issue: rec.issue, gate: "question", label: NEEDS_DECISION_LABEL, text: `Issue #${rec.issue} has a question for the maintainer (${rec.question.kind}): ${rec.question.question}` });
-  await appendQuestionLog(deps.paths, { issue: rec.issue, at: deps.now().toISOString(), event: "sent", asking_stage: rec.asking_stage, question_comment_id: questionId,channel:asked.telegram?.sent?'telegram':'issue',...(asked.telegram?.message_id?{telegram_message_id:asked.telegram.message_id}:{}) }, rec.question.question);
+  await appendQuestionLog(deps.paths, { issue: rec.issue, at: deps.now().toISOString(), event: "sent", asking_stage: rec.asking_stage, question_comment_id: questionId,channel:asked.telegram?.sent?'telegram':'issue',...(asked.telegram?.message_id?{telegram_message_id:asked.telegram.message_id}:{}),...(rec.question.request?{request:rec.question.request}:{}) }, rec.question.question);
   await writePaused(deps.paths, { ...asked, phase: "paused" });
   await removeClaim(deps.paths, rec.issue);
   await record(deps.paths, "issue.released", deps.now(), { reason: "paused" }, { issue: rec.issue });
@@ -1290,7 +1323,7 @@ export async function sendPausedQuestion(deps:DriverDeps,rec:PausedRecord):Promi
   rec={...rec,telegram:{...tg,message_id:id,sent:true,sent_at:deps.now().toISOString(),thread_last_message_id:tg.thread_last_message_id??id,thread_message_ids:[...tg.thread_message_ids,id]}};
  }catch{deps.log({kind:'telegram-send-failed',issue:rec.issue});rec={...rec,telegram:{...tg,send_failures:tg.send_failures+1}};}
  await writePaused(deps.paths,rec);
- if(rec.phase==='paused'&&rec.telegram?.sent&&rec.telegram.message_id&&rec.question_comment_id)await appendQuestionLog(deps.paths,{issue:rec.issue,at:deps.now().toISOString(),event:'sent',asking_stage:rec.asking_stage,question_comment_id:rec.question_comment_id,channel:'telegram',telegram_message_id:rec.telegram.message_id},rec.question.question);
+ if(rec.phase==='paused'&&rec.telegram?.sent&&rec.telegram.message_id&&rec.question_comment_id)await appendQuestionLog(deps.paths,{issue:rec.issue,at:deps.now().toISOString(),event:'sent',asking_stage:rec.asking_stage,question_comment_id:rec.question_comment_id,channel:'telegram',telegram_message_id:rec.telegram.message_id,...(rec.question.request?{request:rec.question.request}:{})},rec.question.question);
  return rec;
 }
 
