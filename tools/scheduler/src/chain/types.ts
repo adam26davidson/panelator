@@ -114,7 +114,9 @@ export type ChainEvent =
   /** `at`: when the checks were read; `pending`: the required checks still pending or missing. */
   | { type: "checks"; status: "green" | "failed" | "pending"; log?: string; sensitive: boolean; at: string; pending?: string[];
       /** Spec 060 AC-1: on a spec or design PR, main's head and the required checks failed on it; `failedId` is the failed check run's id. */
-      main?: { sha: string; failed: string[] }; failedId?: number }
+      main?: { sha: string; failed: string[] }; failedId?: number;
+      /** Spec 097 AC-1: on a pending result with no run for a required check, GitHub reports the PR not mergeable (`mergeable: false`). */
+      conflicts?: boolean }
   /** `specGate`: on the spec and design tracks, spec-present and the UI-design gate run again on origin/main after the merge (AC-4). */
   | { type: "merge_result"; status: "merged" | "not_mergeable"; detail?: string; specGate?: { ok: true } | { ok: false; gate: "spec-present" | "ui-design"; reason: string; /** Spec 031 AC-9: the spec directory holds a README.md on main. */ specDirReadme?: boolean; /** Spec 031 AC-9: the merged diff changed a design under docs/designs/ listing at least two children; its path is in `design`. */ designTouched?: boolean; design?: string } }
   | { type: "rebase_conflict"; detail: string }

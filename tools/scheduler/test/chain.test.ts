@@ -721,6 +721,24 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
     expect(r.state.question?.options.every((o) => o.cost.length > 0)).toBe(true);
     expect(r.state.question?.recommendation.length).toBeGreaterThan(0);
   });
+  it("pending checks on a PR that conflicts with main rebase and push at once, even past the bound (spec 097 AC-1)", () => {
+    const conflicting = (at: string) => ({ type: "checks" as const, status: "pending" as const, sensitive: false, at, pending: ["ci/test"], conflicts: true });
+    let r = transition(at("verify", { pr: pr3 }), conflicting(AT));
+    expect(r.actions).toEqual([{ type: "rebase_push" }, { type: "wait", seconds: 60 }]);
+    expect(r.state).toMatchObject({ stage: "verify", pendingSince: AT, fixes: 0, checksRerun: false });
+    r = transition(r.state, conflicting(plusH(7)));
+    expect(r.actions).toEqual([{ type: "rebase_push" }, { type: "wait", seconds: 60 }]);
+    expect(r.state).toMatchObject({ stage: "verify", pendingSince: AT, checksRerun: false });
+    // The rebase conflicted: spec 024's route, the fix told the conflict and its paths.
+    const f = transition(r.state, { type: "rebase_conflict", detail: "CONFLICT (content): Merge conflict in docs/x.md" });
+    expect(f.state).toMatchObject({ stage: "fix", conflictPending: true, pendingSince: null });
+    expect(f.state.pendingFixInput).toMatch(/^origin\/main conflicts with this branch:\nCONFLICT \(content\): Merge conflict in docs\/x\.md\n\n/);
+    expect(f.state.history.at(-1)).toBe(`origin/main conflicted before verify, on head ${pr3.head_sha}:\nCONFLICT (content): Merge conflict in docs/x.md`);
+  });
+  it("pending checks without a conflict still wait out the bound (spec 097 AC-3)", () => {
+    const r = transition(at("verify", { pr: pr3, pendingSince: AT }), { type: "checks", status: "pending", sensitive: false, at: plusH(6), pending: ["ci/test"], conflicts: false });
+    expect(r.actions).toEqual([{ type: "rerun_checks", sha: pr3.head_sha }, { type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringMatching(/^Required checks ci\/test have been pending for 6 hours/) }]);
+  });
   it("green and failed checks clear the pending window and the re-run flag", () => {
     const s = at("verify", { pr: pr3, pendingSince: AT, checksRerun: true });
     const g = transition(s, { type: "checks", status: "green", sensitive: false, at: plusH(1) });
@@ -1177,6 +1195,7 @@ describe("chain: every event in every stage (AC-27)", () => {
     { type: "checks", status: "green", sensitive: false, at: AT },
     { type: "checks", status: "failed", log: "FAIL", sensitive: false, at: AT },
     { type: "checks", status: "pending", sensitive: false, at: AT, pending: ["ci/test"] },
+    { type: "checks", status: "pending", sensitive: false, at: AT, pending: ["ci/test"], conflicts: true },
     { type: "merge_result", status: "merged" },
     { type: "merge_result", status: "merged", specGate: { ok: true } },
     { type: "merge_result", status: "merged", specGate: { ok: false, gate: "spec-present", reason: "no Parent" } },
