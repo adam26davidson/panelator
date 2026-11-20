@@ -2580,6 +2580,95 @@ describe("driver: a check failing outside the PR's scope (spec 060)", () => {
   }, 60_000);
 });
 
+describe("driver: verify does not wait on a PR that conflicts with main (spec 097)", () => {
+  /** spec-7 with the given check runs on every sha; PR #9's `mergeable` as GitHub reports it (null: still computing). */
+  const routesFor = (sha: string, mergeable: boolean | null, checks: unknown[] = []): Route[] => [
+    {
+      method: "GET", path: /^\/repos\/o\/r\/pulls\/9$/,
+      reply: () => ({ body: { number: 9, base: { ref: "main" }, head: { ref: "spec-7", sha }, html_url: "u", body: "", mergeable, mergeable_state: mergeable === false ? "dirty" : "unknown", merged: false, state: "open" } }),
+    },
+    ...ghRoutes(sha, { headRef: "spec-7", checks, prs: { 9: { headRef: "spec-7" } } }),
+  ];
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+  const verifying = (claim: Claim, sha: string, pendingSince: string | null = hoursAgo(1)): Claim => ({
+    ...claim, state: { ...claim.state, stage: "verify", track: "spec", pr: { number: 9, head_sha: sha }, pendingSince },
+  });
+  const prReads = (gh: ReturnType<typeof mockGitHub>) => gh.calls.filter((c) => c.method === "GET" && c.url === "/repos/o/r/pulls/9").length;
+  const mainMoves = (pair: ReturnType<typeof repoPair>, file: string, text: string) => {
+    writeFileSync(join(pair.repo, file), text);
+    git(pair.repo, "add", "-A");
+    git(pair.repo, "commit", "-q", "-m", "main moves");
+    git(pair.repo, "push", "-q", "origin", "main");
+  };
+
+  it("a conflicting PR with no check run is rebased and pushed at once; verify goes on with the new head and a new window (AC-1, AC-2)", async () => {
+    const { deps, claim, gh, pair } = await setup(() => ({}), (sha) => routesFor(sha, false), onSpec7);
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (rec) => { logs.push(rec); };
+    const before = head(claim.worktree);
+    mainMoves(pair, "other.txt", "other\n");
+    const r = await step(deps, verifying(claim, before));
+    const pushed = git(pair.origin, "rev-parse", "spec-7").trim();
+    expect(pushed).not.toBe(before);
+    expect(git(pair.origin, "merge-base", "--is-ancestor", git(pair.origin, "rev-parse", "main").trim(), "spec-7")).toBe("");
+    expect(r.status).toBe("waiting");
+    expect(r.claim.state).toMatchObject({ stage: "verify", pr: { number: 9, head_sha: pushed }, pendingSince: null, fixes: 0, checksRerun: false });
+    expect(r.claim.pendingEvent).toBeUndefined();
+    expect(prReads(gh)).toBe(1);
+    expect(logs.find((l) => l.kind === "verify-not-mergeable")).toMatchObject({ issue: 7, pr: 9, sha: before });
+  }, 60_000);
+
+  it("a conflicting PR whose rebase conflicts goes to the fix told the conflict and its paths, before the bound (AC-1)", async () => {
+    const { deps, claim, pair } = await setup(() => ({}), (sha) => routesFor(sha, false), onSpec7);
+    writeFileSync(join(claim.worktree, "a.txt"), "pr\n");
+    git(claim.worktree, "commit", "-q", "-am", "pr change");
+    git(claim.worktree, "push", "-q", "origin", "spec-7");
+    const prHead = head(claim.worktree);
+    mainMoves(pair, "a.txt", "main\n");
+    const r = await step(deps, verifying(claim, prHead));
+    expect(r.status).toBe("waiting");
+    expect(r.claim.pendingEvent).toMatchObject({ type: "rebase_conflict", detail: expect.stringContaining("a.txt") });
+    expect(r.claim.state).toMatchObject({ stage: "verify", pr: { head_sha: prHead } });
+    expect(git(pair.origin, "rev-parse", "spec-7").trim()).toBe(prHead);
+    const next = await step(deps, r.claim);
+    expect(next.claim.state).toMatchObject({ stage: "fix", conflictPending: true, checksRerun: false });
+    expect(next.claim.state.pendingFixInput).toMatch(/^origin\/main conflicts with this branch:\n[\s\S]*CONFLICT[\s\S]*a\.txt/);
+    expect(next.claim.state.history.at(-1)).toMatch(/^origin\/main conflicted before verify/);
+  }, 60_000);
+
+  it("mergeable null (GitHub still computing) keeps waiting, with nothing rebased (AC-1)", async () => {
+    const { deps, claim, gh, pair } = await setup(() => ({}), (sha) => routesFor(sha, null), onSpec7);
+    const before = head(claim.worktree);
+    const since = hoursAgo(1);
+    mainMoves(pair, "other.txt", "other\n");
+    const r = await step(deps, verifying(claim, before, since));
+    expect(r.status).toBe("waiting");
+    expect(r.claim.state).toMatchObject({ stage: "verify", pr: { head_sha: before }, pendingSince: since });
+    expect(r.claim.pendingEvent).toBeUndefined();
+    expect(git(pair.origin, "rev-parse", "spec-7").trim()).toBe(before);
+    expect(prReads(gh)).toBe(1);
+  }, 60_000);
+
+  it("a mergeable PR whose checks never report still takes the six-hour path (AC-3)", async () => {
+    const { deps, claim, pair } = await setup(() => ({}), (sha) => routesFor(sha, true), onSpec7);
+    const before = head(claim.worktree);
+    mainMoves(pair, "other.txt", "other\n");
+    const r = await step(deps, verifying(claim, before, hoursAgo(6.1)));
+    expect(r.claim.state).toMatchObject({ stage: "fix", checksRerun: true, pendingSince: null, conflictPending: false, pr: { head_sha: before } });
+    expect(r.claim.state.pendingFixInput).toMatch(/^Required checks test have been pending for 6 hours/);
+    expect(git(pair.origin, "rev-parse", "spec-7").trim()).toBe(before);
+  }, 60_000);
+
+  it("a required check that has a run reads no PR (AC-4)", async () => {
+    const running = [{ id: 1, name: "test", status: "in_progress", conclusion: null }];
+    const { deps, claim, gh } = await setup(() => ({}), (sha) => routesFor(sha, false, running), onSpec7);
+    const r = await step(deps, verifying(claim, head(claim.worktree)));
+    expect(r.claim.state).toMatchObject({ stage: "verify" });
+    expect(r.claim.pendingEvent).toBeUndefined();
+    expect(prReads(gh)).toBe(0);
+  }, 60_000);
+});
+
 describe("driver: spec and ADR numbers are reserved by the scheduler (spec 065)", () => {
   const otherClaim = (issue: number, reserved: { spec: number | null; adr: number | null }, wt: string): Claim =>
     ({ issue, state: { ...initialChainState(issue), reserved }, worktree: wt, started_at: new Date().toISOString(), last_activity_at: new Date().toISOString(), run_id: null });
