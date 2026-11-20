@@ -20,7 +20,7 @@ here); [060-out-of-scope-check-failure-blocks-on-main](../060-out-of-scope-check
 AC-8 (`rebase_push`, reused here);
 [024-rebase-respects-merged-main](../024-rebase-respects-merged-main/spec.md)
 (the `rebase_conflict` event, its fix input and its `conflictPending` rule,
-reused unchanged).
+reused; its transition now also clears `pendingSince`).
 
 ## 1. Goal
 
@@ -100,7 +100,8 @@ with `transition` in `tools/scheduler/test/chain.test.ts`.
   cleared, so verify polls the new head in a new window. Given the rebase
   conflicts, then the PR head is unchanged, the claim's pending event is spec
   024's `rebase_conflict` with git's conflict detail, and the next step runs
-  it: the chain goes to `fix` with `conflictPending` set, the fix input
+  it: the chain goes to `fix` with `conflictPending` set and `pendingSince`
+  cleared (the fix's head gets a new window), the fix input
   `origin/main conflicts with this branch:` followed by the detail and spec
   024's guidance, and the history entry `origin/main conflicted before verify,
   on head <sha>:` with the detail, all as spec 024 defines. Given a clean
@@ -138,7 +139,9 @@ pending event). The PR edits:
   `conflicts` as AC-1 says; `rebasePush` clears `pendingSince` when it binds a
   new head (AC-2; in spec 060's resume it is already null).
 - `tools/scheduler/src/chain/machine.ts`: `verifyChecks` answers `conflicts`
-  before the bound (AC-1).
+  before the bound (AC-1); the `rebase_conflict` transition clears
+  `pendingSince` (AC-2; before this spec it was already null at every point
+  that raised it).
 - `tools/scheduler/test/chain.test.ts` and
   `tools/scheduler/test/driver.test.ts`: the tests of AC-5.
 - This spec, the amendment marks on spec 006 AC-17 and spec 060 AC-8, and its

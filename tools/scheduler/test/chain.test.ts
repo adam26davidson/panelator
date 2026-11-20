@@ -731,7 +731,7 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
     expect(r.state).toMatchObject({ stage: "verify", pendingSince: AT, checksRerun: false });
     // The rebase conflicted: spec 024's route, the fix told the conflict and its paths.
     const f = transition(r.state, { type: "rebase_conflict", detail: "CONFLICT (content): Merge conflict in docs/x.md" });
-    expect(f.state).toMatchObject({ stage: "fix", conflictPending: true });
+    expect(f.state).toMatchObject({ stage: "fix", conflictPending: true, pendingSince: null });
     expect(f.state.pendingFixInput).toMatch(/^origin\/main conflicts with this branch:\nCONFLICT \(content\): Merge conflict in docs\/x\.md\n\n/);
     expect(f.state.history.at(-1)).toBe(`origin/main conflicted before verify, on head ${pr3.head_sha}:\nCONFLICT (content): Merge conflict in docs/x.md`);
   });

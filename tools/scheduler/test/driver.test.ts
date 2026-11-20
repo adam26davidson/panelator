@@ -2631,7 +2631,7 @@ describe("driver: verify does not wait on a PR that conflicts with main (spec 09
     expect(r.claim.state).toMatchObject({ stage: "verify", pr: { head_sha: prHead } });
     expect(git(pair.origin, "rev-parse", "spec-7").trim()).toBe(prHead);
     const next = await step(deps, r.claim);
-    expect(next.claim.state).toMatchObject({ stage: "fix", conflictPending: true, checksRerun: false });
+    expect(next.claim.state).toMatchObject({ stage: "fix", conflictPending: true, checksRerun: false, pendingSince: null });
     expect(next.claim.state.pendingFixInput).toMatch(/^origin\/main conflicts with this branch:\n[\s\S]*CONFLICT[\s\S]*a\.txt/);
     expect(next.claim.state.history.at(-1)).toMatch(/^origin\/main conflicted before verify/);
   }, 60_000);

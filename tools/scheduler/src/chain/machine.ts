@@ -927,7 +927,8 @@ function baseTransition(state: ChainState, event: ChainEvent, bounds: Bounds): S
     if (!["plan", "implement", "review", "fix", "verify", "merge"].includes(state.stage)) invalid(state, event);
     // Spec 024 AC-5: the entry the escalation record explains itself with; the fix input alone is overwritten by the next.
     const noted = note(state, `origin/main conflicted before ${state.stage}, on head ${state.pr?.head_sha ?? "(no PR)"}:\n${event.detail}`);
-    return toFix(noted, `origin/main conflicts with this branch:\n${event.detail}\n\n${CONFLICT_GUIDANCE}`, { conflictPending: true });
+    // Spec 097 AC-2: raised from verify, the pending window ends; the fix's head gets a new one.
+    return toFix(noted, `origin/main conflicts with this branch:\n${event.detail}\n\n${CONFLICT_GUIDANCE}`, { conflictPending: true, pendingSince: null });
   }
   if (event.type === "conflict_gone") {
     if (state.stage !== "fix" || !state.conflictPending) invalid(state, event);
