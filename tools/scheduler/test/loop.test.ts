@@ -1598,10 +1598,12 @@ describe("Telegram attaches when connected (spec 043)", () => {
   it("AC-4: a tick completes while getMe is failing", async () => {
     const { s } = await setup(routes([]));
     const server = await fakeTelegram(); const logs: Record<string, unknown>[] = []; let hooked = 0;
-    server.fail("getMe", 500, 1000);
+    // Keep the outage active until cleanup, regardless of retry count or tick duration.
+    server.fail("getMe", 500, Infinity);
     const p = await poller(s, server, logs, () => hooked++);
     p.start();
     try {
+      await until(() => logs.some((l) => l.status === "connecting"));
       await Promise.race([s.tick(), new Promise((_, rej) => setTimeout(() => rej(new Error("tick hung")), 10000))]);
       expect(logs.some((l) => l.status === "connected")).toBe(false);
       expect(hooked).toBe(0);
