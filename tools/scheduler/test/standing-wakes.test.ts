@@ -131,6 +131,12 @@ describe('the repair turn (spec 025 AC-3 to AC-6)',()=>{
   expect(filerRuns(w)).toHaveLength(2);expect(s.failures).toBe(0);expect(s.postponed_until).toBeTruthy();expect(s.pending_events.length).toBeGreaterThan(0);
  },30000);
 });
+describe('eventsWake min_events (spec 028 AC-4)',()=>{
+ const st=(n:number,failures=0):AgentState=>({last_run:{at:'2026-10-01T00:00:00.000Z',run_id:'r',outcome:'ok'},next_run:null,paused:false,paused_by:null,pending_events:Array.from({length:n},()=>({event:'merge',payload:{},at:'2026-10-01T00:00:00.000Z'})),failures});
+ const now=Date.parse('2026-10-02T00:00:00Z');
+ it('is not due at nine merges and is due at ten',()=>{expect(eventsWake(st(9),now,0,10)).toBe(false);expect(eventsWake(st(10),now,0,10)).toBe(true);});
+ it('defaults to one event, and the retry after a failure runs with what is pending',()=>{expect(eventsWake(st(1),now,0)).toBe(true);expect(eventsWake(st(9,1),now,0,10)).toBe(true);});
+});
 describe('eventsWake (spec 025 AC-12 to AC-14)',()=>{
  const H=3600000;
  const state=(over:Partial<AgentState>):AgentState=>({last_run:{at:'2026-10-01T00:00:00.000Z',run_id:'r',outcome:'ok'},next_run:null,paused:false,paused_by:null,pending_events:[{event:'finding_queued',payload:{},at:'x'}],failures:0,...over});

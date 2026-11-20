@@ -127,6 +127,24 @@
       "type": "string",
       "format": "date-time"
     },
+    "reflection": {
+      "type": "object",
+      "properties": {
+        "period_from": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "plan_key": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "period_from",
+        "plan_key"
+      ],
+      "additionalProperties": false
+    },
     "running": {
       "type": "object",
       "properties": {

@@ -744,7 +744,7 @@ export class Scheduler {
         const debounceMs = parseDuration(String((await d.parameters.read("standing.event_debounce")).value));
         for (const s of states) {
           // Spec 025 AC-12: a routine event waits out the debounce; the schedule never does.
-          const due = (s.state.next_run && Date.parse(s.state.next_run) <= d.now().getTime()) || eventsWake(s.state, d.now().getTime(), debounceMs);
+          const due = (s.state.next_run && Date.parse(s.state.next_run) <= d.now().getTime()) || eventsWake(s.state, d.now().getTime(), debounceMs, s.def.trigger.min_events ?? 1);
           // Spec 013 AC-7: a standing agent postponed on a quota limit is skipped until then, whatever events arrive.
           if (s.state.postponed_until && Date.parse(s.state.postponed_until) > d.now().getTime()) continue;
           if (!s.state.paused && !this.#activeStanding.has(s.def.name) && due) dueStanding.push(s);

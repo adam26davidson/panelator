@@ -1,0 +1,353 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "reflection-input.json",
+  "type": "object",
+  "properties": {
+    "period": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ]
+    },
+    "agent": {
+      "type": "string"
+    },
+    "parameters": {
+      "type": "object"
+    },
+    "agents": {
+      "type": "object"
+    },
+    "metrics": {
+      "$ref": "metrics-report.json"
+    },
+    "events_summary": {
+      "type": "object",
+      "properties": {
+        "by_kind": {
+          "type": "object"
+        },
+        "by_week": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "by_kind",
+        "by_week"
+      ]
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "issue": {
+            "type": "integer"
+          },
+          "total_cost_usd": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "issue",
+          "total_cost_usd"
+        ]
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "issue": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "stage": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "sent_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "issue",
+          "stage",
+          "question",
+          "sent_at"
+        ]
+      }
+    },
+    "previous_plans": {
+      "type": "array"
+    },
+    "open_bot_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "number": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "age_days": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "number",
+          "title",
+          "labels",
+          "age_days"
+        ]
+      }
+    },
+    "findings_pending": {
+      "type": "object",
+      "properties": {
+        "queued": {
+          "type": "integer"
+        },
+        "triage_by_outcome": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "queued",
+        "triage_by_outcome"
+      ]
+    },
+    "design_tree": {
+      "type": "object",
+      "properties": {
+        "designs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "file"
+                        },
+                        "path": {
+                          "type": "string"
+                        },
+                        "exists": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "path",
+                        "exists"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "planned"
+                        },
+                        "slug": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "issue": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "done": {
+                          "type": "boolean"
+                        },
+                        "dead": {
+                          "type": "boolean"
+                        },
+                        "error": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "slug",
+                        "title",
+                        "issue",
+                        "done",
+                        "dead"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "required": [
+              "path",
+              "children"
+            ]
+          }
+        },
+        "specs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "status": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "issue": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "implemented": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "path",
+              "status",
+              "issue",
+              "implemented"
+            ]
+          }
+        }
+      },
+      "required": [
+        "designs",
+        "specs"
+      ]
+    },
+    "charter": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "n",
+          "text"
+        ]
+      }
+    },
+    "console_available": {
+      "type": "boolean"
+    },
+    "maintainer_contacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "first": {
+            "type": "string"
+          },
+          "last": {
+            "type": "string"
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recurring": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "label",
+          "count",
+          "first",
+          "last",
+          "examples",
+          "recurring"
+        ]
+      }
+    },
+    "metric_definitions": {
+      "type": "array"
+    },
+    "snapshots": {
+      "type": "array"
+    },
+    "all_plans": {
+      "type": "array"
+    },
+    "question_outcomes": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "period",
+    "agent",
+    "parameters",
+    "agents",
+    "metrics",
+    "events_summary",
+    "issues",
+    "open_questions",
+    "previous_plans",
+    "open_bot_issues",
+    "findings_pending"
+  ],
+  "additionalProperties": false
+}

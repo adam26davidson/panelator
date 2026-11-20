@@ -23,6 +23,10 @@
             "type": "string"
           },
           "minItems": 1
+        },
+        "min_events": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "minProperties": 1,

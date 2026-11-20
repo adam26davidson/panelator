@@ -13,6 +13,8 @@ export interface AgentState {
  running?:{run_id:string;started_at:string};
  /** Spec 013 AC-7: not started again before this instant (a quota limit or a deferral). */
  postponed_until?:string;
+ /** Spec 028 AC-6: a reflection's period start and plan key, fixed before its first attempt so every retry reuses them. */
+ reflection?:{period_from:string;plan_key:string};
  /**
   * Spec 045 AC-2, AC-5, AC-6: the consecutive transient failures (a network outage) of this agent. The wait lives in
   * `postponed_until`; none of these attempts counts in `failures` until the outage passes its ceiling.
@@ -25,8 +27,10 @@ export const DEBOUNCED_EVENTS:readonly string[]=['finding_queued'];
  * Whether the pending events make an agent due. A debounced event waits until `debounceMs` after the last run ended,
  * and stays pending meanwhile. An agent that has not run yet, or owes the retry after a first failure, does not wait.
  */
-export function eventsWake(state:AgentState,nowMs:number,debounceMs:number):boolean {
+export function eventsWake(state:AgentState,nowMs:number,debounceMs:number,minEvents=1):boolean {
  if(!state.pending_events.length)return false;
+ // Spec 028 AC-4: a batch trigger waits for `minEvents`; the retry owed after a first failure runs with whatever is pending.
+ if(state.failures===0&&state.pending_events.length<minEvents)return false;
  if(state.failures>0||!state.last_run||state.pending_events.some(e=>!DEBOUNCED_EVENTS.includes(e.event)))return true;
  return nowMs-Date.parse(state.last_run.at)>=debounceMs;
 }

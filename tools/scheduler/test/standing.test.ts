@@ -9,7 +9,7 @@ import {emit,EVENT_NAMES,watchMainChecks} from '../src/standing/events.ts';
 import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
 import {ParameterStore} from '../src/parameters/store.ts';
 import {buildAuditInput} from '../src/standing/audit-input.ts';
-import {registryActionsCheck} from '../src/actions/index.ts';
+import {registryActionsCheck,KINDS} from '../src/actions/index.ts';
 import type {GitHubClient} from '../src/github/client.ts';
 import { loadRegistry, parseDuration, renderStandingPrompt } from '../src/standing/registry.ts';
 import { agentsDir } from '../src/config.ts';
@@ -32,6 +32,20 @@ Hello {{agent}}
 it('the filer prompt carries the stops_pipeline rule and input name (spec 063 AC-3)',()=>{
  const text=readFileSync(join(agentsDir,'standing','findings-filer.md'),'utf8');
  expect(text).toContain('issue.stops_pipeline');expect(text).toContain('stops every run or every PR');expect(text).toContain('stops_pipeline_label');
+});
+describe('trigger.min_events (spec 028 AC-4)', () => {
+  const withTrigger = (t: string) => text.replace('trigger: {schedule: 1d, events: [merge]}', `trigger: ${t}`);
+  const load = (s: string) => { const dir = mkdtempSync(join(tmpdir(), 'registry-')); writeFileSync(join(dir, 'test.md'), s); return loadRegistry(dir, ['merge'], []); };
+  it('accepts min_events with events and rejects 0 or a missing events list', () => {
+    expect(load(withTrigger('{schedule: 7d, events: [merge], min_events: 10}')).test.trigger.min_events).toBe(10);
+    expect(() => load(withTrigger('{schedule: 7d, events: [merge], min_events: 0}'))).toThrow();
+    expect(() => load(withTrigger('{schedule: 7d, min_events: 3}'))).toThrow(/min_events needs events/);
+  });
+  it('leaves the filer and the audit on the default', () => {
+    const r = loadRegistry(join(agentsDir, 'standing'), EVENT_NAMES, Object.keys(KINDS));
+    expect(r['findings-filer']!.trigger.min_events).toBeUndefined();
+    expect(r['action-audit']!.trigger.min_events).toBeUndefined();
+  });
 });
 describe('standing registry', () => {
   function load(s = text) { const dir = mkdtempSync(join(tmpdir(), 'registry-')); writeFileSync(join(dir, 'test.md'), s); return loadRegistry(dir, ['merge'], []); }

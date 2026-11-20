@@ -41,7 +41,7 @@ export interface StageDefinition {
 export interface StandingDefinition extends Omit<StageDefinition, "name" | "kind" | "worktree"> {
   name: string;
   kind: "standing";
-  trigger: { schedule?: string; events?: string[] };
+  trigger: { schedule?: string; events?: string[]; min_events?: number };
   worktree: "fresh" | "none";
   actions: string[];
 }
