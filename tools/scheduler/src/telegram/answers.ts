@@ -187,7 +187,8 @@ export class TelegramAnswers {
           };
           await writePaused(d.paths, r);
         }
-        if (!(await answeredEntry(d.paths, r.question_comment_id!)))
+        // Spec 099 AC-5: a request's answer is logged by the resume, after the scheduler has acted on it.
+        if (!r.question.request && !(await answeredEntry(d.paths, r.question_comment_id!)))
           await appendQuestionLog(d.paths, {
             issue: r.issue,
             at: d.now().toISOString(),

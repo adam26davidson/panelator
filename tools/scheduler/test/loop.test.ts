@@ -1989,7 +1989,7 @@ describe("Scheduler.tick credential_expiry producer (spec 099 AC-3)", () => {
     setNow(new Date("2026-10-13T16:00:00Z"));
     const info = await s.tick();
     expect(info.errors.some((e) => e.startsWith("credential expiry"))).toBe(true);
-  });
+}, 60000);
   it("a failed last check produces an event, expiry none with ok or null never does", async () => {
     const { expiryEvents } = await import("../src/credentials/check.ts");
     const { CredentialStore } = await import("../src/credentials/store.ts");

@@ -2438,3 +2438,103 @@ describe("end to end: an implement run stopped before it finished keeps its work
     expect(w.mergeRequests).toEqual([9]);
   }, 120_000);
 });
+
+describe('requests, alerts and the credential check (spec 099 section 6)', () => {
+  const FAKE_CREDS = join(import.meta.dirname, 'helpers', 'fake-systemd-creds');
+  const cred = { type: 'credential', name: 'telegram-bot', provider: 'telegram', access: ['send messages'], setup: ['create the bot', 'cred set telegram-bot'] };
+  const firstContact = { type: 'first_contact', party: 'example.org', channel: 'email', why: 'a question only they can answer', message: 'Hello\nthere' };
+  async function requestWorld(request: Record<string, unknown>) {
+    let w!: ChainWorld; const a = agents(() => w);
+    w = await chainWorld({ files: repoFiles(), results: { plan: [{ escalation: { ...ask('capability', 'Can you do it?'), request } }, PLAN], implement: [a.implement(9)], review: [APPROVE], 'question-check': [SEND] } });
+    const server = await fakeTelegram();
+    w.deps.telegram = telegramChannel(new TelegramClient('SECRET', 42, server.url));
+    const { CredentialStore } = await import('../src/credentials/store.ts');
+    const { loadCatalogue, profileNames } = await import('../src/credentials/catalogue.ts');
+    const store = new CredentialStore({ dir: join(w.pair.root, 'cred-store'), systemdCreds: FAKE_CREDS });
+    await store.writeSecret('telegram-bot', JSON.stringify({ bot_token: '123:abc', chat_id: 42 }), 'maintainer');
+    w.deps.catalogue = loadCatalogue(join(agentsDir, 'credentials.yaml'), { profiles: profileNames(agentsDir), agents: Object.keys(w.deps.registry ?? {}).concat(['action-audit', 'charter-reflection', 'credential-check', 'delivery-reflection', 'findings-filer', 'infra-health', 'meta-reflection']) });
+    w.deps.checkContext = { store, app: w.deps.cfg.app, telegramBaseUrl: server.url, now: () => new Date() };
+    return { w, server };
+  }
+  const press = async (w: ChainWorld, server: Awaited<ReturnType<typeof fakeTelegram>>, n: number) => {
+    const [r] = await listPaused(w.paths);
+    const u = { update_id: 1, callback_query: { id: 'cb', data: `r:${r.nonce}:${n}`, message: { message_id: r.telegram!.message_id!, date: Math.floor(Date.now() / 1000), chat: { id: 42 } } } };
+    await w.scheduler.handleTelegramUpdate(u); await w.scheduler.confirmTelegramUpdate(u); await w.tick();
+    return readFileSync(w.paths.questionsLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((e) => e.event === 'answered');
+  };
+  it('a credential request is sent with Done / Can\'t do this; Done runs the check and the stage resumes with done (verified)', async () => {
+    const { w, server } = await requestWorld(cred);
+    try {
+      await w.tick();
+      const sent = server.sent[0]!;
+      expect((sent.reply_markup as { inline_keyboard: { text: string }[][] }).inline_keyboard.map((r) => r[0]!.text)).toEqual(['Done', "Can't do this"]);
+      expect(String(sent.text)).toContain('1. create the bot');
+      const entry = await press(w, server, 1);
+      expect(entry).toMatchObject({ answer: 'done (verified)', outcome: 'verified', request: { type: 'credential' } });
+      expect(w.mergeRequests).toEqual([9]);
+      expect(JSON.stringify(w.logs)).not.toContain('123:abc');
+    } finally { await server.close(); }
+  }, 120000);
+  it('the same with the check failing: done (check failed: ...)', async () => {
+    const { w, server } = await requestWorld(cred);
+    try {
+      await w.tick();
+      server.fail('getMe', 401);
+      const entry = await press(w, server, 1);
+      expect(entry).toMatchObject({ answer: 'done (check failed: unauthorized)', outcome: 'check_failed' });
+    } finally { await server.close(); }
+  }, 120000);
+  it('a first-contact request approved by button registers the party and tells the stage no channel can reach it; no other repository is touched', async () => {
+    const { w, server } = await requestWorld(firstContact);
+    try {
+      await w.tick();
+      expect(String(server.sent[0]!.text)).toContain('> Hello\n> there');
+      const entry = await press(w, server, 1);
+      expect(entry).toMatchObject({ outcome: 'approved' });
+      expect(entry.answer).toBe('approved (recorded; no channel can reach example.org yet: a credential that can is a credential request)');
+      const { readParties } = await import('../src/contacts/gate.ts');
+      expect((await readParties(w.paths)).map((p) => p.party)).toEqual(['example.org']);
+      expect(w.gh.unmatched).toEqual([]);
+      expect(w.mergeRequests).toEqual([9]);
+    } finally { await server.close(); }
+  }, 120000);
+  it('an infra notification reaches the chat (channel telegram), a refused send falls back to the log, and a reply to an alert gets "alerts take no reply"', async () => {
+    let w!: ChainWorld; w = await chainWorld({ files: repoFiles(), results: {} });
+    const server = await fakeTelegram();
+    try {
+      const channel = telegramChannel(new TelegramClient('SECRET', 42, server.url));
+      w.deps.telegram = channel;
+      const { TelegramNotifier } = await import('../src/notify/telegram.ts');
+      const { LogNotifier } = await import('../src/notify/log.ts');
+      const notifier = TelegramNotifier(new LogNotifier(w.paths.serviceLog), { telegram: () => channel, alertsPath: w.paths.telegramAlerts, log: () => {} });
+      expect(await notifier.notify({ issue: 0, gate: 'infra', label: 'disk', text: 'volume full' })).toEqual({ channel: 'telegram' });
+      expect(server.sent[0]!.text).toBe('infra: disk\n\nvolume full');
+      server.fail('sendMessage', 500);
+      expect(await notifier.notify({ issue: 0, gate: 'infra', label: 'disk2', text: 'again' })).toEqual({ channel: 'log' });
+      const lines = readFileSync(w.paths.serviceLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+      expect(lines.filter((l) => l.kind === 'notify').map((l) => l.channel)).toEqual(['telegram', 'log']);
+      const u = { update_id: 3, message: { message_id: 2000, date: Math.floor(Date.now() / 1000), chat: { id: 42 }, text: 'ok thanks', reply_to_message: { message_id: 1 } } };
+      await w.scheduler.handleTelegramUpdate(u);
+      expect(String(server.sent.at(-1)!.text)).toContain('Alerts take no reply');
+    } finally { await server.close(); }
+  }, 60000);
+  it('the credential check woken for an entry near expiry sends one credential-expiry notification and nothing twice that day; a scope failure sends one contact-scope notification', async () => {
+    const { loadCatalogue } = await import('../src/credentials/catalogue.ts');
+    const { CredentialStore } = await import('../src/credentials/store.ts');
+    const w = await standingWorld({ 'credential-check': [{ summary: 'one warning', warnings: [{ name: 'fake-token', expires_at: '2026-10-04T00:00:00Z', steps: ['rotate by hand'] }] }, { summary: 'again', warnings: [{ name: 'fake-token', expires_at: '2026-10-04T00:00:00Z', steps: ['rotate by hand'] }] }] });
+    const store = new CredentialStore({ dir: join(w.pair.root, 'cred-store'), systemdCreds: FAKE_CREDS });
+    await store.writeSecret('fake-token', 's', 'maintainer');
+    const catalogue = loadCatalogue(join(import.meta.dirname, 'fixtures', 'test-catalogue.yaml'), { profiles: ['backend'], agents: [] });
+    const deps = { ...w.deps, parameters: w.parameters, catalogue, checkContext: { store, app: w.deps.cfg.app, now: () => w.deps.now() }, scope: async () => ({ status: 'failed' as const, reason: 'the installation also reaches o/other' }) };
+    w.setNow(new Date('2026-10-01T12:00:00Z'));
+    const def = w.registry['credential-check']!;
+    await runStandingAgent(deps as never, def, (await readAgentState(w.paths, 'credential-check'))!);
+    const keys = () => w.notifications.map((n) => `${n.gate}:${n.label}`);
+    expect(keys().filter((k) => k === 'credential-expiry:fake-token')).toHaveLength(1);
+    expect(keys().filter((k) => k === 'infra:contact-scope')).toHaveLength(1);
+    expect(w.notifications.find((n) => n.gate === 'credential-expiry')!.text).toContain('1. Run fakecmd --renew');
+    w.setNow(new Date('2026-10-01T18:00:00Z'));
+    await runStandingAgent(deps as never, def, (await readAgentState(w.paths, 'credential-check'))!);
+    expect(keys().filter((k) => k === 'credential-expiry:fake-token')).toHaveLength(1);
+  }, 60000);
+});
