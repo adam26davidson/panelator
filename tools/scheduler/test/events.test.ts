@@ -38,6 +38,43 @@ describe("recordEvent (spec 026 AC-1)", () => {
     expect(readdirSync(p.events)).toEqual([]);
   });
 
+  it("rejects a slot in an issue.claimed payload and accepts {} (spec 095 AC-2)", async () => {
+    const p = await fresh();
+    await expect(recordEvent(p, ev({ kind: "issue.claimed", issue: 7, payload: { slot: 0 } }))).rejects.toThrow(/invalid issue.claimed event/);
+    expect(readdirSync(p.events)).toEqual([]);
+    await recordEvent(p, ev({ kind: "issue.claimed", issue: 7, payload: {} }));
+    expect(lines(join(p.events, "2026-09.jsonl"))).toHaveLength(1);
+  });
+
+  it("indexes an older issue.claimed line with a slot and leaves the file alone (spec 095 AC-3)", async () => {
+    const p = await fresh();
+    const file = join(p.events, "2026-09.jsonl");
+    writeFileSync(file, JSON.stringify({ id: "old1", at: "2026-09-15T09:00:00.000Z", kind: "issue.claimed", issue: 7, payload: { slot: 1 } }) + "\n");
+    const before = readFileSync(file);
+    const db = openIndex(p);
+    const rows = db.prepare("SELECT payload FROM events WHERE kind = 'issue.claimed'").all() as { payload: string }[];
+    db.close();
+    expect(rows.map((r) => JSON.parse(r.payload))).toEqual([{ slot: 1 }]);
+    expect(readFileSync(file).equals(before)).toBe(true);
+    expect(existsSync(p.serviceLog) ? readFileSync(p.serviceLog, "utf8") : "").not.toContain("events-index-skipped-lines");
+  });
+
+  it("no metric definition reads a slot of issue.claimed (spec 095 AC-5)", () => {
+    const root = join(import.meta.dirname, "..");
+    const files: string[] = [];
+    const walk = (d: string) => { if (!existsSync(d)) return; for (const n of readdirSync(d)) { const f = join(d, n); statSync(f).isDirectory() ? walk(f) : files.push(f); } };
+    walk(join(root, "src", "metrics")); walk(join(root, "src", "reflection")); walk(join(root, "..", "..", "agents", "metrics"));
+    expect(files.length).toBeGreaterThan(0);
+    const hits = files.flatMap((f) => readFileSync(f, "utf8").split("\n").filter((l) => /slot/.test(l)));
+    for (const l of hits) {
+      expect(l).toMatch(/\bslots?\b(?!\.)|slots\.sample/);
+      expect(l).not.toMatch(/payload\.slot|'slot'|"slot"|\.slot\b/);
+    }
+    const fixture = readFileSync(join(root, "test", "fixtures", "events", "2026-09.jsonl"), "utf8").split("\n").filter((l) => l.includes('"issue.claimed"'));
+    expect(fixture.length).toBeGreaterThan(0);
+    for (const l of fixture) expect(JSON.parse(l).payload).toHaveProperty("slot");
+  });
+
   it("requires stops_pipeline in an issue.eligible payload (spec 063 AC-5)", async () => {
     const p = await fresh();
     const payload = { rank: 0, work: "system", cls: "none", validated_at: null, created_at: "2026-10-01T00:00:00Z" };

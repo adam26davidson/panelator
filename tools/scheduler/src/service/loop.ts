@@ -512,7 +512,7 @@ export class Scheduler {
     await this.telegramAnswers.archive(rec);
     await removePaused(d.paths, rec.issue);
     await record(d.paths, "pause.ended", d.now(), { stage: rec.asking_stage, question_comment_id: questionId, reason: "answered" }, { issue: rec.issue });
-    await record(d.paths, "issue.claimed", d.now(), { slot: this.active + 1 }, { issue: rec.issue });
+    await record(d.paths, "issue.claimed", d.now(), {}, { issue: rec.issue });
     info.claimed.push(rec.issue);
     this.#start(claim);
   }
@@ -553,7 +553,7 @@ export class Scheduler {
         await removeBlocked(d.paths, rec.issue);
         d.serviceLog.write({ kind: "unblocked", issue: rec.issue, condition: rec.condition, main_sha: head });
         await record(d.paths, "block.ended", d.now(), { kind: rec.condition.kind, main_sha: head }, { issue: rec.issue });
-        await record(d.paths, "issue.claimed", d.now(), { slot: this.active + 1 }, { issue: rec.issue });
+        await record(d.paths, "issue.claimed", d.now(), {}, { issue: rec.issue });
         info.claimed.push(rec.issue);
         this.#start(claim);
       } catch (e) {
@@ -833,7 +833,7 @@ export class Scheduler {
             await writeClaim(d.paths, c);
             held++;
             await d.gh.addLabels(issue.number, [CLAIM_LABEL]);
-            await record(d.paths, "issue.claimed", d.now(), { slot: held }, { issue: issue.number });
+            await record(d.paths, "issue.claimed", d.now(), {}, { issue: issue.number });
             await this.#dropEligibleMark(issue.number);
             info.claimed.push(issue.number);
             this.#start(c);
