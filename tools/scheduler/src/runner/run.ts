@@ -14,6 +14,8 @@ import { newRunId, runDir, writeUsageRecord, type UsageRecord } from "../state/r
 import type { Harness, Profile, AgentDefinition, AgentStageName } from "../types.ts";
 import { renderStandingPrompt } from '../standing/registry.ts';
 import { stageEnv } from "./credentials.ts";
+import { writeShims } from "../credentials/shims.ts";
+import type { CredentialEntry } from "../credentials/catalogue.ts";
 import { spawnBounded, type SpawnResult } from "./process.ts";
 import { linkProfileSkills } from "./skills.ts";
 import { observeRun, type Limit } from "../quota/book.ts";
@@ -28,6 +30,9 @@ export interface RunnerContext {
   now?: () => Date;
   sessionId?: () => string;
   binDir: string;
+  /** Spec 099 AC-2: the configuration file `cred-exec.ts` loads. */
+  configPath?: string;
+  cataloguePath?: string;
   /** Author and committer identity for stage commits (the App's bot user); supplied by plan 3. */
   gitIdentity?: { name: string; email: string };
   /** Spec 013 AC-8: `quota.session_window`; the default when unset. */
@@ -47,6 +52,8 @@ export interface StageRequest {
   attempt: number;
   worktree: string;
   profile: Profile | null;
+  /** Spec 099 AC-2: the catalogue entries the run's profile or definition lists. */
+  credentials?: CredentialEntry[];
   model?: string;
   harness?: Harness;
   /** I2: the driver persists the run id in the claim before the run, so it supplies it here. */
@@ -90,6 +97,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
   const dir = runDir(ctx.paths, runId);
   await mkdir(dir, { recursive: true });
   const resultPath = join(dir, "result.json");
+  const shimDir = req.credentials?.length && ctx.configPath ? await writeShims(dir, req.credentials, { configPath: ctx.configPath, binDir: ctx.binDir, cataloguePath: ctx.cataloguePath }) : null;
   const eventsPath = join(dir, "events.jsonl");
   const model = req.model ?? req.def.model;
 
@@ -148,7 +156,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
       spawned = await spawnBounded({
         argv: cmd.argv,
         stdin: cmd.stdin,
-        env: { ...cmd.env, ...stageEnv(ctx.binDir, ctx.paths.root, ctx.gitIdentity, { actor: req.def.name, runId }) },
+        env: { ...cmd.env, ...stageEnv(ctx.binDir, ctx.paths.root, ctx.gitIdentity, { actor: req.def.name, runId }, shimDir) },
         cwd: req.worktree,
         timeoutMs: req.def.bounds.timeout_min * 60_000,
         scope: { enabled: ctx.systemdScope, unitName: `panelator-stage-${runId}`, systemdRunBin: ctx.systemdRunBin, runtimeMaxSec: req.def.bounds.timeout_min * 60 + 600 },

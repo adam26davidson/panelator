@@ -2,7 +2,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {join} from 'node:path';
 import {mkdir,writeFile} from 'node:fs/promises';
-import type {DriverDeps} from '../chain/driver.ts';
+import {entriesFor,type DriverDeps} from '../chain/driver.ts';
 import type {StandingDefinition,StageDefinition} from '../types.ts';
 import type {ParameterStore} from '../parameters/store.ts';
 import {validate,type SchemaName} from '../schema/validate.ts';
@@ -90,8 +90,8 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   const profile=def.profile==='none'?null:resolveProfile(d.agentsDir,def.profile);
   // Standing agents have no write or GitHub tool, even when a profile normally supplies one.
   const safeProfile=profile?{...profile,tools:['Read','Glob','Grep'],credentials:[]}:null;
-  const req={def,input:{} as StageInput,standingInput:{agent:def.name,events:input?{events:received,input}:received,since:state.last_run?.at??null,parameters},issue:0,attempt,worktree,profile:safeProfile,runId};
-  const context={paths:d.paths,adapter:d.adapterFor(def.harness),systemdScope:d.systemdScope,systemdRunBin:d.systemdRunBin,now:d.now,binDir:d.binDir,sessionWindowMs:quota.sessionWindowMs};
+  const req={def,input:{} as StageInput,standingInput:{agent:def.name,events:input?{events:received,input}:received,since:state.last_run?.at??null,parameters},issue:0,attempt,worktree,profile:safeProfile,runId,credentials:entriesFor(d.catalogue,def.credentials)};
+  const context={paths:d.paths,adapter:d.adapterFor(def.harness),systemdScope:d.systemdScope,systemdRunBin:d.systemdRunBin,now:d.now,binDir:d.binDir,configPath:d.configPath,sessionWindowMs:quota.sessionWindowMs};
   const logLimit=(r:StageOutcome)=>{if(r.limit)d.log({kind:'quota-limit',agent:def.name,run_id:r.runId,key:r.limit.key,scope:r.limit.scope,resets_at:r.limit.resets_at,source:r.limit.source});};
   let ran={harness:moved?.harness??def.harness,model:moved?.model??def.model};
   let result=moved?await runStage({...context,adapter:d.adapterFor(moved.harness)},{...req,model:moved.model,harness:moved.harness,runId:runId+'-fallback'}):await runStage(context,req);

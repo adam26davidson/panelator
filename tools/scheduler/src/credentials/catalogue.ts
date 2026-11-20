@@ -40,6 +40,7 @@ export function loadCatalogue(path: string, known: { profiles: string[]; agents:
     if (e.wrapper !== "none" && isBuiltin) fail("an entry with a wrapper must have a command check, not a builtin");
     if (typeof e.check !== "string" && !(BUILTINS as readonly string[]).includes(e.check.builtin)) fail(`builtin ${e.check.builtin} is not implemented`);
     if (e.wrapper !== "none") {
+      if (!/^[a-z][a-z0-9._-]*$/.test(e.wrapper.command)) fail(`wrapper command ${e.wrapper.command} must match ^[a-z][a-z0-9._-]*$ (a bare command name, no slash)`);
       const other = wrapped.get(e.wrapper.command);
       if (other) fail(`wrapper command ${e.wrapper.command} is already wrapped by ${other}`);
       wrapped.set(e.wrapper.command, e.name);

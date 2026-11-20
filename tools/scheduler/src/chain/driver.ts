@@ -13,6 +13,7 @@ import type { GitHubClient } from "../github/client.ts";
 import { neutraliseMarkers } from "../github/markers.ts";
 import type { PullRequestInfo } from "../github/types.ts";
 import type { Notifier } from "../notify/types.ts";
+import type { CredentialEntry } from "../credentials/catalogue.ts";
 import { implementationProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
 import { afterFallback, harnessForModel, retryDecision } from "../runner/retry.ts";
 import type { ParameterStore } from "../parameters/store.ts";
@@ -53,6 +54,9 @@ import type { ReviewResult } from "../types.ts";
 
 const execFileP = promisify(execFile);
 
+export function entriesFor(catalogue: Record<string, CredentialEntry> | undefined, names: string[] | undefined): CredentialEntry[] {
+  return (names ?? []).flatMap((n) => (catalogue?.[n] ? [catalogue[n]!] : []));
+}
 export interface DriverDeps {
   /** Spec 013: the quota parameters; defaults when absent. */
   parameters?: ParameterStore;
@@ -66,6 +70,9 @@ export interface DriverDeps {
   agentsDir: string;
   repoDir: string;
   binDir: string;
+  configPath?: string;
+  /** Spec 099 AC-2: the loaded credential catalogue, to resolve a profile's `credentials` names. */
+  catalogue?: Record<string, CredentialEntry>;
   adapterFor: (harness: Harness) => Adapter;
   systemdScope: boolean;
   /** Test seam: a stand-in for systemd-run; production leaves it unset. */
@@ -856,10 +863,10 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
     try {
       const out = await runStage(
         {
-          paths: deps.paths, adapter: deps.adapterFor(h), systemdScope: deps.systemdScope, systemdRunBin: deps.systemdRunBin, binDir: deps.binDir, now: deps.now,
+          paths: deps.paths, adapter: deps.adapterFor(h), systemdScope: deps.systemdScope, systemdRunBin: deps.systemdRunBin, binDir: deps.binDir, configPath: deps.configPath, now: deps.now,
           gitIdentity: botIdentity(deps), sessionWindowMs: quota.sessionWindowMs,
         },
-        { def, input, issue: claim.issue, attempt, worktree: claim.worktree, profile, model, harness, runId,
+        { def, input, issue: claim.issue, attempt, worktree: claim.worktree, profile, model, harness, runId, credentials: entriesFor(deps.catalogue, profile?.credentials),
           conversation:!!state.conversation,
           resume:state.resumeSession&&(state.resumeSession.harness===h||state.resumeSession.harness===deps.adapterFor(h).harness)?{sessionId:state.resumeSession.session_id,harness:h,model:state.resumeSession.model}:undefined }, 
       );

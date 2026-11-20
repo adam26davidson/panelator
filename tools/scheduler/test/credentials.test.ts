@@ -282,3 +282,68 @@ describe("the App key at start-up (AC-9)", () => {
     expect((err as Error).message).not.toContain(bodyLine(keys.priv));
   });
 });
+
+// ---- spec 099 AC-2: shims and cred-exec ----
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { writeShims } from "../src/credentials/shims.ts";
+import { stageEnv } from "../src/runner/credentials.ts";
+
+const helpers = join(dirname(fileURLToPath(import.meta.url)), "helpers");
+const testCataloguePath = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "test-catalogue.yaml");
+const testCatalogue = () => loadCatalogue(testCataloguePath, known());
+const binDir = join(dirname(fileURLToPath(import.meta.url)), "..", "bin");
+
+async function shimEnv(secret = "S3CRET-fake-value") {
+  const root = mkdtempSync(join(tmpdir(), "shim-"));
+  const store = new CredentialStore({ dir: join(root, "store"), systemdCreds: fake });
+  await store.writeSecret("fake-token", secret, "maintainer");
+  const state = join(root, "state");
+  mkdirSync(state);
+  const config = join(root, "scheduler.yaml");
+  writeFileSync(config, readFileSync(defaultConfigPath, "utf8") + `\ncredentials:\n  dir: ${join(root, "store")}\n`);
+  const runDir = join(root, "run");
+  mkdirSync(runDir);
+  const shimDir = await writeShims(runDir, Object.values(testCatalogue()), { configPath: config, binDir, cataloguePath: testCataloguePath });
+  const env = { ...process.env, PANELATOR_SYSTEMD_CREDS: fake, PATH: `${shimDir}:${helpers}:${process.env.PATH}` };
+  return { root, state, shimDir: shimDir!, env, runDir };
+}
+
+describe("shims (spec 099 AC-2)", () => {
+  it("rejects a wrapper command with a slash and writes no shim for a run without credentials", async () => {
+    const entries = parse(readFileSync(testCataloguePath, "utf8")) as any[];
+    entries[0].wrapper.command = "bin/fakecmd";
+    const p = join(mkdtempSync(join(tmpdir(), "cat-")), "c.yaml");
+    writeFileSync(p, stringify(entries));
+    expect(() => loadCatalogue(p, known())).toThrow(/fake-token/);
+    const run = mkdtempSync(join(tmpdir(), "run-"));
+    expect(await writeShims(run, [], { configPath: "x", binDir })).toBeNull();
+    expect(existsSync(join(run, "bin"))).toBe(false);
+  });
+  it("puts the shim directory first on PATH only when there is one", () => {
+    expect(stageEnv("/b", "/s", undefined, undefined, "/r/bin").PATH.startsWith("/r/bin:/b:")).toBe(true);
+    expect(stageEnv("/b", "/s").PATH.startsWith("/b:")).toBe(true);
+  });
+  it("gives the wrapped child the secret and nobody else; writes nothing and leaks nothing", async () => {
+    const t = await shimEnv();
+    const r = spawnSync("fakecmd", ["--env"], { env: t.env, encoding: "utf8" });
+    expect(r.stdout.trim()).toBe("FAKE_SECRET=set");
+    expect(r.status).toBe(0);
+    const echoed = spawnSync("fakecmd", ["--echo-secret"], { env: t.env, encoding: "utf8" });
+    expect(echoed.stdout.trim()).toBe("S3CRET-fake-value");
+    const own = spawnSync("sh", ["-c", 'echo "${FAKE_SECRET-unset}"'], { env: t.env, encoding: "utf8" });
+    expect(own.stdout.trim()).toBe("unset");
+    const exit = spawnSync("fakecmd", ["x", "y"], { env: { ...t.env, FAKECMD_EXIT: "3" }, encoding: "utf8" });
+    expect(exit.status).toBe(3);
+    expect(exit.stdout.trim()).toBe("args: x y");
+    expect(readdirSync(t.state)).toEqual([]);
+    for (const f of walk(t.runDir)) expect(readFileSync(f, "utf8")).not.toContain("S3CRET-fake-value");
+  });
+  it("fails without the secret in its text when the secret is missing", async () => {
+    const t = await shimEnv();
+    const r = spawnSync("fakecmd", ["--env"], { env: { ...t.env, FAKE_SYSTEMD_CREDS_FAIL: "1" }, encoding: "utf8" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("cred-exec");
+    expect(r.stderr).not.toContain("S3CRET");
+  });
+});

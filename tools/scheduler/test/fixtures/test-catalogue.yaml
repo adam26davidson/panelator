@@ -1,0 +1,10 @@
+- name: fake-token
+  provider: test
+  purpose: a test credential wrapped by fakecmd
+  access: [read the fake thing]
+  used_by: [backend]
+  wrapper: { command: fakecmd, env: FAKE_SECRET }
+  expiry: { probe: "fakecmd --expiry" }
+  check: "fakecmd --check"
+  renew: { command: "fakecmd --renew" }
+  setup: ["Run fakecmd --renew", "Run cred set fake-token"]
