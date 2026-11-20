@@ -55,7 +55,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  if(moved)d.log({kind:'quota-fallback',agent:def.name,from:def.model,to:moved.model,key:launch.note?.key});
  let postponedUntil:string|null=null;
  const postpone=async(reason:string)=>{postponedUntil=await waitAfterLimit(d.paths,def.harness,def.model,d.now());throw new Error(`${reason}; postponed until ${postponedUntil}`);};
- const filer:FilerDeps={paths:d.paths,gh:d.gh,botLogin:d.botLogin,now:d.now,classes:[...d.cfg.labels.feature_classes,...d.cfg.labels.debt_classes],stopsPipelineLabel:d.cfg.labels.stops_pipeline,notify:(text,key)=>d.notifier.notify({issue:0,gate:'standing',label:`${def.name}:${key??text}`,text}),log:d.log};
+ const filer:FilerDeps={paths:d.paths,gh:d.gh,botLogin:d.botLogin,now:d.now,classes:[...d.cfg.labels.feature_classes,...d.cfg.labels.debt_classes],stopsPipelineLabel:d.cfg.labels.stops_pipeline,notify:(text,key)=>d.notifier.notify({issue:0,gate:'standing',label:`${def.name}:${key??text}`,text}).then(()=>{}),log:d.log};
  // Spec 028 AC-6: a reflection's period start and plan key are fixed before its first attempt and reused by every later one.
  const reflective=def.output==='reflection-result';
  let reflection=state.reflection;

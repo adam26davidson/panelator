@@ -10,9 +10,11 @@ import {
   matchUpdate,
   openQuestionsList,
   NO_OPEN_QUESTION,
+  ALERT_NO_REPLY,
   type PendingSelection,
 } from "./questions.ts";
 import { saveJson } from "./poller.ts";
+import { readAlertIds } from "../notify/telegram.ts";
 import { neutraliseMarkers } from "../github/markers.ts";
 interface Journal {
   ignored_issue_comments?: number[];
@@ -128,6 +130,7 @@ export class TelegramAnswers {
         ),
       ],
       journal.selection,
+      await readAlertIds(d.paths.telegramAlerts),
     );
     if (match.kind === "answer" || match.kind === "pick") {
       let r = records.find((r) => r.nonce === match.record.nonce);
@@ -219,6 +222,9 @@ export class TelegramAnswers {
           at: d.now().toISOString(),
           update_id: u.update_id,
         };
+    } else if (match.kind === "alert-reply") {
+      const open = records.filter((r) => r.phase === "paused" && r.telegram?.message_id);
+      await channel.sendReply(`${ALERT_NO_REPLY}\n${openQuestionsList(open).text}`, u.message?.message_id);
     } else if (match.kind === "none")
       await channel.sendReply(NO_OPEN_QUESTION, u.message?.message_id);
     if (match.kind === "ignore" && u.callback_query)

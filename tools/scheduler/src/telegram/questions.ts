@@ -40,6 +40,7 @@ export const ackText = (stage: string, issue: number, pickedUpFrom?: Date) =>
   pickedUpFrom
     ? `Picked up your reply from ${pickedUpFrom.toISOString().slice(11, 16)}; resuming ${stage} on #${issue}.`
     : `Got it, resuming ${stage} on #${issue}.`;
+export const ALERT_NO_REPLY = "Alerts take no reply. Open questions:";
 export const alreadyAnswered = (where: string) =>
   `That question was already answered on ${where}.`;
 export function doneLine(
@@ -87,11 +88,12 @@ type Match =
       viaCallback?: { id: string; message_id: number; n: number };
     }
   | { kind: "list"; text: string }
-  | { kind: "questions" | "none" | "ignore" };
+  | { kind: "questions" | "none" | "ignore" | "alert-reply" };
 export function matchUpdate(
   u: TelegramUpdate,
   records: PausedRecord[],
   pending: PendingSelection | null,
+  alertIds: number[] = [],
 ): Match {
   if (u.edited_message) return { kind: "ignore" };
   const m = u.message;
@@ -100,6 +102,8 @@ export function matchUpdate(
     (r) => r.phase === "paused" && r.telegram?.message_id,
   );
   if (m?.text === "/questions") return { kind: "questions" };
+  // Spec 099 AC-7: a reply to a message the notifier sent is matched to no question.
+  if (m?.reply_to_message && alertIds.includes(m.reply_to_message.message_id)) return { kind: "alert-reply" };
   if (cb?.data?.startsWith("q:")) {
     const [, nonce, option] = cb.data.split(":");
     const r = records.find((r) => r.nonce === nonce);

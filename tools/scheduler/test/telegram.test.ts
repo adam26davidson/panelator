@@ -766,3 +766,12 @@ describe("Telegram credentials from the store (spec 072 AC-1)", () => {
     expect((await startTelegram(t.cfg, t.log, undefined, t.store))?.source).toBe("file");
   });
 });
+
+describe("alert replies (spec 099 AC-7)", () => {
+  it("a reply to a notifier message is matched to no question, even with one open question", () => {
+    const r = { issue: 7, phase: "paused", nonce: "n", telegram: { message_id: 10, thread_message_ids: [10] }, question: { options: [] } } as unknown as PausedRecord;
+    const update = { update_id: 1, message: { message_id: 11, date: 1, chat: { id: 1 }, text: "ok", reply_to_message: { message_id: 55 } } };
+    expect(matchUpdate(update as never, [r], null, [55]).kind).toBe("alert-reply");
+    expect(matchUpdate(update as never, [r], null, []).kind).toBe("ignore");
+  });
+});

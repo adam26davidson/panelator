@@ -13,9 +13,9 @@ export function rateLimited(inner: Notifier, hours: number, clock: () => Date = 
       const key = identity(n);
       const now = clock().getTime();
       const last = sent.get(key);
-      if (last !== undefined && now - last < windowMs) return;
+      if (last !== undefined && now - last < windowMs) return { channel: "suppressed" };
       sent.set(key, now);
-      await inner.notify(n);
+      return inner.notify(n);
     },
   };
 }
