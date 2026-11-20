@@ -1802,3 +1802,52 @@ describe("Scheduler: sleep inhibitor while runs are in flight", () => {
     expect(rec.logged.map((r) => r.kind)).toEqual(["inhibit-acquired", "inhibit-released", "inhibit-acquired", "inhibit-released"]);
   }, 30_000);
 });
+
+describe("the constructor's default emitEvent (spec 094 AC-5)", () => {
+  async function withRegistry(emitEvent?: SchedulerDeps["emitEvent"]) {
+    const h = await setup(routes([]));
+    const { loadRegistry } = await import("../src/standing/registry.ts");
+    const { EVENT_NAMES } = await import("../src/standing/events.ts");
+    const { registryActionsCheck } = await import("../src/actions/index.ts");
+    const { loadParameterDefinitions } = await import("../src/parameters/definitions.ts");
+    const { ParameterStore } = await import("../src/parameters/store.ts");
+    const { initializeAgents, readAgentState } = await import("../src/standing/state.ts");
+    const registry = loadRegistry(join(agentsDir, "standing"), EVENT_NAMES, registryActionsCheck(join(agentsDir, "actions.yaml")));
+    h.deps.registry = registry;
+    h.deps.parameters = new ParameterStore(h.paths, loadParameterDefinitions(join(agentsDir, "parameters.yaml"), h.deps.cfg, registry));
+    await initializeAgents(h.paths, registry, h.deps.parameters, h.deps.now());
+    h.deps.emitEvent = emitEvent;
+    new Scheduler(h.deps);
+    const events = async (name: string) => (await readAgentState(h.paths, name))!.pending_events;
+    return { h, events };
+  }
+
+  it("delivers, excludes the named agent, uses the clock and rejects an unknown name", async () => {
+    const { h, events } = await withRegistry();
+    const emitEvent = h.deps.emitEvent!;
+    expect(typeof emitEvent).toBe("function");
+    const infra = await events("infra-health");
+    await emitEvent("issue_abandoned", { issue: 3 });
+    const at = h.deps.now().toISOString();
+    expect(await events("findings-filer")).toEqual([{ event: "issue_abandoned", payload: { issue: 3 }, at }]);
+    expect(await events("infra-health")).toEqual(infra);
+    await emitEvent("issue_abandoned", { issue: 4 }, "findings-filer");
+    expect(await events("findings-filer")).toHaveLength(1);
+    await emitEvent("infra_alarm", { kind: "network_outage" });
+    expect((await events("infra-health")).filter((e) => e.event === "infra_alarm")).toHaveLength(1);
+    expect(await events("findings-filer")).toHaveLength(1);
+    await expect(emitEvent("nope", {})).rejects.toThrow("unknown event nope");
+  }, 30_000);
+
+  it("leaves a supplied emitEvent in place", async () => {
+    const stub = async () => {};
+    const { h } = await withRegistry(stub);
+    expect(h.deps.emitEvent).toBe(stub);
+  }, 30_000);
+
+  it("sets none when there is no registry", async () => {
+    const h = await setup(routes([]));
+    new Scheduler(h.deps);
+    expect(h.deps.emitEvent).toBeUndefined();
+  }, 30_000);
+});

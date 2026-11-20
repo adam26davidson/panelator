@@ -352,6 +352,9 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
       files: repoFiles(),
       results: { plan: [PLAN], implement: [a.implement(9)], review: [ESCALATE(q), APPROVE], "question-check": [SEND], fix: [a.adr()] },
     });
+    // spec 094 AC-4: a paused test-only subscriber keeps the events no built-in agent subscribes to.
+    w.deps.registry!.watcher = { ...w.deps.registry!["action-audit"], name: "watcher", trigger: { events: ["merge", "maintainer_reply"] } };
+    await writeAgentState(w.paths, "watcher", { last_run: null, next_run: null, pending_events: [], paused: true, paused_by: "maintainer", failures: 0 });
     await w.tick();
     // AC-13: paused, with the question on the issue.
     const rec = pausedRecord(w);
@@ -378,6 +381,10 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     expect(w.labelLog).toEqual(["+in-progress", "+needs-decision", "-in-progress", "+in-progress", "-needs-decision", "-in-progress"]);
     expect(w.comments.map((c) => c.author)).toEqual(["panelator-pipeline[bot]", "adam26davidson"]);
     expect(readFileSync(w.paths.questionsLog, "utf8").trim().split("\n").map((l) => JSON.parse(l).event)).toEqual(["asked", "checked", "sent", "answered"]);
+    expect((await readAgentState(w.paths, "watcher"))!.pending_events).toEqual([
+      { event: "maintainer_reply", payload: { issue: 7, question_id: question.id }, at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) },
+      { event: "merge", payload: { issue: 7, pr: 9, sha: expect.stringMatching(/^[0-9a-f]{40}$/) }, at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) },
+    ]);
   }, 120_000);
 
   it("a reply that asks back, a follow-up, recorded, merged (spec 006 AC-28)", async () => {
@@ -878,6 +885,10 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     expect(w.notifications.map((n) => n.gate)).toEqual(["abandoned"]);
     expect(w.mergeRequests).toEqual([]);
     expect(existsSync(join(w.paths.worktrees, "issue-7"))).toBe(false);
+    // spec 094 AC-1: the constructor's default emitEvent delivers the abandonment to the filer (the queued finding's finding_queued entry is not tested here).
+    const filer = (await readAgentState(w.paths, "findings-filer"))!;
+    expect(filer.pending_events.filter((e) => e.event === "issue_abandoned")).toEqual([{ event: "issue_abandoned", payload: { issue: 7 }, at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) }]);
+    expect((await readAgentState(w.paths, "infra-health"))!.pending_events).toEqual([]);
   }, 120_000);
 
   it("security finding fixed then merged (spec 006 AC-28)", async () => {
@@ -1389,12 +1400,10 @@ describe("end to end: a full volume postpones runs (spec 059 AC-6)", () => {
     let w!: ChainWorld;
     let reader = LOW;
     const a = agents(() => w);
-    const events: { event: string; payload: unknown }[] = [];
     w = await chainWorld({
       files: repoFiles({ spec: null }), freeSpace: (path) => reader(path),
       results: { spec: [a.spec(12, { "specs/010-thing/spec.md": specOf() })], review: [APPROVE] },
     });
-    w.deps.emitEvent = async (event, payload) => { events.push({ event, payload }); };
     const c = clock(w);
     for (let i = 0; i < 3; i++) {
       await w.tick();
@@ -1409,7 +1418,8 @@ describe("end to end: a full volume postpones runs (spec 059 AC-6)", () => {
     expect(records.filter((r) => r.kind === "transient-outage-alarm")).toHaveLength(1);
     expect(w.notifications.filter((n) => n.gate === "infra")).toHaveLength(1);
     expect(w.notifications.find((n) => n.gate === "infra")?.text).toContain(checkedPaths(w.paths, during.worktree)[2]);
-    expect(events.filter((e) => e.event === "infra_alarm")).toEqual([{ event: "infra_alarm", payload: expect.objectContaining({ kind: "disk_full", issue: 7, cause: "ENOSPC" }) }]);
+    // spec 094 AC-3: the alarm reaches infra health through the constructor's default emitEvent.
+    expect((await readAgentState(w.paths, "infra-health"))!.pending_events.filter((e) => e.event === "infra_alarm")).toEqual([expect.objectContaining({ event: "infra_alarm", payload: expect.objectContaining({ kind: "disk_full", issue: 7, cause: "ENOSPC" }) })]);
     expect(kinds(w, "stage")).toEqual([]);
     expect(records.filter((r) => r.kind === "chain-error")).toEqual([]);
     const before = ledgerOf(during.state);
@@ -1800,7 +1810,7 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
  },60000);
  it('an outage two hours old raises one alarm: a finding, an infra notification and an infra_alarm event (spec 045 AC-5, AC-7)',async()=>{
   const w=await standingWorld({operator:[NETWORK_DOWN,NETWORK_DOWN]});
-  const log=capture(w);const emitted:unknown[][]=[];w.deps.emitEvent=async(...a)=>{emitted.push(a);};
+  const log=capture(w);
   const since='2026-09-30T22:00:00.000Z';
   await dueNow(w,'operator',{outage:{since,count:3,last:'x',alarmed:false}});
   await tickAt(w,T0);
@@ -1812,10 +1822,12 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   for(const part of ['4',since,'EAI_AGAIN'])expect(queue[0].finding.evidence).toContain(part);
   expect(w.notifications).toMatchObject([{gate:'infra',label:'operator:outage'}]);
   expect(log.kinds('operator','standing-outage-alarm')).toHaveLength(1);
-  expect(emitted.filter(a=>a[0]==='infra_alarm')).toEqual([['infra_alarm',{kind:'network_outage',agent:'operator',since,failures:4,cause:'EAI_AGAIN'}]]);
+  // spec 094 AC-2: through the constructor's default emitEvent, to infra health.
+  expect((await readAgentState(w.paths,'infra-health'))!.pending_events).toEqual([{event:'infra_alarm',payload:{kind:'network_outage',agent:'operator',since,failures:4,cause:'EAI_AGAIN'},at:T0}]);
   expect(st.pending_events.filter(e=>e.event==='finding_queued')).toHaveLength(0);
   await tickAt(w,'2026-10-01T00:20:00.000Z');
   expect((await readAgentState(w.paths,'operator'))?.outage?.count).toBe(5);
+  expect((await readAgentState(w.paths,'infra-health'))!.pending_events.filter(e=>e.event==='infra_alarm')).toHaveLength(1);
   expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);expect(w.notifications).toHaveLength(1);expect(log.kinds('operator','standing-outage-alarm')).toHaveLength(1);
  },60000);
  it('an outage a day old stops being transient: its failures count from the third past the ceiling (spec 045 AC-6, AC-7)',async()=>{
