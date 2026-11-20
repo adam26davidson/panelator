@@ -1,4 +1,5 @@
 import { openIndex } from "../src/events/index.ts";
+import { record as recordEvent } from "../src/events/store.ts";
 import {TelegramClient} from '../src/telegram/client.ts';
 import {telegramChannel} from '../src/telegram/channel.ts';
 import {fakeTelegram} from './helpers/fake-telegram.ts';
@@ -8,7 +9,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Octokit } from "octokit";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { agentsDir, defaultConfigPath, loadConfig } from "../src/config.ts";
 import { GitHubClient } from "../src/github/client.ts";
 import { BLOCK_RECHECK_S, MAX_CHAIN_FAILURES, Scheduler, type SchedulerDeps } from "../src/service/loop.ts";
@@ -19,7 +20,7 @@ import { listClaims, readClaim, writeClaim } from "../src/state/claims.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import { writeToken } from "../src/state/token.ts";
 import { HISTORY_ENTRY_MAX, initialChainState, ledgerOf } from "../src/chain/machine.ts";
-import { step, completePause } from "../src/chain/driver.ts";
+import { step, applyActions } from "../src/chain/driver.ts";
 import { questionMarker } from "../src/chain/question.ts";
 import { writeLedger } from "../src/state/ledger.ts";
 import { listBlocked, writeBlocked, type BlockedRecord } from "../src/state/blocked.ts";
@@ -28,9 +29,11 @@ import { appendQuestionLog } from "../src/state/questions.ts";
 import type { Claim } from "../src/state/claims.ts";
 import type { Question } from "../src/types.ts";
 import type { Notification } from "../src/notify/types.ts";
+import { ALL, matches } from "./helpers/markers.ts";
 import { mockGitHub, pageLink, type Route } from "./helpers/mock-github.ts";
 import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
 import { awsWorld } from "./helpers/aws.ts";
+import { watchTickErrors } from "./helpers/tick-errors.ts";
 
 const spec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
 const BOT = { login: "panelator-pipeline[bot]", type: "Bot" };
@@ -55,7 +58,9 @@ async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
   const pair = repoPair(withTopDesign({ "a.txt": "a\n", "specs/010-thing/spec.md": specFile }, "specs/010-thing/spec.md"));
   const paths = statePaths(join(pair.root, "state"));
   await ensureStateDirs(paths);
-  const gh = mockGitHub(rs);
+  // fallback after the caller's routes (first match wins): a tick that loads the registry may list check runs
+  const mainChecks: Route = { method: "GET", path: /^\/repos\/o\/r\/commits\/[^/]+\/check-runs$/, reply: () => ({ body: { total_count: 1, check_runs: [{ id: 1, name: "test", status: "completed", conclusion: "success" }] } }) };
+  const gh = mockGitHub([...rs, mainChecks]);
   const notifications: Notification[] = [];
   const started: number[] = [];
   let now = new Date("2026-10-12T12:00:00Z");
@@ -74,7 +79,17 @@ async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
     fastForward: async () => ({ moved: false, changedPaths: [] }), sleep: async () => {}, monotonic: () => mono, requestRestart: () => { started.push(-1); },
   };
   const s = new Scheduler(deps, { driveChain: drive ?? (async (_d, claim) => { started.push(claim.issue); return { ...claim, state: { ...claim.state, stage: "verify" } }; }) });
-  return { s, deps, gh, notifications, started, paths, pair, setNow: (d: Date) => { now = d; }, setMono: (m: number) => { mono = m; } };
+  const watcher = watchTickErrors(s);
+  onTestFinished(() => watcher.check());
+  const watch = (scheduler: Scheduler) => { const w = watchTickErrors(scheduler); onTestFinished(() => w.check()); return scheduler; };
+  return { s, deps, gh, notifications, allowErrors: watcher.allow, watch, started, paths, pair, setNow: (d: Date) => { now = d; }, setMono: (m: number) => { mono = m; } };
+}
+
+function staleRows(paths: ReturnType<typeof statePaths>): [string, number, unknown][] {
+  const db = openIndex(paths);
+  const rows = db.prepare("SELECT kind, issue, payload FROM events WHERE issue = 7 AND kind IN ('chain.transition', 'issue.claimed', 'issue.released') ORDER BY at, rowid").all() as { kind: string; issue: number; payload: string }[];
+  db.close();
+  return rows.map((r) => [r.kind, r.issue, JSON.parse(r.payload)]);
 }
 
 describe('Telegram answers and watchdog fallback',()=>{
@@ -99,6 +114,13 @@ describe('Telegram answers and watchdog fallback',()=>{
    expect(gh.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/comments'))).toHaveLength(2);expect(server.sent).toHaveLength(1);expect((await listPaused(paths))[0].phase).toBe('resuming');
   }finally{await poll.stop();await server.close();}
  },30000);
+ it('the answer comment neutralises every marker but its own, and the resumed answer is the maintainer\'s exact text (spec 076 AC-2)',async()=>{
+  const {s,deps,paths,gh}=await setup(routes([waiting()]),1,firstStep);const server=await fakeTelegram();deps.telegram=telegramChannel(new TelegramClient('SECRET',42,server.url));
+  try{await writePaused(paths,tgRecord());const u=message(901,ALL);await s.handleTelegramUpdate(u);await s.confirmTelegramUpdate(u);
+   const posted=gh.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/comments')).map(c=>(c.body as {body:string}).body);
+   expect(posted).toHaveLength(1);expect(matches(posted[0]!)).toHaveLength(1);expect(posted[0]!.trimEnd().endsWith('<!-- panelator-telegram-answer:901 -->')).toBe(true);
+   expect((await listPaused(paths))[0].answer).toBe(ALL);}finally{await server.close();}
+ },30000);
  it('keeps free text while two questions are open, then a selection answers the right one',async()=>{
   const {s,deps,paths}=await setup(routes([]));const server=await fakeTelegram();deps.telegram=telegramChannel(new TelegramClient('secret',42,server.url));
   try{await writePaused(paths,tgRecord(7));await writePaused(paths,tgRecord(8));await s.handleTelegramUpdate(message(2,'Choose the file store'));expect(server.sent[0].text).toContain('#7');expect(server.sent[0].text).toContain('#8');const u={update_id:3,callback_query:{id:'pick',data:'pick:8',message:{message_id:1,date:1,chat:{id:42}}}};await s.handleTelegramUpdate(u);await s.confirmTelegramUpdate(u);const all=await listPaused(paths);expect(all.find(r=>r.issue===7)?.phase).toBe('paused');expect(all.find(r=>r.issue===8)?.answer).toBe('Choose the file store');expect(server.answeredCallbacks).toHaveLength(1);}finally{await server.close();}
@@ -115,9 +137,37 @@ describe('Telegram answers and watchdog fallback',()=>{
  },30000);
 });
 
+describe("Scheduler.tick plain files (spec 072)", () => {
+  it("checks on the first tick, not at +30 minutes, again at +1 hour, and survives a failing check", async () => {
+    const { s, deps, paths, setNow } = await setup(routes([]));
+    const { CredentialStore } = await import("../src/credentials/store.ts");
+    const store = new CredentialStore({ dir: join(paths.root, "cred-store"), systemdCreds: join(import.meta.dirname, "helpers", "fake-systemd-creds") });
+    mkdirSync(store.dir, { recursive: true });
+    const file = join(paths.root, "app.pem");
+    writeFileSync(file, "x");
+    await store.writeSecret("github-app-key", "k", "import");
+    deps.plainFiles = { store, paths: { "github-app-key": file }, fromStore: new Set(["github-app-key"]) };
+    const notes = () => deps.notifier && existsSync(paths.plainFilesReminder);
+    await s.tick();
+    expect(notes()).toBe(true);
+    rmSync(paths.plainFilesReminder);
+    setNow(new Date("2026-10-12T12:30:00Z"));
+    await s.tick();
+    expect(existsSync(paths.plainFilesReminder)).toBe(false);
+    setNow(new Date("2026-10-12T13:00:00Z"));
+    await s.tick();
+    expect(existsSync(paths.plainFilesReminder)).toBe(true);
+    writeFileSync(join(store.dir, "index.json"), "{");
+    setNow(new Date("2026-10-12T14:00:00Z"));
+    const info = await s.tick();
+    expect(info.errors).toEqual([]);
+    expect(readFileSync(paths.serviceLog, "utf8")).toContain('"kind":"plain-files-check-failed"');
+  });
+});
+
 describe("Scheduler.tick", () => {
   it("records a completed main check once across two service instances", async () => {
-    const { s, deps, paths, gh } = await setup([
+    const { s, deps, paths, gh, watch } = await setup([
       ...routes([]),
       { method: "GET", path: /^\/repos\/o\/r\/commits\/[^/]+\/check-runs$/, reply: () => ({ body: { total_count: 1, check_runs: [{ id: 42, name: "test", status: "completed", conclusion: "success" }] } }) },
     ]);
@@ -129,7 +179,7 @@ describe("Scheduler.tick", () => {
     for (const def of Object.values(deps.registry)) def.trigger = def.name === "action-audit" ? { events: ["ci_failure_main"] } : def.trigger;
     deps.cfg.required_checks = ["test"];
     await s.tick(); s.stop("restart test");
-    const restarted = new Scheduler(deps);
+    const restarted = watch(new Scheduler(deps));
     await restarted.tick(); restarted.stop("test done");
     expect(gh.calls.filter(c => c.url.includes("/check-runs"))).toHaveLength(2);
     const db = openIndex(paths);
@@ -228,7 +278,7 @@ describe("Scheduler.tick", () => {
   it("removes needs-design-stage from a parked issue once, with one comment, and claims it (spec 029 AC-8)", async () => {
     const parked = issue(4, ["validated", "class:product", "needs-design-stage"]);
     const rs = routes([parked]);
-    const { s, gh, paths, deps } = await setup(rs, 1, undefined, uiSpec());
+    const { s, gh, paths, deps, watch } = await setup(rs, 1, undefined, uiSpec());
     const t = await s.tick();
     expect(gh.calls.filter((c) => c.method === "DELETE").map((c) => c.url)).toEqual(["/repos/o/r/issues/4/labels/needs-design-stage"]);
     expect(gh.calls.filter((c) => c.url === "/repos/o/r/issues/4/comments" && c.method === "POST")).toHaveLength(1);
@@ -240,7 +290,7 @@ describe("Scheduler.tick", () => {
     rs[1] = { method: "GET", path: /^\/repos\/o\/r\/issues$/, reply: (_m, _b, url) => ({ body: [parked], headers: pageLink(url, 1, 1) }) };
     for (const c of await listClaims(paths)) await rm(join(paths.claims, `${c.issue}.json`), { force: true });
     gh.calls.length = 0;
-    const again = new Scheduler(deps, { driveChain: async (_d, claim) => claim });
+    const again = watch(new Scheduler(deps, { driveChain: async (_d, claim) => claim }));
     await again.tick();
     expect(gh.calls.filter((c) => c.method === "DELETE")).toEqual([]);
     expect(gh.calls.filter((c) => c.url === "/repos/o/r/issues/4/comments" && c.method === "POST")).toEqual([]);
@@ -256,7 +306,8 @@ describe("Scheduler.tick", () => {
   it("does not claim when the issue list is incomplete (review focus 1)", async () => {
     const rs = routes([issue(1)]);
     rs[2] = { method: "POST", path: /^\/graphql$/, reply: () => ({ body: { data: { repository: { issues: { totalCount: 3 } } } } }) };
-    const { s } = await setup(rs);
+    const { s, allowErrors } = await setup(rs);
+    allowErrors(/^issue list incomplete/);
     const t = await s.tick();
     expect(t.claimed).toEqual([]);
     expect(t.errors[0]).toMatch(/incomplete/);
@@ -265,9 +316,38 @@ describe("Scheduler.tick", () => {
   it("releases a stale claim whose issue lost in-progress on GitHub (review focus 2)", async () => {
     const { s, deps, paths, pair } = await setup(routes([], { 7: ["validated"] }));
     await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    await recordEvent(paths, "issue.claimed", deps.now(), { slot: 1 }, { issue: 7 });
     const t = await s.tick();
     expect(t.released).toEqual([7]);
     expect(await listClaims(paths)).toEqual([]);
+    // Spec 096 AC-1: the drop records the release of the claim the store holds open.
+    expect(staleRows(paths)).toEqual([
+      ["issue.claimed", 7, { slot: 1 }],
+      ["issue.released", 7, { reason: "stopped" }],
+    ]);
+  }, 30_000);
+
+  it("records nothing for a stale claim whose issue.claimed was never recorded (spec 096 AC-2)", async () => {
+    const { s, deps, paths, pair } = await setup(routes([], { 7: ["validated"] }));
+    await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    const t = await s.tick();
+    expect(t.released).toEqual([7]);
+    expect(await listClaims(paths)).toEqual([]);
+    expect(staleRows(paths)).toEqual([]);
+  }, 30_000);
+
+  it("records nothing for a stale claim already closed by an earlier release (spec 096 AC-2)", async () => {
+    const { s, deps, paths, pair } = await setup(routes([], { 7: ["validated"] }));
+    await recordEvent(paths, "issue.claimed", deps.now(), { slot: 1 }, { issue: 7 });
+    await recordEvent(paths, "issue.released", deps.now(), { reason: "done" }, { issue: 7 });
+    await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    const t = await s.tick();
+    expect(t.released).toEqual([7]);
+    expect(await listClaims(paths)).toEqual([]);
+    expect(staleRows(paths)).toEqual([
+      ["issue.claimed", 7, { slot: 1 }],
+      ["issue.released", 7, { reason: "done" }],
+    ]);
   }, 30_000);
 
   it("releases a claim with no run and no activity for the liveness window, saving a patch (AC-15)", async () => {
@@ -353,21 +433,21 @@ describe("Scheduler.tick", () => {
 
   it("keeps the failure count across a restart: a new Scheduler reads it from the claim (C7)", async () => {
     let calls = 0;
-    const { deps, paths, pair } = await setup(routes([]), 1, async () => { calls++; throw new Error("boom"); });
+    const { deps, paths, pair, watch } = await setup(routes([]), 1, async () => { calls++; throw new Error("boom"); });
     await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
     for (let i = 0; i < 2; i++) {
-      await new Scheduler(deps, { driveChain: async () => { calls++; throw new Error(`boom ${i}`); } }).tick();
+      await watch(new Scheduler(deps, { driveChain: async () => { calls++; throw new Error(`boom ${i}`); } })).tick();
       await new Promise((r) => setTimeout(r, 100));
     }
     expect((await listClaims(paths))[0].state.chainFailures).toEqual({ count: 2, last: "boom 1" });
     expect(JSON.parse(readFileSync(join(paths.escalations, "7.json"), "utf8")).chainFailures).toEqual({ count: 2, last: "boom 1" });
     // A drive that returns resets the count.
-    await new Scheduler(deps, { driveChain: async (_d, c) => c }).tick();
+    await watch(new Scheduler(deps, { driveChain: async (_d, c) => c })).tick();
     await new Promise((r) => setTimeout(r, 100));
     expect((await listClaims(paths))[0].state.chainFailures).toBeNull();
     expect(calls).toBe(2);
     // Tm6: the error kept is clipped like a history entry.
-    await new Scheduler(deps, { driveChain: async () => { throw new Error("x".repeat(HISTORY_ENTRY_MAX + 50)); } }).tick();
+    await watch(new Scheduler(deps, { driveChain: async () => { throw new Error("x".repeat(HISTORY_ENTRY_MAX + 50)); } })).tick();
     await new Promise((r) => setTimeout(r, 100));
     expect((await listClaims(paths))[0].state.chainFailures?.last).toHaveLength(HISTORY_ENTRY_MAX);
   }, 30_000);
@@ -386,7 +466,8 @@ describe("Scheduler.tick", () => {
   }, 30_000);
 
   it("records a failed children scan and still completes the tick (spec 031 AC-3)", async () => {
-    const { s, deps, paths } = await setup(routes([issue(1)]));
+    const { s, deps, paths, allowErrors } = await setup(routes([issue(1)]));
+    allowErrors(/^children scan: /);
     deps.scanChildren = async () => { throw new Error("github down"); };
     const t = await s.tick();
     expect(t.errors).toContain("children scan: github down");
@@ -395,23 +476,27 @@ describe("Scheduler.tick", () => {
   }, 30_000);
 
   it("does not scan when the fast-forward failed (spec 031 AC-3)", async () => {
-    const { s, deps } = await setup(routes([]));
+    const { s, deps, allowErrors } = await setup(routes([]));
+    allowErrors(/^freshness: /);
     let scans = 0;
     deps.scanChildren = async () => { scans++; };
     deps.fastForward = async () => { throw new Error("not a fast-forward"); };
-    await s.tick();
+    const t = await s.tick();
+    expect(t.errors).toEqual([expect.stringMatching(/^freshness: /)]);
     expect(scans).toBe(0);
   }, 30_000);
 
   it("records a freshness error and still lists and claims when fast-forward fails (ruling 7c)", async () => {
-    const { s, deps } = await setup(routes([issue(1)]));
+    const { s, deps, allowErrors } = await setup(routes([issue(1)]));
+    allowErrors(/^freshness: /);
     deps.fastForward = async () => { throw new Error("not a fast-forward"); };
     const t = await s.tick();
     expect(t.errors[0]).toMatch(/freshness/);
     expect(t.claimed).toEqual([1]);
   }, 30_000);
   it("writes the claim file before the claim label, so a failed claim leaves no orphaned in-progress (review fix 1)", async () => {
-    const { s, gh, paths } = await setup(routes([issue(1)]));
+    const { s, gh, paths, allowErrors } = await setup(routes([issue(1)]));
+    allowErrors(/^claim 1: /);
     rmSync(paths.worktrees, { recursive: true, force: true });
     writeFileSync(paths.worktrees, "not a directory\n");
     const t = await s.tick();
@@ -669,7 +754,7 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
       expect.objectContaining({ issue: 7, text: expect.stringContaining("an abandonment") }),
     ]);
     const findings = readFileSync(paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l));
-    expect(findings).toEqual([expect.objectContaining({ issue: 7, finding: expect.objectContaining({ what: "pending work keeps failing", evidence: "boom", noticed_how: "scheduler chain error" }) })]);
+    expect(findings).toEqual([expect.objectContaining({ issue: 7, finding: expect.objectContaining({ what: "pending work keeps failing: boom", evidence: "boom", noticed_how: "scheduler chain error" }) })]);
   }, 30_000);
 
   it("never expires a claim in stage paused or abandoned, whose liveness_expired is invalid", async () => {
@@ -683,6 +768,15 @@ describe("Scheduler.tick: paused issues (spec 006)", () => {
     expect(gh.calls.filter((c) => c.method === "POST" && c.url.endsWith("/comments"))).toEqual([]);
   }, 30_000);
 
+  it("the reminder comment neutralises a question carrying every family (spec 076 AC-2)", async () => {
+    const { s, paths, gh } = await setup(routes([waiting()]));
+    await writePaused(paths, record({ asked_at: "2026-10-11T11:00:00Z", question: { ...Q, question: ALL } }));
+    await s.tick();
+    const posted = gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues/7/comments").map((c) => (c.body as { body: string }).body);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("Still waiting on your answer");
+    expect(matches(posted[0]!)).toEqual([]);
+  });
   it("sends one reminder after 24 hours: the reminded mark first, one comment, one notification (AC-16, C15)", async () => {
     const { s, paths, gh, notifications } = await setup(routes([waiting()]));
     await writePaused(paths, record({ asked_at: "2026-10-11T11:00:00Z" }));
@@ -902,6 +996,10 @@ describe("Scheduler.tick: transient failures (spec 015)", () => {
     expect(t.notifications.filter((n) => n.gate === "chain_error")).toHaveLength(1);
     expect(t.notifications.find((n) => n.gate === "chain_error")?.text).toContain("past its 24-hour ceiling");
     expect(serviceRecords(t.paths).filter((r) => r.kind === "pending-work-failing")).toHaveLength(1);
+    const queued = readFileSync(t.paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l).finding).filter((f) => f.what.startsWith("pending work keeps failing"));
+    expect(queued).toHaveLength(1);
+    expect(queued[0].what).toBe("pending work keeps failing: EAI_AGAIN");
+    expect(queued[0].evidence.startsWith("outage past ceiling: ")).toBe(true);
     expect(await t.claim()).toBeTruthy();
   }, 60_000);
 
@@ -1330,6 +1428,7 @@ describe("Scheduler.tick: fair slot scheduling, failure and crash windows (spec 
     const log = grantLog();
     const failLabel: Route = { method: "POST", path: /^\/repos\/o\/r\/issues\/1\/labels$/, reply: () => ({ status: 422, body: { message: "Validation Failed" } }) };
     const h = await setup([failLabel, ...routes([issue(1), issue(2)])], 1, log.drive);
+    h.allowErrors(/^claim 1: /);
     const t = await h.s.tick();
     await settle();
     expect(t.claimed).toEqual([]);
@@ -1430,35 +1529,61 @@ describe('Scheduler.tick: main check watcher (spec 036)',()=>{
 });
 
 describe("Telegram attaches when connected (spec 043)", () => {
-  const pausing = (): PausedRecord => ({ issue: 7, phase: "pausing", nonce: "nonce", state: initialChainState(7), question: { kind: "product", question: "Which layout?", options: [{ label: "second", cost: "none" }], recommendation: "second" }, asking_stage: "plan", question_comment_id: null, asked_at: null, reminded: false, answer: null, reply_comment_id: null, telegram: emptyTelegram() });
   const poller = async (s: Scheduler, server: Awaited<ReturnType<typeof fakeTelegram>>, logs: Record<string, unknown>[], hook: () => void = () => {}) => {
     const { TelegramPoller } = await import("../src/telegram/poller.ts");
     const client = new TelegramClient("secret", 42, server.url);
     return new TelegramPoller(client, join(tmpdir(), `tg-offset-${Math.random()}.json`), 1, async () => {}, (r) => logs.push(r), async () => { await new Promise((r) => setTimeout(r, 5)); }, undefined, () => { s.setTelegram(telegramChannel(client)); hook(); });
   };
   const until = async (f: () => boolean) => { for (let i = 0; i < 400 && !f(); i++) await new Promise((r) => setTimeout(r, 10)); expect(f()).toBe(true); };
-  it("AC-3: a pause before the connection is an issue question; after it, a Telegram one", async () => {
-    const { s, deps, paths } = await setup(routes([waiting()]), 1, firstStep);
+  const question = { kind: "product" as const, question: "Which layout?", options: [{ label: "second", cost: "none" }], recommendation: "second" };
+  const claimFor = async (h: Awaited<ReturnType<typeof setup>>, n: number) => {
+    const claim = { issue: n, state: { ...initialChainState(n), stage: "plan" as const }, worktree: join(h.pair.worktrees, `issue-${n}`), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null };
+    await writeClaim(h.paths, claim);
+    return claim;
+  };
+  const pause = (h: Awaited<ReturnType<typeof setup>>, claim: Awaited<ReturnType<typeof claimFor>>) =>
+    applyActions(h.deps, claim, [{ type: "pause", question, asking: "plan" }]);
+  it("spec 090 AC-3/AC-4: a pause before the connection is an issue question with telegram null; after it, a Telegram one", async () => {
+    const h = await setup(routes([waiting(), issue(8)]), 1, firstStep);
+    const { s, deps, paths, gh } = h;
+    const driverLog: Record<string, unknown>[] = [];
+    deps.log = (r) => { driverLog.push(r as Record<string, unknown>); };
     const server = await fakeTelegram(); const logs: Record<string, unknown>[] = []; let hooked = 0;
     server.fail("getMe", 500, 1000);
     const p1 = await poller(s, server, logs, () => hooked++);
     p1.start();
     try {
       await until(() => logs.some((l) => l.status === "connecting"));
-      await completePause(deps, pausing());
-      const [r] = await listPaused(paths);
-      expect(r.telegram).toMatchObject({ sent: false, message_id: null });
-      expect(server.sent).toEqual([]);
+      expect(deps.telegram).toBeFalsy();
+      await pause(h, await claimFor(h, 7));
       expect(hooked).toBe(0);
+      const first = (await listPaused(paths)).find((x) => x.issue === 7);
+      expect(first?.telegram).toBeNull();
+      const posts = gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/issues/7/comments").map((c) => (c.body as { body: string }).body);
+      expect(posts).toHaveLength(1);
+      expect(posts[0]).toContain(`@${deps.cfg.maintainer}`);
+      expect(posts[0]).toContain("Reply in a comment on this issue; the scheduler resumes on your reply.");
+      const sent7 = logLines(paths).filter((e) => e.issue === 7 && e.event === "sent");
+      expect(sent7).toHaveLength(1);
+      expect(sent7[0].channel).toBe("issue");
+      expect(sent7[0]).not.toHaveProperty("telegram_message_id");
+      expect(driverLog.some((l) => l.kind === "telegram-send-failed")).toBe(false);
+      expect(server.requests.some((q) => q.method === "sendMessage")).toBe(false);
       await p1.stop();
       server.fail("getMe", 200, 0);
       const p2 = await poller(s, server, logs, () => hooked++);
       p2.start();
       await until(() => hooked === 1);
       await p2.stop();
-      await completePause(deps, { ...pausing(), nonce: "n2", issue: 8 });
+      await pause(h, await claimFor(h, 8));
       expect(server.sent).toHaveLength(1);
-      expect((await listPaused(paths)).find((x) => x.issue === 8)?.telegram?.sent).toBe(true);
+      const second = (await listPaused(paths)).find((x) => x.issue === 8);
+      expect(second?.telegram?.sent).toBe(true);
+      expect(second?.telegram?.message_id).toBeTruthy();
+      const sent8 = logLines(paths).filter((e) => e.issue === 8 && e.event === "sent");
+      expect(sent8).toHaveLength(1);
+      expect(sent8[0].channel).toBe("telegram");
+      expect((await listPaused(paths)).find((x) => x.issue === 7)?.telegram).toBeNull();
     } finally { await p1.stop(); await server.close(); }
   }, 30000);
   it("AC-4: a tick completes while getMe is failing", async () => {
@@ -1634,11 +1759,27 @@ describe("Scheduler.tick: the disk sweep step (spec 064)", () => {
   }, 30_000);
 
   it("a failing sweep is reported in errors and the tick still finishes", async () => {
-    const { s, deps } = await setup(routes([issue(1)]));
+    const { s, deps, allowErrors } = await setup(routes([issue(1)]));
+    allowErrors(/^sweep: /);
     deps.agentsDir = join(deps.agentsDir, "missing");
     const t = await s.tick();
     expect(t.errors.some((e) => e.startsWith("sweep: "))).toBe(true);
     expect(t.eligible).toBe(1);
+  }, 30_000);
+
+  it("a tick with the checked-in registry lists check runs for origin/main and reports no error (spec 081 AC-4)", async () => {
+    const { s, deps, gh, pair } = await setup(routes([]));
+    const { loadRegistry } = await import("../src/standing/registry.ts");
+    const { EVENT_NAMES } = await import("../src/standing/events.ts");
+    const { registryActionsCheck } = await import("../src/actions/index.ts");
+    deps.registry = loadRegistry(join(agentsDir, "standing"), EVENT_NAMES, registryActionsCheck(join(agentsDir, "actions.yaml")));
+    deps.cfg.required_checks = ["test"];
+    const sha = git(pair.repo, "rev-parse", "origin/main").trim();
+    const t = await s.tick();
+    expect(t.errors).toEqual([]);
+    const listed = gh.calls.filter((c) => c.method === "GET" && c.url.includes("/check-runs"));
+    expect(listed.map((c) => c.url)).toEqual([expect.stringContaining(`/commits/${sha}/check-runs`)]);
+    expect(gh.unmatched.filter((u) => JSON.stringify(u).includes("/check-runs"))).toEqual([]);
   }, 30_000);
 });
 
@@ -1757,4 +1898,53 @@ describe("Scheduler.tick AWS step (spec 022 AC-1, AC-2, AC-10, AC-11; spec 050 A
     expect(w.calls().map((c) => c[0])).toEqual(["sts"]);
     expect(w.logs.filter((l) => l.kind === "aws-pull-skipped")).toHaveLength(1);
   }, 30000);
+});
+
+describe("the constructor's default emitEvent (spec 094 AC-5)", () => {
+  async function withRegistry(emitEvent?: SchedulerDeps["emitEvent"]) {
+    const h = await setup(routes([]));
+    const { loadRegistry } = await import("../src/standing/registry.ts");
+    const { EVENT_NAMES } = await import("../src/standing/events.ts");
+    const { registryActionsCheck } = await import("../src/actions/index.ts");
+    const { loadParameterDefinitions } = await import("../src/parameters/definitions.ts");
+    const { ParameterStore } = await import("../src/parameters/store.ts");
+    const { initializeAgents, readAgentState } = await import("../src/standing/state.ts");
+    const registry = loadRegistry(join(agentsDir, "standing"), EVENT_NAMES, registryActionsCheck(join(agentsDir, "actions.yaml")));
+    h.deps.registry = registry;
+    h.deps.parameters = new ParameterStore(h.paths, loadParameterDefinitions(join(agentsDir, "parameters.yaml"), h.deps.cfg, registry));
+    await initializeAgents(h.paths, registry, h.deps.parameters, h.deps.now());
+    h.deps.emitEvent = emitEvent;
+    new Scheduler(h.deps);
+    const events = async (name: string) => (await readAgentState(h.paths, name))!.pending_events;
+    return { h, events };
+  }
+
+  it("delivers, excludes the named agent, uses the clock and rejects an unknown name", async () => {
+    const { h, events } = await withRegistry();
+    const emitEvent = h.deps.emitEvent!;
+    expect(typeof emitEvent).toBe("function");
+    const infra = await events("infra-health");
+    await emitEvent("issue_abandoned", { issue: 3 });
+    const at = h.deps.now().toISOString();
+    expect(await events("findings-filer")).toEqual([{ event: "issue_abandoned", payload: { issue: 3 }, at }]);
+    expect(await events("infra-health")).toEqual(infra);
+    await emitEvent("issue_abandoned", { issue: 4 }, "findings-filer");
+    expect(await events("findings-filer")).toHaveLength(1);
+    await emitEvent("infra_alarm", { kind: "network_outage" });
+    expect((await events("infra-health")).filter((e) => e.event === "infra_alarm")).toHaveLength(1);
+    expect(await events("findings-filer")).toHaveLength(1);
+    await expect(emitEvent("nope", {})).rejects.toThrow("unknown event nope");
+  }, 30_000);
+
+  it("leaves a supplied emitEvent in place", async () => {
+    const stub = async () => {};
+    const { h } = await withRegistry(stub);
+    expect(h.deps.emitEvent).toBe(stub);
+  }, 30_000);
+
+  it("sets none when there is no registry", async () => {
+    const h = await setup(routes([]));
+    new Scheduler(h.deps);
+    expect(h.deps.emitEvent).toBeUndefined();
+  }, 30_000);
 });

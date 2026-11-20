@@ -105,7 +105,7 @@ world) where a criterion names it.
   neither imports nor calls `onFindingsQueued`, and the only registration
   of a `finding_queued` listener in `tools/scheduler/src/` and
   `tools/scheduler/bin/` is the one in the `Scheduler` constructor.
-- AC-2. **bin supplies no `emitEvent`; the constructor's default is the
+- AC-2. Amended by [094-default-emit-event-reaches-subscribers](../094-default-emit-event-reaches-subscribers/spec.md) AC-1: the tests that reach a subscriber's `pending_events` through the constructor's default are those spec 094 AC-1 to AC-4 name, not the existing tests, which stub `emitEvent`. **bin supplies no `emitEvent`; the constructor's default is the
   service's.** Given `tools/scheduler/bin/scheduler.ts`, then it defines
   no `emitEvent` wrapper, does not import `emit` from
   `src/standing/events.ts` (it still imports `EVENT_NAMES` from there for

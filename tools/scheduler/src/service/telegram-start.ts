@@ -1,14 +1,18 @@
 import type { Config } from "../config.ts";
-import { readTelegramCredentials } from "../telegram/credentials.ts";
+import type { CredentialStore } from "../credentials/store.ts";
+import { telegramCredentials } from "../telegram/credentials.ts";
 import { TelegramClient } from "../telegram/client.ts";
 import { telegramChannel } from "../telegram/channel.ts";
+/** The channel, with `source` naming where its credentials came from (spec 072 AC-2); `store` absent reads the file. */
 export async function startTelegram(
   cfg: Config,
   log: (r: Record<string, unknown>) => void,
   baseUrl?: string,
+  store?: CredentialStore,
 ) {
-  const credentials = await readTelegramCredentials(
+  const credentials = await telegramCredentials(
     cfg.telegram!.credentials_path,
+    store,
   );
   if ("off" in credentials) {
     log({ kind: "telegram", status: "off", reason: credentials.off });
@@ -19,14 +23,16 @@ export async function startTelegram(
     credentials.chat_id,
     baseUrl,
   );
-  return telegramChannel(client);
+  return Object.assign(telegramChannel(client), { source: credentials.source });
 }
 export async function telegramCheck(
   cfg: Config,
   baseUrl?: string,
+  store?: CredentialStore,
 ): Promise<string> {
-  const credentials = await readTelegramCredentials(
+  const credentials = await telegramCredentials(
     cfg.telegram!.credentials_path,
+    store,
   );
   if ("off" in credentials) throw Error(`credentials: ${credentials.off}`);
   const client = new TelegramClient(

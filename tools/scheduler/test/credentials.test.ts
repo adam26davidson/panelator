@@ -12,7 +12,7 @@ import { agentsDir, defaultConfigPath, loadConfig } from "../src/config.ts";
 import { loadCatalogue, profileNames } from "../src/credentials/catalogue.ts";
 import { runCheck, type CheckContext } from "../src/credentials/check.ts";
 import { credCommand } from "../src/credentials/commands.ts";
-import { appPrivateKey, CredentialStore } from "../src/credentials/store.ts";
+import { appPrivateKey, appPrivateKeySource, CredentialStore } from "../src/credentials/store.ts";
 import { createAppClient } from "../src/github/auth.ts";
 import { loadParameterDefinitions } from "../src/parameters/definitions.ts";
 import { ParameterStore } from "../src/parameters/store.ts";
@@ -200,7 +200,9 @@ describe("cred set and cred check (AC-3, AC-5, AC-10, AC-11)", () => {
     writeFileSync(t.ctx.credentials!.configPaths["github-app-key"], keys.priv);
     const imported = await t.cred("import", undefined);
     expect(imported.exitCode).toBe(0);
-    expect(imported.lines.join("\n")).toMatch(/safe to delete[\s\S]*still read by the Telegram poller/);
+    expect(imported.lines.join("\n")).toContain(`${t.ctx.credentials!.configPaths["github-app-key"]}: safe to delete after the service has restarted; the scheduler reminds you while it remains`);
+    expect(imported.lines.join("\n")).toContain(`${t.ctx.credentials!.configPaths["telegram-bot"]}: safe to delete after the service has restarted; the scheduler reminds you while it remains`);
+    expect(imported.lines.join("\n")).not.toContain("still read by the Telegram poller");
     expect((await t.store.readIndex())["github-app-key"].set_by).toBe("import");
     expect((await t.cred("remove", "telegram-bot")).lines).toEqual(["telegram-bot: removed"]);
     expect((await t.store.readIndex())["telegram-bot"]).toBeUndefined();
@@ -264,6 +266,7 @@ describe("the App key at start-up (AC-9)", () => {
     await expect(appPrivateKey(cfg, t.store)).rejects.toThrow(/does-not-exist/);
     await t.store.writeSecret("github-app-key", keys.priv, "maintainer");
     expect(await appPrivateKey(cfg, t.store)).toBe(keys.priv);
+    expect((await appPrivateKeySource(cfg, t.store)).source).toBe("store");
     const withPath = { app: t.app };
     const key = await appPrivateKey(withPath, t.store);
     expect(await createAppClient(t.app, key, t.gh.fetch).botLogin()).toBe("panelator-pipeline[bot]");

@@ -108,7 +108,7 @@ and by the recorded commands of AC-3.
   (spec 001 section 12). The registry test of spec 008 AC-1 (every kind in
   the file has code and every kind in code has an entry) still passes; no
   level changes.
-- AC-3. **The grant is proven on a real run.** Given the implementation PR,
+- AC-3. Amended by [079-rerun-proof-spares-head-run](../079-rerun-proof-spares-head-run/spec.md) AC-1: the run is a completed run of a commit of the PR's branch other than its head, and when only the head has a run the stage pushes one further commit after the proof. **The grant is proven on a real run.** Given the implementation PR,
   then its description quotes, with HTTP status lines, one re-run request
   and one cancel request made through the App's `gh` wrapper (the token the
   scheduler mints, never a personal token) against a completed workflow run
@@ -178,6 +178,8 @@ keeping AC-1's content):
 > workflow run); the maintainer granted it on 2026-11-05 (ADR 0006).
 
 ## 5. Verification
+
+> Amended by [079-rerun-proof-spares-head-run](../079-rerun-proof-spares-head-run/spec.md) AC-2: the cancelled run's `head_sha` is not the PR head, and the head's required `test` check is green.
 
 - `pnpm test` from the repository root passes (AC-6).
 - `git diff main -- specs/001-scheduler-core/spec.md` shows changes inside

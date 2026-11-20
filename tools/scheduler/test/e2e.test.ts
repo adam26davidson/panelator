@@ -9,7 +9,7 @@ import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
 import { agentsDir, defaultConfigPath, loadConfig } from "../src/config.ts";
 import { GitHubClient } from "../src/github/client.ts";
-import { Scheduler, type SchedulerDeps } from "../src/service/loop.ts";
+import { MAX_CHAIN_FAILURES, Scheduler, type SchedulerDeps } from "../src/service/loop.ts";
 import { ServiceLog } from "../src/service/log.ts";
 import { SleepInhibitor } from "../src/service/inhibit.ts";
 import { loadStageDefinitions } from "../src/stages/definition.ts";
@@ -18,7 +18,7 @@ import { CHARTER_REVERT_LINE } from "../src/chain/driver.ts";
 import { initialChainState, ledgerOf, MAX_BLOCKS } from "../src/chain/machine.ts";
 import type { BlockedRecord } from "../src/state/blocked.ts";
 import { writeLedger } from "../src/state/ledger.ts";
-import { listClaims } from "../src/state/claims.ts";
+import { listClaims, writeClaim } from "../src/state/claims.ts";
 import { writePaused,listPaused, type PausedRecord } from "../src/state/paused.ts";
 import type { Question } from "../src/types.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
@@ -275,7 +275,7 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     // The second bound needs a PR to close (AC-2): a fix fails (AC-1's "a fix run has failed"), then its rescue fails.
     w = await chainWorld({
       files: repoFiles(),
-      results: { plan: [PLAN, PLAN], implement: [a.implement(9), a.implement(10)], review: [CHANGES, APPROVE], fix: [FAIL, FAIL] },
+      results: { plan: [PLAN, PLAN], implement: [a.implement(9), a.implement(10)], review: [CHANGES, APPROVE, APPROVE], fix: [FAIL, FAIL] },
     });
     await w.tick();
     await expectSettled(w);
@@ -352,6 +352,9 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
       files: repoFiles(),
       results: { plan: [PLAN], implement: [a.implement(9)], review: [ESCALATE(q), APPROVE], "question-check": [SEND], fix: [a.adr()] },
     });
+    // spec 094 AC-4: a paused test-only subscriber keeps the events no built-in agent subscribes to.
+    w.deps.registry!.watcher = { ...w.deps.registry!["action-audit"], name: "watcher", trigger: { events: ["merge", "maintainer_reply"] } };
+    await writeAgentState(w.paths, "watcher", { last_run: null, next_run: null, pending_events: [], paused: true, paused_by: "maintainer", failures: 0 });
     await w.tick();
     // AC-13: paused, with the question on the issue.
     const rec = pausedRecord(w);
@@ -378,6 +381,10 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     expect(w.labelLog).toEqual(["+in-progress", "+needs-decision", "-in-progress", "+in-progress", "-needs-decision", "-in-progress"]);
     expect(w.comments.map((c) => c.author)).toEqual(["panelator-pipeline[bot]", "adam26davidson"]);
     expect(readFileSync(w.paths.questionsLog, "utf8").trim().split("\n").map((l) => JSON.parse(l).event)).toEqual(["asked", "checked", "sent", "answered"]);
+    expect((await readAgentState(w.paths, "watcher"))!.pending_events).toEqual([
+      { event: "maintainer_reply", payload: { issue: 7, question_id: question.id }, at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) },
+      { event: "merge", payload: { issue: 7, pr: 9, sha: expect.stringMatching(/^[0-9a-f]{40}$/) }, at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) },
+    ]);
   }, 120_000);
 
   it("a reply that asks back, a follow-up, recorded, merged (spec 006 AC-28)", async () => {
@@ -748,6 +755,53 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
       }
     });
 
+    describe("a spec-track rescue while recording an answer keeps issue-7's work (spec 085 AC-5)", () => {
+      for (const how of ["the recording spec stage fails twice", "the question check fails twice"] as const) {
+        it(`${how}: issue-7's work is kept and continued after the rescued spec PR merges`, async () => {
+          let w!: ChainWorld;
+          const a = agents(() => w);
+          const held = { head: "" };
+          const starts: string[] = [];
+          const marks = () => w.questions().map((q) => `(maintainer answer, question #${q.id})`).join(", ");
+          const asks = (run: StageRun) => {
+            w.push(run, { "specs/010-thing/spec.md": specOf().replace("Do a thing.", `Do a thing, half written ${marks()}.`) }, "recording");
+            return { verdict: "question", question: ask("capability", "Does the board have a second flash chip?") };
+          };
+          const revises = (run: StageRun) => a.spec(12, { "specs/010-thing/spec.md": specOf().replace("Do a thing.", `Do a thing, in RAM ${marks()}.`) })(run);
+          const failing = how === "the recording spec stage fails twice";
+          w = await chainWorld({
+            files: repoFiles(),
+            results: {
+              plan: [PLAN, PLAN],
+              implement: [asksAfterPushing(() => w, ask("technical", "Cache the frames in RAM or in flash?"), held), a.implement(9, { "a.txt": "pr 9\n" }, (run) => starts.push(rev(run)))],
+              review: [APPROVE, APPROVE],
+              "question-check": failing ? [SEND] : [SEND, FAIL, FAIL],
+              spec: failing ? [FAIL, FAIL, revises] : [asks, revises],
+            },
+          });
+          await w.tick();
+          w.reply("RAM.");
+          await w.tick();
+          await expectSettled(w);
+
+          expect(w.adapter.ran).toEqual(failing
+            ? ["plan", "implement", "question-check", "spec", "spec", "spec", "review", "plan", "implement", "review"]
+            : ["plan", "implement", "question-check", "spec", "question-check", "question-check", "spec", "review", "plan", "implement", "review"]);
+          expect(runsOf(w, "spec").filter((r) => r.model === w.cfg.rescue_model)).toHaveLength(1);
+          expect(kinds(w, "stale-branch-dropped").filter((r) => r.branch === "issue-7")).toEqual([]);
+          expect(kinds(w, "recovered-commits").filter((r) => r.branch === "issue-7")).toEqual([]);
+          for (const k of kinds(w, "held-work-kept").filter((r) => r.branch === "issue-7")) expect(k.head).toBe(held.head);
+          expect(kinds(w, "held-work-kept").some((r) => r.branch === "issue-7")).toBe(true);
+          expect(inputsOf(w, "plan")[1].held_work).toContain("issue-7");
+          expect(inputsOf(w, "plan")[1].held_work).toContain(held.head);
+          expect(starts).toEqual([held.head]);
+          expect(runsOf(w, "implement")[1].branch).toBe("issue-7");
+          expect(w.writes()).not.toContain("DELETE /repos/o/r/git/refs/heads/issue-7");
+          expect(w.mergeRequests).toEqual([12, 9]);
+        }, 180_000);
+      }
+    });
+
     it("decide_yourself after a question: the stage in decide mode continues from the held head", async () => {
       let w!: ChainWorld;
       const a = agents(() => w);
@@ -831,6 +885,10 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     expect(w.notifications.map((n) => n.gate)).toEqual(["abandoned"]);
     expect(w.mergeRequests).toEqual([]);
     expect(existsSync(join(w.paths.worktrees, "issue-7"))).toBe(false);
+    // spec 094 AC-1: the constructor's default emitEvent delivers the abandonment to the filer (the queued finding's finding_queued entry is not tested here).
+    const filer = (await readAgentState(w.paths, "findings-filer"))!;
+    expect(filer.pending_events.filter((e) => e.event === "issue_abandoned")).toEqual([{ event: "issue_abandoned", payload: { issue: 7 }, at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) }]);
+    expect((await readAgentState(w.paths, "infra-health"))!.pending_events).toEqual([]);
   }, 120_000);
 
   it("security finding fixed then merged (spec 006 AC-28)", async () => {
@@ -1013,6 +1071,318 @@ describe("end to end: spec and ADR numbers are reserved by the scheduler (spec 0
 });
 
 // ---------------------------------------------------------------------------------------------------------------
+// Spec 071 AC-7: a spec PR moves its spec; the result names the path and the scheduler rewrites the issue's Spec: line.
+
+describe("end to end: a spec PR moves its spec (spec 071 AC-7)", () => {
+  const parentWith = (...specs: string[]) => `# Product spec\n\nParent: docs/charter.md\n\n## Children\n\n- \`specs/010-thing/spec.md\`\n${specs.map((s) => `- \`${s}\`\n`).join("")}`;
+  const bodyOf = (line: string) => `Do the thing.\n\nSpec: ${line}\n\nTrailer`;
+  const reservedInClaim = () => JSON.parse(readFileSync(join(w!.paths.claims, "7.json"), "utf8")).state.reserved.spec as number | null;
+  let w: ChainWorld | undefined;
+  /** The spec stage's first run: the spec at `path`, its parent listing it, PR 12. */
+  const writes = (world: () => ChainWorld, path: string, mainTakes = false) => (run: StageRun) => {
+    // main takes the number while the spec stage runs, as #112 did for #41.
+    if (mainTakes) world().moveMain({ "specs/030-other/spec.md": "# other\n" });
+    const sha = world().push(run, { [path]: specOf(), [PARENT]: parentWith(path) }, "spec");
+    world().openPr(run, 12, sha, "A new spec");
+    return { verdict: "revised", spec_path: path, pr_number: 12, head_sha: sha };
+  };
+  /** The fix: `git mv` (or copy) the directory, update the parent's bullet, push, and report `report` as spec_path. */
+  const moves = (world: () => ChainWorld, from: string, to: string, o: { copy?: boolean; report?: string | null; during?: () => void } = {}) => (run: StageRun) => {
+    o.during?.();
+    if (o.copy) execFileSync("cp", ["-r", join(run.worktree, from), join(run.worktree, to)]);
+    else git(run.worktree, "mv", from, to);
+    const head_sha = world().push(run, { [PARENT]: parentWith(`${to}/spec.md`) }, "move");
+    const report = o.report === undefined ? `${to}/spec.md` : o.report;
+    return { head_sha, addressed: [0], ...(report === null ? {} : { spec_path: report }) };
+  };
+  const keeps = (run: StageRun) => {
+    git(run.worktree, "commit", "-q", "--allow-empty", "-m", "keep");
+    const branch = git(run.worktree, "rev-parse", "--abbrev-ref", "HEAD").trim();
+    git(run.worktree, "push", "-q", "-f", "origin", `HEAD:refs/heads/${branch}`);
+    return { head_sha: rev(run), addressed: [0], spec_path: "specs/031-x/spec.md" };
+  };
+  const rest = { plan: [PLAN], implement: [] as Scripted[], review: [APPROVE, APPROVE] };
+  type Scripted = Parameters<typeof scripted>[0][string][number];
+  const fixInput = (n: number) => runsOf(w!, "fix")[n].input;
+
+  it("issue #41's sequence: main takes 030, the fix is given 031 (in the claim too), moves the directory and the scope passes; the line is rewritten", async () => {
+    let seenInClaim: number | null | undefined;
+    w = await chainWorld({
+      files: repoFiles({ spec: null }), issueBody: bodyOf("specs/030-x/spec.md"),
+      results: {
+        ...rest,
+        spec: [writes(() => w!, "specs/030-x/spec.md", true)],
+        review: [CHANGES, APPROVE, APPROVE],
+        fix: [
+          moves(() => w!, "specs/030-x", "specs/031-x", { report: null, during: () => { seenInClaim = reservedInClaim(); } }),
+          keeps,
+        ],
+      },
+    });
+    await w.tick();
+    expect(runsOf(w, "fix")).toHaveLength(2);
+    expect(fixInput(0).spec_number).toBe("031");
+    expect(seenInClaim).toBe(31);
+    // The rename without spec_path: #41's three violations, then the retry names the path and passes.
+    const violations = fixInput(1).fix_input ?? "";
+    expect(violations).toContain("specs/030-x/spec.md: no Parent line");
+    expect(violations).toContain("docs/product-spec.md: outside spec PR scope");
+    expect(violations).toContain("specs/031-x/spec.md: another spec; specs/030-x/spec.md does not link to it");
+    expect(w.issueBody).toBe(bodyOf("specs/031-x/spec.md"));
+    expect(w.gh.calls.filter((c) => c.method === "PATCH" && c.url === "/repos/o/r/issues/7" && (c.body as { body?: string }).body !== undefined).map((c) => (c.body as { body: string }).body)).toEqual([bodyOf("specs/031-x/spec.md")]);
+    expect(w.logs.filter((r) => r.kind === "spec-moved")).toEqual([expect.objectContaining({ kind: "spec-moved", issue: 7, from: "specs/030-x/spec.md", to: "specs/031-x/spec.md" })]);
+    expect(w.logs.filter((r) => r.kind === "number-reserved" && r.spec !== undefined).map((r) => r.spec)).toEqual(["031"]);
+    expect(w.mergeRequests).toContain(12);
+    expect(w.onMain("specs/031-x/spec.md")).toBe(specOf());
+    expect(w.onMain("specs/030-x/spec.md")).toBeNull();
+  }, 120_000);
+
+  it("a slug-only move on a free number reserves nothing and rewrites the line", async () => {
+    w = await chainWorld({
+      files: repoFiles({ spec: null }), issueBody: bodyOf("specs/072-a/spec.md"),
+      results: { ...rest, spec: [writes(() => w!, "specs/072-a/spec.md")], review: [CHANGES, APPROVE, APPROVE], fix: [moves(() => w!, "specs/072-a", "specs/072-b")] },
+    });
+    await w.tick();
+    expect(fixInput(0).spec_number ?? "(none)").toBe("(none)");
+    expect(w.logs.filter((r) => r.kind === "number-reserved" && r.spec !== undefined)).toEqual([]);
+    expect(w.issueBody).toBe(bodyOf("specs/072-b/spec.md"));
+    expect(w.logs.filter((r) => r.kind === "spec-moved")).toHaveLength(1);
+    expect(w.onMain("specs/072-b/spec.md")).toBe(specOf());
+  }, 120_000);
+
+  it("a rename to 033 while 031 is reserved fails the result and the issue body still names 030", async () => {
+    w = await chainWorld({
+      files: repoFiles({ spec: null }), issueBody: bodyOf("specs/030-x/spec.md"),
+      results: { ...rest, spec: [writes(() => w!, "specs/030-x/spec.md", true)], review: [CHANGES], fix: [moves(() => w!, "specs/030-x", "specs/033-x", {}), FAIL] },
+    });
+    await w.tick();
+    expect(fixInput(0).spec_number).toBe("031");
+    expect(fixInput(1).history).toContain("fix attempt 1 failed: result: spec number 033 is not the issue's 030 or the reserved 031");
+    expect(w.issueBody).toBe(bodyOf("specs/030-x/spec.md"));
+    expect(w.logs.filter((r) => r.kind === "spec-moved")).toEqual([]);
+  }, 120_000);
+
+  it("a copy that leaves both directories fails the result and the issue body is unchanged", async () => {
+    w = await chainWorld({
+      files: repoFiles({ spec: null }), issueBody: bodyOf("specs/030-x/spec.md"),
+      results: { ...rest, spec: [writes(() => w!, "specs/030-x/spec.md")], review: [CHANGES], fix: [moves(() => w!, "specs/030-x", "specs/031-x", { copy: true }), FAIL] },
+    });
+    await w.tick();
+    expect(fixInput(1).history).toContain("fix attempt 1 failed: result: spec moved to specs/031-x/spec.md but specs/030-x/ still holds files");
+    expect(w.issueBody).toBe(bodyOf("specs/030-x/spec.md"));
+  }, 120_000);
+
+  it("a spec-stage revise of a spec on main that names a new path fails and the body is unchanged", async () => {
+    const moved = (run: StageRun) => {
+      const sha = w!.push(run, { "specs/011-y/spec.md": specOf() }, "spec");
+      w!.openPr(run, 12, sha, "Spec revision for the thing");
+      return { verdict: "revised", spec_path: "specs/011-y/spec.md", pr_number: 12, head_sha: sha };
+    };
+    const a = agents(() => w!);
+    w = await chainWorld({
+      files: repoFiles(), issueBody: bodyOf("specs/010-thing/spec.md"),
+      results: { plan: [PLAN, PLAN], implement: [a.implement(9), FAIL, FAIL], review: [CHANGES], fix: [FAIL, FAIL], spec: [moved, FAIL] },
+    });
+    await w.tick();
+    expect(runsOf(w, "spec").length).toBeGreaterThanOrEqual(2);
+    expect(runsOf(w, "spec")[1].input.history).toContain("spec attempt 1 failed: result: the spec at specs/010-thing/spec.md is on main and cannot move");
+    expect(w.issueBody).toBe(bodyOf("specs/010-thing/spec.md"));
+    expect(w.logs.filter((r) => r.kind === "spec-moved")).toEqual([]);
+  }, 120_000);
+
+  it("a spec-track fix on a spec nothing else holds is given no number and reserves none", async () => {
+    w = await chainWorld({
+      files: repoFiles({ spec: null }), issueBody: bodyOf("specs/030-x/spec.md"),
+      results: { ...rest, spec: [writes(() => w!, "specs/030-x/spec.md")], review: [CHANGES, APPROVE, APPROVE], fix: [(run: StageRun) => ({ head_sha: w!.push(run, { "specs/030-x/notes.md": "n\n" }, "fix"), addressed: [0] })] },
+    });
+    await w.tick();
+    expect(fixInput(0).spec_number ?? "(none)").toBe("(none)");
+    expect(w.logs.filter((r) => r.kind === "number-reserved" && r.spec !== undefined)).toEqual([]);
+    expect(w.issueBody).toBe(bodyOf("specs/030-x/spec.md"));
+  }, 120_000);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Spec 092 AC-6: a stage run that cannot reach the API waits out the outage; it is not the stage's failure.
+
+describe("end to end: a stage run that cannot reach the API waits out the outage (spec 092 AC-6)", () => {
+  const clock = (w: ChainWorld) => {
+    const c = { offset: 0 };
+    w.deps.now = () => new Date(Date.now() + c.offset);
+    return c;
+  };
+
+  it("implement unreachable twice then succeeding: no attempt is spent, the backoff doubles, the chain goes on", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: [NETWORK_DOWN, NETWORK_DOWN, a.implement(9)], review: [APPROVE] } });
+    const c = clock(w);
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["plan", "implement"]);
+    let claim = (await listClaims(w.paths))[0];
+    expect(claim.state.history.filter((h) => /^implement attempt/.test(h))).toEqual([]);
+    expect(claim.outage?.count).toBe(1);
+    const first = Date.parse(claim.outage!.retry_at!) - Date.now();
+    expect(first).toBeGreaterThan(50_000);
+    expect(first).toBeLessThanOrEqual(60_000);
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["plan", "implement"]);
+
+    c.offset += 61_000;
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["plan", "implement", "implement"]);
+    claim = (await listClaims(w.paths))[0];
+    expect(claim.outage?.count).toBe(2);
+    const second = Date.parse(claim.outage!.retry_at!) - (Date.now() + c.offset);
+    expect(second).toBeGreaterThan(110_000);
+    expect(second).toBeLessThanOrEqual(120_000);
+
+    c.offset += 121_000;
+    await w.tick();
+    await expectSettled(w);
+    expect(w.adapter.ran).toEqual(["plan", "implement", "implement", "implement", "review"]);
+    expect(kinds(w, "stage-transient")).toHaveLength(2);
+    const records = serviceRecords(w);
+    expect(records.filter((r) => r.kind === "transient-outage")).toHaveLength(1);
+    expect(records.filter((r) => r.kind === "transient-outage-over")).toHaveLength(1);
+    expect(records.filter((r) => r.kind === "chain-error")).toEqual([]);
+    expect(w.mergeRequests).toEqual([9]);
+  }, 180_000);
+
+  it("a rescue run that cannot reach the API is still the rescue after the wait, with no re-plan", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({
+      files: repoFiles(),
+      results: { plan: [PLAN], implement: [a.implement(9)], review: [CHANGES, APPROVE, APPROVE], fix: [FAIL, NETWORK_DOWN, a.fix({ "a.txt": "fixed\n" })], "question-check": [SEND] },
+    });
+    const c = clock(w);
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["plan", "implement", "review", "fix", "fix"]);
+    expect((await listClaims(w.paths))[0].state).toMatchObject({ stage: "fix", rescueRun: true, rescues: 1 });
+    c.offset += 1000_000;
+    await w.tick();
+    await expectSettled(w);
+    expect(w.adapter.ran.filter((r) => r === "plan")).toHaveLength(1);
+    expect(runsOf(w, "fix").at(-1)!.model).toBe(w.cfg.rescue_model);
+    expect(runsOf(w, "fix").at(-2)!.model).toBe(w.cfg.rescue_model);
+    expect(kinds(w, "stage-transient")).toEqual([expect.objectContaining({ stage: "fix" })]);
+  }, 180_000);
+
+  it("implement that commits then loses the API keeps its commits as held work for the retry", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    let held = "";
+    const starts: string[] = [];
+    const rev = (run: StageRun) => git(run.worktree, "rev-parse", "HEAD").trim();
+    w = await chainWorld({
+      files: repoFiles(),
+      results: {
+        plan: [PLAN],
+        implement: [(run: StageRun) => { held = w.push(run, { "a.txt": "held\n" }, "held"); return NETWORK_DOWN; }, a.implement(9, undefined, (run) => starts.push(rev(run)))],
+        review: [APPROVE],
+      },
+    });
+    const c = clock(w);
+    await w.tick();
+    const claim = (await listClaims(w.paths))[0];
+    expect(claim.state.heldWork).toEqual([{ branch: "issue-7", head: held, carried: expect.stringContaining("reach the API") }]);
+    expect(kinds(w, "held-work")).toMatchObject([{ stage: "implement", branch: "issue-7", head: held }]);
+    expect(w.adapter.ran).toEqual(["plan", "implement"]);
+    c.offset += 61_000;
+    await w.tick();
+    await expectSettled(w);
+    // AC-3: the retry is prepared from the hold, not from origin/main.
+    expect(w.adapter.ran).toEqual(["plan", "implement", "implement", "review"]);
+    expect(starts).toEqual([held]);
+    expect(kinds(w, "held-work-kept")).toMatchObject([{ issue: 7, branch: "issue-7", head: held }]);
+    expect(kinds(w, "held-work-restored")).toEqual([]);
+    expect(kinds(w, "stale-branch-dropped")).toEqual([]);
+    expect(patchesOf(w, "recovered")).toEqual([]);
+    expect(kinds(w, "recovered-commits")).toEqual([]);
+  }, 180_000);
+
+  it("a review with an independent fallback that cannot reach the API starts no fallback run and retries on its own model", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: [a.implement(9)], review: [NETWORK_DOWN, APPROVE] } });
+    const own = w.deps.stages.review.model;
+    w.deps.stages.review = { ...w.deps.stages.review, independent: true, fallback: "claude-fable-5-1", tier: "standard" };
+    const c = clock(w);
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["plan", "implement", "review"]);
+    expect(kinds(w, "stage-transient")).toHaveLength(1);
+    c.offset += 61_000;
+    await w.tick();
+    await expectSettled(w);
+    expect(w.adapter.ran).toEqual(["plan", "implement", "review", "review"]);
+    expect(runsOf(w, "review").map((r) => r.model)).toEqual([own, own]);
+  }, 180_000);
+
+  it("a conversation turn that cannot reach the API does not spend the conversation's retry, then settles", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    w = await chainWorld({
+      files: repoFiles(),
+      results: { plan: [PLAN], implement: [a.implement(9)], review: [ESCALATE(ask("technical", "Which cache?")), NETWORK_DOWN, { conversation: "settled", decision: "Use option one for bounded memory" }, APPROVE], fix: [a.adr()], "question-check": [SEND] },
+    });
+    const server = await fakeTelegram();
+    w.deps.telegram = telegramChannel(new TelegramClient("SECRET", 42, server.url));
+    const c = clock(w);
+    try {
+      await w.tick();
+      const date = () => Math.floor((Date.now() + c.offset) / 1000) + 1;
+      const u = { update_id: 1, message: { message_id: 1000, date: date(), chat: { id: 42 }, text: "Use option one" } };
+      await w.scheduler.handleTelegramUpdate(u);
+      await w.scheduler.confirmTelegramUpdate(u);
+      await w.tick();
+      expect(w.adapter.runs.filter((r) => r.conversation)).toHaveLength(1);
+      expect(kinds(w, "stage-transient")).toEqual([expect.objectContaining({ stage: "review" })]);
+      const claim = (await listClaims(w.paths))[0];
+      expect(claim.state.conversation).toMatchObject({ retried: false });
+      expect(claim.outage?.count).toBe(1);
+      c.offset += 61_000;
+      await w.tick();
+      await expectSettled(w);
+      expect(w.adapter.runs.filter((r) => r.conversation)).toHaveLength(2);
+      expect(runsOf(w, "fix").at(-1)!.input.decision).toBe("Use option one for bounded memory");
+      expect(w.mergeRequests).toEqual([9]);
+    } finally {
+      await server.close();
+    }
+  }, 180_000);
+
+  it("an outage past its 24-hour ceiling counts a stage run's rejections as chain failures, alarms once, and releases with chain_error (AC-5)", async () => {
+    let w!: ChainWorld;
+    w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: Array.from({ length: 12 }, () => NETWORK_DOWN) } });
+    const c = clock(w);
+    await w.tick();
+    const c0 = (await listClaims(w.paths))[0];
+    const outageSince = (hours: number) => new Date(Date.now() + c.offset - hours * 3600_000).toISOString();
+    // Three hours in: the next rejection raises the alarm, once.
+    const young = outageSince(3);
+    await writeClaim(w.paths, { ...c0, outage: { since: young, count: 5, last: c0.outage!.last, retry_at: young, alarmed: false } });
+    await w.tick();
+    expect(serviceRecords(w).filter((r) => r.kind === "transient-outage-alarm")).toHaveLength(1);
+    // A day on: past the ceiling the rejections count, and the alarm is not raised again.
+    const old = outageSince(25);
+    const c1 = (await listClaims(w.paths))[0];
+    await writeClaim(w.paths, { ...c1, outage: { ...c1.outage!, since: old, retry_at: old } });
+    for (let i = 0; i < 12 && !serviceRecords(w).some((r) => r.kind === "chain-error"); i++) {
+      c.offset += 1801_000;
+      await w.tick();
+      const cl = (await listClaims(w.paths))[0];
+      if (cl?.state.chainFailures) expect(cl.state.chainFailures.last.startsWith("outage past ceiling: ")).toBe(true);
+    }
+    const records = serviceRecords(w);
+    expect(records.filter((r) => r.kind === "chain-error")).toHaveLength(1);
+    expect(records.filter((r) => r.kind === "transient-outage-ceiling")).toHaveLength(1);
+    expect(records.filter((r) => r.kind === "transient-outage-alarm")).toHaveLength(1);
+    expect(w.notifications.filter((n) => n.gate === "infra")).toHaveLength(1);
+    expect(w.adapter.ran.filter((r) => r === "implement").length).toBeGreaterThan(MAX_CHAIN_FAILURES);
+  }, 180_000);
+});
+
 // Spec 059 AC-6: a full volume postpones runs; it is not the work's failure.
 
 describe("end to end: a full volume postpones runs (spec 059 AC-6)", () => {
@@ -1030,12 +1400,10 @@ describe("end to end: a full volume postpones runs (spec 059 AC-6)", () => {
     let w!: ChainWorld;
     let reader = LOW;
     const a = agents(() => w);
-    const events: { event: string; payload: unknown }[] = [];
     w = await chainWorld({
       files: repoFiles({ spec: null }), freeSpace: (path) => reader(path),
       results: { spec: [a.spec(12, { "specs/010-thing/spec.md": specOf() })], review: [APPROVE] },
     });
-    w.deps.emitEvent = async (event, payload) => { events.push({ event, payload }); };
     const c = clock(w);
     for (let i = 0; i < 3; i++) {
       await w.tick();
@@ -1050,7 +1418,8 @@ describe("end to end: a full volume postpones runs (spec 059 AC-6)", () => {
     expect(records.filter((r) => r.kind === "transient-outage-alarm")).toHaveLength(1);
     expect(w.notifications.filter((n) => n.gate === "infra")).toHaveLength(1);
     expect(w.notifications.find((n) => n.gate === "infra")?.text).toContain(checkedPaths(w.paths, during.worktree)[2]);
-    expect(events.filter((e) => e.event === "infra_alarm")).toEqual([{ event: "infra_alarm", payload: expect.objectContaining({ kind: "disk_full", issue: 7, cause: "ENOSPC" }) }]);
+    // spec 094 AC-3: the alarm reaches infra health through the constructor's default emitEvent.
+    expect((await readAgentState(w.paths, "infra-health"))!.pending_events.filter((e) => e.event === "infra_alarm")).toEqual([expect.objectContaining({ event: "infra_alarm", payload: expect.objectContaining({ kind: "disk_full", issue: 7, cause: "ENOSPC" }) })]);
     expect(kinds(w, "stage")).toEqual([]);
     expect(records.filter((r) => r.kind === "chain-error")).toEqual([]);
     const before = ledgerOf(during.state);
@@ -1069,7 +1438,7 @@ describe("end to end: a full volume postpones runs (spec 059 AC-6)", () => {
     const a = agents(() => w);
     w = await chainWorld({
       files: repoFiles(),
-      results: { plan: [PLAN], implement: [a.implement(9)], review: [CHANGES, APPROVE], fix: [FAIL, HOST_REFUSED, a.fix({ "a.txt": "fixed\n" })], "question-check": [SEND] },
+      results: { plan: [PLAN], implement: [a.implement(9)], review: [CHANGES, APPROVE, APPROVE], fix: [FAIL, HOST_REFUSED, a.fix({ "a.txt": "fixed\n" })], "question-check": [SEND] },
     });
     const c = clock(w);
     await w.tick();
@@ -1441,7 +1810,7 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
  },60000);
  it('an outage two hours old raises one alarm: a finding, an infra notification and an infra_alarm event (spec 045 AC-5, AC-7)',async()=>{
   const w=await standingWorld({operator:[NETWORK_DOWN,NETWORK_DOWN]});
-  const log=capture(w);const emitted:unknown[][]=[];w.deps.emitEvent=async(...a)=>{emitted.push(a);};
+  const log=capture(w);
   const since='2026-09-30T22:00:00.000Z';
   await dueNow(w,'operator',{outage:{since,count:3,last:'x',alarmed:false}});
   await tickAt(w,T0);
@@ -1453,10 +1822,12 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   for(const part of ['4',since,'EAI_AGAIN'])expect(queue[0].finding.evidence).toContain(part);
   expect(w.notifications).toMatchObject([{gate:'infra',label:'operator:outage'}]);
   expect(log.kinds('operator','standing-outage-alarm')).toHaveLength(1);
-  expect(emitted.filter(a=>a[0]==='infra_alarm')).toEqual([['infra_alarm',{kind:'network_outage',agent:'operator',since,failures:4,cause:'EAI_AGAIN'}]]);
+  // spec 094 AC-2: through the constructor's default emitEvent, to infra health.
+  expect((await readAgentState(w.paths,'infra-health'))!.pending_events).toEqual([{event:'infra_alarm',payload:{kind:'network_outage',agent:'operator',since,failures:4,cause:'EAI_AGAIN'},at:T0}]);
   expect(st.pending_events.filter(e=>e.event==='finding_queued')).toHaveLength(0);
   await tickAt(w,'2026-10-01T00:20:00.000Z');
   expect((await readAgentState(w.paths,'operator'))?.outage?.count).toBe(5);
+  expect((await readAgentState(w.paths,'infra-health'))!.pending_events.filter(e=>e.event==='infra_alarm')).toHaveLength(1);
   expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(1);expect(w.notifications).toHaveLength(1);expect(log.kinds('operator','standing-outage-alarm')).toHaveLength(1);
  },60000);
  it('an outage a day old stops being transient: its failures count from the third past the ceiling (spec 045 AC-6, AC-7)',async()=>{
@@ -1471,7 +1842,7 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   st=(await readAgentState(w.paths,'operator'))!;
   expect(st).toMatchObject({failures:0,last_run:{outcome:'failed'}});
   const queue=await readJsonLines<{finding:{what:string;evidence:string}}>(w.paths.findingsQueue);
-  expect(queue).toHaveLength(1);expect(queue[0].finding.evidence.startsWith('outage past ceiling: ')).toBe(true);
+  expect(queue).toHaveLength(1);expect(queue[0].finding.evidence.startsWith('outage past ceiling: ')).toBe(true);expect(queue[0].finding.what).toBe('standing agent operator failed twice: EAI_AGAIN');
   expect(w.notifications).toHaveLength(1);expect(st.next_run).not.toBeNull();expect(st.pending_events).toEqual([]);
  },60000);
  it('a GitHub 404 while applying a filer result is a genuine failure, not an outage (spec 045 AC-1)',async()=>{
@@ -1488,7 +1859,7 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   const w=await failFilerTwice();
   expect(await readAgentState(w.paths,'findings-filer')).toMatchObject({failures:0,next_run:'2026-10-02T00:00:00.000Z',pending_events:[],last_run:{outcome:'failed'}});
   const queue=await readJsonLines<{finding:{what:string}}>(w.paths.findingsQueue);
-  expect(queue.map(r=>r.finding.what)).toEqual([FAILED_TWICE]);expect(w.notifications).toHaveLength(1);
+  expect(queue).toHaveLength(1);expect(queue[0].finding.what.startsWith(FAILED_TWICE+': ')).toBe(true);expect(queue[0].finding.what).toBe(FAILED_TWICE+': exit');expect(w.notifications).toHaveLength(1);
   const runs=readdirSync(w.paths.runs).length;
   for(let i=1;i<=3;i++){w.setNow(new Date(w.deps.now().getTime()+i*2*60_000));await w.scheduler.tick();await idle(w);}
   expect(w.adapter.ran.filter(s=>s==='findings-filer')).toHaveLength(2);

@@ -23,15 +23,18 @@ import { rankIssues, classifyWork, classOf } from "../shortlist/rank.ts";
 import type { IssueData } from "../types.ts";
 import { selectEligible } from "../shortlist/select.ts";
 import { listClaims, readClaim, removeClaim, writeClaim, type Claim, type Outage } from "../state/claims.ts";
-import { CEILING_MIN_FAILURES, CEILING_MIN_SPAN_MS, DISK_FULL, forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, PAST_CEILING, transientCause } from "../chain/transient.ts";
+import { CEILING_MIN_FAILURES, CEILING_MIN_SPAN_MS, DISK_FULL, forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, PAST_CEILING, failureCause, transientCause } from "../chain/transient.ts";
 import { readLedger, writeLedger } from "../state/ledger.ts";
 import { listBlocked, removeBlocked, writeBlocked, type BlockedRecord } from "../state/blocked.ts";
 import { recordChecks } from "../events/ci.ts";
+import { claimOpen } from "../events/claimed.ts";
 import { listPaused, pausedDecision, removePaused, writePaused, type PausedRecord } from "../state/paused.ts";
 import { answeredEntry, appendQuestionLog } from "../state/questions.ts";
 import { recentMerges } from "../state/merges.ts";
 import { savePatch } from "../state/patches.ts";
 import { pruneUsage } from "../state/runs.ts";
+import { checkPlainFiles } from "../credentials/plain-files.ts";
+import type { CredentialStore } from "../credentials/store.ts";
 import { sweepVolumes } from "./sweep.ts";
 import { readToken } from "../state/token.ts";
 import type { SleepInhibitor } from "./inhibit.ts";
@@ -43,6 +46,7 @@ import type { AwsContext } from "../aws/context.ts";
 import { schedulerChanged } from "./git.ts";
 import { fileDesignChildren } from "../children/scan.ts";
 import { loadDesignTree } from "../gates/design-tree.ts";
+import { neutraliseMarkers } from "../github/markers.ts";
 
 export interface SchedulerDeps extends DriverDeps {
   registry?:Record<string,StandingDefinition>;
@@ -50,6 +54,8 @@ export interface SchedulerDeps extends DriverDeps {
   runStanding?:typeof runStandingAgent;
   botLogin: string;
   serviceLog: ServiceLog;
+  /** Spec 072: the store, the two configured plain-file paths and the credentials this process read from the store. */
+  plainFiles?: { store: CredentialStore; paths: Partial<Record<"github-app-key" | "telegram-bot", string>>; fromStore: ReadonlySet<string> };
   inhibitor: SleepInhibitor;
   fastForward: () => Promise<{ moved: boolean; changedPaths: string[] }>;
   sleep: (ms: number) => Promise<void>;
@@ -120,6 +126,7 @@ export class Scheduler {
   #deps: SchedulerDeps;
   #drive: DriveFn;
   #active = new Map<number, Promise<void>>();
+  #plainFilesCheckedAt: number | null = null;
   #activeStanding = new Map<string,Promise<void>>();
   #stopping = false;
   #stopReason = "";
@@ -259,7 +266,7 @@ export class Scheduler {
       d.serviceLog.write({ kind: "pending-work-failing", issue, failures: chainFailures.count, error });
       // CM3: a problem the system must be able to resolve: a finding, as well as the notification.
       await appendFindings(d.paths, { issue, stage: stuckStage(claim.state), run_id: "chain-error", timestamp: d.now().toISOString() }, [{
-        what: "pending work keeps failing", where: `issue #${issue}, ${claim.pendingEvent ? `pending ${claim.pendingEvent.type} event` : "pending abandonment actions"}`,
+        what: `pending work keeps failing: ${failureCause(chainFailures.last, null)}`, where: `issue #${issue}, ${claim.pendingEvent ? `pending ${claim.pendingEvent.type} event` : "pending abandonment actions"}`,
         evidence: chainFailures.last, noticed_how: "scheduler chain error",
       }]);
       await d.notifier.notify({ issue, gate: "chain_error", label: "", text });
@@ -310,7 +317,7 @@ export class Scheduler {
         const what = claim.pendingEvent ? `the ${claim.pendingEvent.type} event` : "an abandonment";
         d.serviceLog.write({ kind: "pending-work-failing", issue, failures: count, error: last });
         await appendFindings(d.paths, { issue, stage: stuckStage(claim.state), run_id: "chain-error", timestamp: now.toISOString() }, [{
-          what: "pending work keeps failing", where: `issue #${issue}, ${claim.pendingEvent ? `pending ${claim.pendingEvent.type} event` : "pending abandonment actions"}`,
+          what: `pending work keeps failing: ${failureCause(last, cause)}`, where: `issue #${issue}, ${claim.pendingEvent ? `pending ${claim.pendingEvent.type} event` : "pending abandonment actions"}`,
           evidence: last, noticed_how: "scheduler chain error",
         }]);
         await d.notifier.notify({ issue, gate: "chain_error", label: "", text: `Issue #${issue}: a network outage past its 24-hour ceiling keeps the scheduler from finishing work it must not drop (${what}); it keeps retrying. Last error: ${outage.last}` });
@@ -351,6 +358,10 @@ export class Scheduler {
       d.log({ kind: "stale-claim", issue: claim.issue });
       await savePatch(d.paths, claim.issue, await uncommittedPatch(claim.worktree).catch(() => ""));
       await removeClaim(d.paths, claim.issue);
+      // Spec 096: the drop is a release only when its `issue.claimed` was recorded; a failed lookup counts as open.
+      let open = true;
+      try { open = claimOpen(d.paths, claim.issue); } catch (e) { errors.push(`stale-claim ${claim.issue}: ${(e as Error).message}`); }
+      if (open) await record(d.paths, "issue.released", d.now(), { reason: "stopped" }, { issue: claim.issue });
       return true;
     }
     const ghActivity = await d.gh.issueActivityAt(claim.issue).catch(() => claim.last_activity_at);
@@ -425,7 +436,7 @@ export class Scheduler {
       if(d.telegram&&rec.telegram?.message_id){
         const id=await d.telegram.sendReply(reminderText(rec),rec.telegram.message_id,questionMessage({number:rec.issue,title:''},rec,'').reply_markup);
         rec={...rec,reminded:true,telegram:{...rec.telegram,reminder_message_id:id,thread_message_ids:[...rec.telegram.thread_message_ids,id]}};await writePaused(d.paths,rec);
-      }else await d.gh.comment(rec.issue, text);
+      }else await d.gh.comment(rec.issue, neutraliseMarkers(text));
       await d.notifier.notify({ issue: rec.issue, gate: "question-reminder", label: NEEDS_DECISION_LABEL, text });
       await appendQuestionLog(d.paths, { issue: rec.issue, at: d.now().toISOString(), event: "reminded", asking_stage: rec.asking_stage,channel:rec.telegram?.message_id?'telegram':'issue',...(rec.telegram?.reminder_message_id?{telegram_message_id:rec.telegram.reminder_message_id}:{}), ...(rec.question_comment_id === null ? {} : { question_comment_id: rec.question_comment_id }) }, rec.question.question);
     }
@@ -634,6 +645,13 @@ export class Scheduler {
       // Spec 064 AC-1, AC-2: the scheduler's own sweep of the temp and state volumes; a failure never stops the tick.
       await sweepVolumes({ paths: d.paths, repoDir: d.repoDir, agentsDir: d.agentsDir, now: d.now, gh: d.gh, parameters: d.parameters, freeSpace: d.freeSpace, log: (rec) => d.serviceLog.write(rec), notifier: d.notifier, emitEvent: d.emitEvent, activeIssues: () => [...this.#active.keys()] }).catch((e) => info.errors.push(`sweep: ${(e as Error).message}`));
 
+      // Spec 072 AC-3: at most hourly, the first time on the first tick; a failure is logged and never stops the tick.
+      if (d.plainFiles && (this.#plainFilesCheckedAt === null || d.now().getTime() - this.#plainFilesCheckedAt >= 3_600_000)) {
+        this.#plainFilesCheckedAt = d.now().getTime();
+        await checkPlainFiles({ ...d.plainFiles, statePath: d.paths.plainFilesReminder, telegram: d.telegram ?? null, notifier: d.notifier, now: d.now, log: (rec) => d.serviceLog.write(rec) })
+          .catch((e) => d.serviceLog.write({ kind: "plain-files-check-failed", error: (e as Error).message }));
+      }
+
       if(d.telegram)await this.#serializeQuestions(async()=>this.telegramAnswers.auditLateIssueReplies((await listClaims(d.paths)).map(c=>c.issue))).catch(()=>d.log({kind:'telegram-issue-audit-failed'}));
       // Step 2 owns the claims of paused issues (a crash mid-pause or mid-resume); a claim carrying pending work is the driver's.
       const pausedIssues = new Set((await listPaused(d.paths)).map((r) => r.issue));
@@ -794,6 +812,7 @@ export class Scheduler {
           try {
             // Claim file before the label: a failure in between leaves a claim without in-progress, which the
             // next tick's stale-claim check drops (GitHub wins), never an in-progress label with no claim file.
+            // Such a drop records no issue.released: no issue.claimed was recorded (spec 096).
             const wt = await ensureWorktree(d.repoDir, d.paths.worktrees, issue.number);
             // AC-19: a spec-present failure starts at the spec stage; AC-7: the counters and history carry over.
             let ledger = await readLedger(d.paths, issue.number);

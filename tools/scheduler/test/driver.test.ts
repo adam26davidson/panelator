@@ -2,13 +2,15 @@ import {TelegramClient} from '../src/telegram/client.ts';
 import {telegramChannel} from '../src/telegram/channel.ts';
 import {fakeTelegram} from './helpers/fake-telegram.ts';
 import {emptyTelegram,listPaused,type PausedRecord} from '../src/state/paused.ts';
-import {completePause, OUT_OF_SCOPE_PARAGRAPH} from "../src/chain/driver.ts";
+import {completePause, OUT_OF_SCOPE_PARAGRAPH, specMoveReason} from "../src/chain/driver.ts";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Octokit } from "octokit";
 import { describe, expect, it } from "vitest";
 import type { Adapter, StageRun } from "../src/adapters/types.ts";
+import { transientCause } from "../src/chain/transient.ts";
 import { initialChainState, ledgerOf, transition } from "../src/chain/machine.ts";
 import type { Action, ChainState } from "../src/chain/types.ts";
 import { applyActions, CHARTER_REVERT_LINE, CLOSING_KEYWORD, designTop, driveChain, step, type DriverDeps } from "../src/chain/driver.ts";
@@ -188,6 +190,26 @@ describe("driveChain", () => {
     const reviewRun = readdirSync(paths.runs).find((d) => d.startsWith("7-review-"))!;
     const reviewInput = JSON.parse(readFileSync(join(paths.runs, reviewRun, "input.json"), "utf8"));
     expect(reviewInput.ci).toBe(`All required checks passed for ${sha}.\ntest: success`);
+  }, 60_000);
+
+  it("gives the review run the pull request's description, and does not start it when the read fails (spec 080 AC-3, AC-4)", async () => {
+    const withBody = (sha: string) => ghRoutes(sha, { prs: { 9: { headRef: "issue-7", head: sha, body: "Closes #7\n\nran `pnpm test` {{spec}}" } } });
+    const a = await setup(() => ({ review: [approve] }), withBody);
+    const atReview = (c: Claim): Claim => ({ ...c, state: { ...c.state, stage: "review", plan: plan as never, pr: { number: 9, head_sha: a.sha } } });
+    await writeClaim(a.paths, atReview(a.claim));
+    await step(a.deps, atReview(a.claim));
+    const run = readdirSync(a.paths.runs).find((d) => d.startsWith("7-review-"))!;
+    expect(JSON.parse(readFileSync(join(a.paths.runs, run, "input.json"), "utf8")).pr.body).toBe("Closes #7\n\nran `pnpm test` {{spec}}");
+    expect(readFileSync(join(a.paths.runs, run, "prompt.md"), "utf8")).toContain("Closes #7\n\nran `pnpm test` {{spec}}");
+
+    const b = await setup(() => ({ review: [approve] }), (sha) => ghRoutes(sha).map((r) =>
+      r.method === "GET" && String(r.path) === String(/^\/repos\/o\/r\/pulls\/(\d+)$/) ? { ...r, reply: () => ({ status: 500, body: { message: "boom" } }) } : r));
+    b.deps.gh = new GitHubClient(new Octokit({ auth: "x", request: { fetch: b.gh.fetch }, retry: { enabled: false } }), "o/r");
+    const c = atReview(b.claim);
+    await writeClaim(b.paths, c);
+    const r = await step(b.deps, c);
+    expect(b.adapter.ran).toEqual([]);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "review", attempt: c.state.attempt });
   }, 60_000);
 
   it("waits on pending checks and starts fix with the failing log (AC-14)", async () => {
@@ -414,8 +436,8 @@ describe("driveChain", () => {
     expect(gh.calls.find((call) => call.method === "PUT")).toBeUndefined();
   }, 60_000);
 
-  it("fails a plain review run returning the conversation shape as a run, not a chain failure (spec 044 AC-2)", async () => {
-    const { deps, claim, gh, sha } = await setup(() => ({ review: [settled, approve] }), undefined);
+  it("fails a plain review run returning the conversation shape as a run, not a chain failure, then continues on approve (spec 044 AC-2, spec 091 AC-2)", async () => {
+    const { deps, claim, gh, adapter, sha } = await setup(() => ({ review: [settled, approve] }), undefined);
     const logs: Record<string, unknown>[] = [];
     deps.log = (r) => { logs.push(r); };
     const c: Claim = { ...claim, state: { ...claim.state, stage: "review", attempt: 1, plan: plan as never, pr: { number: 9, head_sha: sha } } };
@@ -425,7 +447,9 @@ describe("driveChain", () => {
     expect(logs.filter((l) => l.kind === "chain-error" || l.kind === "pending-work-failing")).toEqual([]);
     expect(gh.calls.some((x) => /\/pulls\/9\/(reviews|merge)/.test(x.url))).toBe(false);
     const r2 = await step(deps, r.claim);
-    expect(r2.claim.state.history).not.toContain("review attempt 2 failed: result: invalid");
+    expect(adapter.ran.filter((x: string) => x.startsWith("review:"))).toHaveLength(2);
+    expect(r2.claim.state.history.some((h: string) => h.startsWith("review attempt 2 failed"))).toBe(false);
+    expect(r2.claim.state).toMatchObject({ stage: "merge", chainFailures: null, chainErrors: 0 });
   }, 60_000);
 
   it("fails an implement run returning the conversation shape with the same reason, not pr mismatch (spec 044 AC-3)", async () => {
@@ -487,8 +511,18 @@ describe("driveChain", () => {
     const c = await steps(deps, claim, 3);
     expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1"]);
     expect(c.state).toMatchObject({ stage: "plan", rescues: 1, rescueRun: true });
-    expect(c.state.history.at(-1)).toContain("profile not available: firmware");
+    expect(c.state.history.at(-1)).toContain("profile not available: firmware (implementation profiles: backend)");
     expect(notifications).toEqual([]);
+  }, 60_000);
+
+  it("fails a plan whose domain names a stage profile (spec 077 AC-2)", async () => {
+    const spec = { ...plan, domain: "spec" };
+    const { deps, claim, adapter } = await setup(() => ({ plan: [spec, { ...spec }] }));
+    const c = await steps(deps, claim, 3);
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1"]);
+    // plan-result.json's domain enum already refuses "spec" before the I4 check runs, so the plan fails as an invalid result.
+    expect(c.state.history.at(-1)).toMatch(/profile not available: spec|result: invalid/);
+    expect(c.state).toMatchObject({ stage: "plan", rescues: 1, rescueRun: true });
   }, 60_000);
 });
 
@@ -1387,9 +1421,9 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     expect(gh.calls.some((x) => x.method === "PATCH" && x.url === "/repos/o/r/issues/7")).toBe(false);
   }, 60_000);
 
-  it("fails a revised result whose spec_path differs from the issue's Spec: line (AC-21)", async () => {
+  it("fails a revised result whose spec_path differs from the Spec: line of a spec on main (AC-21, amended by spec 071 AC-2 item 2)", async () => {
     const { r } = await specRun((run: StageRun) => revised(head(run.worktree), { spec_path: "specs/011-other/spec.md" }));
-    expect(r.claim.state.history).toContain("spec attempt 1 failed: result: spec_path differs from the issue's Spec: line");
+    expect(r.claim.state.history).toContain("spec attempt 1 failed: result: the spec at specs/010-thing/spec.md is on main and cannot move");
   }, 60_000);
 
   it("fails a spec PR whose body closes an issue, by number, owner/repo#N or URL (AC-21, D8)", async () => {
@@ -2322,6 +2356,128 @@ describe("driver: a full volume postpones runs (spec 059)", () => {
   }, 60_000);
 });
 
+/** A scripted adapter whose failing runs are judged as `outcome` with `status` and `reason`. */
+function judgedAs(results: Record<string, Scripted[]>, status: number | null, reason: string, outcome: "failed" | "timeout" | "bounds" = "failed"): ReturnType<typeof scriptedAdapter> {
+  const a = scriptedAdapter(results);
+  return { ...a, judge: (e, exit, timedOut) => exit === 0 ? a.judge(e, exit, timedOut) : { outcome, reason, apiErrorStatus: status, finalText: null } };
+}
+const UNREACHABLE = "API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)";
+
+describe("driver: a run that cannot reach the API waits out the outage (spec 092)", () => {
+  async function run(adapter: ReturnType<typeof scriptedAdapter>, patch: Partial<ChainState> = { stage: "review" }, prepare = prBehindMain) {
+    const w = await setup(() => ({}), undefined, prepare);
+    w.deps.adapterFor = () => adapter;
+    const logs: Record<string, unknown>[] = [];
+    w.deps.log = (r) => { logs.push(r); };
+    const c = at(w.claim, { plan: plan as never, pr: { number: 9, head_sha: w.sha }, ...patch });
+    await writeClaim(w.paths, c);
+    return { ...w, logs, c };
+  }
+
+  it("rejects the step with the cause, undoes the rebase, records no result and keeps resumeSession (AC-1)", async () => {
+    const adapter = judgedAs({ review: [undefined] }, null, UNREACHABLE);
+    const { deps, c, logs, paths, sha, claim } = await run(adapter, { stage: "review" });
+    const error = await step(deps, c).catch((e: unknown) => e as Error);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(`run ${(logs.find((l) => l.kind === "stage-transient") as { run_id: string }).run_id} could not reach the model API: ${UNREACHABLE}`);
+    expect(transientCause(error)).toBe("EAI_AGAIN");
+    expect(logs.find((l) => l.kind === "stage-transient")).toMatchObject({ issue: 7, stage: "review", attempt: 1, cause: "EAI_AGAIN" });
+    expect(logs.find((l) => l.kind === "rebase-undone")).toMatchObject({ to: sha });
+    expect(head(claim.worktree)).toBe(sha);
+    const saved = await readClaim(paths, 7);
+    expect(saved?.stageRun).toBeUndefined();
+    expect(saved?.run_id).toBeNull();
+    expect(saved?.state.history).toEqual([]);
+    expect(adapter.ran).toHaveLength(1);
+    expect(readdirSync(paths.usage)).toHaveLength(1);
+  }, 60_000);
+
+  it("leaves resumeSession on the claim as it was, so the retry resumes the same session (AC-1)", async () => {
+    const adapter = judgedAs({ review: [undefined] }, null, UNREACHABLE);
+    const resumeSession = { harness: "fake", model: "m", session_id: "s1", worktree: "/tmp/wt" } as never;
+    const { deps, c, paths } = await run(adapter, { stage: "review", resumeSession });
+    await expect(step(deps, c)).rejects.toThrow(/could not reach the model API/);
+    expect((await readClaim(paths, 7))?.state.resumeSession).toEqual(resumeSession);
+  }, 60_000);
+
+  it("a 5xx run carries its status; no fallback runs on an independent stage (AC-1)", async () => {
+    const adapter = judgedAs({ review: [undefined, approve] }, 503, "overloaded");
+    const { deps, c } = await run(adapter);
+    const error = await step(deps, c).catch((e: unknown) => e as Error & { status?: number });
+    expect((error as { status?: number }).status).toBe(503);
+    expect(transientCause(error)).not.toBeNull();
+    expect(adapter.ran).toHaveLength(1);
+  }, 60_000);
+
+  it("a rescue run rejects too, and a host-refused run still throws ENOSPC first (AC-1, AC-2)", async () => {
+    const adapter = judgedAs({ review: [undefined] }, null, UNREACHABLE);
+    const { deps, c } = await run(adapter, { stage: "review", rescueRun: true });
+    await expect(step(deps, c)).rejects.toMatchObject({ message: expect.stringMatching(/could not reach the model API/) });
+    const refused = { ...judgedAs({ review: [approve] }, null, UNREACHABLE), hostRefusal: () => "ENOSPC" };
+    const w = await run(refused);
+    await expect(step(w.deps, w.c)).rejects.toMatchObject({ code: "ENOSPC" });
+  }, 60_000);
+
+  it("a 429 still takes the rate-limit rules; genuine runs still fail the stage (AC-2, AC-4)", async () => {
+    const cases: [number | null, string, "failed" | "timeout" | "bounds"][] = [
+      [401, "ECONNRESET on login", "failed"], [null, "exit 1", "failed"], [null, UNREACHABLE, "timeout"], [null, UNREACHABLE, "bounds"],
+    ];
+    for (const [status, reason, outcome] of cases) {
+      const adapter = judgedAs({ review: [undefined] }, status, reason, outcome);
+      const { deps, c, logs } = await run(adapter);
+      const r = await step(deps, c);
+      expect(r.claim.state.history.some((h) => /^review attempt 1 failed/.test(h)) || r.claim.state.stage !== "review").toBe(true);
+      expect(logs.some((l) => l.kind === "stage-transient")).toBe(false);
+    }
+    const limited = rateLimited({ review: [undefined] });
+    const w = await run(limited);
+    const r = await step(w.deps, w.c);
+    expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "review" });
+    expect(w.logs.some((l) => l.kind === "stage-transient")).toBe(false);
+  }, 120_000);
+
+  it("a transient implement run keeps the commits it left as held work, and nothing without commits (AC-3)", async () => {
+    const withCommit = judgedAs({ implement: [(run: StageRun) => { commitIn(run.worktree, { "w.txt": "w\n" }); return undefined; }] }, null, UNREACHABLE);
+    const a = await run(withCommit, { stage: "implement", pr: null });
+    await expect(step(a.deps, a.c)).rejects.toThrow(/could not reach the model API/);
+    const kept = (await readClaim(a.paths, 7))!;
+    expect(kept.state.heldWork).toEqual([{ branch: "issue-7", head: head(a.claim.worktree), carried: UNREACHABLE }]);
+    expect(a.logs.find((l) => l.kind === "held-work")).toMatchObject({ stage: "implement", carried: UNREACHABLE });
+
+    const bare = judgedAs({ implement: [undefined] }, null, UNREACHABLE);
+    const b = await run(bare, { stage: "implement", pr: null });
+    await expect(step(b.deps, b.c)).rejects.toThrow(/could not reach the model API/);
+    expect((await readClaim(b.paths, 7))!.state.heldWork).toEqual([]);
+    expect(b.logs.some((l) => l.kind === "held-work")).toBe(false);
+  }, 120_000);
+
+  describe("a conversation turn (AC-2)", () => {
+    const q: Question = { kind: "product", question: "Which layout?", options: [{ label: "second", cost: "none" }], recommendation: "second" };
+    async function turn(script: Scripted) {
+      const w = await run(judgedAs({ plan: [script] }, null, UNREACHABLE));
+      const paused = { ...w.c.state, stage: "paused" as const, question: q, askingStage: "plan" as const, resumeSession: { harness: "fake" as const, model: "m", session_id: "s", worktree: w.claim.worktree } };
+      w.c.state = transition(paused, { type: "answered", answer: "second", questionId: 1 }).state;
+      return w;
+    }
+
+    it("a transient turn that changed the worktree is restored and fails with the worktree reason", async () => {
+      const w = await turn((r: StageRun) => { writeFileSync(join(r.worktree, "a.txt"), "forbidden\n"); return undefined; });
+      writeFileSync(join(w.claim.worktree, "a.txt"), "kept\n");
+      const r = await step(w.deps, w.c);
+      expect(readFileSync(join(w.claim.worktree, "a.txt"), "utf8")).toBe("kept\n");
+      expect(r.claim.state.conversation?.retried).toBe(true);
+      expect(w.logs.some((l) => l.kind === "stage-transient")).toBe(false);
+    }, 60_000);
+
+    it("a transient turn that changed nothing rejects the step and does not spend the retry", async () => {
+      const w = await turn(() => undefined);
+      await expect(step(w.deps, w.c)).rejects.toThrow(/could not reach the model API/);
+      expect(w.logs.some((l) => l.kind === "stage-transient")).toBe(true);
+      expect((await readClaim(w.paths, 7))?.state.conversation?.retried).toBeFalsy();
+    }, 60_000);
+  });
+});
+
 describe("driver: a check failing outside the PR's scope (spec 060)", () => {
   const failedRun = { id: 41, name: "test", status: "completed", conclusion: "failure" };
   const logRoute: Route = { method: "GET", path: /^\/repos\/o\/r\/actions\/jobs\/\d+\/logs$/, reply: () => ({ body: "FAIL tools/design-stage/test/render.test.ts\n" }) };
@@ -2421,6 +2577,95 @@ describe("driver: a check failing outside the PR's scope (spec 060)", () => {
     const next = await step(deps, r.claim);
     expect(next.claim.state).toMatchObject({ stage: "fix", conflictPending: true });
     expect(head).toHaveLength(40);
+  }, 60_000);
+});
+
+describe("driver: verify does not wait on a PR that conflicts with main (spec 097)", () => {
+  /** spec-7 with the given check runs on every sha; PR #9's `mergeable` as GitHub reports it (null: still computing). */
+  const routesFor = (sha: string, mergeable: boolean | null, checks: unknown[] = []): Route[] => [
+    {
+      method: "GET", path: /^\/repos\/o\/r\/pulls\/9$/,
+      reply: () => ({ body: { number: 9, base: { ref: "main" }, head: { ref: "spec-7", sha }, html_url: "u", body: "", mergeable, mergeable_state: mergeable === false ? "dirty" : "unknown", merged: false, state: "open" } }),
+    },
+    ...ghRoutes(sha, { headRef: "spec-7", checks, prs: { 9: { headRef: "spec-7" } } }),
+  ];
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+  const verifying = (claim: Claim, sha: string, pendingSince: string | null = hoursAgo(1)): Claim => ({
+    ...claim, state: { ...claim.state, stage: "verify", track: "spec", pr: { number: 9, head_sha: sha }, pendingSince },
+  });
+  const prReads = (gh: ReturnType<typeof mockGitHub>) => gh.calls.filter((c) => c.method === "GET" && c.url === "/repos/o/r/pulls/9").length;
+  const mainMoves = (pair: ReturnType<typeof repoPair>, file: string, text: string) => {
+    writeFileSync(join(pair.repo, file), text);
+    git(pair.repo, "add", "-A");
+    git(pair.repo, "commit", "-q", "-m", "main moves");
+    git(pair.repo, "push", "-q", "origin", "main");
+  };
+
+  it("a conflicting PR with no check run is rebased and pushed at once; verify goes on with the new head and a new window (AC-1, AC-2)", async () => {
+    const { deps, claim, gh, pair } = await setup(() => ({}), (sha) => routesFor(sha, false), onSpec7);
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (rec) => { logs.push(rec); };
+    const before = head(claim.worktree);
+    mainMoves(pair, "other.txt", "other\n");
+    const r = await step(deps, verifying(claim, before));
+    const pushed = git(pair.origin, "rev-parse", "spec-7").trim();
+    expect(pushed).not.toBe(before);
+    expect(git(pair.origin, "merge-base", "--is-ancestor", git(pair.origin, "rev-parse", "main").trim(), "spec-7")).toBe("");
+    expect(r.status).toBe("waiting");
+    expect(r.claim.state).toMatchObject({ stage: "verify", pr: { number: 9, head_sha: pushed }, pendingSince: null, fixes: 0, checksRerun: false });
+    expect(r.claim.pendingEvent).toBeUndefined();
+    expect(prReads(gh)).toBe(1);
+    expect(logs.find((l) => l.kind === "verify-not-mergeable")).toMatchObject({ issue: 7, pr: 9, sha: before });
+  }, 60_000);
+
+  it("a conflicting PR whose rebase conflicts goes to the fix told the conflict and its paths, before the bound (AC-1)", async () => {
+    const { deps, claim, pair } = await setup(() => ({}), (sha) => routesFor(sha, false), onSpec7);
+    writeFileSync(join(claim.worktree, "a.txt"), "pr\n");
+    git(claim.worktree, "commit", "-q", "-am", "pr change");
+    git(claim.worktree, "push", "-q", "origin", "spec-7");
+    const prHead = head(claim.worktree);
+    mainMoves(pair, "a.txt", "main\n");
+    const r = await step(deps, verifying(claim, prHead));
+    expect(r.status).toBe("waiting");
+    expect(r.claim.pendingEvent).toMatchObject({ type: "rebase_conflict", detail: expect.stringContaining("a.txt") });
+    expect(r.claim.state).toMatchObject({ stage: "verify", pr: { head_sha: prHead } });
+    expect(git(pair.origin, "rev-parse", "spec-7").trim()).toBe(prHead);
+    const next = await step(deps, r.claim);
+    expect(next.claim.state).toMatchObject({ stage: "fix", conflictPending: true, checksRerun: false, pendingSince: null });
+    expect(next.claim.state.pendingFixInput).toMatch(/^origin\/main conflicts with this branch:\n[\s\S]*CONFLICT[\s\S]*a\.txt/);
+    expect(next.claim.state.history.at(-1)).toMatch(/^origin\/main conflicted before verify/);
+  }, 60_000);
+
+  it("mergeable null (GitHub still computing) keeps waiting, with nothing rebased (AC-1)", async () => {
+    const { deps, claim, gh, pair } = await setup(() => ({}), (sha) => routesFor(sha, null), onSpec7);
+    const before = head(claim.worktree);
+    const since = hoursAgo(1);
+    mainMoves(pair, "other.txt", "other\n");
+    const r = await step(deps, verifying(claim, before, since));
+    expect(r.status).toBe("waiting");
+    expect(r.claim.state).toMatchObject({ stage: "verify", pr: { head_sha: before }, pendingSince: since });
+    expect(r.claim.pendingEvent).toBeUndefined();
+    expect(git(pair.origin, "rev-parse", "spec-7").trim()).toBe(before);
+    expect(prReads(gh)).toBe(1);
+  }, 60_000);
+
+  it("a mergeable PR whose checks never report still takes the six-hour path (AC-3)", async () => {
+    const { deps, claim, pair } = await setup(() => ({}), (sha) => routesFor(sha, true), onSpec7);
+    const before = head(claim.worktree);
+    mainMoves(pair, "other.txt", "other\n");
+    const r = await step(deps, verifying(claim, before, hoursAgo(6.1)));
+    expect(r.claim.state).toMatchObject({ stage: "fix", checksRerun: true, pendingSince: null, conflictPending: false, pr: { head_sha: before } });
+    expect(r.claim.state.pendingFixInput).toMatch(/^Required checks test have been pending for 6 hours/);
+    expect(git(pair.origin, "rev-parse", "spec-7").trim()).toBe(before);
+  }, 60_000);
+
+  it("a required check that has a run reads no PR (AC-4)", async () => {
+    const running = [{ id: 1, name: "test", status: "in_progress", conclusion: null }];
+    const { deps, claim, gh } = await setup(() => ({}), (sha) => routesFor(sha, false, running), onSpec7);
+    const r = await step(deps, verifying(claim, head(claim.worktree)));
+    expect(r.claim.state).toMatchObject({ stage: "verify" });
+    expect(r.claim.pendingEvent).toBeUndefined();
+    expect(prReads(gh)).toBe(0);
   }, 60_000);
 });
 
@@ -2558,4 +2803,148 @@ describe("driver: spec and ADR numbers are reserved by the scheduler (spec 065)"
     const r = await step(t.deps, c);
     expect(r.claim.state.history.join("\n")).toContain("result: ADR 0005 is held by docs/decisions/0005-x.md");
   }, 60_000);
+});
+
+describe("driver: a spec PR moves its spec (spec 071)", () => {
+  const body = (line: string) => `Do the thing.\n\nSpec: ${line}\n\nTrailer`;
+  const topWith = (...specs: string[]) => `# Top design\n\n## Children\n\n- \`specs/010-thing/spec.md\`\n${specs.map((s) => `- \`${s}\`\n`).join("")}`;
+  const bodyPatch = (gh: { calls: { method: string; url: string; body?: unknown }[] }) => gh.calls.find((x) => x.method === "PATCH" && x.url === "/repos/o/r/issues/7")?.body as { body: string } | undefined;
+
+  /** The spec PR holds `line`; main holds `mainHas` (a spec directory) when given. */
+  async function env(results: (sha: string) => Record<string, Scripted[]>, line: string, opts: { mainHas?: string; openPrs?: { number: number; added: string[] }[]; others?: Claim[]; track?: "spec" | "issue" } = {}) {
+    let wt = "";
+    const files = withTopDesign({ "a.txt": "a\n", "specs/010-thing/spec.md": spec, ...(opts.mainHas ? { [`${opts.mainHas}/spec.md`]: spec } : {}) }, "specs/010-thing/spec.md");
+    const prs = { 12: { headRef: "spec-7", head: () => head(wt), body: "Refs #7" } };
+    const t = await setup(results, (sha) => ghRoutes(sha, { issueBody: body(line), prs, openPrs: opts.openPrs }), (_p, w) => {
+      wt = w;
+      git(w, "checkout", "-q", "-b", "spec-7");
+      commitIn(w, { [line]: spec, "docs/top.md": topWith(line) }, "spec work");
+      git(w, "push", "-q", "-u", "origin", "spec-7");
+    }, files);
+    const logs: Record<string, unknown>[] = [];
+    t.deps.log = (rec) => { logs.push(rec); };
+    for (const o of opts.others ?? []) await writeClaim(t.paths, o);
+    const c = at(t.claim, { stage: "fix", track: "spec", pr: { number: 12, head_sha: t.sha }, pendingFixInput: "Fix it." });
+    await writeClaim(t.paths, c);
+    return { ...t, logs, c, of: (k: string) => logs.filter((l) => l.kind === k) };
+  }
+  /** The fix: `git mv` the old directory to the new one (or copy it), fix the parent's bullet, and report `spec_path`. */
+  const moveFix = (from: string, to: string, o: { copy?: boolean; report?: string | null } = {}) => (run: StageRun) => {
+    const wt = run.worktree;
+    if (o.copy) execFileSync("cp", ["-r", join(wt, from), join(wt, to)]);
+    else git(wt, "mv", from, to);
+    const sha = commitIn(wt, { "docs/top.md": topWith(`${to}/spec.md`) }, "move");
+    const report = o.report === undefined ? `${to}/spec.md` : o.report;
+    return { head_sha: sha, addressed: [], ...(report === null ? {} : { spec_path: report }) };
+  };
+  const other = (issue: number, spec_: number | null): Claim =>
+    ({ issue, state: { ...initialChainState(issue), reserved: { spec: spec_, adr: null } }, worktree: `/w${issue}`, started_at: new Date().toISOString(), last_activity_at: new Date().toISOString(), run_id: null });
+
+  it("replays issue #41: the rename without spec_path fails with the three violations; with it the scope is ok, the line is rewritten and the reservation spent (AC-1, AC-5, AC-7)", async () => {
+    const bad = await env(() => ({ fix: [moveFix("specs/030-x", "specs/031-x", { report: null })] }), "specs/030-x/spec.md", { mainHas: "specs/030-other" });
+    const r0 = await step(bad.deps, bad.c);
+    expect(inputOf(bad.paths, "7-fix-1-").spec_number).toBe("031");
+    expect(r0.claim.state.pendingFixInput).toContain("specs/030-x/spec.md: no Parent line");
+    expect(r0.claim.state.pendingFixInput).toContain("docs/top.md: outside spec PR scope");
+    expect(r0.claim.state.pendingFixInput).toContain("specs/031-x/spec.md: another spec; specs/030-x/spec.md does not link to it");
+    expect(bodyPatch(bad.gh)).toBeUndefined();
+
+    const t = await env(() => ({ fix: [moveFix("specs/030-x", "specs/031-x")] }), "specs/030-x/spec.md", { mainHas: "specs/030-other" });
+    const r = await step(t.deps, t.c);
+    expect(inputOf(t.paths, "7-fix-1-").spec_number).toBe("031");
+    expect(t.of("number-reserved").map((l) => l.spec)).toEqual(["031"]);
+    expect(r.claim.state.history.join()).not.toMatch(/failed/);
+    expect(r.claim.state.pendingFixInput ?? "").not.toContain("outside spec PR scope");
+    expect(bodyPatch(t.gh)).toEqual({ body: body("specs/031-x/spec.md") });
+    expect(t.of("spec-moved")).toEqual([{ kind: "spec-moved", issue: 7, from: "specs/030-x/spec.md", to: "specs/031-x/spec.md" }]);
+    expect(r.claim.state.reserved.spec).toBeNull();
+  }, 60_000);
+
+  it("moves to a new slug on a free number with no reservation (AC-1, AC-5)", async () => {
+    const t = await env(() => ({ fix: [moveFix("specs/072-a", "specs/072-b")] }), "specs/072-a/spec.md");
+    const r = await step(t.deps, t.c);
+    expect(inputOf(t.paths, "7-fix-1-").spec_number).toBeUndefined();
+    expect(t.of("number-reserved").filter((l) => l.spec !== undefined)).toEqual([]);
+    expect(bodyPatch(t.gh)).toEqual({ body: body("specs/072-b/spec.md") });
+    expect(r.claim.state.history.join()).not.toMatch(/failed/);
+  }, 60_000);
+
+  it("reserves a number held by an open PR or another claim, gives a set reservation again, and does not count the chain's own PR (AC-1)", async () => {
+    const pr = await env(() => ({ fix: [undefined] }), "specs/030-x/spec.md", { openPrs: [{ number: 30, added: ["specs/030-hand/spec.md"] }] });
+    await step(pr.deps, pr.c);
+    expect(inputOf(pr.paths, "7-fix-1-").spec_number).toBe("031");
+    const cl = await env(() => ({ fix: [undefined] }), "specs/030-x/spec.md", { others: [other(8, 30)] });
+    await step(cl.deps, cl.c);
+    expect(inputOf(cl.paths, "7-fix-1-").spec_number).toBe("031");
+    const set = await env(() => ({ fix: [undefined] }), "specs/030-x/spec.md");
+    await writeClaim(set.paths, at(set.c, {}, {}));
+    const c2 = at(set.c, { reserved: { spec: 44, adr: null } });
+    await writeClaim(set.paths, c2);
+    await step(set.deps, c2);
+    expect(inputOf(set.paths, "7-fix-1-").spec_number).toBe("044");
+    const own = await env(() => ({ fix: [undefined] }), "specs/030-x/spec.md", { openPrs: [{ number: 12, added: ["specs/030-x/spec.md"] }] });
+    await step(own.deps, own.c);
+    expect(inputOf(own.paths, "7-fix-1-").spec_number).toBeUndefined();
+  }, 120_000);
+
+  it("reserves nothing for a spec on main (AC-1)", async () => {
+    const t = await env(() => ({ fix: [undefined] }), "specs/010-thing/spec.md", { openPrs: [{ number: 30, added: ["specs/010-hand/spec.md"] }] });
+    await step(t.deps, t.c);
+    expect(inputOf(t.paths, "7-fix-1-").spec_number).toBeUndefined();
+  }, 60_000);
+
+  const failures: [string, string, string, Parameters<typeof moveFix>[2], string][] = [
+    ["a rename to a number that is not the reservation (item 5)", "specs/033-x", "specs/030-x", {}, "result: spec number 033 is not the issue's 030 or the reserved 031"],
+    ["a copy (item 3)", "specs/031-x", "specs/030-x", { copy: true }, "result: spec moved to specs/031-x/spec.md but specs/030-x/ still holds files"],
+  ];
+  for (const [name, to, from, o, reason] of failures) {
+    it(`fails ${name} and leaves the issue body alone (AC-2)`, async () => {
+      const t = await env(() => ({ fix: [moveFix(from, to, o)] }), "specs/030-x/spec.md", { mainHas: "specs/030-other" });
+      const r = await step(t.deps, t.c);
+      expect(r.claim.state.history).toContain(`fix attempt 1 failed: ${reason}`);
+      expect(bodyPatch(t.gh)).toBeUndefined();
+    }, 60_000);
+  }
+
+  it("fails a move onto a spec directory on main, even with the line path's number (AC-2 item 6)", async () => {
+    const t = await env(() => ({ fix: [(run: StageRun) => { git(run.worktree, "rm", "-q", "-r", "specs/030-x"); return { head_sha: commitIn(run.worktree, { "specs/030-other/spec.md": "changed\n" }), addressed: [], spec_path: "specs/030-other/spec.md" }; }] }), "specs/030-x/spec.md", { mainHas: "specs/030-other" });
+    const r = await step(t.deps, t.c);
+    expect(r.claim.state.history.join()).toContain("result: spec number 030 is held by origin/main");
+    expect(bodyPatch(t.gh)).toBeUndefined();
+  }, 60_000);
+
+  it("fails a move with no spec at the new path, an issue-track move, and a move of a spec on main (AC-2 items 4, 1, 2)", async () => {
+    const none = await env(() => ({ fix: [(run: StageRun) => { git(run.worktree, "rm", "-q", "-r", "specs/072-a"); return { head_sha: commitIn(run.worktree, { "b.txt": "b\n" }), addressed: [], spec_path: "specs/031-x/spec.md" }; }] }), "specs/072-a/spec.md");
+    const r1 = await step(none.deps, none.c);
+    expect(r1.claim.state.history.join()).toContain("result: no spec at specs/031-x/spec.md");
+    const issueTrack = await specMoveReason({} as DriverDeps, { state: { track: "issue" } } as Claim, "specs/072-a/spec.md", "specs/072-b/spec.md");
+    expect(issueTrack).toBe("result: spec_path differs from the issue's Spec: line");
+    const onMain = await env(() => ({ fix: [(run: StageRun) => ({ head_sha: head(run.worktree), addressed: [], spec_path: "specs/011-y/spec.md" })] }), "specs/010-thing/spec.md");
+    const r3 = await step(onMain.deps, onMain.c);
+    expect(r3.claim.state.history.join()).toContain("result: the spec at specs/010-thing/spec.md is on main and cannot move");
+    for (const t of [none, onMain]) expect(bodyPatch(t.gh)).toBeUndefined();
+  }, 120_000);
+
+  describe("the spec stage (AC-3)", () => {
+    const specClaim = async (t: Awaited<ReturnType<typeof env>>) => {
+      const c = at(t.c, { stage: "spec", track: "spec", specMode: "write" });
+      await writeClaim(t.paths, c);
+      return c;
+    };
+    const revised = (from: string, to: string) => (run: StageRun) => {
+      git(run.worktree, "mv", from, to);
+      return { verdict: "revised", spec_path: `${to}/spec.md`, pr_number: 12, head_sha: commitIn(run.worktree, { "docs/top.md": topWith(`${to}/spec.md`) }, "move") };
+    };
+    it("rewrites the line for a revised result that moves the spec, and refuses one that moves a spec on main", async () => {
+      const t = await env(() => ({ spec: [revised("specs/072-a", "specs/072-b")] }), "specs/072-a/spec.md");
+      const r = await step(t.deps, await specClaim(t));
+      expect(r.claim.state.history.join()).not.toMatch(/failed/);
+      expect(bodyPatch(t.gh)).toEqual({ body: body("specs/072-b/spec.md") });
+      expect(t.of("spec-moved")).toHaveLength(1);
+      const m = await env(() => ({ spec: [(run: StageRun) => ({ verdict: "revised", spec_path: "specs/011-y/spec.md", pr_number: 12, head_sha: head(run.worktree) })] }), "specs/010-thing/spec.md");
+      const r2 = await step(m.deps, await specClaim(m));
+      expect(r2.claim.state.history.join()).toContain("result: the spec at specs/010-thing/spec.md is on main and cannot move");
+      expect(bodyPatch(m.gh)).toBeUndefined();
+    }, 120_000);
+  });
 });

@@ -74,6 +74,8 @@ shape, a normalizer and the lookups that read it), so it is not an ADR
 
 ## 2. Out of scope
 
+> Amended by [085-spec-rescue-keeps-issue-hold](../085-spec-rescue-keeps-issue-hold/spec.md) AC-1: a spec-track rescue while `issue-<n>` holds work clears only the hold on `spec-<n>`, so the first bullet's "still clears every hold" no longer applies to it.
+
 - Which transitions clear held work. Spec 011 AC-7's list stands: this spec
   changes only *which* holds a transition clears (one branch's or all),
   never *whether* it clears. In particular a spec-track escalation (a spec
@@ -130,7 +132,7 @@ an entry exists. `branch` and `head` mean what spec 011 AC-1 says. The
   `issue-<n>` entry stays. The failure of a stage that is not the asking
   stage, the question check's first failure and its retry, and a quota
   postponement carry every hold unchanged, as spec 011 AC-7 says.
-- AC-4. Amended by [053-incomplete-implement-run-keeps-its-work](../053-incomplete-implement-run-keeps-its-work/spec.md) AC-2 and AC-3: the escalate to an implement rescue after an incomplete run keeps the carried entry. **Discarding the attempt clears every hold.** Given any holds, when
+- AC-4. Amended by [085-spec-rescue-keeps-issue-hold](../085-spec-rescue-keeps-issue-hold/spec.md) AC-1 and AC-2: the escalate to a spec-track rescue removes only the `spec-<n>` entry; every other escalation still empties the list. Amended by [053-incomplete-implement-run-keeps-its-work](../053-incomplete-implement-run-keeps-its-work/spec.md) AC-2 and AC-3: the escalate to an implement rescue after an incomplete run keeps the carried entry. **Discarding the attempt clears every hold.** Given any holds, when
   an `escalate` transition (rescue, re-plan, spec revision, abandonment, the
   question check's second failure included), `liveness_expired`,
   `chain_error`, any `release`, the `done` of an abandonment or the `done`

@@ -361,6 +361,15 @@ describe("standing definition schema", () => {
 
 describe("spec 060 schemas", () => {
   const fix = { head_sha: "a".repeat(40), addressed: [] };
+  it("fix-result accepts an optional spec_path beside head_sha only, in the spec result's pattern (spec 071 AC-5)", () => {
+    const fix = { head_sha: "a".repeat(40), addressed: [0] };
+    expect(validate("fix-result", fix).ok).toBe(true);
+    expect(validate("fix-result", { ...fix, spec_path: "specs/031-x/spec.md" }).ok).toBe(true);
+    expect(validate("fix-result", { ...fix, spec_path: "specs/31-x/spec.md" }).ok).toBe(false);
+    expect(validate("fix-result", { ...fix, spec_path: "docs/x.md" }).ok).toBe(false);
+    const q = { kind: "product", question: "q", options: [{ label: "a", cost: "c" }], recommendation: "a" };
+    expect(validate("fix-result", { escalation: q, spec_path: "specs/031-x/spec.md" }).ok).toBe(false);
+  });
   it("fix-result accepts out_of_scope with a cause and at least one path, and rejects an empty list or a missing cause", () => {
     const ok = { ...fix, out_of_scope: { cause: "chromium is missing", paths: [".github/workflows/ci.yml"] } };
     expect(validate("fix-result", ok)).toEqual({ ok: true });
@@ -374,5 +383,58 @@ describe("spec 060 schemas", () => {
     expect(validate("blocked", { ...base, condition: { kind: "paths", paths: ["a"], main_sha: "a" }, last_check: null })).toEqual({ ok: true });
     expect(validate("blocked", { ...base, condition: { kind: "other" } }).ok).toBe(false);
     expect(validate("blocked", { ...base, condition: { kind: "paths", paths: [], main_sha: "a" } }).ok).toBe(false);
+  });
+});
+
+describe("scheduler records use their schemas (spec 086)", () => {
+  const at = "2026-11-19T00:00:00.000Z";
+  const msgs = (r: ReturnType<typeof validate>) => (r.ok ? "" : r.errors.join("; "));
+  it("accepts every definition of agents/parameters.yaml (AC-3)", () => {
+    const defs = parse(readFileSync("agents/parameters.yaml", "utf8")) as unknown[];
+    for (const d of defs) expect(validate("parameter-definition", d)).toEqual({ ok: true });
+  });
+  it("accepts a full agent state (AC-6)", () => {
+    const state = {
+      last_run: { at, run_id: "r", outcome: "done" }, next_run: at, pending_events: [{ event: "e", payload: { a: 1 }, at }, { event: "f", at }],
+      paused: true, paused_by: "maintainer", failures: 1, summary: "s", removed_at: at, running: { run_id: "r", started_at: at }, postponed_until: at,
+      outage: { since: at, count: 2, last: at, alarmed: false, past_ceiling: { since: at, failures: 1 }, ceiling: true },
+    };
+    expect(validate("agent-state", state)).toEqual({ ok: true });
+  });
+  it("checks proposed actions through standing-result (AC-7)", () => {
+    const r = (a: unknown) => ({ summary: "s", actions: [a] });
+    const act = { kind: "run_agent", args: { name: "x" }, why: "a reason of twenty chars or more" };
+    expect(validate("standing-result", r(act))).toEqual({ ok: true });
+    expect(msgs(validate("standing-result", r({ ...act, why: "short" })))).toBe('/actions/0/why must NOT have fewer than 20 characters {"limit":20}');
+    expect(msgs(validate("standing-result", r({ ...act, args: [] })))).toBe('/actions/0/args must be object {"type":"object"}');
+  });
+  it("accepts representative parameters and action-log-entry records", () => {
+    expect(validate("parameters", { x: { value: 1, mode: "auto", set_by: "default", at } })).toEqual({ ok: true });
+    const row = { id: "i", at, agent: "a", run_id: "r", kind: "k", args: {}, why: "x", status: "applied", undo: { kind: "k", args: {} }, undoes: "j" };
+    expect(validate("action-log-entry", row)).toEqual({ ok: true });
+    expect(validate("action-log-entry", { ...row, undo: null })).toEqual({ ok: true });
+  });
+  it("describes every triage-entry field (AC-10)", () => {
+    const min = { ref: "1", outcome: "file", reason: "r", run_id: "x", at };
+    const full = { ...min, issue: 1, advisory: "a", failed: false, finding: { what: "w" }, attempt: 1, failure: "error", held: false, capability_issue: 2, rests_on_pr: 3, stops_pipeline: true, blocked_by: [1], blocked_until: at, rests_on_pr_state: "merged", reoffered: true };
+    expect(validate("triage-entry", min)).toEqual({ ok: true });
+    expect(validate("triage-entry", full)).toEqual({ ok: true });
+    expect(msgs(validate("triage-entry", { ...min, foo: 1 }))).toBe('/ must NOT have additional properties {"additionalProperty":"foo"}');
+    expect(msgs(validate("triage-entry", { ...min, failure: "other" }))).toMatch(/^\/failure must be equal to one of the allowed values/);
+    expect(msgs(validate("triage-entry", { ...min, blocked_by: [0] }))).toBe('/blocked_by/0 must be >= 1 {"comparison":">=","limit":1}');
+  });
+});
+
+describe("contacts-log-entry (spec 083 AC-3)", () => {
+  const at = "2026-11-19T00:00:00.000Z";
+  const refused = { at, event: "refused", actor: "implement", run_id: null, party: "github:other", command: ["issue", "create"] };
+  const entry = { party: "github:other", channel: "github", approved_at: at, question_comment_id: 5, issue: 3 };
+  const removed = { at, event: "removed", actor: "maintainer", party: "github:other", entry };
+  it("accepts both shapes and rejects a mix or extra fields", () => {
+    expect(validate("contacts-log-entry", refused)).toEqual({ ok: true });
+    expect(validate("contacts-log-entry", removed)).toEqual({ ok: true });
+    expect(validate("contacts-log-entry", { ...refused, entry }).ok).toBe(false);
+    expect(validate("contacts-log-entry", { ...removed, actor: "x" }).ok).toBe(false);
+    expect(validate("contacts-log-entry", { ...refused, at: "yesterday" }).ok).toBe(false);
   });
 });

@@ -13,4 +13,5 @@ export const PAYLOAD_SCHEMAS: Partial<Record<EventKind, string>> = {
   question: "question-log-entry",
   "finding.triaged": "triage-entry",
   "aws.cost": "aws-cost",
+  "metrics.snapshot": "metrics-report",
 };

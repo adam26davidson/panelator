@@ -23,30 +23,38 @@ import {loadRegistry} from '../src/standing/registry.ts';
 import {EVENT_NAMES} from '../src/standing/events.ts';
 import {initializeAgents,listAgentStates} from '../src/standing/state.ts';
 import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
+import {readContactLog} from '../src/contacts/log.ts';
 import {ParameterStore} from '../src/parameters/store.ts';
 import {setParameterModeCommand} from '../src/parameters/command.ts';
 import {registryActionsCheck,loadActionLevels,applyAction} from '../src/actions/index.ts';
 import {ActionLog} from '../src/actions/log.ts';
 import {undoAction} from '../src/actions/undo.ts';
 import {loadCatalogue,profileNames} from '../src/credentials/catalogue.ts';
-import {storeFromConfig,appPrivateKey} from '../src/credentials/store.ts';
+import {storeFromConfig,appPrivateKey,appPrivateKeySource} from '../src/credentials/store.ts';
 import {credCommand} from '../src/credentials/commands.ts';
 import {awsCli} from '../src/aws/cli.ts';
 import {newAwsState,type AwsContext} from '../src/aws/context.ts';
 import {awsCheck,awsPull,awsStatus} from '../src/aws/check.ts';
 import {emit} from '../src/standing/events.ts';
+import {loadMetricDefinitions,assertReadOnlySelect} from '../src/metrics/definitions.ts';
+import {computeMetrics,historyRange,recordSnapshot,weekStart} from '../src/metrics/compute.ts';
+import {formatReport} from '../src/metrics/format.ts';
+import {openIndex} from '../src/events/index.ts';
 
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 const has = (name: string) => args.includes(name);
 
+// Spec 088: --agents-dir exists for tests; the default is the checkout's agents/.
+const agentsRoot = flag("--agents-dir") ?? agentsDir;
 const cfg = loadConfig(flag("--config") ?? defaultConfigPath);
 const paths = statePaths(cfg.state_dir);
 await ensureStateDirs(paths);
 const serviceLog = new ServiceLog(paths.serviceLog);
 const binDir = dirname(fileURLToPath(import.meta.url));
+const credStore=storeFromConfig(cfg);
 if(args[0]==='telegram-check'){
- try{console.log(await telegramCheck(cfg));process.exit(0);}catch(e){console.error((e as Error).message);process.exit(1);}
+ try{console.log(await telegramCheck(cfg,undefined,credStore));process.exit(0);}catch(e){console.error((e as Error).message);process.exit(1);}
 }
 
 /** I7: a configuration error the service cannot recover from by restarting; the unit's RestartPreventExitStatus=78 stops the loop. */
@@ -56,13 +64,12 @@ function fail(reason: string): never {
   process.exit(78);
 }
 
-const credStore=storeFromConfig(cfg);
-const {registry,parameters,levels,catalogue}=(()=>{try {
-  const kinds=registryActionsCheck(join(agentsDir,'actions.yaml'));
-  const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,kinds);
-  const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),cfg,registry));
-  const catalogue=loadCatalogue(join(agentsDir,'credentials.yaml'),{profiles:profileNames(agentsDir),agents:Object.keys(registry)});
-  return {registry,parameters,levels:loadActionLevels(join(agentsDir,'actions.yaml')),catalogue};
+const {registry,parameters,levels,catalogue,metrics}=(()=>{try {
+  const kinds=registryActionsCheck(join(agentsRoot,'actions.yaml'));
+  const registry=loadRegistry(join(agentsRoot,'standing'),EVENT_NAMES,kinds);
+  const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsRoot,'parameters.yaml'),cfg,registry));
+  const catalogue=loadCatalogue(join(agentsRoot,'credentials.yaml'),{profiles:profileNames(agentsRoot),agents:Object.keys(registry)});
+  return {registry,parameters,levels:loadActionLevels(join(agentsRoot,'actions.yaml')),catalogue,metrics:loadMetricDefinitions(join(agentsRoot,'metrics'))};
 }catch(e){fail((e as Error).message);}})();
 await initializeAgents(paths,registry,parameters,new Date());
 const actionLog=new ActionLog(paths.actionsLog,paths);
@@ -77,6 +84,29 @@ if(args[0]==='events'&&args[1]==='backfill') {
   const counts=await backfillEvents(paths,rec=>serviceLog.write(rec));
   console.log(JSON.stringify(counts,null,2));
   process.exit(0);
+}
+if(args[0]==='metrics'||(args[0]==='events'&&args[1]==='query')) {
+  // Spec 027 AC-6: the maintainer's view; the index opens read-only and only --snapshot records an event.
+  try {
+    if(args[0]==='events') {
+      if(!args[2])throw new Error('usage: events query "<sql>"');
+      assertReadOnlySelect(args[2]);
+      const db=openIndex(paths,{readOnly:true});
+      for(const row of db.prepare(args[2]).all())console.log(JSON.stringify(row));
+    } else if(args[1]==='show') {
+      const def=metrics[args[2]];if(!def)throw new Error(`unknown metric ${args[2]}`);
+      const db=openIndex(paths,{readOnly:true});
+      const report=computeMetrics(db,metrics,{...historyRange(db,def,new Date()),names:[def.name]});
+      console.log(JSON.stringify({definition:def,history:report.metrics[0]?.buckets},null,2));
+    } else if(!args[1]||args[1].startsWith('--')) {
+      const weeks=Number(flag('--weeks')??12);if(!Number.isInteger(weeks)||weeks<1)throw new Error('--weeks must be a positive integer');
+      const to=new Date(),from=new Date(Date.parse(weekStart(to.getTime()))-(weeks-1)*7*86400000),db=openIndex(paths,{readOnly:true});
+      const report=computeMetrics(db,metrics,{from,to,includeRetired:has('--all')});
+      if(has('--snapshot'))await recordSnapshot(paths,report);
+      console.log(has('--json')?JSON.stringify(report,null,2):formatReport(report));
+    } else throw new Error('usage: metrics [--weeks n] [--json] [--snapshot] [--all]|show <name>; events backfill|query "<sql>"');
+    process.exit(0);
+  }catch(e){console.error((e as Error).message);process.exit(1);}
 }
 if(args[0]==='quota') {
   // Spec 013 AC-10: the quota book, with the claims and agents waiting on it.
@@ -93,7 +123,7 @@ if(args[0]==='aws-check'||args[0]==='aws') {
     process.exit(out.exitCode);
   }catch(e){console.error((e as Error).message);process.exit(1);}
 }
-if(['param','agent','action','cred'].includes(args[0])) {
+if(['param','agent','action','cred','contacts'].includes(args[0])) {
   let client:GitHubClient|undefined;
   const remote=async()=>client??=new GitHubClient(createAppClient(cfg.app,await appPrivateKey(cfg,credStore)).octokit,cfg.repo);
   const ctx={paths,parameters,log:actionLog,levels,now:()=>new Date(),gh:{rerunWorkflowRun:async(id:number)=>(await remote()).rerunWorkflowRun(id),cancelWorkflowRun:async(id:number)=>(await remote()).cancelWorkflowRun(id)},
@@ -108,6 +138,7 @@ if(['param','agent','action','cred'].includes(args[0])) {
       for(const line of out.lines)console.log(line);
       process.exit(out.exitCode);
     }
+    else if(command==='contacts'&&verb==='log')console.log(JSON.stringify(await readContactLog(paths,flag('--since')),null,2));
     else if(command==='action'&&verb==='list')console.log(JSON.stringify(await actionLog.list(flag('--since')),null,2));
     else if(command==='param'&&verb==='set') {
       const def=parameters.definitions[name];if(!def)throw new Error(`undefined parameter ${name}`);
@@ -122,7 +153,7 @@ if(['param','agent','action','cred'].includes(args[0])) {
       if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
     } else if(command==='action'&&verb==='undo') {
       const row=await undoAction(ctx,name,'maintainer');if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
-    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; cred set|list|check|import|remove; quota');
+    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; contacts log [--since time]; cred set|list|check|import|remove; quota');
     process.exit(0);
   }catch(e){console.error((e as Error).message);process.exit(1);}
 }
@@ -130,8 +161,9 @@ await actionLog.markStalePending();
 
 if (cfg.app.id === 0 || cfg.app.installation_id === 0) fail("GitHub App ids not set in agents/scheduler.yaml");
 let privateKey: string;
+let appKeySource: "store" | "file";
 try {
-  privateKey = await appPrivateKey(cfg, credStore);
+  ({ key: privateKey, source: appKeySource } = await appPrivateKeySource(cfg, credStore));
 } catch (e) {
   fail((e as Error).message);
 }
@@ -159,12 +191,16 @@ const gh = new GitHubClient(app.octokit, cfg.repo);
 const inhibitor = new SleepInhibitor({ enabled: cfg.systemd.inhibit, log: (rec) => serviceLog.write(rec) });
 // The lock never outlives the process, whatever path ends it.
 process.on("exit", () => inhibitor.release());
-const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec));
+const telegram=await startTelegram(cfg,rec=>serviceLog.write(rec),undefined,credStore);
+// Spec 072 AC-2: the credentials this process reads from the store, fixed for its life.
+const fromStore=new Set<string>();
+if(appKeySource==='store')fromStore.add('github-app-key');
+if(telegram?.source==='store')fromStore.add('telegram-bot');
 let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
-  cfg, paths, gh, telegram: null,registry, parameters, notifier: rateLimited(recordedNotifier(new LogNotifier(paths.serviceLog), paths), cfg.notify_rate_limit_hours),
-  stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: repoRoot, binDir,
+  cfg, paths, gh, telegram: null,registry,plainFiles:{store:credStore,paths:{'github-app-key':cfg.app.private_key_path,...(cfg.telegram?{'telegram-bot':cfg.telegram.credentials_path}:{})},fromStore}, parameters, notifier: rateLimited(recordedNotifier(new LogNotifier(paths.serviceLog), paths), cfg.notify_rate_limit_hours),
+  stages: loadStageDefinitions(join(agentsRoot, "stages")), agentsDir: agentsRoot, repoDir: repoRoot, binDir,
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),
   stopUnit: (unit) => systemdStopUnit(unit, { enabled: cfg.systemd.scope }),

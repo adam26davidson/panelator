@@ -78,6 +78,8 @@ network is back, as nothing touched the claim meanwhile.
 
 ## 2. Out of scope
 
+> Amended by [092-chain-stage-waits-out-network-outage](../092-chain-stage-waits-out-network-outage/spec.md) AC-1: a run whose judgement is transient (the harness losing its API connection) rejects the driver step as a transient error instead of being left to the adapter's judgement and the chain's attempt rules.
+
 - Rate limits of any kind: the model provider's quota (spec 001 AC-25 to
   AC-27) and GitHub's primary and secondary rate limits (HTTP 403 or 429
   with a rate-limit message). Spec 013 plans the model provider's quota;

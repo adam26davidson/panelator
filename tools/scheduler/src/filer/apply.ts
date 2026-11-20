@@ -3,11 +3,14 @@ import type {IssueData,Question} from '../types.ts';
 import {validate} from '../schema/validate.ts';
 import {record as recordEvt} from '../events/store.ts';
 import {createIssueRecorded} from '../events/filed.ts';
-import {BLOCKED_LABEL,blockedByComment,blockedUntilComment,hasBlockedUntilMarker,isDone,latestBlockedBy,neutraliseBlockMarkers,parseBlockedBy} from './blocked.ts';
-import {readJsonLines,recordKey,settledCursor,advisoryAttempts,isRestingDiscard,isCapabilityIssue,stripCapabilityMarkers,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,CAPABILITY_TITLE,CAPABILITY_CLOSED_MARKER,type AdvisoryFailure,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
+import {BLOCKED_LABEL,blockedByComment,blockedUntilComment,hasBlockedUntilMarker,isDone,latestBlockedBy,parseBlockedBy} from './blocked.ts';
+import {neutraliseMarkers} from '../github/markers.ts';
+import {readJsonLines,recordKey,settledCursor,advisoryAttempts,isRestingDiscard,isCapabilityIssue,ADVISORY_ATTEMPTS,CAPABILITY_MARKER,CAPABILITY_TITLE,CAPABILITY_CLOSED_MARKER,type AdvisoryFailure,type FilerDeps,type FilerInput,type TriageEntry} from './input.ts';
 export interface Decision {ref:string;outcome:'discard'|'file'|'merge_into'|'escalate'|'security'|'retry'|'rewrite'|'close'|'defer';reason:string;issue?:{title:string;body:string;class:string;stops_pipeline?:boolean;blocked_by?:number[];blocked_until?:string};issue_number?:number;question?:Question;advisory?:{title:string;description:string;severity:'low'|'medium'|'high'|'critical'};rests_on_pr?:number}
-/** Model-written text reaches GitHub with neither the capability marker nor a block marker in it (spec 014 AC-6, spec 066 AC-5). */
-const strip=(text:string)=>neutraliseBlockMarkers(stripCapabilityMarkers(text));
+/** Model-written text reaches GitHub with no marker of any family in it (spec 014 AC-6, spec 066 AC-5, spec 076 AC-2). */
+const strip=neutraliseMarkers;
+/** The App's record of a finding ref: the author's whole marker, ref escaped (spec 008 AC-18, spec 076 AC-4). */
+const findingMarkerOf=(ref:string)=>new RegExp(`<!-- panelator-finding:[^:]+:${ref.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')} -->`);
 export interface FilerResult {summary:string;decisions:Decision[]}
 export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput,result:FilerResult):Promise<void> {
  const valid=validate('filer-result',result);if(!valid.ok)throw new Error(valid.errors.join('; '));
@@ -95,7 +98,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   const blockComment=(nums:number[]|undefined,until:string|undefined)=>nums?blockedByComment(nums):blockedUntilComment(strip(until!));
   const file=async()=>{
    const issue=dec.issue?{...dec.issue}:{title:record?.finding.what??abandoned!.issue.title,body:JSON.stringify(record?.finding??abandoned!.issue,null,2),class:defaultClass(d.classes)};
-   const existing=(await openBotIssues()).find(i=>i.author===d.botLogin&&new RegExp(`<!-- panelator-finding:[^:]+:${dec.ref.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')} -->`).test(i.body));
+   const existing=(await openBotIssues()).find(i=>i.author===d.botLogin&&findingMarkerOf(dec.ref).test(i.body));
    const block=dec.issue?.blocked_by!==undefined||dec.issue?.blocked_until!==undefined;
    if(existing) {
     // A crash between the create and the comment: the issue carries `blocked` but not what it waits for (spec 066 AC-5).
@@ -140,6 +143,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
    row.outcome='security';
    try {
     const advisory=dec.advisory??{title:dec.issue?.title??record!.finding.what,description:dec.issue?.body??JSON.stringify(record!.finding),severity:'high' as const};
+    advisory.title=strip(advisory.title);advisory.description=strip(advisory.description);
     const privateMarker=`<!-- panelator-security-finding:${dec.ref} -->`;
     row.advisory=(await d.gh.findDraftSecurityAdvisory(privateMarker))??await d.gh.createDraftSecurityAdvisory({...advisory,description:`${advisory.description}\n\n${privateMarker}`});
     await d.notify(`Security advisory ${row.advisory}`,dec.ref);
@@ -165,7 +169,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
    case 'merge_into': {
     const target=(await openBotIssues()).find(i=>i.number===dec.issue_number);
     if(!target){row.outcome='file';row.reason+=' (merge target closed or not bot-authored)';row.issue=await file();}
-    else {const comments=await d.gh.listComments(target.number);if(!comments.some(c=>c.body.includes(`:${dec.ref} -->`)))await d.gh.comment(target.number,strip(`${JSON.stringify(record?.finding,null,2)}\n\n${dec.reason}`)+`\n\n${marker}`);if(dec.issue?.stops_pipeline)await d.gh.addLabels(target.number,[d.stopsPipelineLabel]);row.issue=target.number;}break;
+    else {const comments=await d.gh.listComments(target.number);if(!comments.some(c=>c.author===d.botLogin&&findingMarkerOf(dec.ref).test(c.body)))await d.gh.comment(target.number,strip(`${JSON.stringify(record?.finding,null,2)}\n\n${dec.reason}`)+`\n\n${marker}`);if(dec.issue?.stops_pipeline)await d.gh.addLabels(target.number,[d.stopsPipelineLabel]);row.issue=target.number;}break;
    }
    case 'retry':
     if(triage.filter(t=>t.ref===dec.ref&&t.outcome==='retry').length>=2){row.outcome='defer';row.reason='retry limit of two exhausted';break;}
@@ -195,6 +199,7 @@ async function applyDecisions(d:FilerDeps,runId:string,input:FilerInput,result:F
   // `reoffered` is the copy's own: a new record riding on a re-offered entry has not used up a re-offer.
   const {reoffered:_entryReoffered,...shared}=row;
   const copies=row.failed?[]:(record?.duplicate_refs??[]).filter(ref=>!settled.has(ref)||reopened(ref)).map(ref=>({...shared,ref,reason:`same record as ref ${dec.ref}: ${row.reason}`,...(reopened(ref)?{reoffered:true}:{})}));
+  for(const c of [row,...copies]){const v=validate('triage-entry',c);if(!v.ok)throw new Error(`invalid triage entry ${c.ref}: ${v.errors.join('; ')}`);}
   await appendFile(d.paths.findingsTriage,[row,...copies].map(c=>JSON.stringify(c)+'\n').join(''));triage.push(row,...copies);
   for(const c of [row,...copies])await recordEvt(d.paths,'finding.triaged',c.at,c as unknown as Record<string,unknown>,{run_id:runId});
   // Logged once the decision is kept, so a settled ref or a batch that aborts earlier logs nothing (spec 018 AC-3).

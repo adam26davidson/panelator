@@ -10,9 +10,10 @@ import type { Config } from "../config.ts";
 import { ROOT, TOP_DESIGNS } from "../gates/design-tree.ts";
 import { designScopeGate, isSensitive, scopeGate, specPresentGate, specScopeGate, uiDesignGate, type ScopeResult } from "../gates/index.ts";
 import type { GitHubClient } from "../github/client.ts";
+import { neutraliseMarkers } from "../github/markers.ts";
 import type { PullRequestInfo } from "../github/types.ts";
 import type { Notifier } from "../notify/types.ts";
-import { listProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
+import { implementationProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
 import { afterFallback, harnessForModel, retryDecision } from "../runner/retry.ts";
 import type { ParameterStore } from "../parameters/store.ts";
 import { modelLimitFallback, planLaunch, quotaParams, readBook, waitAfterLimit } from "../quota/book.ts";
@@ -23,7 +24,7 @@ import {
   checkoutBranch, commitsPatch, deleteLocalBranch, diffFilesAgainstBase, discardUncommitted, onlyRebased, rebaseOntoMain, removeWorktree, syncToRemote, uncommittedPatch,
 } from "../runner/worktree.ts";
 import { buildSelectContext } from "../shortlist/fetch.ts";
-import { specPathFromIssueBody } from "../spec/link.ts";
+import { specPathFromIssueBody, withSpecPath } from "../spec/link.ts";
 import { parseChildEntries, parseSpec } from "../spec/parse.ts";
 import type { StageInput } from "../stages/prompt.ts";
 import { listClaims, removeClaim, writeClaim, type Claim } from "../state/claims.ts";
@@ -45,6 +46,7 @@ import type {
   AgentStageName, FixOutcome, Harness, ImplementOutcome, ImplementResult, IssueData, PlanOutcome, Profile, SpecResult, DesignResult, StageDefinition,
 } from "../types.ts";
 import { CLAIM_LABEL, NEEDS_DECISION_LABEL, POSTPONE_WAIT_S, branchOf, heldOn, initialChainState, ledgerOf, transition } from "./machine.ts";
+import { transientRun } from "./transient.ts";
 import { formatQuestion, questionBody, questionMarker } from "./question.ts";
 import type { Action, ChainEvent, ChainState } from "./types.ts";
 import type { ReviewResult } from "../types.ts";
@@ -113,6 +115,18 @@ function gitShow(repoDir: string, ref: string): string | null {
 function specOnMain(repoDir: string, path: string | null): string {
   return path ? gitShow(repoDir, `origin/main:${path}`) ?? "" : "";
 }
+
+/** Spec 071: a spec is on main when `origin/main` holds any file under its directory. */
+function specDirOnMain(repoDir: string, specPath: string): boolean {
+  try {
+    return execFileSync("git", ["ls-tree", "-r", "--name-only", "origin/main", "--", `${specDir(specPath)}/`], { cwd: repoDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() !== "";
+  } catch {
+    return false;
+  }
+}
+
+const specDir = (specPath: string): string => specPath.slice(0, specPath.lastIndexOf("/"));
+const specNumber = (specPath: string): number => Number(/^specs\/(\d{3})-/.exec(specPath)?.[1]);
 
 async function gitOut(cwd: string, ...args: string[]): Promise<string> {
   return (await execFileP("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })).stdout;
@@ -247,6 +261,31 @@ async function heldNumberReason(deps: DriverDeps, claim: Claim, kinds: ("spec" |
   const hit = collisions(added, await holders(numberDeps(deps), claim.issue, ownPrs(claim, ...more)))[0];
   if (!hit) return null;
   return hit.kind === "spec" ? `result: spec number ${fmtSpec(hit.number)} is held by ${hit.holder}` : `result: ADR ${fmtAdr(hit.number)} is held by ${hit.holder}`;
+}
+
+/** Spec 071 AC-2: the first reason a spec result's or fix result's `spec_path` is not a valid move from the issue's line path, or null. */
+export async function specMoveReason(deps: DriverDeps, claim: Claim, linePath: string, specPath: string, ...more: (number | undefined)[]): Promise<string | null> {
+  const state = claim.state;
+  if (state.track !== "spec") return "result: spec_path differs from the issue's Spec: line";
+  if (specDirOnMain(deps.repoDir, linePath)) return `result: the spec at ${linePath} is on main and cannot move`;
+  const oldDir = specDir(linePath);
+  const newDir = specDir(specPath);
+  if ((await gitOut(claim.worktree, "ls-tree", "-r", "--name-only", "HEAD", "--", `${oldDir}/`)).trim() !== "") return `result: spec moved to ${specPath} but ${oldDir}/ still holds files`;
+  if ((await gitOut(claim.worktree, "ls-tree", "--name-only", "HEAD", "--", `${newDir}/spec.md`, `${newDir}/README.md`)).trim() === "") return `result: no spec at ${specPath}`;
+  const number = specNumber(specPath);
+  if (number !== specNumber(linePath) && number !== state.reserved.spec) {
+    return `result: spec number ${fmtSpec(number)} is not the issue's ${fmtSpec(specNumber(linePath))} or the reserved ${state.reserved.spec === null ? "(none)" : fmtSpec(state.reserved.spec)}`;
+  }
+  // The target directory itself: a landed spec's directory is never a move target, though the branch only modifies its files.
+  if (specDirOnMain(deps.repoDir, specPath)) return `result: spec number ${fmtSpec(number)} is held by origin/main`;
+  return heldNumberReason(deps, claim, ["spec", "adr"], ...more);
+}
+
+/** Spec 071 AC-4: the scheduler rewrites the issue's Spec: line to the moved spec, and the reservation, if any, is spent. */
+async function moveSpecLine(deps: DriverDeps, claim: Claim, issueBody: string, from: string, to: string): Promise<void> {
+  await deps.gh.setIssueBody(claim.issue, withSpecPath(issueBody, to));
+  deps.log({ kind: "spec-moved", issue: claim.issue, from, to });
+  claim.state.reserved = { ...claim.state.reserved, spec: null };
 }
 
 /**
@@ -540,7 +579,8 @@ async function keepHeldWork(deps: DriverDeps, claim: Claim, branch: string): Pro
 
 /**
  * Fetch, keep any leftovers as a patch, then put the worktree where the next step must see it: with no PR, the
- * chain's branch (`issue-<n>` or `spec-<n>`) fresh from origin/main (C1, AC-21); with a PR, that PR's branch at its
+ * chain's branch (`issue-<n>` or `spec-<n>`) at its held head when held work names it (spec 011 AC-2, AC-5),
+ * otherwise fresh from origin/main (C1, AC-21); with a PR, that PR's branch at its
  * remote head (R1), so the diffs the gates judge (sensitivity, scope) are of the commit GitHub holds. Commits the
  * reset or sync discards are saved as a patch first (spec 005), like the uncommitted leftovers.
  */
@@ -648,14 +688,19 @@ async function runAgentStage(deps: DriverDeps, claim: Claim, stage: AgentStageNa
 /** Spec 065 AC-1, AC-2: reserves the numbers this run may take, once, under the process-wide reservation lock. */
 async function reserveNumbers(deps: DriverDeps, claim: Claim, stage: AgentStageName, issueBody: string): Promise<void> {
   const state = claim.state;
-  const wantSpec = stage === "spec" && specPathFromIssueBody(issueBody) === null && state.reserved.spec === null;
+  const linePath = specPathFromIssueBody(issueBody);
+  let wantSpec = stage === "spec" && linePath === null && state.reserved.spec === null;
+  // Spec 071 AC-1: a spec or spec-track fix run whose spec is not on main reserves a number when another holder has the line path's.
+  const checkLine = linePath !== null && state.reserved.spec === null && (stage === "spec" || (stage === "fix" && state.track === "spec")) && !specDirOnMain(deps.repoDir, linePath);
   const wantAdr = state.reserved.adr === null && ["spec", "implement", "fix"].includes(stage);
-  if (!wantSpec && !wantAdr) return;
+  if (!wantSpec && !wantAdr && !checkLine) return;
   await reserveSerially(async () => {
+    if (checkLine && collisions([linePath], await holders(numberDeps(deps), claim.issue, ownPrs(claim))).length > 0) wantSpec = true;
     // The chain's own PRs count: their added numbers are taken (spec 065 section 3 excludes only other claims' own).
     const held = await holders(numberDeps(deps), claim.issue);
     const spec = wantSpec ? nextFree(held, "spec") : null;
     const adr = wantAdr ? nextFree(held, "adr") : null;
+    if (spec === null && adr === null) return;
     state.reserved = { spec: spec ?? state.reserved.spec, adr: adr ?? state.reserved.adr };
     await writeClaim(deps.paths, { ...claim, last_activity_at: deps.now().toISOString() });
     deps.log({ kind: "number-reserved", issue: claim.issue, ...(spec !== null ? { spec: fmtSpec(spec) } : {}), ...(adr !== null ? { adr: fmtAdr(adr) } : {}) });
@@ -779,15 +824,26 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
   const security = sensitive && state.securityPass;
   const profile = pickProfile(deps, def, state, security);
   const ci = stage === "review" && state.pr ? await ciSummary(deps, state.pr.head_sha, state.pr.number) : undefined;
+  // Spec 080: the review reads the pull request's description; without it the review does not start.
+  let prBody: string | undefined;
+  if (stage === "review" && state.pr) {
+    try {
+      prBody = (await deps.gh.pullRequest(state.pr.number)).body;
+    } catch (e) {
+      return postponed(`pr description: ${(e as Error).message}`);
+    }
+  }
   // AC-10: review gets the diff's cited answers; C8: the question check gets the issue's answered questions.
   const checkAnswers = stage === "question-check" ? await issueAnswers(deps, claim.issue) : undefined;
   const answered = stage === "review" ? await answeredQuestions(deps, claim.issue, claim.worktree) : checkAnswers?.answered;
   const input = await buildInput(deps, claim, issue.title, issue.body, specText, ci, answered, checkAnswers?.reported);
+  if (input.pr && prBody !== undefined) input.pr.body = prBody;
 
   input.decision=state.decision??undefined;
   const beforePatch=state.conversation?await uncommittedPatch(claim.worktree):'';
   const beforeIndex=state.conversation?await gitOut(claim.worktree,'diff','--cached','--binary'):'';
   const attempt = state.attempt;
+  const resumeBefore = state.resumeSession;
   const exec = async (model?: string, harness?: Harness, tag?: string): Promise<StageOutcome> => {
     const h = harness ?? def.harness;
     // I2: the real run id, persisted before the run, so a restart can find the run's scope unit. A rescue or a
@@ -831,10 +887,31 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
     deps.log({ kind: "stage-host-refused", issue: claim.issue, stage, attempt, run_id: r.runId, cause: r.hostRefusal });
     throw Object.assign(new Error(`host refused every shell command in run ${r.runId}`), { code: DISK_FULL });
   };
+  /**
+   * Spec 092 AC-1 to AC-3: a run whose harness could not reach the model API is no result of the work: undo, keep an implement
+   * run's commits, restore the session, log, and reject the step as a transient error (spec 015 AC-5's path).
+   */
+  const rejectTransient = async (r: StageOutcome): Promise<void> => {
+    const cause = transientRun(r.judgement);
+    if (cause === null) return;
+    await undoRebase();
+    const reason = r.reason ?? r.outcome;
+    if (stage === "implement" && state.pr === null && (await commitsPatch(claim.worktree, "origin/main")).trim()) {
+      const head = await holdWork(deps, claim, stage, reason);
+      const branch = `issue-${claim.issue}`;
+      state.heldWork = [...state.heldWork.filter((h) => h.branch !== branch), { branch, head, carried: reason }];
+    }
+    state.resumeSession = resumeBefore;
+    deps.log({ kind: "stage-transient", issue: claim.issue, stage, attempt, run_id: r.runId, cause });
+    await writeClaim(deps.paths, { ...claim, last_activity_at: deps.now().toISOString() });
+    const status = r.judgement.apiErrorStatus;
+    throw Object.assign(new Error(`run ${r.runId} could not reach the model API: ${reason}`), status !== null && status >= 500 && status <= 599 ? { status } : {});
+  };
   let out = firstRun ? await exec(firstRun.model, firstRun.harness, state.rescueRun ? "rescue-fallback" : "fallback")
     : state.rescueRun ? await exec(deps.cfg.rescue_model, harnessForModel(deps.cfg.rescue_model), "rescue") : await exec();
   deps.log({ kind: "stage", issue: claim.issue, stage, attempt, outcome: out.outcome, reason: out.reason, run_id: out.runId, rescue: state.rescueRun || undefined, ...(firstRun ? { fallback: firstRun.model } : {}) });
   await rejectHostRefused(out);
+  if (!state.conversation) await rejectTransient(out);
   if (out.limit) deps.log({ kind: "quota-limit", issue: claim.issue, stage, run_id: out.runId, key: out.limit.key, scope: out.limit.scope, resets_at: out.limit.resets_at, source: out.limit.source });
   if(state.conversation){
     if((await worktreeHead(claim.worktree))!==start||(await uncommittedPatch(claim.worktree))!==beforePatch||(await gitOut(claim.worktree,'diff','--cached','--binary'))!==beforeIndex){
@@ -843,6 +920,7 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
       if(beforeIndex){const path=join(deps.paths.patches,`conversation-index-${randomUUID()}.patch`);await writeFile(path,beforeIndex);await gitOut(claim.worktree,'apply','--cached',path);}
       return {type:'stage_failed',stage,reason:'conversation: worktree changed'};
     }
+    await rejectTransient(out);
     return out.outcome==='ok'?{type:'stage_ok',stage,result:out.result} as ChainEvent:{type:'stage_failed',stage,reason:out.reason??out.outcome};
   }
   if (out.outcome !== "ok") {
@@ -861,6 +939,7 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
         out = await exec(retry.model, retry.harness, state.rescueRun ? "rescue-fallback" : "fallback");
         deps.log({ kind: "stage", issue: claim.issue, stage, attempt, outcome: out.outcome, reason: out.reason, run_id: out.runId, rescue: state.rescueRun || undefined, fallback: retry.model });
         await rejectHostRefused(out);
+        await rejectTransient(out);
         if (out.limit) deps.log({ kind: "quota-limit", issue: claim.issue, stage, run_id: out.runId, key: out.limit.key, scope: out.limit.scope, resets_at: out.limit.resets_at, source: out.limit.source });
         // Only afterFallback judges the fallback run (AC-26).
         if (out.outcome !== "ok" && afterFallback(retryDef, out.judgement).kind === "postpone") return postponed(out.reason ?? out.outcome);
@@ -903,7 +982,8 @@ async function stageEvent(deps: DriverDeps, claim: Claim, stage: AgentStageName,
       if (!("escalation" in plan && plan.escalation)) {
         // I4: a domain with no profile fails the plan rather than running under another profile.
         const domain = (plan as { domain: string }).domain;
-        if (!listProfiles(deps.agentsDir).includes(domain)) return { type: "stage_failed", stage: "plan", reason: `profile not available: ${domain}` };
+        const impl = implementationProfiles(deps.agentsDir);
+        if (!impl.includes(domain)) return { type: "stage_failed", stage: "plan", reason: `profile not available: ${domain} (implementation profiles: ${impl.join(", ")})` };
       }
       if ("escalation" in plan && plan.escalation) return { type: "stage_ok", stage: "plan", result: plan, head: await holdWork(deps, claim, "plan") };
       return { type: "stage_ok", stage: "plan", result: plan };
@@ -932,10 +1012,17 @@ async function codeEvent(
     const head = await holdWork(deps, claim, stage);
     return stage === "implement" ? { type: "stage_ok", stage, result: result as ImplementOutcome, head } : { type: "stage_ok", stage, result: result as FixOutcome, head };
   }
-  const r = result as ImplementResult | { head_sha: string };
+  const r = result as ImplementResult | { head_sha: string; spec_path?: string };
   const prNumber = stage === "implement" ? (r as ImplementResult).pr_number : state.pr?.number;
   if (prNumber === undefined || !(await prBound(deps, claim, { prNumber, branch: branchOf(state) }, r.head_sha))) {
     return { type: "stage_failed", stage, reason: "result: pr mismatch" };
+  }
+  // Spec 071 AC-5: a fix result may move the spec.
+  const linePath = specPathFromIssueBody(issueBody);
+  const movedTo = stage === "fix" && linePath !== null && "spec_path" in r && r.spec_path !== undefined && r.spec_path !== linePath ? r.spec_path : null;
+  if (movedTo !== null) {
+    const bad = await specMoveReason(deps, claim, linePath!, movedTo, prNumber);
+    if (bad) return { type: "stage_failed", stage, reason: bad };
   }
   const heldAdr = await heldNumberReason(deps, claim, ["adr"], prNumber);
   if (heldAdr) return { type: "stage_failed", stage, reason: heldAdr };
@@ -948,7 +1035,7 @@ async function codeEvent(
   }
   const diff = await diffFilesAgainstBase(claim.worktree);
   let scope: ScopeResult = { ok: true };
-  if (state.track === "spec") scope = await specTrackScope(deps, claim, diff, specPathFromIssueBody(issueBody));
+  if (state.track === "spec") scope = await specTrackScope(deps, claim, diff, movedTo ?? linePath);
   else if (state.track === "design") scope = designScopeGate(diff, specPathFromIssueBody(issueBody) ?? "");
   else if (state.plan) {
     // C6: an ADR the PR adds is in scope (design section 3 item 2: an agent records its own large decision); an edit to an
@@ -959,6 +1046,10 @@ async function codeEvent(
   }
   if (stage === "implement") return { type: "stage_ok", stage, result: result as ImplementOutcome, scope };
   const fix = result as FixOutcome;
+  if (movedTo !== null) {
+    await moveSpecLine(deps, claim, issueBody, linePath!, movedTo);
+    issueBody = withSpecPath(issueBody, movedTo);
+  }
   const verdict = "out_of_scope" in fix ? fix.out_of_scope : undefined;
   if (!verdict) return { type: "stage_ok", stage, result: fix, scope };
   return { type: "stage_ok", stage, result: fix, scope, mainSha: mainSha ?? (await originMain(deps)), outOfScope: await judgeOutOfScope(deps, claim, issueBody, r.head_sha, verdict.paths) };
@@ -990,7 +1081,7 @@ async function specEvent(deps: DriverDeps, claim: Claim, issueBody: string, r: S
   // D5: the spec-result schema already refused a spec_path outside specs/ (the run failed as "result: invalid").
   const specPath = r.spec_path!;
   const issueSpec = specPathFromIssueBody(issueBody);
-  if (issueSpec !== null && issueSpec !== specPath) return failed("result: spec_path differs from the issue's Spec: line");
+  const moved = issueSpec !== null && issueSpec !== specPath;
   const pr = r.pr_number === undefined || r.head_sha === undefined ? null : await prBound(deps, claim, { prNumber: r.pr_number, branch: `spec-${claim.issue}` }, r.head_sha);
   if (!pr) return failed("result: pr mismatch");
   if (CLOSING_KEYWORD.test(pr.body)) return failed("result: spec PR body closes an issue");
@@ -998,10 +1089,12 @@ async function specEvent(deps: DriverDeps, claim: Claim, issueBody: string, r: S
     const number = Number(/^specs\/(\d{3})-/.exec(specPath)?.[1]);
     if (number !== state.reserved.spec) return failed(`result: spec number ${fmtSpec(number)} is not the reserved ${state.reserved.spec === null ? "(none)" : fmtSpec(state.reserved.spec)}`);
   }
-  const held = await heldNumberReason(deps, claim, issueSpec === null ? ["spec", "adr"] : ["adr"], r.pr_number);
+  // Spec 071 AC-3: a revised result may move the spec; the line is rewritten after the other checks.
+  const held = moved ? await specMoveReason(deps, claim, issueSpec, specPath, r.pr_number) : await heldNumberReason(deps, claim, issueSpec === null ? ["spec", "adr"] : ["adr"], r.pr_number);
   if (held) return failed(held);
   if (answerToRecord(state) && !(await carriesMarks(claim.worktree, state.recordIds, start))) return failed("result: answer not marked");
   const scope = await specTrackScope(deps, claim, await diffFilesAgainstBase(claim.worktree), specPath);
+  if (moved) await moveSpecLine(deps, claim, issueBody, issueSpec, specPath);
   if (issueSpec === null) {
     await deps.gh.setIssueBody(claim.issue, `${issueBody}\n\nSpec: ${specPath}`);
     // The issue body and the open PR hold the number now.
@@ -1066,7 +1159,12 @@ async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> 
     const pending = required.length
       ? required.filter((n) => summary.runs.find((r) => r.name === n)?.status !== "completed")
       : summary.runs.filter((r) => r.status !== "completed").map((r) => r.name);
-    return { type: "checks", status: "pending", sensitive, at: deps.now().toISOString(), pending };
+    // Spec 097 AC-1: a required check with no run may be a PR GitHub runs no workflow on, one that conflicts with main.
+    // Only then is the PR read; `mergeable: null` (still computing) is not a conflict.
+    const noRun = required.length ? required.some((n) => !summary.runs.some((r) => r.name === n)) : summary.runs.length === 0;
+    const conflicts = noRun && (await deps.gh.pullRequest(pr.number)).mergeable === false;
+    if (conflicts) deps.log({ kind: "verify-not-mergeable", issue: claim.issue, pr: pr.number, sha: pr.head_sha });
+    return { type: "checks", status: "pending", sensitive, at: deps.now().toISOString(), pending, ...(conflicts ? { conflicts } : {}) };
   }
   return { type: "checks", status: summary.status, sensitive, at: deps.now().toISOString() };
 }
@@ -1215,6 +1313,7 @@ async function blockIssue(deps: DriverDeps, claim: Claim, a: Extract<Action, { t
 /**
  * Spec 060 AC-8: after a block, the worktree is put at the PR's remote head and rebased onto origin/main; a moved head is
  * pushed with a lease and becomes the PR's head. A conflict goes to the machine as spec 024's `rebase_conflict`.
+ * Spec 097 AC-2: verify applies it too, to a PR that conflicts with main; a pushed head starts a new pending window.
  */
 async function rebasePush(deps: DriverDeps, claim: Claim): Promise<void> {
   const pr = claim.state.pr;
@@ -1231,7 +1330,7 @@ async function rebasePush(deps: DriverDeps, claim: Claim): Promise<void> {
   const after = await worktreeHead(claim.worktree);
   const branch = branchOf(claim.state);
   await gitOut(claim.worktree, "push", `--force-with-lease=${branch}:${before}`, "origin", `HEAD:refs/heads/${branch}`);
-  claim.state = { ...claim.state, pr: { ...pr, head_sha: after } };
+  claim.state = { ...claim.state, pr: { ...pr, head_sha: after }, pendingSince: null };
   deps.log({ kind: "rebase-pushed", issue: claim.issue, from: before, to: after });
 }
 
@@ -1278,7 +1377,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         }
         break;
       case "comment":
-        await deps.gh.comment(claim.issue, claim.state.stage === "abandoned" ? `${a.text}\n\n${await runRecordList(deps, claim.issue)}` : a.text);
+        await deps.gh.comment(claim.issue, neutraliseMarkers(claim.state.stage === "abandoned" ? `${a.text}\n\n${await runRecordList(deps, claim.issue)}` : a.text));
         break;
       case "notify":
         await deps.notifier.notify({ issue: claim.issue, gate: a.gate, label: a.label, text: a.text });
@@ -1315,7 +1414,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
           return "";
         });
         const saved = await savePatch(deps.paths, claim.issue, commits, deps.now(), "closed-pr");
-        await deps.gh.comment(a.pr, a.comment);
+        await deps.gh.comment(a.pr, neutraliseMarkers(a.comment));
         await deps.gh.closePullRequest(a.pr);
         await deps.gh.deleteBranch(a.branch);
         deps.log({ kind: "pr-closed", issue: claim.issue, pr: a.pr, branch: a.branch, patch: saved });
@@ -1344,7 +1443,7 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
         break;
       }
       case "close_issue":
-        await deps.gh.closeIssue(claim.issue, a.comment);
+        await deps.gh.closeIssue(claim.issue, neutraliseMarkers(a.comment));
         break;
       case "rerun_checks":
         await rerunChecks(deps, claim, a.sha);

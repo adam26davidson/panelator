@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -6,7 +6,7 @@ import { fileDesignChildren, type ChildrenGh } from "../src/children/scan.ts";
 import { blockedMarker, childMarker, unblockedMarker } from "../src/children/markers.ts";
 import type { IssueComment } from "../src/github/types.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
-import type { IssueData } from "../src/types.ts";
+import type { IssueData, LabelEvent } from "../src/types.ts";
 
 const BOT = "panelator-pipeline[bot]";
 const D = "docs/delivery-system-design.md";
@@ -21,6 +21,9 @@ class FakeGh implements ChildrenGh {
   listCalls = 0;
   failCreate = false;
   created: number[] = [];
+  failComment = false;
+  eventCalls = 0;
+  events = new Map<number, LabelEvent[]>();
   constructor(issues: Partial<IssueData>[] = []) {
     for (const i of issues) this.add(i);
   }
@@ -28,6 +31,9 @@ class FakeGh implements ChildrenGh {
     const issue: IssueData = { number: this.next++, title: "", author: BOT, body: "", labels: [], labelEvents: [], createdAt: "", state: "open", ...o };
     this.issues.push(issue);
     return issue;
+  }
+  event(n: number, label: string, action: "labeled" | "unlabeled", actor = BOT) {
+    this.events.set(n, [...(this.events.get(n) ?? []), { label, actor, action, at: "" }]);
   }
   get(n: number) {
     return this.issues.find((i) => i.number === n)!;
@@ -41,19 +47,27 @@ class FakeGh implements ChildrenGh {
     if (this.failCreate) throw new Error("boom");
     const i = this.add({ title, body, labels });
     this.created.push(i.number);
+    for (const l of labels) this.event(i.number, l, "labeled");
     return i.number;
   }
   async addLabels(n: number, labels: string[]) {
     this.get(n).labels.push(...labels);
+    for (const l of labels) this.event(n, l, "labeled");
   }
   async removeLabel(n: number, label: string) {
     this.get(n).labels = this.get(n).labels.filter((l) => l !== label);
+    this.event(n, label, "unlabeled");
   }
   async comment(n: number, body: string, author = BOT) {
+    if (this.failComment) throw new Error("rate limit");
     this.comments.set(n, [...(this.comments.get(n) ?? []), { id: 1, author, at: "", body }]);
   }
   async listComments(n: number) {
     return this.comments.get(n) ?? [];
+  }
+  async labelEvents(n: number) {
+    this.eventCalls++;
+    return this.events.get(n) ?? [];
   }
 }
 
@@ -103,6 +117,45 @@ describe("fileDesignChildren (spec 031 AC-4 to AC-7)", () => {
     const r4 = await run(gh);
     expect(r4.unblocked).toEqual([]);
     expect(two!.labels).toContain("blocked");
+  });
+
+  const filedEvents = () => {
+    if (!existsSync(paths.events)) return [];
+    return readdirSync(paths.events)
+      .filter((f) => f.endsWith(".jsonl"))
+      .flatMap((f) => readFileSync(join(paths.events, f), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)))
+      .filter((e) => e.kind === "issue.filed");
+  };
+
+  it("records issue.filed for each child it files, once (spec 074 AC-1)", async () => {
+    const gh = new FakeGh([{ number: 50 }]);
+    const r1 = await run(gh);
+    expect(r1.filed).toHaveLength(2);
+    const events = filedEvents();
+    expect(events).toHaveLength(2);
+    for (const [i, slug] of ["one", "two"].entries()) {
+      const issue = gh.get(r1.filed[i]!);
+      expect(events[i]).toMatchObject({
+        kind: "issue.filed",
+        issue: issue.number,
+        payload: { number: issue.number, by: BOT, class: "class:tooling", labels: issue.labels, marker: childMarker(D, slug), body: issue.body },
+      });
+    }
+    expect(events[0].payload.labels).toEqual(["class:tooling", "validated"]);
+    expect(events[1].payload.labels).toEqual(["class:tooling", "validated", "blocked"]);
+    expect(events[1].payload.marker).toBe(`<!-- panelator-child:${D}:two -->`);
+
+    await run(gh);
+    expect(filedEvents()).toHaveLength(2);
+  });
+
+  it("records no issue.filed when the creation fails (spec 074 AC-2)", async () => {
+    const gh = new FakeGh([{ number: 50 }]);
+    gh.failCreate = true;
+    const r = await run(gh);
+    expect(r.filed).toEqual([]);
+    expect(kinds()).toContain("child-filing-failed");
+    expect(filedEvents()).toEqual([]);
   });
 
   it("does not unblock while a sibling is open or closed abandoned", async () => {
@@ -188,6 +241,125 @@ describe("fileDesignChildren (spec 031 AC-4 to AC-7)", () => {
     expect(await run(gh, design("- `specs/001-x/spec.md`\n- `specs/002-y/spec.md`\n"))).toEqual({ filed: [], unblocked: [], errors: [] });
   });
 });
+
+describe("the scan completes a blocked comment it failed to post (spec 078)", () => {
+  let paths: ReturnType<typeof statePaths>;
+  let log: Record<string, unknown>[];
+  beforeEach(async () => {
+    paths = statePaths(mkdtempSync(join(tmpdir(), "children-")));
+    await ensureStateDirs(paths);
+    log = [];
+  });
+  const run = (gh: FakeGh, designs: Map<string, string>) =>
+    fileDesignChildren({ gh, paths, botLogin: BOT, now: () => new Date("2026-11-18T00:00:00Z"), log: (r) => log.push(r), designs });
+  const TWO = design(planned("one") + planned("two", "  after: one\n"));
+  const blockedComments = (gh: FakeGh, n: number) => (gh.comments.get(n) ?? []).filter((c) => c.body.includes(blockedMarker(D, "two")));
+
+  async function failFirst(gh: FakeGh) {
+    gh.failComment = true;
+    const r = await run(gh, TWO);
+    gh.failComment = false;
+    return r;
+  }
+
+  it("posts the comment on scan 2, keeps blocked, unblocks on scan 3, then changes nothing", async () => {
+    const gh = new FakeGh();
+    const r1 = await failFirst(gh);
+    const [one, two] = r1.filed.map((n) => gh.get(n));
+    expect(two!.labels).toContain("blocked");
+    expect(gh.comments.get(two!.number)).toBeUndefined();
+    expect(log).toContainEqual({ kind: "child-filing-failed", design: D, slug: "two", error: "blocked comment: rate limit" });
+
+    const r2 = await run(gh, TWO);
+    expect(r2).toEqual({ filed: [], unblocked: [], errors: [] });
+    expect(blockedComments(gh, two!.number).map((c) => c.body)).toEqual([`Blocked until #${one!.number} are done (after: one in ${D}).\n\n${blockedMarker(D, "two")}`]);
+    expect(log).toContainEqual({ kind: "child-blocked-comment-posted", design: D, slug: "two", issue: two!.number });
+    expect(two!.labels).toContain("blocked");
+
+    one!.state = "closed";
+    expect((await run(gh, TWO)).unblocked).toEqual([two!.number]);
+    expect(two!.labels).not.toContain("blocked");
+    expect(gh.comments.get(two!.number)!.filter((c) => c.body.includes(unblockedMarker(D, "two")))).toHaveLength(1);
+
+    const before = gh.comments.get(two!.number)!.length;
+    expect(await run(gh, TWO)).toEqual({ filed: [], unblocked: [], errors: [] });
+    expect(gh.comments.get(two!.number)).toHaveLength(before);
+  });
+
+  it("posts the comment and unblocks in the same scan when the sibling is already done", async () => {
+    const gh = new FakeGh();
+    const r1 = await failFirst(gh);
+    const [one, two] = r1.filed.map((n) => gh.get(n));
+    one!.state = "closed";
+    const r2 = await run(gh, TWO);
+    expect(r2.unblocked).toEqual([two!.number]);
+    const bodies = gh.comments.get(two!.number)!.map((c) => c.body);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toBe(`Blocked until #${one!.number} are done (after: one in ${D}).\n\n${blockedMarker(D, "two")}`);
+    expect(bodies[1]).toContain(unblockedMarker(D, "two"));
+    expect(two!.labels).not.toContain("blocked");
+  });
+
+  it("logs a failing repair, counts nothing, and the next scan posts it", async () => {
+    const gh = new FakeGh();
+    const r1 = await failFirst(gh);
+    const two = gh.get(r1.filed[1]!);
+    gh.failComment = true;
+    const r2 = await run(gh, TWO);
+    expect(r2.errors).toEqual([`${D}:two: blocked comment: rate limit`]);
+    expect(log.filter((l) => l.kind === "child-filing-failed")).toHaveLength(2);
+    expect(existsSync(paths.findingsQueue)).toBe(false);
+    expect(JSON.parse(readFileSync(paths.childrenFailures, "utf8"))).toEqual({});
+    gh.failComment = false;
+    expect((await run(gh, TWO)).errors).toEqual([]);
+    expect(blockedComments(gh, two.number)).toHaveLength(1);
+  });
+
+  it("never touches a blocked a person set, a hand-filed issue, or one with no labeled event", async () => {
+    const d = design(planned("a") + planned("b", "  issue: #7\n") + planned("c", "  issue: #8\n"));
+    const gh = new FakeGh([{ number: 7, author: "someone", labels: ["blocked"] }, { number: 8, labels: ["blocked"], body: childMarker(D, "c") }]);
+    gh.event(7, "blocked", "labeled", BOT);
+    const r1 = await run(gh, d);
+    const a = gh.get(r1.filed[0]!);
+    // person blocks a no-after child
+    await gh.addLabels(a.number, ["blocked"]);
+    gh.events.set(a.number, [{ label: "blocked", actor: "maintainer", action: "labeled", at: "" }]);
+    for (let i = 0; i < 2; i++) await run(gh, d);
+    // the scan's own label removed by hand and put back by a person
+    gh.events.set(a.number, [
+      { label: "blocked", actor: BOT, action: "labeled", at: "" },
+      { label: "blocked", actor: "maintainer", action: "unlabeled", at: "" },
+      { label: "blocked", actor: "maintainer", action: "labeled", at: "" },
+    ]);
+    await run(gh, d);
+    for (const n of [7, 8, a.number]) {
+      expect(gh.get(n).labels).toContain("blocked");
+      expect(gh.comments.get(n)).toBeUndefined();
+    }
+    expect(kinds(log)).not.toContain("child-blocked-comment-posted");
+  });
+
+  it("calls labelEvents zero times when no comment is missing", async () => {
+    const gh = new FakeGh();
+    await run(gh, TWO);
+    await run(gh, TWO);
+    expect(gh.eventCalls).toBe(0);
+  });
+
+  it("files a design's children in dependency order", async () => {
+    const d = design(planned("b", "  after: a\n") + planned("a"));
+    const gh = new FakeGh();
+    const r = await run(gh, d);
+    const [a, b] = r.filed.map((n) => gh.get(n));
+    expect(r.filed[0]).toBe(gh.created[0]);
+    expect(a!.body).toContain(childMarker(D, "a"));
+    expect(b!.body).toContain(`After: #${a!.number}`);
+    const c = gh.comments.get(b!.number)![0]!.body;
+    expect(c).toContain(`Blocked until #${a!.number} are done`);
+    expect(c).not.toMatch(/Blocked until a /);
+  });
+});
+const kinds = (log: Record<string, unknown>[]) => log.map((r) => r.kind);
 
 describe("liftFilerBlocks through the scan (spec 066 AC-7)", () => {
   let paths: ReturnType<typeof statePaths>;

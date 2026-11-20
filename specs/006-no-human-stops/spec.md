@@ -102,7 +102,7 @@ AC-10 second sentence, AC-13)
 - AC-3. **A third bound triggers a spec revision.** Given a re-plan has run,
   when a bound from AC-1 is hit again, then the spec stage runs in `revise`
   mode with the history as input.
-- AC-4. **A merged spec PR is checked again, then the work goes on.** Given
+- AC-4. Amended by [075-spec-006-split-closes-issue](../075-spec-006-split-closes-issue/spec.md) AC-1: when spec-present fails after a split of spec 031 AC-9, the issue is closed `done` instead of the bound hit. **A merged spec PR is checked again, then the work goes on.** Given
   the spec stage returns `revised` with a PR, then that PR goes through the
   scope check of AC-22, verify, review and merge. Review uses the `spec`
   profile; when the diff touches a sensitive path, the `security` review
@@ -401,7 +401,7 @@ AC-10 second sentence, AC-13)
   hours, then one reminder is sent: an issue comment that @-mentions the
   maintainer, and one notification. No second reminder is sent. The issue is
   never abandoned or released for lack of an answer.
-- AC-17. **Any stage can report what it cannot do.** Given a plan, implement or
+- AC-17. Amended by [097-verify-rebases-conflicting-pr](../097-verify-rebases-conflicting-pr/spec.md) AC-1 and AC-3: a pending PR that GitHub reports not mergeable, with a required check that has no run, is not waited on; it is rebased and pushed at once, and a conflict goes to the fix as spec 024's rebase_conflict. The six-hour path applies to the other pending PRs. **Any stage can report what it cannot do.** Given a plan, implement or
   fix result that carries an `escalation` (kind `capability`, `product` or
   `technical`; `other` does not validate there), then the question goes to the
   question check (AC-12) with that stage as the asking stage. A result with an
@@ -487,7 +487,7 @@ AC-10 second sentence, AC-13)
   receives `needs-design-stage` with a comment that spec E will provide the
   design stage. It is not claimed. The label is applied once, with no repeat
   notification on later polls. Spec E removes it (section 2).
-- AC-21. Amended by [065-scheduler-reserves-spec-and-adr-numbers](../065-scheduler-reserves-spec-and-adr-numbers/spec.md) AC-3: before the Spec: line is appended, the number of spec_path must be the one the scheduler reserved and no numbered path the PR adds may be held by main, another open PR or another claim; otherwise the result is a failed run. **The spec stage's contract.** Its result validates against
+- AC-21. Amended by [071-spec-pr-moves-its-spec](../071-spec-pr-moves-its-spec/spec.md) AC-3: on the spec track a spec or fix result may name a spec_path other than the issue's Spec: line while the spec is not on main, and the scheduler then checks the move and rewrites the line. Amended by [065-scheduler-reserves-spec-and-adr-numbers](../065-scheduler-reserves-spec-and-adr-numbers/spec.md) AC-3: before the Spec: line is appended, the number of spec_path must be the one the scheduler reserved and no numbered path the PR adds may be held by main, another open PR or another claim; otherwise the result is a failed run. **The spec stage's contract.** Its result validates against
   `spec-result`:
   - `verdict`: `revised` or `question`;
   - `spec_path`, `pr_number` and `head_sha`, required for `revised`;
@@ -498,7 +498,7 @@ AC-10 second sentence, AC-13)
   the result is a failed run. Given it has none, then the scheduler appends
   `Spec: <spec_path>` to the issue body.
 
-  **Branch.** The PR is from branch `spec-<issue>` into `main`. Every entry
+  **Branch.** Amended by [084-spec-006-branch-left-at-held-head](../084-spec-006-branch-left-at-held-head/spec.md) AC-1: when held work names spec-<issue>, the branch is left at the held head instead of being created from origin/main (spec 011 section 4). The PR is from branch `spec-<issue>` into `main`. Every entry
   into the spec stage puts the chain on the spec track, so the spec stage, a
   question check it asks and its spec PR all use `spec-<issue>`. The
   scheduler creates that branch from `origin/main` and checks it out in the
@@ -619,6 +619,8 @@ AC-10 second sentence, AC-13)
   - a spec PR that touches the charter, never merged (AC-22).
 
 ## 4. Chain changes
+
+> Amended by [075-spec-006-split-closes-issue](../075-spec-006-split-closes-issue/spec.md) AC-2: before the row "merge, spec track | merged, spec-present fails on `origin/main`", a split of spec 031 AC-9 deletes `spec-<issue>`, comments, closes the issue, removes the claim label and ends `done`.
 
 The spec 001 section 5 table, as amended. Rows not listed are unchanged. This
 table is the single source for the chain's transitions; the plan implements

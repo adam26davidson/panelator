@@ -271,7 +271,7 @@ is the state of section 3's AC-4.
   answered resumes and before standing agents. Given it does not hold, then
   nothing is written beyond the record's check time and the tick goes on;
   a blocked record has no time ceiling (the finding is the recovery path).
-- AC-8. Amended by [070-test-board](../070-test-board/spec.md) AC-6: after a `board` block whose head did not change, the HIL workflow run is re-run before verify. **The resume rebases, pushes and verifies.** Given the chain's first
+- AC-8. Amended by [097-verify-rebases-conflicting-pr](../097-verify-rebases-conflicting-pr/spec.md) AC-2: verify applies `rebase_push` too, to a PR that conflicts with main, and a pushed head clears `pendingSince`. Amended by [070-test-board](../070-test-board/spec.md) AC-6: after a `board` block whose head did not change, the HIL workflow run is re-run before verify. **The resume rebases, pushes and verifies.** Given the chain's first
   step applies `unblocked` at stage `blocked`, then the state's stage is
   `verify`, `blocked` keeps `blocks` and drops the condition, `checkRerun`
   is cleared, and the actions are `{ type: "rebase_push" }` then `verify`.

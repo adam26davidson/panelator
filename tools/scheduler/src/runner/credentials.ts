@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 /** Environment every stage gets so gh and git authenticate as the App without seeing the token (spec section 12). */
-export function stageEnv(binDir: string, stateDir: string, identity?: { name: string; email: string }): Record<string, string> {
+export function stageEnv(binDir: string, stateDir: string, identity?: { name: string; email: string }, run?: { actor: string; runId: string }): Record<string, string> {
   const env: Record<string, string> = {
     PATH: `${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
     PANELATOR_STATE_DIR: stateDir,
@@ -24,6 +24,10 @@ export function stageEnv(binDir: string, stateDir: string, identity?: { name: st
     env.GIT_AUTHOR_EMAIL = identity.email;
     env.GIT_COMMITTER_NAME = identity.name;
     env.GIT_COMMITTER_EMAIL = identity.email;
+  }
+  if (run) {
+    env.PANELATOR_ACTOR = run.actor;
+    env.PANELATOR_RUN_ID = run.runId;
   }
   return env;
 }

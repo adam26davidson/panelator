@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentsDir } from "../src/config.ts";
 import { loadStageDefinitions, parseStageDefinition } from "../src/stages/definition.ts";
-import { resolveProfile } from "../src/profiles/resolve.ts";
+import { implementationProfiles, resolveProfile } from "../src/profiles/resolve.ts";
 import { renderReplyPrompt,renderPrompt } from "../src/stages/prompt.ts";
 
 const minimal = `---
@@ -113,6 +113,15 @@ describe("committed stage prompts (AC-1, AC-14, AC-15, AC-17)", () => {
     const text = read(n);
     expect(text).toContain('"security": false, "stops_pipeline": false }');
     expect(text).toContain("stops every run or every PR");
+  });
+  it("plan names the implementation profiles and the areas (spec 077 AC-4)", () => {
+    const text = read("plan").replace(/\s+/g, " ");
+    const sentence = /The domains with an implementation profile today are:[^.]*\./.exec(text)?.[0] ?? "";
+    expect([...sentence.matchAll(/`([^`]+)`/g)].map((m) => m[1])).toEqual(implementationProfiles(agentsDir));
+    expect(text).not.toContain("firmware, infra");
+    const areas = text.split(". ").find((s) => s.includes("`backend` for everything else")) ?? "";
+    expect(areas).toContain("`tools/`");
+    expect(areas).toContain("`agents/`");
   });
   const full = {
     issue: { number: 7, title: "Add thing", body: "Spec: specs/010-thing/spec.md" },
@@ -314,6 +323,19 @@ describe("renderPrompt", () => {
     expect(read("spec")).toContain("specs/{{spec_number}}-<slug>/spec.md");
     for (const n of ["spec", "implement", "fix"]) expect(read(n), n).toContain("docs/decisions/{{adr_number}}-<slug>.md");
   });
+  it("tells the fix and spec stages how to move a spec and that the issue body is the scheduler's (spec 071 AC-6)", () => {
+    const read = (n: string) => readFileSync(join(agentsDir, "stages", `${n}.md`), "utf8");
+    const fix = read("fix");
+    expect(fix).toContain("**Moving the spec.**");
+    expect(fix).toContain("`git mv`");
+    expect(fix).toContain('"spec_path"');
+    expect(fix).toContain("Never edit the issue body");
+    expect(renderPrompt(fix, { ...input, spec_number: "031" })).toContain("the scheduler reserved `031`");
+    const spec = read("spec");
+    expect(spec).toContain("then it names the new path and the scheduler rewrites the line");
+    expect(spec).toContain("then the spec moves to `specs/{{spec_number}}-<slug>/spec.md`");
+    expect(`${fix}\n${spec}`.split("\n").filter((l) => /edit the issue body/i.test(l)).every((l) => /never edit/i.test(l))).toBe(true);
+  });
   it("renders held_work, (none) when absent, in the four stages that carry it (spec 011 AC-4)", () => {
     const read = (n: string) => readFileSync(join(agentsDir, "stages", `${n}.md`), "utf8");
     expect(renderPrompt("{{held_work}}", input)).toBe("(none)");
@@ -332,5 +354,29 @@ describe("renderPrompt", () => {
   });
   it("throws on an unknown placeholder", () => {
     expect(() => renderPrompt("{{nope}}", input)).toThrow(/unknown placeholder/);
+  });
+});
+
+describe("{{pr_body}} (spec 080)", () => {
+  const base = { issue: { number: 1, title: "t", body: "b" }, spec: "S", result_path: "/r", profile_instructions: "p" };
+  const pr = { number: 9, head_sha: "a".repeat(40), url: "u" };
+  const render = (input: Parameters<typeof renderPrompt>[1]) => renderPrompt("<{{pr_body}}>", input);
+  it("renders none, none, empty and the body (AC-1)", () => {
+    expect(render(base)).toBe("<(none)>");
+    expect(render({ ...base, pr })).toBe("<(none)>");
+    expect(render({ ...base, pr: { ...pr, body: "" } })).toBe("<(empty)>");
+    expect(render({ ...base, pr: { ...pr, body: " \n\t" } })).toBe("<(empty)>");
+    expect(render({ ...base, pr: { ...pr, body: "Closes #1" } })).toBe("<Closes #1>");
+  });
+  it("keeps placeholder text in a body literal (AC-2)", () => {
+    expect(render({ ...base, pr: { ...pr, body: "{{spec}} {{nope}}" } })).toBe("<{{spec}} {{nope}}>");
+  });
+  it("puts the body after the Pull request line in review.md", () => {
+    const t = readFileSync(join(agentsDir, "stages", "review.md"), "utf8");
+    expect(t.match(/\{\{pr_body\}\}/g)).toHaveLength(1);
+    const out = renderPrompt(t.replace(/^---[\s\S]*?\n---\n/, ""), { ...base, pr: { ...pr, body: "BODY-TEXT" }, ci: "CI" });
+    expect(out.indexOf("Pull request: #9")).toBeGreaterThan(-1);
+    expect(out.indexOf("BODY-TEXT")).toBeGreaterThan(out.indexOf("Pull request: #9"));
+    expect(out.indexOf("BODY-TEXT")).toBeLessThan(out.indexOf("CI summary"));
   });
 });

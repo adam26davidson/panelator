@@ -17,7 +17,7 @@ import {applyAction,loadActionLevels} from '../actions/index.ts';
 import {appendFindings} from '../state/findings.ts';
 import {buildFilerInput,type FilerDeps} from '../filer/input.ts';
 import {applyFilerResult,type FilerResult} from '../filer/apply.ts';
-import {transientCause,transientRun,outageBackoffS,OUTAGE_ALARM_MS,OUTAGE_CEILING_MS,CEILING_MIN_FAILURES,CEILING_MIN_SPAN_MS,PAST_CEILING} from '../chain/transient.ts';
+import {transientCause,transientRun,outageBackoffS,OUTAGE_ALARM_MS,OUTAGE_CEILING_MS,CEILING_MIN_FAILURES,CEILING_MIN_SPAN_MS,PAST_CEILING,failureCause} from '../chain/transient.ts';
 import {checkHostSpace} from '../runner/host-space.ts';
 import {HISTORY_ENTRY_MAX} from '../chain/machine.ts';
 import {buildAuditInput} from './audit-input.ts';
@@ -165,7 +165,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  const next=def.trigger.schedule?new Date(d.now().getTime()+parseDuration(String((await d.parameters.read(`schedule.${def.name}`)).value))).toISOString():null;
  await updateAgentState(d.paths,def.name,current=>{const n={...current,last_run:{at,run_id:runId,outcome},summary:summary||error,next_run:next,failures:0,pending_events:current.pending_events.filter(e=>!received.some(r=>JSON.stringify(r)===JSON.stringify(e)))};if(over)delete n.outage;return n;});
  if(outcome!=='ok') {
-  await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:at},[{what:`standing agent ${def.name} failed twice`,where:`agents/standing/${def.name}.md`,evidence:error,noticed_how:'standing run retry exhausted'}],{exclude:def.name});
+  await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:at},[{what:`standing agent ${def.name} failed twice: ${failureCause(error,transient)}`,where:`agents/standing/${def.name}.md`,evidence:error,noticed_how:'standing run retry exhausted'}],{exclude:def.name});
   await filer.notify(`Standing agent ${def.name} failed twice: ${error}`);
  }
 }

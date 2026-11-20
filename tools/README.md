@@ -23,7 +23,7 @@ A `web-ui` or `widget` spec on `main` without its design artifacts (three render
 
 ## Planned children of a design
 
-On the service's first tick and on every tick where `origin/main` moved, the scheduler runs `fileDesignChildren` (`tools/scheduler/src/children/`) over the designs on `main`. For each `- planned: <slug>` bullet in a design's `## Children` section that has no issue, it files one issue authored by the App, labelled with the child's class and `validated`, whose body is the brief, a link to the design and the marker `<!-- panelator-child:<design>:<slug> -->`. A child whose `after:` siblings are not done is also labelled `blocked`, with a comment carrying `<!-- panelator-child-blocked:<design>:<slug> -->`; when they are done the scan removes `blocked` and comments with `<!-- panelator-child-unblocked:<design>:<slug> -->`. Only issues and comments authored by the App count, and a `blocked` the scan did not add is never removed. An `issue: #<n>` on the bullet records an existing issue and nothing is filed for it. The scan logs `child-filed`, `child-unblocked`, `child-issue-dead`, `child-after-unknown`, `child-filing-failed` and `children-scan-failed` to the service log. The only state file is `children/failures.json` in the state directory, the count of consecutive scans on which an issue could not be filed; the third failure appends one finding and resets the count. See spec 031.
+On the service's first tick and on every tick where `origin/main` moved, the scheduler runs `fileDesignChildren` (`tools/scheduler/src/children/`) over the designs on `main`. For each `- planned: <slug>` bullet in a design's `## Children` section that has no issue, it files one issue authored by the App, labelled with the child's class and `validated`, whose body is the brief, a link to the design and the marker `<!-- panelator-child:<design>:<slug> -->`. A child whose `after:` siblings are not done is also labelled `blocked`, with a comment carrying `<!-- panelator-child-blocked:<design>:<slug> -->`; when they are done the scan removes `blocked` and comments with `<!-- panelator-child-unblocked:<design>:<slug> -->`. A design's planned children are filed in dependency order (a sibling named by `after:` first, bullet order otherwise). When the App put `blocked` on the scan's own child issue and the blocked comment never arrived (it failed after the issue was filed), the scan reads the label timeline, posts the missing comment and then judges unblocking as usual (spec 078). Only issues and comments authored by the App count, and a `blocked` the scan did not add is never removed. An `issue: #<n>` on the bullet records an existing issue and nothing is filed for it. The scan logs `child-filed`, `child-blocked-comment-posted`, `child-unblocked`, `child-issue-dead`, `child-after-unknown`, `child-filing-failed` and `children-scan-failed` to the service log. The only state file is `children/failures.json` in the state directory, the count of consecutive scans on which an issue could not be filed; the third failure appends one finding and resets the count. See spec 031.
 
 ## Standing agents, actions and parameters
 
@@ -41,6 +41,7 @@ undo, which needs the App). Use `node tools/scheduler/bin/scheduler.ts` followed
 
 - `agent list`, `agent pause <name>`, `agent resume <name>`, `agent run <name>`.
 - `action list [--since <ISO time>]`, `action undo <id>`.
+- `contacts log [--since <ISO time>]` (the first-contact gate's log: refused calls and removed parties; writes nothing).
 - `param list`, `param set <name> <value>`, `param mode <name> auto|locked` (prints the parameter's new state; recorded in the parameter history).
 
 Numbers and booleans use JSON syntax; durations use `1h`, `12h`, `7d`, etc. Only the
@@ -122,3 +123,18 @@ A line that fails to parse is skipped and reported once in the service log.
   finding and parameter logs) as events, once. A second run records nothing. A record whose shape fails its payload
   schema is kept as it is and counted as `old_shape`. The service runs it at its first start after this code lands
   (`events/backfilled.json` holds the time and counts).
+
+## Metrics (spec 027)
+
+A metric is `agents/metrics/<name>.yaml`: `name` (the file name), `goal` (`speed`, `delivery`, `quality`, `spend` or
+`autonomy`), `description`, `unit`, `direction` (`lower` or `higher` is better), `introduced`, `rationale` (at least 200
+characters: the decision it drives and why it tracks the goal), `query`, and optionally `replaces` and `retired`. The
+query is one read-only `SELECT` (or `WITH ... SELECT`) over the `events` table only, taking `:from` and `:to` and
+returning `(bucket, value, n)` per ISO week (the bucket is the week's Monday, `YYYY-MM-DD`). A bad definition fails the
+registry test and exits the service with 78. A definition with `replaces: <old>` keeps `<old>` computed and present for
+28 days after its `introduced` date, and its rationale must differ from the old one's. Changes go through a reviewed PR.
+
+- `panelator-scheduler metrics [--weeks <n>] [--json] [--snapshot] [--all]` prints the last `n` weeks (default 12) as a
+  table or JSON; `--all` includes retired metrics; `--snapshot` records the report as a `metrics.snapshot` event.
+- `panelator-scheduler metrics show <name>` prints one definition and its history from the earliest event in the index.
+- `panelator-scheduler events query "<sql>"` runs one read-only `SELECT` against the index and prints the rows as JSON.

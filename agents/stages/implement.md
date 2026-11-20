@@ -46,7 +46,10 @@ Implement every task in the plan, test-first. Commit after each task: when a run
 its bounds (cost, turns, time or a session limit), only committed work is carried to the next
 attempt; uncommitted changes are discarded. Run `pnpm test` from
 the repo root before you finish. Then push the branch and open a pull request with `gh pr create`
-whose body starts with "Closes #<issue>". When the work above names an open pull request from the
+whose body starts with "Closes #<issue>". The description reports only commands this run
+actually ran, each with the output it observed, quoted rather than paraphrased where a
+criterion asks for output; a check the plan or spec names which the run did not make is stated
+as not run, never described as done. When the work above names an open pull request from the
 branch, push to it and report its number rather than opening a second one. Write the JSON result to {{result_path}}:
 { "pr_number": <n>, "head_sha": "<40 hex>", "tasks_done": ["T1", ...], "findings": [] }
 

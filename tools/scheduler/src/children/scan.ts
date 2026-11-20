@@ -2,13 +2,15 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createIssueRecorded } from "../events/filed.ts";
 import { childClass } from "../gates/design-tree.ts";
+import { latestLabelActor } from "../gates/authority.ts";
 import type { IssueComment } from "../github/types.ts";
 import { parseChildEntries, type ChildEntry } from "../spec/parse.ts";
 import { appendFindings } from "../state/findings.ts";
 import type { StatePaths } from "../state/paths.ts";
-import type { IssueData } from "../types.ts";
+import type { IssueData, LabelEvent } from "../types.ts";
 import { liftFilerBlocks } from "../filer/blocked.ts";
-import { blockedMarker, childMarker, isDone, neutraliseChildMarkers, resolveChildIssue, unblockedMarker } from "./markers.ts";
+import { neutraliseMarkers } from "../github/markers.ts";
+import { blockedMarker, childMarker, isChildIssue, isDone, resolveChildIssue, unblockedMarker } from "./markers.ts";
 
 const BLOCKED = "blocked";
 const VALIDATED = "validated";
@@ -22,6 +24,7 @@ export interface ChildrenGh {
   removeLabel(issue: number, label: string): Promise<void>;
   comment(issue: number, body: string): Promise<unknown>;
   listComments(issue: number): Promise<IssueComment[]>;
+  labelEvents(issue: number): Promise<LabelEvent[]>;
 }
 
 export interface ChildrenDeps {
@@ -60,7 +63,14 @@ async function writeFailures(path: string, f: Failures): Promise<void> {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The planned entries of a design, with each one after the planned siblings its `after:` names (file order otherwise). */
+/** The blocked comment of spec 031 AC-5, as the filing and the repair of spec 078 AC-1 both post it. */
+const blockedComment = (design: string, slug: string, labels: string[], after: string[]) =>
+  neutraliseMarkers(`Blocked until ${labels.join(", ")} are done (after: ${after.join(", ")} in ${design}).`) + `\n\n${blockedMarker(design, slug)}`;
+
+/**
+ * Spec 078 AC-3: the planned entries of a design, each after the planned siblings its `after:` names
+ * (so AC-5's `After: #<n>` names a filed issue), bullet order otherwise; a cycle falls back to bullet order.
+ */
 function inDependencyOrder(planned: ChildEntry[]): ChildEntry[] {
   const out: ChildEntry[] = [];
   const left = [...planned];
@@ -120,19 +130,21 @@ export async function fileDesignChildren(d: ChildrenDeps): Promise<ChildrenResul
       const siblings = entry.after.map((ref) => ({ ref, ...sibling(design, all, slug, ref, false) }));
       const blocked = siblings.some((s) => !s.done);
       const afterLine = siblings.length ? `After: ${siblings.map((s) => s.label).join(", ")}\n\n` : "";
-      const brief = neutraliseChildMarkers((entry.brief ?? "").replace(/^\s*Spec:.*$/gm, ""));
+      const brief = (entry.brief ?? "").replace(/^\s*Spec:.*$/gm, "");
       const body =
+        neutraliseMarkers(
         `${brief}\n\n` +
         `Parent design: \`${design}\` (planned child \`${slug}\`).\n\n` +
         `The spec for this work names \`${design}\` on its \`Parent:\` line, lives at \`specs/NNN-${slug}/spec.md\` with the next free number, ` +
         `and replaces the planned entry with the spec's path in the design's \`## Children\` section.\n\n` +
-        afterLine +
+        afterLine,
+        ) +
         childMarker(design, slug);
       const labels = [childClass(d.designs, design, entry), VALIDATED, ...(blocked ? [BLOCKED] : [])];
       const key = `${design}:${slug}`;
       let number: number;
       try {
-        number = await createIssueRecorded(d.gh, d.paths, { title: neutraliseChildMarkers(entry.title ?? slug), body, labels, by: d.botLogin, class: labels[0]!, marker: childMarker(design, slug) });
+        number = await createIssueRecorded(d.gh, d.paths, { title: neutraliseMarkers(entry.title ?? slug), body, labels, by: d.botLogin, class: labels[0]!, marker: childMarker(design, slug) });
       } catch (e) {
         const error = message(e);
         d.log({ kind: "child-filing-failed", design, slug, error });
@@ -154,10 +166,7 @@ export async function fileDesignChildren(d: ChildrenDeps): Promise<ChildrenResul
       if (blocked) {
         const waiting = siblings.filter((s) => !s.done);
         try {
-          await d.gh.comment(
-            number,
-            `Blocked until ${waiting.map((s) => s.label).join(", ")} are done (after: ${entry.after.join(", ")} in ${design}).\n\n${blockedMarker(design, slug)}`,
-          );
+          await d.gh.comment(number, blockedComment(design, slug, waiting.map((s) => s.label), entry.after));
         } catch (e) {
           d.log({ kind: "child-filing-failed", design, slug, error: `blocked comment: ${message(e)}` });
           result.errors.push(`${key}: blocked comment: ${message(e)}`);
@@ -177,13 +186,27 @@ export async function fileDesignChildren(d: ChildrenDeps): Promise<ChildrenResul
       try {
         const comments = await d.gh.listComments(issue.number);
         const bot = comments.filter((c) => c.author === d.botLogin);
-        if (!bot.some((c) => c.body.includes(blockedMarker(design, slug)))) continue;
         if (bot.some((c) => c.body.includes(unblockedMarker(design, slug)))) continue;
-        const siblings = entry.after.map((ref) => sibling(design, all, slug, ref, true));
+        const siblings = entry.after.map((ref) => ({ ref, ...sibling(design, all, slug, ref, true) }));
+        if (!bot.some((c) => c.body.includes(blockedMarker(design, slug)))) {
+          // Spec 078 AC-1: the scan's own issue, blocked by the App, whose blocked comment never arrived.
+          if (!isChildIssue(issue, design, slug, d.botLogin)) continue;
+          if (latestLabelActor(await d.gh.labelEvents(issue.number), BLOCKED) !== d.botLogin) continue;
+          const waiting = siblings.filter((s) => !s.done);
+          const named = (waiting.length ? waiting : siblings).map((s) => s.label);
+          try {
+            await d.gh.comment(issue.number, blockedComment(design, slug, named.length ? named : ["its siblings"], entry.after));
+          } catch (e) {
+            d.log({ kind: "child-filing-failed", design, slug, error: `blocked comment: ${message(e)}` });
+            result.errors.push(`${design}:${slug}: blocked comment: ${message(e)}`);
+            continue;
+          }
+          d.log({ kind: "child-blocked-comment-posted", design, slug, issue: issue.number });
+        }
         if (siblings.some((s) => !s.done)) continue;
         await d.gh.removeLabel(issue.number, BLOCKED);
         issue.labels = issue.labels.filter((l) => l !== BLOCKED);
-        await d.gh.comment(issue.number, `Unblocked: ${siblings.map((s) => s.label).join(", ") || "its siblings"} are done.\n\n${unblockedMarker(design, slug)}`);
+        await d.gh.comment(issue.number, neutraliseMarkers(`Unblocked: ${siblings.map((s) => s.label).join(", ") || "its siblings"} are done.`) + `\n\n${unblockedMarker(design, slug)}`);
         result.unblocked.push(issue.number);
         d.log({ kind: "child-unblocked", design, slug, issue: issue.number });
       } catch (e) {

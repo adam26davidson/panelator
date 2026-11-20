@@ -103,7 +103,7 @@ is `ok` and whose result is missing, invalid or rejected is not incomplete.
   `-lost`), no `recovered-commits`, no `stale-branch-dropped`, the branch
   on origin and any open PR from it untouched, and `HEAD` at the carried
   head.
-- AC-3. **What clears it.** Given carried work, then it is replaced by a
+- AC-3. Amended by [085-spec-rescue-keeps-issue-hold](../085-spec-rescue-keeps-issue-hold/spec.md) AC-1: the escalate to a spec-track rescue keeps a carried entry on `issue-<n>`. **What clears it.** Given carried work, then it is replaced by a
   later incomplete implement failure's head (AC-2), cleared by an implement
   failure without `head` that is not a postponement (the attempt is then a
   wrong one, or left nothing; a postponed retry or rescue keeps the entry

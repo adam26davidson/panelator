@@ -227,7 +227,8 @@ function rerun(state: ChainState, stuck: Stuck, fixInput: string, patch: Partial
 function escalate(state: ChainState, stuck: Stuck, reason: string, fixInput: string = reason): Step {
   const s = note({ ...state, heldWork: [] }, `${stuck}: ${reason}`);
   if (s.track === "spec" || stuck === "spec") {
-    if (s.specRescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { specRescues: s.specRescues + 1, rescueRun: true, track: "spec" });
+    // Spec 085 AC-1: the rescue starts the recording on spec-<n> again, so only that branch's hold goes; other branches' holds are kept.
+    if (s.specRescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { specRescues: s.specRescues + 1, rescueRun: true, track: "spec", heldWork: state.heldWork.filter((h) => h.branch !== `spec-${state.issue}`) });
     return abandon(s, stuck);
   }
   // Spec 029 AC-4: the design track gets one rescue, then the spec agent revises the UI design section, then the issue is abandoned.
@@ -679,6 +680,9 @@ function verifyChecks(state: ChainState, event: Extract<ChainEvent, { type: "che
   const checked = { ...state, sensitive: event.sensitive };
   if (event.status === "pending") {
     const since = checked.pendingSince ?? event.at;
+    // Spec 097 AC-1: GitHub runs no workflow on a PR that conflicts with main, so its checks are not waited on. The branch is
+    // rebased and pushed (spec 060's rebase_push); a conflict comes back as spec 024's rebase_conflict, else verify polls again.
+    if (event.conflicts) return { state: { ...checked, pendingSince: since }, actions: [{ type: "rebase_push" }, { type: "wait", seconds: PENDING_WAIT_S }] };
     if (Date.parse(event.at) - Date.parse(since) < VERIFY_PENDING_MAX_H * 3_600_000) {
       return { state: { ...checked, pendingSince: since }, actions: [{ type: "wait", seconds: PENDING_WAIT_S }] };
     }
@@ -739,7 +743,7 @@ function proceedToPlan(state: ChainState, fresh: Partial<ChainState>, after: (ne
   return after(toPlan({ ...base, pr: null, plan: null }));
 }
 
-/** AC-4: after a spec PR merges, spec-present and the UI-design gate ran again on origin/main. The chain is not done. */
+/** AC-4: after a spec PR merges, spec-present and the UI-design gate ran again on origin/main. The chain is not done, except for a split (spec 031 AC-9, spec 075), which closes the issue and ends done. */
 function specMerged(state: ChainState, gate: PostMergeGate): Step {
   const deleteBranch: Action = { type: "delete_branch", branch: branchOf(state) };
   // T4: a merged spec PR on this chain carried the unrecorded answer (the driver refused one without its mark).
@@ -923,7 +927,8 @@ function baseTransition(state: ChainState, event: ChainEvent, bounds: Bounds): S
     if (!["plan", "implement", "review", "fix", "verify", "merge"].includes(state.stage)) invalid(state, event);
     // Spec 024 AC-5: the entry the escalation record explains itself with; the fix input alone is overwritten by the next.
     const noted = note(state, `origin/main conflicted before ${state.stage}, on head ${state.pr?.head_sha ?? "(no PR)"}:\n${event.detail}`);
-    return toFix(noted, `origin/main conflicts with this branch:\n${event.detail}\n\n${CONFLICT_GUIDANCE}`, { conflictPending: true });
+    // Spec 097 AC-2: raised from verify, the pending window ends; the fix's head gets a new one.
+    return toFix(noted, `origin/main conflicts with this branch:\n${event.detail}\n\n${CONFLICT_GUIDANCE}`, { conflictPending: true, pendingSince: null });
   }
   if (event.type === "conflict_gone") {
     if (state.stage !== "fix" || !state.conflictPending) invalid(state, event);

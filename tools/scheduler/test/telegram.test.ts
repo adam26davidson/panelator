@@ -1,9 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import { startTelegram } from "../src/service/telegram-start.ts";
+import { CredentialStore } from "../src/credentials/store.ts";
+import { loadConfig, defaultConfigPath } from "../src/config.ts";
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readTelegramCredentials } from "../src/telegram/credentials.ts";
-import { TelegramClient } from "../src/telegram/client.ts";
+import { TelegramApiError, TelegramClient, isAuthError } from "../src/telegram/client.ts";
 import { UpdateDeferred } from "../src/telegram/answers.ts";
 import { TelegramPoller } from "../src/telegram/poller.ts";
 import { fakeTelegram } from "./helpers/fake-telegram.ts";
@@ -210,6 +215,42 @@ describe("Telegram", () => {
       expect(await c.sendMessage({ text: "hello" })).toBe(1);
       server.fail("getMe", 401);
       await expect(c.getMe()).rejects.not.toThrow("secret");
+    } finally {
+      await server.close();
+    }
+  });
+  it("spec 089 AC-1, AC-2: only a Bot API 401 or 404 is an authorization error", async () => {
+    const server = await fakeTelegram();
+    try {
+      const c = new TelegramClient("secret", 42, server.url);
+      const fail = async (code: number, body?: string) => {
+        server.fail("getMe", code, 1, body);
+        const e = await c.getMe().then(
+          () => undefined,
+          (x: unknown) => x,
+        );
+        expect(e).toBeInstanceOf(TelegramApiError);
+        expect(JSON.stringify(e) + String((e as Error).message)).not.toContain("secret");
+        return e as TelegramApiError;
+      };
+      for (const code of [401, 404]) {
+        const e = await fail(code);
+        expect(e.error_code).toBe(code);
+        expect(e.bot_api).toBe(true);
+        expect(isAuthError(e)).toBe(true);
+      }
+      for (const [code, body, description] of [
+        [401, "<html>portal</html>", "invalid response"],
+        [404, "<html>portal</html>", "invalid response"],
+        [404, "null", "invalid response"],
+        [404, "{}", "request failed"],
+      ] as const) {
+        const e = await fail(code, body);
+        expect(e.error_code).toBe(code);
+        expect(e.description).toBe(description);
+        expect(e.bot_api).toBe(false);
+        expect(isAuthError(e)).toBe(false);
+      }
     } finally {
       await server.close();
     }
@@ -521,6 +562,7 @@ describe("Telegram poller connect step (spec 043)", () => {
   const rig = async (
     sleep: ((ms: number) => Promise<void>) | undefined,
     waits: number[] = [],
+    onHook?: (n: number) => void | Promise<void>,
   ) => {
     const server = await fakeTelegram();
     const dir = await mkdtemp(join(tmpdir(), "connect-"));
@@ -539,6 +581,7 @@ describe("Telegram poller connect step (spec 043)", () => {
       undefined,
       () => {
         hook++;
+        return onHook?.(hook);
       },
     );
     return { server, poll, logs, hook: () => hook };
@@ -590,6 +633,30 @@ describe("Telegram poller connect step (spec 043)", () => {
       }
     }
   });
+  it("spec 089 AC-3: a non-Bot-API 404 then 401 is retried as connecting", async () => {
+    const html = "<html>captive portal</html>";
+    const holder: { server?: Awaited<ReturnType<typeof fakeTelegram>> } = {};
+    const waits: number[] = [];
+    const r = await rig(async () => {
+      if (waits.length === 1) holder.server!.fail("getMe", 401, 1, html);
+    }, waits);
+    holder.server = r.server;
+    r.server.fail("getMe", 404, 1, html);
+    r.poll.start();
+    try {
+      await until(() => r.server.requests.some((q) => q.method === "getUpdates"));
+      expect(r.logs).toEqual([
+        { kind: "telegram", status: "connecting", reason: "getMe: connection failed" },
+        connected,
+      ]);
+      expect(waits).toEqual([1000, 2000]);
+      expect(r.hook()).toBe(1);
+      expect(r.logs.some((l) => l.status === "off")).toBe(false);
+    } finally {
+      await r.poll.stop();
+      await r.server.close();
+    }
+  });
   it("AC-1: a stop during the connecting wait issues no getUpdates", async () => {
     const r = await rig(undefined);
     r.server.fail("getMe", 500, 1000);
@@ -603,5 +670,99 @@ describe("Telegram poller connect step (spec 043)", () => {
     } finally {
       await r.server.close();
     }
+  });
+  it("spec 090 AC-1: a rejecting hook is retried alone, without another getMe", async () => {
+    const waits: number[] = [];
+    const seen: number[] = [];
+    const holder: { r?: Awaited<ReturnType<typeof rig>> } = {};
+    const r = await rig(async () => {}, waits, async (n) => {
+      seen.push(holder.r!.server.requests.length);
+      if (n === 1) throw new Error("attach one");
+      if (n === 2) return Promise.reject(new Error("attach two"));
+    });
+    holder.r = r;
+    r.poll.start();
+    try {
+      await until(() => r.server.requests.some((q) => q.method === "getUpdates"));
+      expect(r.logs).toEqual([
+        connected,
+        { kind: "telegram-attach-failed", error: "attach one" },
+      ]);
+      expect(waits).toEqual([1000, 2000]);
+      expect(r.hook()).toBe(3);
+      expect(r.server.requests.slice(0, 2).map((q) => q.method)).toEqual(["getMe", "getUpdates"]);
+      expect(r.server.requests.filter((q) => q.method === "getMe")).toHaveLength(1);
+      expect(seen).toEqual([1, 1, 1]);
+    } finally {
+      await r.poll.stop();
+      await r.server.close();
+    }
+  });
+  it("spec 090 AC-2: a stop while the hook is failing ends the loop", async () => {
+    const waits: number[] = [];
+    let release: () => void = () => {};
+    let blocked = false;
+    const r = await rig(
+      async () => {
+        if (waits.length >= 3) {
+          blocked = true;
+          await new Promise<void>((res) => (release = res));
+        }
+      },
+      waits,
+      async () => {
+        throw new Error("always");
+      },
+    );
+    r.poll.start();
+    try {
+      await until(() => blocked);
+      const calls = r.hook();
+      const stopped = r.poll.stop();
+      release();
+      await stopped;
+      expect(r.hook()).toBe(calls);
+      expect(calls).toBe(3);
+      expect(r.logs.filter((l) => l.kind === "telegram-attach-failed")).toHaveLength(1);
+      expect(r.server.requests.some((q) => q.method === "getUpdates")).toBe(false);
+    } finally {
+      await r.server.close();
+    }
+  });
+});
+
+describe("Telegram credentials from the store (spec 072 AC-1)", () => {
+  const fakeCreds = join(dirname(fileURLToPath(import.meta.url)), "helpers", "fake-systemd-creds");
+  afterEach(() => { delete process.env.FAKE_SYSTEMD_CREDS_FAIL; });
+  async function setup() {
+    const dir = await mkdtemp(join(tmpdir(), "tg-store-"));
+    const path = join(dir, "telegram.json");
+    const cfg = { ...loadConfig(defaultConfigPath), telegram: { credentials_path: path, long_poll_timeout_s: 50 } };
+    const store = new CredentialStore({ dir: join(dir, "store"), systemdCreds: fakeCreds });
+    const logs: Record<string, unknown>[] = [];
+    return { path, cfg, store, logs, log: (r: Record<string, unknown>) => logs.push(r) };
+  }
+  it("reads the stored secret with the file absent", async () => {
+    const t = await setup();
+    await t.store.writeSecret("telegram-bot", JSON.stringify({ bot_token: "STORED-TOKEN", chat_id: 7 }), "maintainer");
+    const started = await startTelegram(t.cfg, t.log, undefined, t.store);
+    expect(started?.source).toBe("store");
+  });
+  it("is off with the reason, and no token in the log, when the blob will not decrypt or has the wrong shape", async () => {
+    const t = await setup();
+    await writeFile(t.path, JSON.stringify({ bot_token: "FILE-TOKEN", chat_id: 1 }));
+    await t.store.writeSecret("telegram-bot", JSON.stringify({ bot_token: "STORED-TOKEN", chat_id: 7 }), "maintainer");
+    process.env.FAKE_SYSTEMD_CREDS_FAIL = "1";
+    expect(await startTelegram(t.cfg, t.log, undefined, t.store)).toBeNull();
+    delete process.env.FAKE_SYSTEMD_CREDS_FAIL;
+    await t.store.writeSecret("telegram-bot", '{"bot_token":"STORED-TOKEN","chat_id":"x"}', "maintainer");
+    expect(await startTelegram(t.cfg, t.log, undefined, t.store)).toBeNull();
+    expect(t.logs.map((l) => l.reason)).toEqual(["stored telegram-bot credential unreadable", "stored telegram-bot credential has an invalid shape"]);
+    expect(JSON.stringify(t.logs)).not.toContain("TOKEN");
+  });
+  it("reads the file while the index has no entry", async () => {
+    const t = await setup();
+    await writeFile(t.path, JSON.stringify({ bot_token: "FILE-TOKEN", chat_id: 1 }));
+    expect((await startTelegram(t.cfg, t.log, undefined, t.store))?.source).toBe("file");
   });
 });

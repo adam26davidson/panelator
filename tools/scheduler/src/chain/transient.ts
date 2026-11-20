@@ -49,6 +49,19 @@ export function transientCause(error: unknown): string | null {
   return null;
 }
 
+/** Spec 093 AC-3: the longest cause label taken from an error's first line, in code points. */
+export const CAUSE_MAX = 60;
+
+/**
+ * Spec 093 AC-3: the short label of a failure's cause, for the `what` of the scheduler's own failure findings. The
+ * transient label when there is one, else the error's first line cut to CAUSE_MAX code points, else `unknown error`.
+ */
+export function failureCause(error: string, transient: string | null): string {
+  if (transient) return transient;
+  const line = error.split("\n")[0].trim();
+  return Array.from(line).slice(0, CAUSE_MAX).join("").trim() || "unknown error";
+}
+
 function labelOf(text: string): string | null {
   const code = CODE_IN_MESSAGE.exec(text);
   if (code) return code[1];
@@ -63,7 +76,7 @@ function labelOf(text: string): string | null {
 const CLAUDE_UNREACHABLE = /can[\u0027\u2019]t reach the api server/i;
 
 /**
- * Spec 045 AC-1: the label of a transient failed run of a standing agent, else null. A judgement is transient when it
+ * Spec 045 AC-1: the label of a transient failed run of a standing agent (spec 045) or of a chain stage run (spec 092), else null. A judgement is transient when it
  * failed with no HTTP status (and its reason names the network) or a 5xx; a 4xx (a 429 included) is never transient.
  */
 export function transientRun(judgement: Judgement): string | null {
