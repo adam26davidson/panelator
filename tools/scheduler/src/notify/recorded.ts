@@ -7,7 +7,7 @@ export function recordedNotifier(inner: Notifier, paths: StatePaths, clock: () =
   return {
     async notify(n) {
       await inner.notify(n);
-      await record(paths, "maintainer.contact", clock(), { channel: "log", kind: "notification", ...(n.issue ? { issue: n.issue } : {}), label: n.label || n.gate, text: n.text }, n.issue ? { issue: n.issue } : {});
+      await record(paths, "maintainer.contact", clock(), { channel: "log", kind: n.contact?.kind ?? "notification", ...(n.issue ? { issue: n.issue } : {}), label: n.label || n.gate, text: n.text, ...(n.contact?.request ? { request: n.contact.request } : {}) }, n.issue ? { issue: n.issue } : {});
     },
   };
 }

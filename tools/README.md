@@ -84,6 +84,31 @@ The shipped profiles are `backend`, `design`, `security` and `spec`. A plan whos
   `cred_remove`, `agent: maintainer`, `args: { name }`, one row per credential.
 - The scheduler reads the App key from the store once `github-app-key` is set, else from `app.private_key_path`.
 
+## The delivery-system AWS account (spec 022)
+
+The scheduler talks to one AWS account of its own, through the `aws` CLI only (`--profile`, `--region`, never an SDK).
+Add the block to `agents/scheduler.yaml` once the account and its profile exist; without it AWS is off and the service
+behaves as before.
+
+```yaml
+aws:
+  profile: panelator-delivery   # AWS CLI profile (default)
+  account_id: "123456789012"    # twelve digits, required
+  region: us-east-2             # default
+  pull_interval_h: 24           # default, minimum 6
+```
+
+- The identity (`sts get-caller-identity`) is checked at start and before each pull; another account or a failure turns
+  AWS off with one `aws-access` notification.
+- Once per `pull_interval_h` the tick pulls the month-to-date cost (`ce get-cost-and-usage`, about one cent) into
+  `aws/cost.json` and an `aws.cost` event, and judges the forecast against `aws_cap_usd`. While the cap is 0 only the
+  identity is checked.
+- Code that creates a billable resource calls `reserveSpend` (`src/aws/ledger.ts`) first; a refusal is an `aws-funds`
+  notification and a `maintainer.contact` event of kind `funds`.
+- `panelator-scheduler aws-check` runs the identity check and the cost call and prints the SSO expiry (exit 0 only when
+  both pass; at cap 0 no cost call is made). `panelator-scheduler aws [--json]` prints the cost record and the
+  reservations. `panelator-scheduler aws pull` forces a pull, even at cap 0.
+
 ## Events (spec 026)
 
 The scheduler appends every run, stage transition, merge, CI result, review, finding, action, question, pause,

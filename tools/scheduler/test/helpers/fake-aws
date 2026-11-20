@@ -1,0 +1,20 @@
+#!/usr/bin/env node
+// A stand-in for the `aws` CLI (spec 022 section 6): answers `sts get-caller-identity` and `ce get-cost-and-usage` from
+// fixture files in $FAKE_AWS_DIR (identity.json, ce.json) and appends every invocation's argv to calls.log.
+// A file named fail-sts or fail-ce makes that call exit 255 with a message that carries a fake secret.
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+const dir = process.env.FAKE_AWS_DIR;
+const args = process.argv.slice(2);
+appendFileSync(join(dir, "calls.log"), JSON.stringify(args) + "\n");
+const service = args[0] + " " + args[1];
+const key = service === "sts get-caller-identity" ? "sts" : service === "ce get-cost-and-usage" ? "ce" : null;
+if (!key) {
+  console.error("fake aws: unknown command " + service);
+  process.exit(2);
+}
+if (existsSync(join(dir, `fail-${key}`))) {
+  console.error("An error occurred (ExpiredToken): the SSO session has expired aws_secret_access_key=FAKESECRET123 AKIAFAKEKEYID123456");
+  process.exit(255);
+}
+process.stdout.write(readFileSync(join(dir, key === "sts" ? "identity.json" : "ce.json"), "utf8"));

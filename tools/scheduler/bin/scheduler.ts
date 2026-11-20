@@ -32,6 +32,10 @@ import {undoAction} from '../src/actions/undo.ts';
 import {loadCatalogue,profileNames} from '../src/credentials/catalogue.ts';
 import {storeFromConfig,appPrivateKey,appPrivateKeySource} from '../src/credentials/store.ts';
 import {credCommand} from '../src/credentials/commands.ts';
+import {awsCli} from '../src/aws/cli.ts';
+import {newAwsState,type AwsContext} from '../src/aws/context.ts';
+import {awsCheck,awsPull,awsStatus} from '../src/aws/check.ts';
+import {emit} from '../src/standing/events.ts';
 import {loadMetricDefinitions,assertReadOnlySelect} from '../src/metrics/definitions.ts';
 import {computeMetrics,historyRange,recordSnapshot,weekStart} from '../src/metrics/compute.ts';
 import {formatReport} from '../src/metrics/format.ts';
@@ -69,6 +73,9 @@ const {registry,parameters,levels,catalogue,metrics}=(()=>{try {
 }catch(e){fail((e as Error).message);}})();
 await initializeAgents(paths,registry,parameters,new Date());
 const actionLog=new ActionLog(paths.actionsLog,paths);
+const awsContext:AwsContext={config:cfg.aws,paths,cli:cfg.aws?awsCli(cfg.aws):undefined,parameters,
+ notifier:rateLimited(recordedNotifier(new LogNotifier(paths.serviceLog),paths),cfg.notify_rate_limit_hours),notifyHours:cfg.notify_rate_limit_hours,
+ now:()=>new Date(),log:rec=>serviceLog.write(rec),emitEvent:(event,payload)=>emit(paths,registry,event,payload,new Date()),state:newAwsState()};
 
 // Local administration works without service auth or the main-only checkout requirement.
 if(args[0]==='events'&&args[1]==='backfill') {
@@ -107,6 +114,14 @@ if(args[0]==='quota') {
   const book=await readBook(paths);
   console.log(JSON.stringify({...book,summary:await quotaSummary(paths,new Date())},null,2));
   process.exit(0);
+}
+if(args[0]==='aws-check'||args[0]==='aws') {
+  // Spec 022 AC-3, AC-10: the setup check, the book, and a forced pull; no GitHub and no service auth.
+  try {
+    const out=args[0]==='aws-check'?await awsCheck(awsContext):args[1]==='pull'?await awsPull(awsContext):await awsStatus(awsContext,has('--json'));
+    for(const line of out.lines)console.log(line);
+    process.exit(out.exitCode);
+  }catch(e){console.error((e as Error).message);process.exit(1);}
 }
 if(['param','agent','action','cred','contacts'].includes(args[0])) {
   let client:GitHubClient|undefined;
@@ -191,7 +206,7 @@ const scheduler: Scheduler = new Scheduler({
   stopUnit: (unit) => systemdStopUnit(unit, { enabled: cfg.systemd.scope }),
   refreshToken: () => app.refreshTokenFile(paths).then(() => {}),
   log: (rec) => serviceLog.write(rec), fetchOrigin: () => fetchOrigin(repoRoot),
-  botLogin, serviceLog, inhibitor,
+  aws: awsContext, botLogin, serviceLog, inhibitor,
   fastForward: () => fastForwardMain(repoRoot), sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   monotonic: () => Number(process.hrtime.bigint() / 1_000_000n),
   // Called on every idle tick while a restart is pending; only the first call acts.

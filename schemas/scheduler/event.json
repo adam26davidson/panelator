@@ -39,7 +39,8 @@
             "issue.filed",
             "reflection.plan",
             "metrics.snapshot",
-            "aws.cost"
+            "aws.cost",
+            "aws.reserve"
           ]
         },
         "issue": {
@@ -352,6 +353,9 @@
           },
           "text": {
             "type": "string"
+          },
+          "request": {
+            "type": "object"
           }
         },
         "required": [
@@ -451,6 +455,95 @@
           "marker",
           "body"
         ]
+      },
+      "aws.cost": {
+        "type": "object",
+        "required": [
+          "month",
+          "actual_usd",
+          "as_of",
+          "cap_usd",
+          "reserved_usd",
+          "forecast_usd",
+          "days_elapsed",
+          "days_in_month",
+          "source"
+        ],
+        "properties": {
+          "month": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}$"
+          },
+          "actual_usd": {
+            "type": "number",
+            "minimum": 0
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cap_usd": {
+            "type": "number",
+            "minimum": 0
+          },
+          "reserved_usd": {
+            "type": "number",
+            "minimum": 0
+          },
+          "forecast_usd": {
+            "type": "number",
+            "minimum": 0
+          },
+          "days_elapsed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "days_in_month": {
+            "type": "integer",
+            "minimum": 28,
+            "maximum": 31
+          },
+          "source": {
+            "const": "ce"
+          }
+        },
+        "additionalProperties": false
+      },
+      "aws.reserve": {
+        "type": "object",
+        "required": [
+          "id",
+          "what",
+          "expected_monthly_usd",
+          "why",
+          "by",
+          "outcome"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "what": {
+            "type": "string"
+          },
+          "expected_monthly_usd": {
+            "type": "number",
+            "minimum": 0
+          },
+          "why": {
+            "type": "string"
+          },
+          "by": {
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "reserved",
+              "refused",
+              "released"
+            ]
+          }
+        }
       }
     }
   },
@@ -873,6 +966,48 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/payloads/issue.filed"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "aws.cost"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/aws.cost"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "aws.reserve"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/aws.reserve"
           }
         },
         "type": "object"

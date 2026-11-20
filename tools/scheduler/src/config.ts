@@ -30,6 +30,25 @@ export interface Config {
   decide: { base_url: string; key_env: string };
   /** Spec 030 AC-1: the credential store directory and how many days before expiry a warning is due. */
   credentials: { dir: string; warn_days: number };
+  /** Spec 022 AC-1: the delivery-system AWS account; absent means AWS is off. */
+  aws?: AwsConfig;
+}
+
+export interface AwsConfig { profile: string; account_id: string; region: string; pull_interval_h: number }
+
+function loadAws(raw: unknown): AwsConfig | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("config aws must be an object");
+  const a = raw as Record<string, unknown>;
+  if (Object.keys(a).some((k) => !["profile", "account_id", "region", "pull_interval_h"].includes(k))) throw new Error("config aws unknown key");
+  const profile = a.profile ?? "panelator-delivery";
+  if (typeof profile !== "string" || !profile) throw new Error("config aws profile must be a string");
+  if (typeof a.account_id !== "string" || !/^\d{12}$/.test(a.account_id)) throw new Error("config aws account_id must be twelve digits");
+  const region = a.region ?? "us-east-2";
+  if (typeof region !== "string" || !region) throw new Error("config aws region must be a string");
+  const interval = a.pull_interval_h ?? 24;
+  if (typeof interval !== "number" || !Number.isFinite(interval) || interval < 6) throw new Error("config aws pull_interval_h must be a number >= 6");
+  return { profile, account_id: a.account_id, region, pull_interval_h: interval };
 }
 
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -104,6 +123,7 @@ export function loadConfig(path: string): Config {
     systemd: { scope: systemd.scope !== false, inhibit: systemd.inhibit !== false },
     decide: { base_url: String(decide.base_url ?? ""), key_env: String(decide.key_env ?? "PANELATOR_DECIDE_KEY") },
     credentials: { dir: expandHome(String(cr.dir ?? "~/.config/panelator/credentials")), warn_days: warnDays },
+    ...(raw.aws === undefined || raw.aws === null ? {} : { aws: loadAws(raw.aws) }),
   };
   if (cfg.slots < 1) throw new Error("config slots must be >= 1");
   if (cfg.poll_interval_s < 5) throw new Error("config poll_interval_s must be >= 5");

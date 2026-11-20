@@ -24,11 +24,11 @@ export type SchemaName =
   | "question-log-entry"
   | "standing-definition" | "standing-result" | "action" | "action-log-entry"
   | "parameter-definition" | "parameters" | "filer-result" | "triage-entry" | "agent-state" | "filer-input" | "audit-input" | "infra-health-input"
-  | "event" | "credential-index" | "credential-catalogue" | "metric-definition" | "metrics-report" | "contacts-log-entry";
+  | "event" | "aws-cost" | "aws-ledger" | "credential-index" | "credential-catalogue" | "metric-definition" | "metrics-report" | "contacts-log-entry";
 
 const NAMES: SchemaName[] = [
   "standing-definition", "standing-result", "action", "action-log-entry", "parameter-definition", "parameters", "filer-result", "triage-entry", "agent-state", "filer-input", "audit-input", "infra-health-input",
-  "event", "credential-index", "credential-catalogue", "metric-definition", "metrics-report", "contacts-log-entry",
+  "event", "aws-cost", "aws-ledger", "credential-index", "credential-catalogue", "metric-definition", "metrics-report", "contacts-log-entry",
   "finding",
   "plan-result",
   "implement-result",

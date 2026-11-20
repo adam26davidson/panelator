@@ -32,6 +32,7 @@ import type { Notification } from "../src/notify/types.ts";
 import { ALL, matches } from "./helpers/markers.ts";
 import { mockGitHub, pageLink, type Route } from "./helpers/mock-github.ts";
 import { git, repoPair, withTopDesign } from "./helpers/repo-pair.ts";
+import { awsWorld } from "./helpers/aws.ts";
 import { watchTickErrors } from "./helpers/tick-errors.ts";
 
 const spec = readFileSync(join(import.meta.dirname, "fixtures", "specs", "good-backend.md"), "utf8");
@@ -1838,6 +1839,65 @@ describe("Scheduler: sleep inhibitor while runs are in flight", () => {
     expect(rec.killed).toHaveLength(2);
     expect(rec.logged.map((r) => r.kind)).toEqual(["inhibit-acquired", "inhibit-released", "inhibit-acquired", "inhibit-released"]);
   }, 30_000);
+});
+
+describe("Scheduler.tick AWS step (spec 022 AC-1, AC-2, AC-10, AC-11; spec 050 AC-5, AC-8)", () => {
+  const tickLines = (paths: ReturnType<typeof statePaths>) => readFileSync(paths.serviceLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((l) => l.kind === "tick");
+  async function awsSetup(opts: Parameters<typeof awsWorld>[0] = {}) {
+    const h = await setup(routes([]));
+    const w = await awsWorld({ start: "2026-10-12T12:00:00Z", ...opts });
+    const { ParameterStore } = await import("../src/parameters/store.ts");
+    const { loadParameterDefinitions } = await import("../src/parameters/definitions.ts");
+    const { loadRegistry } = await import("../src/standing/registry.ts");
+    const { EVENT_NAMES } = await import("../src/standing/events.ts");
+    const { registryActionsCheck } = await import("../src/actions/index.ts");
+    h.deps.registry = loadRegistry(join(agentsDir, "standing"), EVENT_NAMES, registryActionsCheck(join(agentsDir, "actions.yaml")));
+    h.deps.parameters = new ParameterStore(h.paths, loadParameterDefinitions(join(agentsDir, "parameters.yaml"), h.deps.cfg, h.deps.registry));
+    for (const def of Object.values(h.deps.registry)) def.trigger = { cron: "0 0 1 1 *" } as never;
+    w.ctx.paths = h.paths;
+    w.ctx.parameters = h.deps.parameters;
+    w.ctx.notifier = h.deps.notifier;
+    h.deps.aws = w.ctx;
+    const setNow = (d: Date) => { h.setNow(d); w.clock.now = d; };
+    w.ctx.now = () => w.clock.now;
+    return { ...h, w, setNow };
+  }
+
+  it("logs aws: off once, with the reason, and the tick field says why (no aws block)", async () => {
+    const { s, w, paths } = await awsSetup({ config: null });
+    await s.tick();
+    await s.tick();
+    expect(w.logs.filter((l) => l.kind === "aws-off")).toHaveLength(1);
+    expect(tickLines(paths).every((t) => t.aws.off === "no aws block in agents/scheduler.yaml")).toBe(true);
+    expect(w.calls()).toEqual([]);
+  }, 30000);
+
+  it("pulls once, keeps the field, pulls again after the interval, and follows a param set without a pull", async () => {
+    const { s, w, deps, paths, setNow } = await awsSetup({ cap: 100 });
+    await deps.parameters!.setParameter("aws_cap_usd", 100, "maintainer");
+    w.setCost(20);
+    const info = await s.tick();
+    expect(info.aws).toMatchObject({ actual_usd: 20, cap_usd: 100, forecast_usd: 51.67 });
+    await s.tick();
+    expect(w.calls().filter((c) => c[0] === "ce")).toHaveLength(1);
+    expect(tickLines(paths).at(-1).aws).toMatchObject({ actual_usd: 20, forecast_usd: 51.67, cap_usd: 100, reserved_usd: 0, as_of: "2026-10-12T12:00:00.000Z" });
+    await deps.parameters!.setParameter("aws_cap_usd", 50, "maintainer");
+    await s.tick();
+    expect(w.calls().filter((c) => c[0] === "ce")).toHaveLength(1);
+    expect(tickLines(paths).at(-1).aws).toMatchObject({ cap_usd: 50 });
+    setNow(new Date("2026-10-13T13:00:00Z"));
+    await s.tick();
+    expect(w.calls().filter((c) => c[0] === "ce")).toHaveLength(2);
+  }, 30000);
+
+  it("at cap 0 pulls nothing, shows pull_skipped, and records the skip once", async () => {
+    const { s, w, paths } = await awsSetup({ cap: 0 });
+    await s.tick();
+    await s.tick();
+    expect(tickLines(paths).at(-1).aws).toEqual({ actual_usd: null, forecast_usd: null, cap_usd: 0, reserved_usd: null, as_of: null, pull_skipped: "cap 0" });
+    expect(w.calls().map((c) => c[0])).toEqual(["sts"]);
+    expect(w.logs.filter((l) => l.kind === "aws-pull-skipped")).toHaveLength(1);
+  }, 30000);
 });
 
 describe("the constructor's default emitEvent (spec 094 AC-5)", () => {

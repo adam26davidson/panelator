@@ -30,6 +30,11 @@ systemd:
 # credentials:                # spec 030 AC-1: the encrypted store `cred set` writes; both keys are optional
 #   dir: ~/.config/panelator/credentials
 #   warn_days: 7
+aws:                          # spec 022 AC-1: the delivery-system AWS account
+  profile: panelator-delivery
+  account_id: "849692148420"
+  region: us-east-2
+  pull_interval_h: 24
 decide:
   base_url: ""               # /v1/systemone; unused in v0
   key_env: PANELATOR_DECIDE_KEY
