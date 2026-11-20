@@ -27,6 +27,7 @@ import { CEILING_MIN_FAILURES, CEILING_MIN_SPAN_MS, DISK_FULL, forgiveTransientC
 import { readLedger, writeLedger } from "../state/ledger.ts";
 import { listBlocked, removeBlocked, writeBlocked, type BlockedRecord } from "../state/blocked.ts";
 import { recordChecks } from "../events/ci.ts";
+import { claimOpen } from "../events/claimed.ts";
 import { listPaused, pausedDecision, removePaused, writePaused, type PausedRecord } from "../state/paused.ts";
 import { answeredEntry, appendQuestionLog } from "../state/questions.ts";
 import { recentMerges } from "../state/merges.ts";
@@ -351,6 +352,10 @@ export class Scheduler {
       d.log({ kind: "stale-claim", issue: claim.issue });
       await savePatch(d.paths, claim.issue, await uncommittedPatch(claim.worktree).catch(() => ""));
       await removeClaim(d.paths, claim.issue);
+      // Spec 096: the drop is a release only when its `issue.claimed` was recorded; a failed lookup counts as open.
+      let open = true;
+      try { open = claimOpen(d.paths, claim.issue); } catch (e) { errors.push(`stale-claim ${claim.issue}: ${(e as Error).message}`); }
+      if (open) await record(d.paths, "issue.released", d.now(), { reason: "stopped" }, { issue: claim.issue });
       return true;
     }
     const ghActivity = await d.gh.issueActivityAt(claim.issue).catch(() => claim.last_activity_at);
@@ -798,6 +803,7 @@ export class Scheduler {
           try {
             // Claim file before the label: a failure in between leaves a claim without in-progress, which the
             // next tick's stale-claim check drops (GitHub wins), never an in-progress label with no claim file.
+            // Such a drop records no issue.released: no issue.claimed was recorded (spec 096).
             const wt = await ensureWorktree(d.repoDir, d.paths.worktrees, issue.number);
             // AC-19: a spec-present failure starts at the spec stage; AC-7: the counters and history carry over.
             let ledger = await readLedger(d.paths, issue.number);

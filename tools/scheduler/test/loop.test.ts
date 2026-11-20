@@ -1,4 +1,5 @@
 import { openIndex } from "../src/events/index.ts";
+import { record as recordEvent } from "../src/events/store.ts";
 import {TelegramClient} from '../src/telegram/client.ts';
 import {telegramChannel} from '../src/telegram/channel.ts';
 import {fakeTelegram} from './helpers/fake-telegram.ts';
@@ -81,6 +82,13 @@ async function setup(rs: Route[], slots = 1, drive?: Drive, specFile = spec) {
   onTestFinished(() => watcher.check());
   const watch = (scheduler: Scheduler) => { const w = watchTickErrors(scheduler); onTestFinished(() => w.check()); return scheduler; };
   return { s, deps, gh, notifications, allowErrors: watcher.allow, watch, started, paths, pair, setNow: (d: Date) => { now = d; }, setMono: (m: number) => { mono = m; } };
+}
+
+function staleRows(paths: ReturnType<typeof statePaths>): [string, number, unknown][] {
+  const db = openIndex(paths);
+  const rows = db.prepare("SELECT kind, issue, payload FROM events WHERE issue = 7 AND kind IN ('chain.transition', 'issue.claimed', 'issue.released') ORDER BY at, rowid").all() as { kind: string; issue: number; payload: string }[];
+  db.close();
+  return rows.map((r) => [r.kind, r.issue, JSON.parse(r.payload)]);
 }
 
 describe('Telegram answers and watchdog fallback',()=>{
@@ -307,9 +315,38 @@ describe("Scheduler.tick", () => {
   it("releases a stale claim whose issue lost in-progress on GitHub (review focus 2)", async () => {
     const { s, deps, paths, pair } = await setup(routes([], { 7: ["validated"] }));
     await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    await recordEvent(paths, "issue.claimed", deps.now(), { slot: 1 }, { issue: 7 });
     const t = await s.tick();
     expect(t.released).toEqual([7]);
     expect(await listClaims(paths)).toEqual([]);
+    // Spec 096 AC-1: the drop records the release of the claim the store holds open.
+    expect(staleRows(paths)).toEqual([
+      ["issue.claimed", 7, { slot: 1 }],
+      ["issue.released", 7, { reason: "stopped" }],
+    ]);
+  }, 30_000);
+
+  it("records nothing for a stale claim whose issue.claimed was never recorded (spec 096 AC-2)", async () => {
+    const { s, deps, paths, pair } = await setup(routes([], { 7: ["validated"] }));
+    await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    const t = await s.tick();
+    expect(t.released).toEqual([7]);
+    expect(await listClaims(paths)).toEqual([]);
+    expect(staleRows(paths)).toEqual([]);
+  }, 30_000);
+
+  it("records nothing for a stale claim already closed by an earlier release (spec 096 AC-2)", async () => {
+    const { s, deps, paths, pair } = await setup(routes([], { 7: ["validated"] }));
+    await recordEvent(paths, "issue.claimed", deps.now(), { slot: 1 }, { issue: 7 });
+    await recordEvent(paths, "issue.released", deps.now(), { reason: "done" }, { issue: 7 });
+    await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "verify" }, worktree: join(pair.worktrees, "issue-7"), started_at: deps.now().toISOString(), last_activity_at: deps.now().toISOString(), run_id: null });
+    const t = await s.tick();
+    expect(t.released).toEqual([7]);
+    expect(await listClaims(paths)).toEqual([]);
+    expect(staleRows(paths)).toEqual([
+      ["issue.claimed", 7, { slot: 1 }],
+      ["issue.released", 7, { reason: "done" }],
+    ]);
   }, 30_000);
 
   it("releases a claim with no run and no activity for the liveness window, saving a patch (AC-15)", async () => {
