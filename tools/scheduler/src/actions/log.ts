@@ -1,8 +1,10 @@
 import {randomUUID} from 'node:crypto';
-import {appendFile,readFile,writeFile,rename} from 'node:fs/promises';
+import {appendFile,writeFile,rename} from 'node:fs/promises';
 import {withStateLock} from '../parameters/store.ts';
 import type {StatePaths} from '../state/paths.ts';
 import {validate} from '../schema/validate.ts';
+import {readJsonLines} from '../state/jsonl.ts';
+import {ServiceLog} from '../service/log.ts';
 import {record} from '../events/store.ts';
 export interface Inverse {kind:string; args:Record<string,unknown>}
 export interface ActionRequest extends Inverse {agent:string; run_id:string; why:string}
@@ -14,8 +16,8 @@ export class ActionLog {
  constructor(path:string,paths:StatePaths) {this.path=path;this.paths=paths;}
  private async event(row:LogEntry):Promise<void> {await record(this.paths,'action',new Date(),row as unknown as Record<string,unknown>,{run_id:row.run_id,agent:row.agent});}
  async list(since?:string):Promise<LogEntry[]> {
-  let text:string; try{text=await readFile(this.path,'utf8');}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return [];throw e;}
-  return text.split('\n').filter(Boolean).map(l=>JSON.parse(l) as LogEntry).filter(e=>!since||e.at>=since);
+  const rows=await readJsonLines<LogEntry>(this.path,{log:rec=>new ServiceLog(this.paths.serviceLog).write(rec)});
+  return rows.filter(e=>!since||e.at>=since);
  }
  async writePending(entry:ActionRequest & {undo:Inverse|null; undoes?:string},at=new Date().toISOString()):Promise<LogEntry> {
   const row:LogEntry={...entry,id:randomUUID(),at,status:'pending'};
