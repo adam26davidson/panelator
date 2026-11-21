@@ -331,4 +331,20 @@ describe("TelegramNotifier outbox (spec 102 AC-1 to AC-3, AC-6, AC-8)", () => {
     expect(await chain.flush!()).toBe(1);
     expect(s.sent[0]!.text).not.toContain("cleared");
   });
+  it("AC-2, AC-3: the event store holds only the two queued contacts after a flush", async () => {
+    const c = { current: null as TelegramChannel | null };
+    const dir = mkdtempSync(join(tmpdir(), "ev102-"));
+    const paths = statePaths(dir);
+    const { ensureStateDirs } = await import("../src/state/paths.ts");
+    await ensureStateDirs(paths);
+    const tn = TelegramNotifier(new LogNotifier(paths.serviceLog), { telegram: () => c.current, alertsPath: paths.telegramAlerts, outboxPath: paths.telegramOutbox, now: () => new Date(), log: () => {} });
+    const chain = rateLimited(recordedNotifier(tn, paths), { hours: 4, repeatHours: 24, path: paths.notifySent });
+    await chain.notify({ issue: 5, gate: "abandoned", label: "a", text: "one" });
+    await chain.notify({ issue: 6, gate: "abandoned", label: "b", text: "two" });
+    const s = stub(); c.current = s.chan;
+    expect(await chain.flush!()).toBe(2);
+    const { readdirSync } = await import("node:fs");
+    const contacts = readdirSync(paths.events).filter((f) => f.endsWith(".jsonl")).flatMap((f) => rd102(join(paths.events, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l))).filter((e) => e.kind === "maintainer.contact");
+    expect(contacts.map((e) => e.payload.channel)).toEqual(["queued", "queued"]);
+  });
 });
