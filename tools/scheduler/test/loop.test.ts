@@ -115,7 +115,7 @@ describe('Telegram answers and watchdog fallback',()=>{
   const logs:Record<string,unknown>[]=[],waits:number[]=[];const {TelegramPoller}=await import('../src/telegram/poller.ts');
   const poll=new TelegramPoller(deps.telegram!.client,paths.telegramOffset,50,u=>s.handleTelegramUpdate(u),r=>logs.push(r),async ms=>{waits.push(ms);},u=>s.confirmTelegramUpdate(u));
   try{await writePaused(paths,tgRecord());server.push(message(1,'Use the file store.'));poll.start();
-   for(let i=0;i<400&&!(existsSync(paths.telegramOffset)&&JSON.parse(readFileSync(paths.telegramOffset,'utf8')).next_update_id===2&&server.sent.length>=1);i++)await new Promise(r=>setTimeout(r,10));
+   await waitFor({'offset names update 2':()=>existsSync(paths.telegramOffset)&&JSON.parse(readFileSync(paths.telegramOffset,'utf8')).next_update_id===2,'two comment posts':()=>gh.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/comments')).length>=2,'one sent message':()=>server.sent.length>=1,'paused record resuming':async()=>(await listPaused(paths))[0]?.phase==='resuming'});
    expect(logs).toHaveLength(2);expect(logs[0]).toMatchObject({kind:'telegram',status:'connected'});expect(logs[1]).toMatchObject({kind:'telegram-handler-failed',update_id:1});expect(String(logs[1].error)).toContain('mock github comment failure');
    expect(logs.some(l=>l.kind==='telegram-outage'||l.kind==='telegram-recovered')).toBe(false);expect(waits).toEqual([2000]);
    expect(gh.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/comments'))).toHaveLength(2);expect(server.sent).toHaveLength(1);expect((await listPaused(paths))[0].phase).toBe('resuming');
@@ -546,6 +546,15 @@ const record = (over: Partial<PausedRecord> = {}): PausedRecord => ({
 const waiting = (labels = ["validated", "class:product", "needs-decision"]) => issue(7, labels);
 /** The real first step of the chain, so a resume's `answered` event is applied as the driver applies it. */
 const firstStep: Drive = async (d, claim) => (await step(d, claim)).claim;
+/** Spec 101 AC-1: poll every `stepMs` until every condition holds; at the bound, fail naming those still false. */
+async function waitFor(conditions: Record<string, () => boolean | Promise<boolean>>, timeoutMs = 25_000, stepMs = 10): Promise<void> {
+  const missing = async () => { const out: string[] = []; for (const [name, f] of Object.entries(conditions)) if (!(await f())) out.push(name); return out; };
+  const end = Date.now() + timeoutMs;
+  let left = await missing();
+  while (left.length && Date.now() < end) { await new Promise((r) => setTimeout(r, stepMs)); left = await missing(); }
+  if (left.length) expect.fail(`timed out after ${timeoutMs} ms waiting for: ${left.join(", ")}`);
+}
+
 const settle = () => new Promise((r) => setTimeout(r, 100));
 const logLines = (paths: { questionsLog: string }) => { try { return readFileSync(paths.questionsLog, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
 const labelCalls = (gh: { calls: { method: string; url: string; body: unknown }[] }, n: number) =>
@@ -1543,7 +1552,7 @@ describe("Telegram attaches when connected (spec 043)", () => {
     const client = new TelegramClient("secret", 42, server.url);
     return new TelegramPoller(client, join(tmpdir(), `tg-offset-${Math.random()}.json`), 1, async () => {}, (r) => logs.push(r), async () => { await new Promise((r) => setTimeout(r, 5)); }, undefined, () => { s.setTelegram(telegramChannel(client)); hook(); });
   };
-  const until = async (f: () => boolean) => { for (let i = 0; i < 400 && !f(); i++) await new Promise((r) => setTimeout(r, 10)); expect(f()).toBe(true); };
+  const until = async (f: () => boolean) => { await waitFor({ condition: f }); };
   const question = { kind: "product" as const, question: "Which layout?", options: [{ label: "second", cost: "none" }], recommendation: "second" };
   const claimFor = async (h: Awaited<ReturnType<typeof setup>>, n: number) => {
     const claim = { issue: n, state: { ...initialChainState(n), stage: "plan" as const }, worktree: join(h.pair.worktrees, `issue-${n}`), started_at: h.deps.now().toISOString(), last_activity_at: h.deps.now().toISOString(), run_id: null };
@@ -1842,7 +1851,7 @@ describe("Scheduler: sleep inhibitor while runs are in flight", () => {
     const tick = h.s.tick.bind(h.s);
     h.s.tick = async () => { const t = await tick(); if (++ticks === 1) h.s.stop("SIGTERM"); return t; };
     const running = h.s.run();
-    for (let i = 0; i < 100 && log.grants.length < 2; i++) await settle();
+    for (let i = 0; i < 200 && log.grants.length < 2; i++) await settle();
     expect(rec.inhibitor.held).toBe(true);
     await log.release("standing");
     await running;

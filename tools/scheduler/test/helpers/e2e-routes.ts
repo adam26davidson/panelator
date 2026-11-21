@@ -41,6 +41,24 @@ export type Scripted = unknown | ((run: StageRun) => unknown);
 export const OUT_OF_SCOPE = (paths: string[] = [".github/workflows/ci.yml"], cause = "CI's runner has no Chromium, so tools/design-stage/test/render.test.ts fails on every PR") => (run: StageRun) => ({
   head_sha: git(run.worktree, "rev-parse", "HEAD").trim(), addressed: [], out_of_scope: { cause, paths }, findings: [],
 });
+/** Spec 101 AC-7: a fix result that returns the head unchanged with a finding and no verdict, as the fix runs of issue #116 did. */
+export const UNCHANGED_WITH_FINDING = (run: StageRun) => ({
+  head_sha: git(run.worktree, "rev-parse", "HEAD").trim(), addressed: [],
+  findings: [{ what: "no file in this PR can affect the failing test", where: "tools/scheduler/test/loop.test.ts", evidence: "the PR changes only docs and specs", noticed_how: "reading the failed check" }],
+});
+/** Spec 101 AC-7: the conflict fix of a resumed spec PR: merge origin/main, resolve `file` by keeping both sides' lines, push, return the head. */
+export const MERGE_MAIN_FIX = (file: string) => (run: StageRun) => {
+  git(run.worktree, "fetch", "-q", "origin");
+  try { git(run.worktree, "merge", "-q", "--no-edit", "origin/main"); } catch { /* the expected conflict */ }
+  const ours = git(run.worktree, "show", `HEAD:${file}`).split("\n");
+  const theirs = git(run.worktree, "show", `origin/main:${file}`).split("\n");
+  writeFileSync(join(run.worktree, file), [...theirs, ...ours.filter((l) => !theirs.includes(l))].join("\n").replace(/\n+$/, "\n"));
+  git(run.worktree, "add", "-A");
+  git(run.worktree, "commit", "-q", "--no-edit");
+  const branch = git(run.worktree, "rev-parse", "--abbrev-ref", "HEAD").trim();
+  git(run.worktree, "push", "-q", "-f", "origin", `HEAD:refs/heads/${branch}`);
+  return { head_sha: git(run.worktree, "rev-parse", "HEAD").trim(), addressed: [] };
+};
 /** A scripted run the vendor rate-limited: the fake harness exits 2 and `judge` reports a 429. */
 export const RATE_LIMITED = Symbol("rate-limited");
 /** A scripted run whose harness could not reach the API (spec 045): the fake harness exits 3 and `judge` reports the live reason with no status. */
@@ -166,6 +184,7 @@ export async function chainWorld(opts: {
   /** Spec 060: what a commit's required `test` check reports; green unless a test sets it. */
   let checkFor: (sha: string) => { status: string; conclusion: string | null } = () => ({ status: "completed", conclusion: "success" });
   const rerequested: number[] = [];
+  const rerunFailedJobs: number[] = [];
   const prComments: { pr: number; body: string }[] = [];
   const prs = new Map<number, MockPr>();
   const addedByPr = new Map<number, string[]>();
@@ -302,8 +321,9 @@ export async function chainWorld(opts: {
     },
     {
       method: "GET", path: /^\/repos\/o\/r\/commits\/([0-9a-f]+)\/check-runs$/,
-      reply: (m) => ({ body: { total_count: 1, check_runs: [{ id: 41, name: "test", ...checkFor(m[1]) }] } }),
+      reply: (m) => ({ body: { total_count: 1, check_runs: [{ id: 41, name: "test", details_url: "https://github.com/o/r/actions/runs/500/job/600", ...checkFor(m[1]) }] } }),
     },
+    { method: "POST", path: /^\/repos\/o\/r\/actions\/runs\/(\d+)\/rerun-failed-jobs$/, reply: (m) => { rerunFailedJobs.push(Number(m[1])); return { status: 201, body: {} }; } },
     { method: "POST", path: /^\/repos\/o\/r\/check-runs\/(\d+)\/rerequest$/, reply: (m) => { rerequested.push(Number(m[1])); return { status: 201, body: {} }; } },
     { method: "GET", path: /^\/repos\/o\/r\/actions\/jobs\/\d+\/logs$/, reply: () => ({ body: "FAIL tools/design-stage/test/render.test.ts\nError: browserType.launch: Executable doesn't exist\n" }) },
   ];
@@ -333,7 +353,7 @@ export async function chainWorld(opts: {
 
   return {
     deps,scheduler,pair, paths, cfg, gh, filed, adapter, notifications, logs, labels, labelLog, comments, prComments, prs, addedByPr, mergeRequests,
-    rerequested,
+    rerequested, rerunFailedJobs,
     /** Spec 060: what each commit's `test` check reports from now on. */
     setChecks(fn: (sha: string) => { status: string; conclusion: string | null }) { checkFor = fn; },
     /** Spec 060: a commit on origin's main (as a merge of another PR would be) touching `files`; the new head. */
