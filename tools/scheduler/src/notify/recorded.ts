@@ -10,5 +10,11 @@ export function recordedNotifier(inner: Notifier, paths: StatePaths, clock: () =
       await record(paths, "maintainer.contact", clock(), { channel: res?.channel ?? "log", kind: n.contact?.kind ?? "notification", ...(n.issue ? { issue: n.issue } : {}), label: n.label || n.gate, text: n.text, ...(n.contact?.request ? { request: n.contact.request } : {}) }, n.issue ? { issue: n.issue } : {});
       return res;
     },
+    async flush() {
+      return (await inner.flush?.()) ?? 0;
+    },
+    async clear(sel) {
+      await inner.clear?.(sel);
+    },
   };
 }

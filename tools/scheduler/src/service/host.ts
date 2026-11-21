@@ -195,6 +195,8 @@ export class HostMonitor {
     await this.#save({ ...withDowntime(s, interval, now.getTime()), paused: null });
     this.#memo = { tick: this.#tick, cause: null };
     this.#d.write({ kind: "host-resumed", since: p.since, cause: p.cause, probes: p.probes, paused_ms: now.getTime() - Date.parse(p.since) });
+    // Spec 102 AC-6: the pause is over, so its next notice is sent at once.
+    await this.#d.notifier.clear?.({ issue: 0, gate: "infra", label: "host" }).catch((e) => this.#d.write({ kind: "error", error: `notify clear: ${(e as Error).message}` }));
     return true;
   }
 

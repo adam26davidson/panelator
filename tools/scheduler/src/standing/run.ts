@@ -216,8 +216,14 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  const at=d.now().toISOString();
  const next=def.trigger.schedule?new Date(d.now().getTime()+parseDuration(String((await d.parameters.read(`schedule.${def.name}`)).value))).toISOString():null;
  await updateAgentState(d.paths,def.name,current=>{const n={...current,last_run:{at,run_id:runId,outcome},summary:summary||error,next_run:next,failures:0,pending_events:current.pending_events.filter(e=>!received.some(r=>JSON.stringify(r)===JSON.stringify(e)))};if(over)delete n.outage;if(outcome==='ok')delete n.reflection;return n;});
+ // Spec 102 AC-6: a successful run clears the agent's standing and outage notices, so the next failure notifies at once.
+ if(outcome==='ok'){
+  const clearFailed=(e:unknown)=>d.log({kind:'error',error:`notify clear: ${(e as Error).message}`});
+  await d.notifier.clear?.({issue:0,gate:'standing',labelPrefix:`${def.name}:`}).catch(clearFailed);
+  await d.notifier.clear?.({issue:0,gate:'infra',label:`${def.name}:outage`}).catch(clearFailed);
+ }
  if(outcome!=='ok') {
   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:at},[{what:`standing agent ${def.name} failed twice: ${failureCause(error,transient)}`,where:`agents/standing/${def.name}.md`,evidence:error,noticed_how:'standing run retry exhausted'}],{exclude:def.name});
-  await filer.notify(`Standing agent ${def.name} failed twice: ${error}`);
+  await filer.notify(`Standing agent ${def.name} failed twice: ${error}`,`failed:${failureCause(error,transient)}`);
  }
 }

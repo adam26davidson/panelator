@@ -61,6 +61,9 @@ export interface StatePaths {
   awsLedger: string;
   /** Spec 022 AC-8, AC-9, AC-4: which notices went out this month, and the pull failures of the day. */
   awsNotices: string;
+  /** Spec 102 AC-2, AC-5: notices the chat could not take, and the persisted rate-limit map. */
+  telegramOutbox: string;
+  notifySent: string;
 }
 
 export function statePaths(root: string): StatePaths {
@@ -77,6 +80,8 @@ export function statePaths(root: string): StatePaths {
     contactsParties: join(root, 'contacts', 'parties.json'),
     credentialsExpiryState: join(root, 'credentials', 'expiry-state.json'),
     telegramAlerts: join(root, 'telegram', 'alerts.json'),
+    telegramOutbox: join(root, 'telegram', 'outbox.json'),
+    notifySent: join(root, 'notify', 'sent.json'),
     agents: join(root, 'agents'),
     mainChecks: join(root, 'main-checks.json'),
     findingsCursor: join(root, 'findings', 'cursor.json'),
@@ -112,5 +117,5 @@ export function statePaths(root: string): StatePaths {
 }
 
 export async function ensureStateDirs(p: StatePaths): Promise<void> {
-  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.blocked, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), p.agents, p.events, p.reflections, dirname(p.eligibleMarks), dirname(p.awsCost)]) await mkdir(d, { recursive: true });
+  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.blocked, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), p.agents, p.events, p.reflections, dirname(p.eligibleMarks), dirname(p.awsCost), dirname(p.notifySent)]) await mkdir(d, { recursive: true });
 }

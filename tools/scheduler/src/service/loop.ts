@@ -620,10 +620,16 @@ export class Scheduler {
     await sweepVolumes({ paths: d.paths, repoDir: d.repoDir, agentsDir: d.agentsDir, now: d.now, gh: d.gh, parameters: d.parameters, freeSpace: d.freeSpace, log: (rec) => d.serviceLog.write(rec), notifier: d.notifier, emitEvent: d.emitEvent, activeIssues: () => [...this.#active.keys()] }).catch((e) => info.errors.push(`sweep: ${(e as Error).message}`));
   }
 
+  /** Spec 102 AC-3: send the notices the chat could not take; a failure never fails the tick. */
+  async #flushNotices(info: TickInfo): Promise<void> {
+    await this.#deps.notifier.flush?.().catch((e) => info.errors.push(`notify flush: ${(e as Error).message}`));
+  }
+
   /** Spec 100 AC-3: what a paused tick does: the notice if due, the usage prune and the volume sweep; nothing else. */
   async #pausedTick(info: TickInfo): Promise<TickInfo> {
     const d = this.#deps;
     await d.host!.noticeIfDue().catch((e) => info.errors.push(`host notice: ${(e as Error).message}`));
+    await this.#flushNotices(info);
     await pruneUsage(d.paths, d.now()).catch((e) => info.errors.push(`prune: ${(e as Error).message}`));
     await this.#sweep(info);
     return info;
@@ -644,6 +650,7 @@ export class Scheduler {
       await host.beginTick();
       await host.startupGap(d.cfg.poll_interval_s).catch((e) => d.log({ kind: "error", error: `host downtime: ${(e as Error).message}` }));
       if (host.paused && !(await host.probeIfDue())) return await this.#pausedTick(info);
+      await this.#flushNotices(info);
       const token = await readToken(d.paths).catch(() => null);
       if (token && new Date(token.expires_at).getTime() - d.now().getTime() < TOKEN_REFRESH_MARGIN_MS) await this.#refreshToken();
       let mainMoved = false;

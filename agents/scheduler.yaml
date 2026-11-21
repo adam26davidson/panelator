@@ -16,6 +16,7 @@ retry_cost_limit_usd: 1.0
 reflection_max_issues: 8     # issues one reflection plan may file; the rest are deferred in the plan (spec 028)
 rescue_model: claude-fable-5-2   # strongest model, for rescue attempts (spec 006)
 notify_rate_limit_hours: 4
+notify_repeat_hours: 24      # window for lasting conditions: standing, infra, chain_error, aws, credential-expiry (spec 102)
 bounds:
   design_revisions: 2        # design stage reruns after a merge whose gate still fails (spec 029 AC-4)
 required_checks: [test]

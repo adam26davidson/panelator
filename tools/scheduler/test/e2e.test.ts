@@ -2708,7 +2708,7 @@ describe('requests, alerts and the credential check (spec 099 section 6)', () =>
       w.deps.telegram = channel;
       const { TelegramNotifier } = await import('../src/notify/telegram.ts');
       const { LogNotifier } = await import('../src/notify/log.ts');
-      const notifier = TelegramNotifier(new LogNotifier(w.paths.serviceLog), { telegram: () => channel, alertsPath: w.paths.telegramAlerts, log: () => {} });
+      const notifier = TelegramNotifier(new LogNotifier(w.paths.serviceLog), { telegram: () => channel, alertsPath: w.paths.telegramAlerts, outboxPath: w.paths.telegramOutbox, log: () => {} });
       expect(await notifier.notify({ issue: 0, gate: 'infra', label: 'disk', text: 'volume full' })).toEqual({ channel: 'telegram' });
       expect(server.sent[0]!.text).toBe('infra: disk\n\nvolume full');
       server.fail('sendMessage', 500);
