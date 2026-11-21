@@ -177,7 +177,7 @@ fake harness and a mocked GitHub API unless marked (real).
 
 **Records and notifications**
 
-- AC-27. Given any gate failure or escalation, then exactly one call to the
+- AC-27. Amended by [102-scheduler-alerts-reach-telegram](../102-scheduler-alerts-reach-telegram/spec.md) AC-5: the window is 24 hours for a lasting-condition gate and 4 for the rest, survives a restart, and is re-armed when the condition clears (its AC-6). Given any gate failure or escalation, then exactly one call to the
   notification interface is made with the issue number, the gate, and the
   label applied; identical notifications are rate-limited to one per 4 hours.
 - AC-28. Given an agent stage writes finding records, when the stage ends,
