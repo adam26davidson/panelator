@@ -44,6 +44,7 @@ export interface StandingDefinition extends Omit<StageDefinition, "name" | "kind
   trigger: { schedule?: string; events?: string[]; min_events?: number };
   worktree: "fresh" | "none";
   actions: string[];
+  credentials?: string[];
 }
 export type AgentDefinition = StageDefinition | StandingDefinition;
 
@@ -213,6 +214,6 @@ export interface Profile {
   skillsDir: string;
   instructions: string;
   tools: string[];
-  credentialHook?: string;
+  credentials?: string[];
   reviewCriteria?: string;
 }

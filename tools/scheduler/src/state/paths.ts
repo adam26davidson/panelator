@@ -29,6 +29,12 @@ export interface StatePaths {
   actionsLog: string;
   /** Spec 083: the first-contact gate's log (refused calls, removed parties). */
   contactsLog: string;
+  /** Spec 099: the approved parties (AC-8). */
+  contactsParties: string;
+  /** Spec 099 AC-3: the last `credential_expiry` emission per name, and the last `credential-expiry` notification per name. */
+  credentialsExpiryState: string;
+  /** Spec 099 AC-7: ids of the messages the notifier sent. */
+  telegramAlerts: string;
   agents: string;
   mainChecks: string;
   findingsCursor: string;
@@ -68,6 +74,9 @@ export function statePaths(root: string): StatePaths {
     parametersHistory: join(root, 'parameters', 'history.jsonl'),
     actionsLog: join(root, 'actions', 'log.jsonl'),
     contactsLog: join(root, 'contacts', 'log.jsonl'),
+    contactsParties: join(root, 'contacts', 'parties.json'),
+    credentialsExpiryState: join(root, 'credentials', 'expiry-state.json'),
+    telegramAlerts: join(root, 'telegram', 'alerts.json'),
     agents: join(root, 'agents'),
     mainChecks: join(root, 'main-checks.json'),
     findingsCursor: join(root, 'findings', 'cursor.json'),

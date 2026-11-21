@@ -65,6 +65,13 @@ export class CredentialStore {
     index[name] = { name, created_at: this.now().toISOString(), set_by: setBy, expires_at: null, last_checked_at: null, last_check: null };
     await this.saveIndex(index);
   }
+  /** Spec 099 AC-13: the expiry a renewal's probe read; a name with no entry is left alone. */
+  async writeExpiry(name: string, expires_at: string): Promise<void> {
+    const index = await this.readIndex();
+    if (!index[name]) return;
+    index[name] = { ...index[name], expires_at };
+    await this.saveIndex(index);
+  }
   async readSecret(name: string): Promise<string> {
     try {
       return await this.run(["--user", "decrypt", `--name=${name}`, this.blob(name), "-"]);

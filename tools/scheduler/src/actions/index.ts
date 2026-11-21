@@ -18,6 +18,8 @@ import {credSetKind} from './cred-set.ts';
 import {credCheckKind} from './cred-check.ts';
 import {credImportKind} from './cred-import.ts';
 import {credRemoveKind} from './cred-remove.ts';
+import {renewCredentialKind} from './renew-credential.ts';
+import type {ShimOptions} from '../credentials/shims.ts';
 import type {CredentialStore} from '../credentials/store.ts';
 import type {CredentialEntry} from '../credentials/catalogue.ts';
 import type {CheckContext,CheckResult} from '../credentials/check.ts';
@@ -26,15 +28,15 @@ export interface ActionContext {
  now:()=>Date; actor?:string; reversing?:boolean;
  /** Spec 064: `sweep_volume` needs the repository, the service log, the issues running in this process and a way to report what it removed. */
  /** Spec 069 AC-11: the `cred_*` kinds' store and probe context; the secret and the check result travel here, never through `args`. */
- credentials?:{store:CredentialStore;catalogue:Record<string,CredentialEntry>;probe:CheckContext;secret?:()=>Promise<string>;onResult?:(name:string,result:CheckResult)=>void;configPaths:{'github-app-key':string;'telegram-bot':string}};
+ credentials?:{store:CredentialStore;catalogue:Record<string,CredentialEntry>;probe:CheckContext;secret?:()=>Promise<string>;onResult?:(name:string,result:CheckResult)=>void;shim?:ShimOptions;onRenewFailure?:(name:string,reason:string)=>void;configPaths:{'github-app-key':string;'telegram-bot':string}};
  repoDir?:string; serviceLog?:(rec:Record<string,unknown>)=>void; activeIssues?:()=>number[]; onSweep?:(r:SweepResult)=>void;
 }
 export interface ActionKind {
  changesMode:false;
  check(args:Record<string,unknown>,ctx:ActionContext):Promise<string|null>;
- apply(args:Record<string,unknown>,ctx:ActionContext):Promise<{undo:Inverse|null; undoes?:string}>;
+ apply(args:Record<string,unknown>,ctx:ActionContext):Promise<{undo:Inverse|null; undoes?:string; reason?:string}>;
 }
-export const KINDS:Record<string,ActionKind>={set_parameter:setParameterKind,pause_agent:pauseAgentKind,resume_agent:resumeAgentKind,run_agent:runAgentKind,rerun_workflow:rerunWorkflowKind,undo:undoKind,sweep_volume:sweepVolumeKind,cred_set:credSetKind,cred_check:credCheckKind,cred_import:credImportKind,cred_remove:credRemoveKind};
+export const KINDS:Record<string,ActionKind>={set_parameter:setParameterKind,pause_agent:pauseAgentKind,resume_agent:resumeAgentKind,run_agent:runAgentKind,rerun_workflow:rerunWorkflowKind,undo:undoKind,sweep_volume:sweepVolumeKind,cred_set:credSetKind,cred_check:credCheckKind,cred_import:credImportKind,cred_remove:credRemoveKind,renew_credential:renewCredentialKind};
 export function loadActionLevels(path:string):Record<string,1|2> {
  const file=parse(readFileSync(path,'utf8')) as Record<string,{level:1|2;description:string}>;
  if(!file||typeof file!=='object'||Array.isArray(file))throw new Error(`${path}: expected action map`);
@@ -84,7 +86,7 @@ async function applyUnlocked(ctx:ActionContext,request:ActionRequest,allowed:str
  }
  try {
   const result=await handler!.apply(request.args,c);
-  const row=await ctx.log.settle(pending.id,'applied',undefined,result.undo);
+  const row=await ctx.log.settle(pending.id,'applied',result.undo===null?result.reason:undefined,result.undo);
   if(result.undoes)await ctx.log.markUndone(result.undoes);
   return row;
  }catch(e){return ctx.log.settle(pending.id,e instanceof ParameterLockedError?'refused':'failed',(e as Error).message);}

@@ -66,3 +66,52 @@ export function checkRequest(question: Question): string | null {
   const missing = REQUEST_FIELDS[type].filter((f) => emptyField(request[f], f));
   return missing.length === 0 ? null : `a ${type} request must give ${missing.join(", ")}`;
 }
+
+export type RequestOutcomeName = "approved" | "denied" | "verified" | "check_failed" | "declined" | "text";
+export const REQUEST_BUTTONS = { credential: ["Done", "Can't do this"], funds: ["Approved", "Declined"], first_contact: ["Approve", "Deny"] } as const;
+
+/** Spec 099 AC-5: what the scheduler does for an answer to a request, before the stage resumes. Pure. */
+export function actOnAnswer(request: { type: string } | undefined, answer: string): { action: "approve_party" | "run_check" | "none"; outcome: RequestOutcomeName | null } {
+  if (!request) return { action: "none", outcome: null };
+  const text = answer.trim();
+  const first = (text.split(/\s+/)[0] ?? "").toLowerCase().replace(/[.,!;:]+$/, "");
+  if (request.type === "first_contact") {
+    if (["approve", "approved", "yes", "ok"].includes(first)) return { action: "approve_party", outcome: "approved" };
+    if (["deny", "denied", "no"].includes(first)) return { action: "none", outcome: "denied" };
+    return { action: "none", outcome: "text" };
+  }
+  if (request.type === "credential") {
+    if (first.startsWith("done")) return { action: "run_check", outcome: "verified" };
+    if (text.toLowerCase().startsWith("can't do this") || text.toLowerCase().startsWith("cannot do this")) return { action: "none", outcome: "declined" };
+    return { action: "none", outcome: "text" };
+  }
+  if (first === "approved") return { action: "none", outcome: "approved" };
+  if (first === "declined") return { action: "none", outcome: "declined" };
+  return { action: "none", outcome: "text" };
+}
+
+export function approvedAnswer(party: string): string {
+  return `approved (recorded; no channel can reach ${party} yet: a credential that can is a credential request)`;
+}
+
+/** The answer the stage receives for a credential "Done", from the check's result; `skipped` and unknown names are `text` (nothing verified, nothing failed). */
+export function doneAnswer(result: { status: "ok" } | { status: "failed"; reason: string } | { status: "skipped"; reason: string } | { status: "unknown"; name: string }): { answer: string; outcome: RequestOutcomeName } {
+  if (result.status === "ok") return { answer: "done (verified)", outcome: "verified" };
+  if (result.status === "failed") return { answer: `done (check failed: ${result.reason})`, outcome: "check_failed" };
+  if (result.status === "skipped") return { answer: `done (not checked: ${result.reason})`, outcome: "text" };
+  return { answer: `done (unverified: ${result.name} is not in the catalogue)`, outcome: "text" };
+}
+
+/** Spec 099 AC-4: the request as a Telegram message body: setup steps numbered, a first_contact message quoted in full. */
+export function requestMessageLines(q: Question): string[] {
+  if (q.request === undefined) return [];
+  const r = q.request as Record<string, unknown>;
+  const out = [`Request (${String(r.type)}):`];
+  for (const [k, v] of Object.entries(r)) {
+    if (k === "type") continue;
+    if (k === "setup" && Array.isArray(v)) out.push("setup:", ...v.map((s, i) => `${i + 1}. ${String(s)}`));
+    else if (k === "message") out.push("message:", ...String(v).split("\n").map((l) => `> ${l}`));
+    else out.push(`${k}: ${Array.isArray(v) ? v.map(String).join("; ") : String(v)}`);
+  }
+  return out;
+}

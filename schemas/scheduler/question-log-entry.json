@@ -67,6 +67,13 @@
     },
     "telegram_message_id": {
       "type": "integer"
+    },
+    "request": {
+      "$ref": "question.json#/properties/request"
+    },
+    "outcome": {
+      "enum": ["approved", "denied", "verified", "check_failed", "declined", "text"],
+      "description": "Spec 099 AC-5: the outcome of a request's answer (the six of spec 068 AC-3)."
     }
   }
 }

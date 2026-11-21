@@ -7,6 +7,9 @@ export interface Notification {
   contact?: { kind: "funds"; request?: Record<string, unknown> };
 }
 
+/** Spec 099 AC-6: which channel carried the notification; `suppressed` is the rate limiter dropping it. */
+export interface NotifyResult { channel: "telegram" | "log" | "suppressed" }
+
 export interface Notifier {
-  notify(n: Notification): Promise<void>;
+  notify(n: Notification, extra?: { channel?: "telegram" | "log" }): Promise<NotifyResult | void>;
 }

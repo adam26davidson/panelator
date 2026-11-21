@@ -100,6 +100,8 @@ export async function standingWorld(results:Record<string,Scripted[]>,freeSpace:
   let now=new Date('2026-10-01T00:00:00Z');await initializeAgents(paths,registry,parameters,now);
   // The infra health agent (spec 064) is due every six hours and would take the one slot these worlds script; tests that run it unpause it.
   await writeAgentState(paths,'infra-health',{...(await readAgentState(paths,'infra-health'))!,paused:true,paused_by:'maintainer'});
+  // Likewise the credential check (spec 099), due daily.
+  await writeAgentState(paths,'credential-check',{...(await readAgentState(paths,'credential-check'))!,paused:true,paused_by:'maintainer'});
   const issues:{number:number;title:string;body:string;user:{login:string};labels:{name:string}[];created_at:string}[]=[];
   const comments=new Map<number,unknown[]>();
   const closed=new Map<number,(typeof issues)[number]>();

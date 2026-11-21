@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contacts.json",
+  "description": "contacts/parties.json (spec 099 AC-8): the parties the maintainer approved for first contact.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["party", "channel", "approved_at", "question_comment_id", "issue"],
+    "additionalProperties": false,
+    "properties": {
+      "party": { "type": "string", "minLength": 1 },
+      "channel": { "type": "string", "minLength": 1 },
+      "approved_at": { "type": "string", "format": "date-time" },
+      "question_comment_id": { "anyOf": [{ "type": "integer" }, { "type": "string" }, { "type": "null" }] },
+      "issue": { "anyOf": [{ "type": "integer" }, { "type": "null" }] }
+    }
+  }
+}

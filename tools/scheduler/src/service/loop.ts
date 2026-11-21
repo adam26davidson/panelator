@@ -1,6 +1,6 @@
 import {TelegramAnswers} from '../telegram/answers.ts';
 import {questionMessage,reminderText} from '../telegram/questions.ts';
-import { applyActions, sendPausedQuestion, completePause, driveChain as defaultDriveChain, recordTransition, step, type DriverDeps } from "../chain/driver.ts";
+import { applyActions, applyRequestAnswer, sendPausedQuestion, completePause, driveChain as defaultDriveChain, recordTransition, step, type DriverDeps } from "../chain/driver.ts";
 import { CLAIM_LABEL, ENDED, HISTORY_ENTRY_MAX, NEEDS_DECISION_LABEL, initialChainState, ledgerOf, stuckOf as stuckStage, transition } from "../chain/machine.ts";
 import {emit} from '../standing/events.ts';
 import { quotaSummary } from "../quota/book.ts";
@@ -35,6 +35,8 @@ import { recentMerges } from "../state/merges.ts";
 import { savePatch } from "../state/patches.ts";
 import { pruneUsage } from "../state/runs.ts";
 import { checkPlainFiles } from "../credentials/plain-files.ts";
+import { expiryEvents } from "../credentials/check.ts";
+import type { CredentialEntry } from "../credentials/catalogue.ts";
 import type { CredentialStore } from "../credentials/store.ts";
 import { sweepVolumes } from "./sweep.ts";
 import { HostMonitor } from "./host.ts";
@@ -60,6 +62,8 @@ export interface SchedulerDeps extends DriverDeps {
   serviceLog: ServiceLog;
   /** Spec 072: the store, the two configured plain-file paths and the credentials this process read from the store. */
   plainFiles?: { store: CredentialStore; paths: Partial<Record<"github-app-key" | "telegram-bot", string>>; fromStore: ReadonlySet<string> };
+  /** Spec 099 AC-3: the index reader of the hourly `credential_expiry` step. */
+  credentials?: { store: CredentialStore; catalogue: Record<string, CredentialEntry>; warnDays: number };
   inhibitor: SleepInhibitor;
   fastForward: () => Promise<{ moved: boolean; changedPaths: string[] }>;
   sleep: (ms: number) => Promise<void>;
@@ -133,6 +137,7 @@ export class Scheduler {
   #drive: DriveFn;
   #active = new Map<number, Promise<void>>();
   #plainFilesCheckedAt: number | null = null;
+  #expiryCheckedAt: number | null = null;
   #activeStanding = new Map<string,Promise<void>>();
   #stopping = false;
   #stopReason = "";
@@ -475,10 +480,12 @@ export class Scheduler {
     const d = this.#deps;
     if (rec.question_comment_id === null || rec.answer === null || rec.reply_comment_id === null) throw new Error("resuming record without its question or reply");
     const questionId = rec.question_comment_id;
+    const acted = await applyRequestAnswer(d, rec, rec.answer);
     if (!(await answeredEntry(d.paths, questionId))) {
       await appendQuestionLog(d.paths, {
         issue: rec.issue, at: d.now().toISOString(), event: "answered", asking_stage: rec.asking_stage,
-        question_comment_id: questionId, reply_comment_id: rec.reply_comment_id, answer: rec.answer, question: rec.question,channel:rec.telegram?.channel??'issue',
+        question_comment_id: questionId, reply_comment_id: rec.reply_comment_id, answer: acted.answer, question: rec.question,channel:rec.telegram?.channel??'issue',
+        ...(rec.question.request ? { request: rec.question.request } : {}), ...(acted.outcome ? { outcome: acted.outcome } : {}),
       });
     }
     // The closing comment carries a marker, so a close that failed after commenting does not comment again.
@@ -500,11 +507,15 @@ export class Scheduler {
     const d = this.#deps;
     if (rec.question_comment_id === null || rec.answer === null || rec.reply_comment_id === null) throw new Error("resuming record without its question or reply");
     const questionId = rec.question_comment_id;
+    // Spec 099 AC-5: the scheduler acts on a request's answer first; the stage receives the transformed text.
+    const acted = await applyRequestAnswer(d, rec, rec.answer);
+    const answerForStage = acted.answer;
     if (!(await answeredEntry(d.paths, questionId))) {
       // C8: the question text goes with the answer, for the review input of AC-10.
       await appendQuestionLog(d.paths, {
         issue: rec.issue, at: d.now().toISOString(), event: "answered", asking_stage: rec.asking_stage,
-        question_comment_id: questionId, reply_comment_id: rec.reply_comment_id, answer: rec.answer, question: rec.question,channel:rec.telegram?.channel??'issue',
+        question_comment_id: questionId, reply_comment_id: rec.reply_comment_id, answer: answerForStage, question: rec.question,channel:rec.telegram?.channel??'issue',
+        ...(rec.question.request ? { request: rec.question.request } : {}), ...(acted.outcome ? { outcome: acted.outcome } : {}),
       });
     }
     let claim = await readClaim(d.paths, rec.issue);
@@ -514,7 +525,7 @@ export class Scheduler {
         issue: rec.issue, state:{...rec.state,resumeSession:d.telegram?rec.session??null:null}, worktree: rec.session?.worktree??wt.path,
         telegram_thread:rec.telegram??null,
         started_at: d.now().toISOString(), last_activity_at: d.now().toISOString(), run_id: null,
-        pendingEvent: { type: "answered", answer: rec.answer, questionId },
+        pendingEvent: { type: "answered", answer: answerForStage, questionId },
       };
       await d.emitEvent?.('maintainer_reply',{issue:rec.issue,question_id:questionId});
       await writeClaim(d.paths, claim);
@@ -685,6 +696,16 @@ export class Scheduler {
         this.#plainFilesCheckedAt = d.now().getTime();
         await checkPlainFiles({ ...d.plainFiles, statePath: d.paths.plainFilesReminder, telegram: d.telegram ?? null, notifier: d.notifier, now: d.now, log: (rec) => d.serviceLog.write(rec) })
           .catch((e) => d.serviceLog.write({ kind: "plain-files-check-failed", error: (e as Error).message }));
+      }
+
+      // Spec 099 AC-3: the credential_expiry producer, at most hourly; reads the index only.
+      if (d.credentials && (this.#expiryCheckedAt === null || d.now().getTime() - this.#expiryCheckedAt >= 3_600_000)) {
+        this.#expiryCheckedAt = d.now().getTime();
+        try {
+          for (const payload of await expiryEvents({ ...d.credentials, statePath: d.paths.credentialsExpiryState, now: d.now })) await d.emitEvent?.("credential_expiry", payload);
+        } catch (e) {
+          info.errors.push(`credential expiry: ${(e as Error).message}`);
+        }
       }
 
       if(d.telegram)await this.#serializeQuestions(async()=>this.telegramAnswers.auditLateIssueReplies((await listClaims(d.paths)).map(c=>c.issue))).catch(()=>d.log({kind:'telegram-issue-audit-failed'}));

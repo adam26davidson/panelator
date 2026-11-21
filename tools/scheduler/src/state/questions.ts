@@ -4,6 +4,7 @@ import { record } from "../events/store.ts";
 import type { AskingStage, Question } from "../types.ts";
 import type { StatePaths } from "./paths.ts";
 
+export type RequestOutcome = "approved" | "denied" | "verified" | "check_failed" | "declined" | "text";
 export interface QuestionLogEntry {
   channel?: 'telegram'|'issue';
   telegram_message_id?: number;
@@ -17,6 +18,8 @@ export interface QuestionLogEntry {
   reasoning?: string;
   reply_comment_id?: number;
   answer?: string;
+  request?: Question["request"];
+  outcome?: RequestOutcome;
 }
 
 export async function appendQuestionLog(p: StatePaths, entry: QuestionLogEntry, contactText = ""): Promise<void> {

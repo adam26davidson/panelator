@@ -11,6 +11,10 @@ export interface AppClient {
   botLogin(): Promise<string>;
   /** `GET /app` with the App JWT; it mints no installation token (spec 069 AC-2). */
   appIdentity(): Promise<{ id: number; slug: string }>;
+  /** `GET /app/installations` with the App JWT (spec 099 AC-11); it mints no installation token. */
+  appInstallations(): Promise<{ id: number; repository_selection: string }[]>;
+  /** `GET /installation/repositories` with the installation token, every page (spec 099 AC-11). */
+  installationRepositories(): Promise<string[]>;
 }
 
 export const TOKEN_REFRESH_MS = 50 * 60_000;
@@ -23,6 +27,7 @@ export function createAppClient(cfg: Config["app"], privateKey: string, fetchFn:
   const app = new App({ appId: cfg.id, privateKey, Octokit: Octokit.defaults(defaults) });
   let installation: Octokit | null = null;
 
+  const installationOctokit = async () => (installation ??= await app.getInstallationOctokit(cfg.installation_id));
   const client: AppClient = {
     get octokit() {
       if (!installation) throw new Error("call installationToken() before using the client");
@@ -86,6 +91,15 @@ export function createAppClient(cfg: Config["app"], privateKey: string, fetchFn:
     async appIdentity() {
       const { data } = await app.octokit.request("GET /app");
       return data as { id: number; slug: string };
+    },
+    async appInstallations() {
+      const data = await app.octokit.paginate("GET /app/installations", { per_page: 100 });
+      return (data as { id: number; repository_selection: string }[]).map((i) => ({ id: i.id, repository_selection: i.repository_selection }));
+    },
+    async installationRepositories() {
+      const o = await installationOctokit();
+      const data = await o.paginate("GET /installation/repositories", { per_page: 100 });
+      return (data as { full_name: string }[]).map((r) => r.full_name);
     },
   };
   return client;

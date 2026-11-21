@@ -110,6 +110,11 @@ of this kind without one, is sent back once with the missing fields named in the
 asking again with the request completed is not asking the question again, whatever mode you
 are in. A second incomplete request is a failed run.
 
+**Reach of the App's token.** The App's installation token reaches `adam26davidson/panelator`
+only. A `404` or `403` from `gh` or `git` on another repository means ask first: raise a capability
+question with a `first_contact` request, and a write there also needs a `credential` request. The
+`gh` shim refuses nothing itself; GitHub answers.
+
 **Follow-up.** When the maintainer's answer is present but the reply asks for more detail
 or asks something back, do not guess: return verdict escalate with an `escalation` holding
 the follow-up question, with `"follow_up": true` and `"reply_quote"` set to the words of
