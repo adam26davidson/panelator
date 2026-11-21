@@ -118,6 +118,8 @@ describe('the repair turn (spec 025 AC-3 to AC-6)',()=>{
   expect(await readAgentState(w.paths,FILER)).toMatchObject({failures:0,last_run:{outcome:'failed'}});
   expect((await readJsonLines<{finding:{what:string}}>(w.paths.findingsQueue)).at(-1)?.finding.what).toBe('standing agent findings-filer failed twice: result: invalid');
   expect(w.notifications).toHaveLength(1);
+  expect(w.notifications[0]).toMatchObject({issue:0,gate:'standing',label:'findings-filer:failed:result: invalid',text:expect.stringMatching(/^Standing agent findings-filer failed twice: /)});
+  expect(w.clears).toEqual([]);
  },30000);
  it('a run that failed some other way gets no repair turn',async()=>{
   const w=await standingWorld({[FILER]:[undefined,good]});
@@ -191,5 +193,26 @@ describe('the event debounce through tick (spec 025 AC-12 to AC-15)',()=>{
   expect(filerRuns(w)).toHaveLength(2);expect((await readAgentState(w.paths,FILER))?.failures).toBe(1);
   w.setNow(new Date('2026-10-01T06:02:00Z'));await tick(w);
   expect(filerRuns(w)).toHaveLength(3);
+ },30000);
+});
+
+describe('the standing runner clears its conditions on an ok run (spec 102 AC-6)',()=>{
+ it('an ok run clears exactly the failure prefix and the outage label, a failed one clears nothing',async()=>{
+  const w=await standingWorld({[FILER]:[good]});
+  await queue(w);await tick(w);
+  expect(await readAgentState(w.paths,FILER)).toMatchObject({last_run:{outcome:'ok'}});
+  expect(w.clears).toEqual([{issue:0,gate:'standing',labelPrefix:'findings-filer:failed:'},{issue:0,gate:'infra',label:'findings-filer:outage'}]);
+  const f=await standingWorld({[FILER]:[unknownShape,unknownShape,unknownShape]});
+  await queue(f);await tick(f);await tick(f);
+  expect(await readAgentState(f.paths,FILER)).toMatchObject({last_run:{outcome:'failed'}});
+  expect(f.clears).toEqual([]);
+ },30000);
+ it('a clear that rejects leaves the run recorded ok and the error logged',async()=>{
+  const w=await standingWorld({[FILER]:[good]});
+  const logs:Record<string,unknown>[]=[];w.deps.log=r=>{logs.push(r as Record<string,unknown>);};
+  w.clearFails.v=true;
+  await queue(w);await tick(w);
+  expect(await readAgentState(w.paths,FILER)).toMatchObject({failures:0,last_run:{outcome:'ok'}});
+  expect(logs.filter(l=>l.kind==='error'&&l.agent===FILER&&String(l.error).startsWith('notify clear: '))).toHaveLength(2);
  },30000);
 });

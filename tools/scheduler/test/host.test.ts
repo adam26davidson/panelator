@@ -136,4 +136,33 @@ describe("HostMonitor", () => {
     expect(a.notes).toMatchObject([{ gate: "infra", issue: 0, label: "host" }]);
     expect(a.events).toMatchObject([["infra_alarm", { kind: "host_outage", cause: "EAI_AGAIN" }]]);
   });
+  it("clears its infra notice on the probe that resumes, only then (spec 102 AC-6)", async () => {
+    const clears: unknown[] = [];
+    let cause: string | null = "EAI_AGAIN";
+    const clock = { t: Date.parse("2026-11-01T00:00:00Z") };
+    const m = new HostMonitor({ paths: statePaths(root), now: () => new Date(clock.t), write: () => {}, notifier: { notify: async () => {}, clear: async (sel) => { clears.push(sel); } }, emitEvent: async () => {}, probe: async () => cause });
+    await m.beginTick();
+    expect(await m.probeIfDue()).toBe(false);
+    await m.onTransient("EAI_AGAIN", "boom");
+    clock.t = Date.parse(m.paused!.next_probe_at);
+    expect(await m.probeIfDue()).toBe(false);
+    expect(clears).toEqual([]);
+    cause = null;
+    clock.t = Date.parse(m.paused!.next_probe_at);
+    expect(await m.probeIfDue()).toBe(true);
+    expect(clears).toEqual([{ issue: 0, gate: "infra", label: "host" }]);
+  });
+  it("logs a clear that rejects and still resumes (spec 102 AC-6)", async () => {
+    const log: Record<string, unknown>[] = [];
+    let cause: string | null = "EAI_AGAIN";
+    const clock = { t: Date.parse("2026-11-01T00:00:00Z") };
+    const m = new HostMonitor({ paths: statePaths(root), now: () => new Date(clock.t), write: (r) => log.push(r), notifier: { notify: async () => {}, clear: async () => { throw new Error("nope"); } }, emitEvent: async () => {}, probe: async () => cause });
+    await m.beginTick();
+    await m.onTransient("EAI_AGAIN", "boom");
+    cause = null;
+    clock.t = Date.parse(m.paused!.next_probe_at);
+    expect(await m.probeIfDue()).toBe(true);
+    expect(log).toContainEqual({ kind: "error", error: "notify clear: nope" });
+    expect(m.paused).toBeNull();
+  });
 });

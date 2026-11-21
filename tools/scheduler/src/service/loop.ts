@@ -620,10 +620,20 @@ export class Scheduler {
     await sweepVolumes({ paths: d.paths, repoDir: d.repoDir, agentsDir: d.agentsDir, now: d.now, gh: d.gh, parameters: d.parameters, freeSpace: d.freeSpace, log: (rec) => d.serviceLog.write(rec), notifier: d.notifier, emitEvent: d.emitEvent, activeIssues: () => [...this.#active.keys()] }).catch((e) => info.errors.push(`sweep: ${(e as Error).message}`));
   }
 
+  /** Spec 102 AC-3: once per tick, send the notices the chat could not take; a failure is logged, never the tick's. */
+  async #flushNotices(): Promise<void> {
+    try {
+      await this.#deps.notifier.flush?.();
+    } catch (e) {
+      this.#deps.serviceLog.write({ kind: "error", error: `notify flush: ${(e as Error).message}` });
+    }
+  }
+
   /** Spec 100 AC-3: what a paused tick does: the notice if due, the usage prune and the volume sweep; nothing else. */
-  async #pausedTick(info: TickInfo): Promise<TickInfo> {
+  async #pausedTick(info: TickInfo, flushed = false): Promise<TickInfo> {
     const d = this.#deps;
     await d.host!.noticeIfDue().catch((e) => info.errors.push(`host notice: ${(e as Error).message}`));
+    if (!flushed) await this.#flushNotices();
     await pruneUsage(d.paths, d.now()).catch((e) => info.errors.push(`prune: ${(e as Error).message}`));
     await this.#sweep(info);
     return info;
@@ -644,6 +654,7 @@ export class Scheduler {
       await host.beginTick();
       await host.startupGap(d.cfg.poll_interval_s).catch((e) => d.log({ kind: "error", error: `host downtime: ${(e as Error).message}` }));
       if (host.paused && !(await host.probeIfDue())) return await this.#pausedTick(info);
+      await this.#flushNotices();
       const token = await readToken(d.paths).catch(() => null);
       if (token && new Date(token.expires_at).getTime() - d.now().getTime() < TOKEN_REFRESH_MARGIN_MS) await this.#refreshToken();
       let mainMoved = false;
@@ -661,7 +672,7 @@ export class Scheduler {
         info.errors.push(`freshness: ${(e as Error).message}`);
         // Spec 100 AC-2: a transient freshness failure with a failing host probe pauses the scheduler before any claim is read.
         const cause = transientCause(e);
-        if (cause !== null && (await host.onTransient(cause, (e as Error).message))) return await this.#pausedTick(info);
+        if (cause !== null && (await host.onTransient(cause, (e as Error).message))) return await this.#pausedTick(info, true);
       }
       // Spec 031 AC-3: the first tick after start and every move of main; a failure waits for the next move, never stops the tick.
       if (fresh && (this.#firstTick || mainMoved)) {

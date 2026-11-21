@@ -1195,6 +1195,93 @@ describe("Scheduler.tick: transient failures (spec 015)", () => {
     }, 60_000);
   });
 
+  describe("alerts reach the chat (spec 102 AC-3, AC-4)", () => {
+    it("flushes once per tick, paused or not, and a flush that rejects is logged, not the tick's", async () => {
+      const t = await outageSetup(async (_d, c) => c);
+      let flushes = 0;
+      let reject = false;
+      t.deps.notifier = { notify: async () => {}, flush: async () => { flushes++; if (reject) throw new Error("outbox broke"); return 0; } };
+      t.deps.host = undefined;
+      const s = new Scheduler(t.deps, { driveChain: async (_d, c) => c });
+      const w2 = watchTickErrors(s);
+      onTestFinished(() => w2.check());
+      await s.tick();
+      expect(flushes).toBe(1);
+      t.setProbe("EAI_AGAIN");
+      t.deps.fetchOrigin = async () => { throw dns(); };
+      w2.allow(/freshness/);
+      await s.tick();
+      await settle();
+      expect(flushes).toBe(2);
+      reject = true;
+      t.advance(30);
+      const info = await s.tick();
+      expect(flushes).toBe(3);
+      expect(info.errors).toEqual([]);
+      expect(serviceRecords(t.paths)).toContainEqual(expect.objectContaining({ kind: "error", error: "notify flush: outbox broke" }));
+    }, 60_000);
+
+    it("a host-pause notice queued while the chat is unreachable is sent once, marked cleared, by the tick that resumes; a start-up notice goes out on the first tick after the attach", async () => {
+      const { rateLimited } = await import("../src/notify/rate-limit.ts");
+      const { recordedNotifier } = await import("../src/notify/recorded.ts");
+      const { TelegramNotifier, readOutbox } = await import("../src/notify/telegram.ts");
+      const { LogNotifier } = await import("../src/notify/log.ts");
+      const t = await outageSetup(async (_d, c) => c);
+      const sent: string[] = [];
+      let mode: "off" | "reject" | "accept" = "reject";
+      const chan = { sendReply: async (text: string) => { if (mode === "reject") throw new Error("down"); sent.push(text); return 500 + sent.length; } } as unknown as import("../src/telegram/channel.ts").TelegramChannel;
+      const tn = TelegramNotifier(new LogNotifier(t.paths.serviceLog), { telegram: () => (mode === "off" ? null : chan), alertsPath: t.paths.telegramAlerts, outboxPath: t.paths.telegramOutbox, now: () => t.deps.now(), log: (r) => t.deps.serviceLog.write(r) });
+      t.deps.notifier = rateLimited(recordedNotifier(tn, t.paths, () => t.deps.now()), { hours: 4, repeatHours: 24, path: t.paths.notifySent }, () => t.deps.now());
+      t.deps.host = undefined;
+      let fetchFails = true;
+      t.deps.fetchOrigin = async () => { if (fetchFails) throw dns(); };
+      const s = new Scheduler(t.deps, { driveChain: async (_d, c) => c });
+      const w2 = watchTickErrors(s);
+      onTestFinished(() => w2.check());
+      w2.allow(/freshness/);
+      t.setProbe("EAI_AGAIN");
+      await s.tick();
+      await settle();
+      t.advance(30 * 3600);
+      await s.tick();
+      await s.tick();
+      const hostNotes = () => serviceRecords(t.paths).filter((r) => r.kind === "notify" && r.label === "host");
+      expect(hostNotes().map((r) => r.channel)).toEqual(["queued"]);
+      expect((await readOutbox(t.paths.telegramOutbox)).map((e) => e.identity)).toEqual(["0:infra:host"]);
+      expect(sent).toEqual([]);
+      t.advance(1800);
+      await s.tick();
+      expect(sent).toEqual([]);
+      // the chat takes messages again and the probe passes: the resuming tick sends it, once
+      mode = "accept";
+      fetchFails = false;
+      t.setProbe(null);
+      t.advance(1800);
+      await s.tick();
+      await settle();
+      expect(serviceRecords(t.paths).filter((r) => r.kind === "host-resumed")).toHaveLength(1);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatch(/^infra: host\nqueued \S+, cleared \S+\n\nThe scheduler is paused: the host cannot work \(EAI_AGAIN\)/);
+      expect(sent[0]).toContain("since ");
+      expect(await readOutbox(t.paths.telegramOutbox)).toEqual([]);
+      t.advance(30);
+      await s.tick();
+      expect(sent).toHaveLength(1);
+      // start-up: raised before the poller attaches the channel, sent on the first tick after it
+      mode = "off";
+      await t.deps.notifier.notify({ issue: 9, gate: "abandoned", label: "x", text: "gave up" });
+      expect((await readOutbox(t.paths.telegramOutbox)).map((e) => e.gate)).toEqual(["abandoned"]);
+      t.advance(30);
+      await s.tick();
+      expect(sent).toHaveLength(1);
+      mode = "accept";
+      t.advance(30);
+      await s.tick();
+      expect(sent).toHaveLength(2);
+      expect(sent[1]).toContain("abandoned: x #9");
+    }, 60_000);
+  });
+
   it("does not let liveness expire a claim that is retrying through an outage (AC-9)", async () => {
     const t = await outageSetup(async () => { throw dns(); });
     for (let i = 0; i < 4; i++) {
