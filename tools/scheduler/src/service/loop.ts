@@ -667,6 +667,8 @@ export class Scheduler {
         if (ff.moved && schedulerChanged(ff.changedPaths)) {
           this.#restartPending = true;
           info.restartPending = true;
+          // Spec 104 AC-1: from here no claim is resumed, so the next process counts this interval as downtime.
+          await host.markRestartPending().catch((e) => d.log({ kind: "error", error: `host restart pending: ${(e as Error).message}` }));
         }
       } catch (e) {
         info.errors.push(`freshness: ${(e as Error).message}`);
@@ -727,7 +729,9 @@ export class Scheduler {
         const claim = await readClaim(d.paths, rec.issue);
         if (claim && !this.#active.has(rec.issue) && claim.pendingEvent?.type !== "unblocked") await removeClaim(d.paths, rec.issue);
       }
-      for (const claim of await listClaims(d.paths)) {
+      // Spec 104 AC-3: with a restart pending no claim is resumed (below), so none is judged stalled; the next process
+      // counts the interval as downtime (AC-2).
+      if (!this.#restartPending) for (const claim of await listClaims(d.paths)) {
         if (this.#active.has(claim.issue) || pausedIssues.has(claim.issue) || carriesPending(claim)) continue;
         if (await this.#liveness(claim, info.errors)) info.released.push(claim.issue);
       }

@@ -22,10 +22,14 @@ export const HOST_NOTICE_MS = 2 * 3600_000;
 /** AC-6: downtime entries older than this are dropped. */
 export const DOWNTIME_KEEP_MS = 90 * 24 * 3600_000;
 
-export type DowntimeReason = "host" | "sleep" | "stopped";
+export type DowntimeReason = "host" | "sleep" | "stopped" | "restart";
 export interface Downtime { from: string; to: string; reason: DowntimeReason }
 export interface Paused { since: string; cause: string; probes: number; next_probe_at: string; notified: boolean }
-export interface HostState { paused: Paused | null; last_seen_at: string | null; downtime: Downtime[] }
+/**
+ * Spec 104: `restart_pending_since` is when this process's pending self-restart began; while it is pending the scheduler
+ * resumes no claim, so the next process records the interval as `restart` downtime.
+ */
+export interface HostState { paused: Paused | null; last_seen_at: string | null; downtime: Downtime[]; restart_pending_since?: string }
 
 const emptyState = (): HostState => ({ paused: null, last_seen_at: null, downtime: [] });
 
@@ -232,13 +236,30 @@ export class HostMonitor {
     await this.#save(withDowntime(s, { from: new Date(now.getTime() - sleptMs).toISOString(), to: now.toISOString(), reason: "sleep" }, now.getTime()));
   }
 
-  /** AC-6: on the first tick of a process, a gap since the last tick of the previous one is downtime. */
+  /** Spec 104 AC-1: the moment a self-restart became pending, kept for the next process; a later call keeps the first. */
+  async markRestartPending(): Promise<void> {
+    const s = await this.#state();
+    if (s.restart_pending_since) return;
+    await this.#save({ ...s, restart_pending_since: this.#d.now().toISOString() });
+  }
+
+  /**
+   * AC-6: on the first tick of a process, a gap since the last tick of the previous one is downtime. Spec 104 AC-2: so is
+   * the time the previous process spent with a restart pending, during which it resumed no claim.
+   */
   async startupGap(pollIntervalS: number): Promise<void> {
     if (!this.#first) return;
     this.#first = false;
-    const s = await this.#state();
-    if (!s.last_seen_at) return;
+    let s = await this.#state();
     const now = this.#d.now();
+    if (s.restart_pending_since) {
+      const { restart_pending_since: from, ...rest } = s;
+      const ms = now.getTime() - Date.parse(from);
+      s = ms > 0 ? withDowntime(rest, { from, to: now.toISOString(), reason: "restart" }, now.getTime()) : rest;
+      await this.#save(s);
+      if (ms > 0) this.#d.write({ kind: "downtime", from, to: now.toISOString(), ms, reason: "restart" });
+    }
+    if (!s.last_seen_at) return;
     const ms = now.getTime() - Date.parse(s.last_seen_at);
     if (ms <= 2 * pollIntervalS * 1000) return;
     const interval: Downtime = { from: s.last_seen_at, to: now.toISOString(), reason: "stopped" };

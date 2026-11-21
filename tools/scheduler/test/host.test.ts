@@ -91,6 +91,31 @@ describe("HostMonitor", () => {
     const m = new HostMonitor({ paths: statePaths(root), now: () => new Date(clock.t), write: (r) => log.push(r), notifier: { notify: async (n) => { notes.push(n); } }, emitEvent: async (e, p) => { events.push([e, p]); }, probe });
     return { m, log, notes, events, clock };
   };
+  it("keeps the first moment a restart became pending, and the next process records it as restart downtime and clears it (spec 104 AC-1, AC-2)", async () => {
+    const clock = { t: Date.parse("2026-11-01T00:00:00Z") };
+    const { m } = make(async () => null, clock);
+    await m.beginTick();
+    await m.markRestartPending();
+    clock.t += 600_000;
+    await m.markRestartPending();
+    expect((await readHostState(statePaths(root))).restart_pending_since).toBe("2026-11-01T00:00:00.000Z");
+    clock.t += 3600_000;
+    const next = make(async () => null, clock);
+    await next.m.beginTick();
+    await next.m.startupGap(60);
+    const s = await readHostState(statePaths(root));
+    expect(s.restart_pending_since).toBeUndefined();
+    expect(s.downtime).toEqual([{ from: "2026-11-01T00:00:00.000Z", to: "2026-11-01T01:10:00.000Z", reason: "restart" }]);
+    expect(next.log).toEqual([{ kind: "downtime", from: "2026-11-01T00:00:00.000Z", to: "2026-11-01T01:10:00.000Z", ms: 4200_000, reason: "restart" }]);
+    expect(next.m.downtimeMs("2026-10-31T23:00:00Z", "2026-11-01T02:00:00Z")).toBe(4200_000);
+  });
+  it("records no restart interval when none was pending", async () => {
+    const { m, log } = make(async () => null);
+    await m.beginTick();
+    await m.startupGap(60);
+    expect(log).toEqual([]);
+    expect((await readHostState(statePaths(root))).downtime).toEqual([]);
+  });
   it("probes at most once per tick", async () => {
     const probe = vi.fn(async () => null);
     const { m } = make(probe);

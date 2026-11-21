@@ -226,7 +226,7 @@ of a stamp is now minus the stamp minus the downtime between them.
   by its own rule; infra health treats it as spec 050 AC-3 says for a kind
   it does not act on). Nothing more is sent for the same pause, and nothing
   on resume.
-- AC-6. **The downtime log, and liveness counts running time only.**
+- AC-6. Amended by [104-pending-restart-is-downtime](../104-pending-restart-is-downtime/spec.md) AC-2: the reasons gain `restart`, the interval a previous process spent with a self-restart pending. **The downtime log, and liveness counts running time only.**
   `recordDowntime(paths, { from, to, reason })` appends to `host.json`'s
   `downtime` array (reasons `host`, `sleep`, `stopped`), dropping entries
   older than `DOWNTIME_KEEP_MS` (90 days). `downtimeBetween(log, from, to)`
