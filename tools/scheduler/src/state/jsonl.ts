@@ -20,7 +20,8 @@ const isEnoent=(e:unknown)=>(e as NodeJS.ErrnoException).code==='ENOENT';
 /** Collects what one read skipped or recovered, and reports it once. */
 class Tally {
  skipped=0;recovered=0;offsets:number[]=[];lines:number[]=[];
- constructor(readonly file:string,readonly opts:ReadOpts|undefined,readonly withLines:boolean) {}
+ readonly file:string;readonly opts:ReadOpts|undefined;readonly withLines:boolean;
+ constructor(file:string,opts:ReadOpts|undefined,withLines:boolean) {this.file=file;this.opts=opts;this.withLines=withLines;}
  add(kind:'skipped'|'recovered',offset:number,line?:number):void {
   this[kind]++;this.offsets.push(offset);if(line!==undefined)this.lines.push(line);
  }
