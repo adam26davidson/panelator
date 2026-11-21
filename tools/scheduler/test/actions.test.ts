@@ -8,7 +8,8 @@ import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
 import {ActionLog} from '../src/actions/log.ts';
 import {readAgentState,writeAgentState} from '../src/standing/state.ts';
 import {readJsonLines} from '../src/filer/input.ts';
-import {readdirSync,readFileSync,existsSync} from 'node:fs';
+import {readdirSync,readFileSync,existsSync,writeFileSync} from 'node:fs';
+import {validate} from '../src/schema/validate.ts';
 import {buildAuditInput} from '../src/standing/audit-input.ts';
 import {applyAction,KINDS,registryActionsCheck,loadActionLevels,type ActionContext} from '../src/actions/index.ts';
 it('logs allowed actions, refuses locks and permissions, undoes and recovers pending',async()=>{
@@ -80,4 +81,24 @@ it('refuses to log a malformed action row and records nothing (spec 086 AC-8)',a
  const before=readFileSync(paths.actionsLog,'utf8');
  await expect(log.settle(row.id,'applied',undefined,{kind:'k'} as never)).rejects.toThrow(/^invalid action log entry: \/undo must be null/);
  expect(readFileSync(paths.actionsLog,'utf8')).toBe(before);
+});
+
+it('markStalePending and the audit input survive a torn action log (spec 103 AC-5)',async()=>{
+ const paths=statePaths(await mkdtemp(join(tmpdir(),'actions-')));await ensureStateDirs(paths);
+ const log=new ActionLog(paths.actionsLog,paths);
+ const req={agent:'test',run_id:'run',kind:'set_parameter',args:{name:'system_work_share',value:0.5},why:'Adjust the balance of system work'};
+ const done=await log.writePending({...req,undo:null});await log.settle(done.id,'applied');
+ const NUL='\u0000',lines=readFileSync(paths.actionsLog,'utf8');
+ const pending={...done,id:'p1',status:'pending'};
+ writeFileSync(paths.actionsLog,NUL.repeat(6)+'\n'+lines+NUL.repeat(2)+JSON.stringify(pending)+'\n');
+ writeFileSync(paths.parametersHistory,NUL.repeat(3)+'\n'+JSON.stringify({name:'slots',value:2})+'\n');
+ const logged:Record<string,unknown>[]=[];
+ const input=await buildAuditInput(paths,null,new Date(),r=>logged.push(r));
+ expect((input.kinds as any).set_parameter.entries.map((e:any)=>e.id)).toEqual([done.id,'p1']);
+ expect(input.parameter_history).toEqual([{name:'slots',value:2}]);
+ expect(logged.map(r=>[r.file,r.skipped,r.recovered])).toEqual([[paths.actionsLog,1,1],[paths.parametersHistory,1,0]]);
+ expect(validate('audit-input',input)).toEqual({ok:true});
+ await log.markStalePending();
+ expect((await log.list()).find(x=>x.id==='p1')?.status).toBe('failed');
+ expect(readFileSync(paths.serviceLog,'utf8')).toContain('jsonl-skipped-lines');
 });

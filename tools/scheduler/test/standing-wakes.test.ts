@@ -1,6 +1,6 @@
 // Spec 025: the repair turn and the debounce on finding_queued wakes, through the real runner and tick.
 import {describe,it,expect} from 'vitest';
-import {mkdtempSync,readFileSync,readdirSync,writeFileSync} from 'node:fs';
+import {appendFileSync,mkdtempSync,readFileSync,readdirSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import type {StageRun} from '../src/adapters/types.ts';
@@ -191,5 +191,21 @@ describe('the event debounce through tick (spec 025 AC-12 to AC-15)',()=>{
   expect(filerRuns(w)).toHaveLength(2);expect((await readAgentState(w.paths,FILER))?.failures).toBe(1);
   w.setNow(new Date('2026-10-01T06:02:00Z'));await tick(w);
   expect(filerRuns(w)).toHaveLength(3);
+ },30000);
+});
+describe('a torn service log does not stop infra health (spec 103 AC-3)',()=>{
+ it('runs the agent over a NUL-only line and a NUL-prefixed record',async()=>{
+  const w=await standingWorld({'infra-health':[{summary:'all quiet'}]});
+  for(const name of ['findings-filer','action-audit','operator'])await writeAgentState(w.paths,name,{...(await readAgentState(w.paths,name))!,paused:true,paused_by:'maintainer'});
+  await writeAgentState(w.paths,'infra-health',{...(await readAgentState(w.paths,'infra-health'))!,paused:false,paused_by:null});
+  w.setNow(new Date('2026-10-01T07:00:00Z'));
+  const logged:Record<string,unknown>[]=[];w.deps.log=r=>{logged.push(r);};
+  const at=w.deps.now().toISOString(),NUL='\u0000';
+  appendFileSync(w.paths.serviceLog,NUL.repeat(12)+'\n'+NUL.repeat(3)+JSON.stringify({at,kind:'stopped',reason:'telegram connected'})+'\n');
+  await tick(w);
+  expect(w.adapter.ran).toContain('infra-health');
+  expect(logged.filter(r=>r.kind==='standing-error')).toEqual([]);
+  expect(logged.filter(r=>r.kind==='jsonl-skipped-lines'&&r.file===w.paths.serviceLog)).toHaveLength(1);
+  expect((await readAgentState(w.paths,'infra-health'))?.last_run?.outcome).toBe('ok');
  },30000);
 });

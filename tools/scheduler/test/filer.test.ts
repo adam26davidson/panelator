@@ -655,3 +655,17 @@ describe('066 AC-6: a rewrite re-points the issues blocked on what it supersedes
   expect(earlier.gh.createIssue.mock.calls[0][2]).toContain('blocked');
  });
 });
+
+it('builds the input and applies decisions over a torn queue and triage log (spec 103 AC-5)',async()=>{
+ const {paths,d}=await setup();const logged:Record<string,unknown>[]=[];d.log=r=>logged.push(r);
+ const NUL='\u0000',rec=(n:number)=>JSON.stringify({finding:{...finding,what:String(n)}});
+ await appendFile(paths.findingsQueue,[rec(1),NUL.repeat(8),rec(3),NUL.repeat(4)+rec(4),rec(5)].join('\n')+'\n');
+ const row=(ref:string)=>JSON.stringify({ref,outcome:'discard',reason:'r',run_id:'x',at:'2026-10-26T00:00:00Z'});
+ await appendFile(paths.findingsTriage,[row('1'),NUL.repeat(3),row('3')].join('\n')+'\n');
+ const input=await buildFilerInput(d);
+ expect(input.records.map(r=>r.ref)).toEqual(['4','5']);expect(input.records[0].finding.what).toBe('4');expect(input.cursor).toBe(1);
+ expect(logged.filter(r=>r.kind==='jsonl-skipped-lines').map(r=>[String(r.file).endsWith('triage.jsonl')||r.file===paths.findingsTriage,r.skipped,r.recovered])).toEqual([[false,1,1],[true,1,0]]);
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:input.records.map(r=>({ref:r.ref,outcome:'discard',reason:'not an issue'}))});
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).map(t=>t.ref)).toEqual(['1','3','4','5']);
+ expect(JSON.parse(await readFile(paths.findingsCursor,'utf8')).line).toBe(1);
+});
