@@ -162,7 +162,7 @@ export class Scheduler {
       onFindingsQueued(deps.paths,(count,offset,exclude)=>emit(deps.paths,deps.registry!,'finding_queued',{count,offset},deps.now(),exclude));
     }
     // Spec 100: the monitor the loop, the driver and the standing runner share; without a probe the host always passes.
-    deps.host ??= new HostMonitor({ paths: deps.paths, now: deps.now, write: (rec) => deps.serviceLog.write(rec), notifier: deps.notifier, emitEvent: (event, payload, exclude) => deps.emitEvent?.(event, payload, exclude) ?? Promise.resolve(), probe: deps.probeHost ?? (() => Promise.resolve(null)) });
+    deps.host ??= new HostMonitor({ paths: deps.paths, now: () => deps.now(), write: (rec) => deps.serviceLog.write(rec), notifier: deps.notifier, emitEvent: (event, payload, exclude) => deps.emitEvent?.(event, payload, exclude) ?? Promise.resolve(), probe: deps.probeHost ?? (() => Promise.resolve(null)) });
     this.#drive = opts.driveChain ?? defaultDriveChain;
   }
 
