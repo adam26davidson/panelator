@@ -8,7 +8,7 @@ import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
 import {ActionLog} from '../src/actions/log.ts';
 import {readAgentState,writeAgentState} from '../src/standing/state.ts';
 import {readJsonLines} from '../src/filer/input.ts';
-import {readdirSync,readFileSync,existsSync} from 'node:fs';
+import {readdirSync,readFileSync,existsSync,writeFileSync} from 'node:fs';
 import {buildAuditInput} from '../src/standing/audit-input.ts';
 import {applyAction,KINDS,registryActionsCheck,loadActionLevels,type ActionContext} from '../src/actions/index.ts';
 it('logs allowed actions, refuses locks and permissions, undoes and recovers pending',async()=>{
@@ -80,4 +80,15 @@ it('refuses to log a malformed action row and records nothing (spec 086 AC-8)',a
  const before=readFileSync(paths.actionsLog,'utf8');
  await expect(log.settle(row.id,'applied',undefined,{kind:'k'} as never)).rejects.toThrow(/^invalid action log entry: \/undo must be null/);
  expect(readFileSync(paths.actionsLog,'utf8')).toBe(before);
+});
+
+it('settles a pending row that follows a torn line and reports the torn line (spec 103 AC-5)',async()=>{
+ const paths=statePaths(await mkdtemp(join(tmpdir(),'actions-')));await ensureStateDirs(paths);
+ const log=new ActionLog(paths.actionsLog,paths);
+ writeFileSync(paths.actionsLog,'\u0000'.repeat(25)+'\n');
+ const pending=await log.writePending({agent:'test',run_id:'run',kind:'set_parameter',args:{name:'system_work_share',value:0.5},why:'Adjust the balance of system work',undo:null});
+ await log.markStalePending();
+ expect((await log.list()).find(x=>x.id===pending.id)?.status).toBe('failed');
+ const reports=(await readJsonLines<{kind:string;file:string}>(paths.serviceLog)).filter(r=>r.kind==='jsonl-skipped-lines');
+ expect(reports.length).toBeGreaterThan(0);expect(reports.every(r=>r.file===paths.actionsLog)).toBe(true);
 });

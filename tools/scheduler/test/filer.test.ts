@@ -655,3 +655,18 @@ describe('066 AC-6: a rewrite re-points the issues blocked on what it supersedes
   expect(earlier.gh.createIssue.mock.calls[0][2]).toContain('blocked');
  });
 });
+
+it('offers the records after a hole and a recovered record, and the cursor stops before the hole (spec 103 AC-5)',async()=>{
+ const {paths,d,gh}=await setup();const NUL='\u0000'.repeat(30),rec=(what:string)=>JSON.stringify({finding:{...finding,what}});
+ await appendFile(paths.findingsQueue,[rec('one'),NUL,rec('three'),NUL+rec('four'),rec('five')].map(l=>l+'\n').join(''));
+ const row=(ref:string)=>JSON.stringify({ref,outcome:'discard',reason:'r',run_id:'x',at:'2026-10-26T00:00:00Z'})+'\n';
+ await appendFile(paths.findingsTriage,NUL+'\n'+row('1')+row('3'));
+ const logs:Record<string,unknown>[]=[];d.log=r=>{logs.push(r);};
+ const input=await buildFilerInput(d);
+ expect(input.records.map(r=>r.ref)).toEqual(['4','5']);expect(input.records[0].finding.what).toBe('four');expect(input.cursor).toBe(1);
+ const reports=logs.filter(l=>l.kind==='jsonl-skipped-lines');
+ expect(reports.map(r=>[r.file,r.skipped,r.recovered])).toEqual([[paths.findingsQueue,1,1],[paths.findingsTriage,1,0]]);
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:input.records.map(r=>({ref:r.ref,outcome:'discard' as const,reason:'not an issue'}))});
+ expect(JSON.parse(await readFile(paths.findingsCursor,'utf8')).line).toBe(1);
+ const again=await buildFilerInput(d);expect(again.records).toEqual([]);expect(gh.createIssue).not.toHaveBeenCalled();
+});
