@@ -178,7 +178,7 @@ claim is the record of its consecutive transient failures.
   `MAX_CHAIN_FAILURES` genuine failures in a row the `chain_error` event is
   raised as spec 006 AC-7 ("Repeated chain errors") says. Transient failures between genuine ones
   neither count nor reset the count.
-- AC-8. Amended by [059-full-disk-postpones-runs](../059-full-disk-postpones-runs/spec.md) AC-4: an outage whose cause is `ENOSPC` alarms on its first failure, with kind `disk_full`. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-1: the `infra_alarm` payload gains `kind: "network_outage"`. **A long outage raises one alarm.** Given an outage whose `since`
+- AC-8. Amended by [100-host-outage-pauses-scheduler](../100-host-outage-pauses-scheduler/spec.md) AC-8: the outage's age is its active age (downtime subtracted). Amended by [059-full-disk-postpones-runs](../059-full-disk-postpones-runs/spec.md) AC-4: an outage whose cause is `ENOSPC` alarms on its first failure, with kind `disk_full`. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-1: the `infra_alarm` payload gains `kind: "network_outage"`. **A long outage raises one alarm.** Given an outage whose `since`
   is two hours or more before a transient failure and `alarmed` false, then
   the loop sets `alarmed`, logs `{ kind: "transient-outage-alarm", issue,
   since, failures, cause }`, appends one finding (`what: "network outage
@@ -229,7 +229,7 @@ claim is the record of its consecutive transient failures.
   - the same chain with a genuine error thrown three times: `chain_error`
     and a release, as today, with implement run once and its recorded
     result re-checked twice.
-- AC-13. **An outage has a ceiling.** Given an outage whose `since` is 24
+- AC-13. Amended by [100-host-outage-pauses-scheduler](../100-host-outage-pauses-scheduler/spec.md) AC-2 and AC-8: a failure the host probe refuses is not recorded on the outage, the outage's age is its active age, and the finding names the passing probe. **An outage has a ceiling.** Given an outage whose `since` is 24
   hours or more (`OUTAGE_CEILING_MS`) before a transient failure, then the
   failure is recorded in `outage.past_ceiling: { since, failures }`. The
   outage's age is wall-clock time and counts a laptop asleep, so failures

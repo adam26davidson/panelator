@@ -146,7 +146,7 @@ transient failures, kept in its state file (AC-2).
   names `ECONNRESET` (genuine), a 429 (spec 013's path, asserted by the
   existing tests), `exit 1` (genuine) and a GitHub 404 thrown while applying
   a filer result (genuine).
-- AC-2. **A transient failure postpones the agent and counts nothing.** Given
+- AC-2. Amended by [100-host-outage-pauses-scheduler](../100-host-outage-pauses-scheduler/spec.md) AC-2: a transient failure the host probe refuses pauses the scheduler instead of postponing the agent. **A transient failure postpones the agent and counts nothing.** Given
   a due standing agent whose attempt fails transiently, then its state gets
   `postponed_until` set to now plus `outageBackoffS(count)` (60 s, doubling
   per consecutive transient failure, capped at 1800 s, spec 015 AC-5) and
@@ -193,7 +193,7 @@ transient failures, kept in its state file (AC-2).
   emitter is configured. Later failures of the same outage raise nothing
   more. The alarm is per agent per outage: two agents in the same outage each
   raise one.
-- AC-6. **An outage has a ceiling.** Given a transient failure whose outage's
+- AC-6. Amended by [100-host-outage-pauses-scheduler](../100-host-outage-pauses-scheduler/spec.md) AC-8: the outage's age is its active age (downtime subtracted). **An outage has a ceiling.** Given a transient failure whose outage's
   `since` is `OUTAGE_CEILING_MS` (24 hours, spec 015 AC-13) or more before
   now, then the failure is recorded in `outage.past_ceiling: { since,
   failures }`. Failures past the ceiling count as genuine only from the one
