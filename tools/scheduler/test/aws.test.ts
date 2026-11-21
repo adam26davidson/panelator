@@ -453,7 +453,7 @@ const lambda = (up: number, down: number, id = "panelator-console-api", conc = [
 });
 
 describe("the scale descriptor (spec 068 AC-6)", () => {
-  const withScale = (scale: unknown, usd = 6) => ({ ...ask("console api functions for the console", usd), scale } as never);
+  const withScale = (scale: unknown, usd = 6) => ({ ...ask("console api functions for the console", usd), scale } as any);
   it("is written with state up for each kind, and a reservation without one is unchanged", async () => {
     const w = await awsWorld();
     const cf = { kind: "cloudfront-distribution", id: "E123", up: { expected_monthly_usd: 3, setting: { enabled: true } }, down: { expected_monthly_usd: 1, setting: { enabled: false } } };

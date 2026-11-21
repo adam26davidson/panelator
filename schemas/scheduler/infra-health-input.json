@@ -9,8 +9,33 @@
     "free_space": { "type": "array" },
     "agents": { "type": "object" },
     "service_log": { "type": "array" },
-    "actions": { "type": "array" }
+    "actions": { "type": "array" },
+    "aws": {
+      "type": "object",
+      "required": ["on", "cap_usd", "cost", "reservations"],
+      "properties": {
+        "on": { "type": "boolean" },
+        "off_reason": { "type": "string" },
+        "cap_usd": { "type": "number", "minimum": 0 },
+        "cost": { "type": ["object", "null"] },
+        "reservations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "what", "expected_monthly_usd", "by", "at"],
+            "properties": {
+              "id": { "type": "string" },
+              "what": { "type": "string" },
+              "expected_monthly_usd": { "type": "number" },
+              "by": { "type": "string" },
+              "at": { "type": "string" },
+              "scale": { "type": "object" }
+            }
+          }
+        }
+      }
+    }
   },
-  "required": ["since", "events", "disk_sweep", "free_space", "agents", "service_log", "actions"],
+  "required": ["since", "events", "disk_sweep", "free_space", "agents", "service_log", "actions", "aws"],
   "additionalProperties": true
 }
