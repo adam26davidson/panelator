@@ -42,6 +42,7 @@ import {credCommand} from '../src/credentials/commands.ts';
 import {awsCli} from '../src/aws/cli.ts';
 import {newAwsState,type AwsContext} from '../src/aws/context.ts';
 import {awsCheck,awsPull,awsStatus} from '../src/aws/check.ts';
+import {ssoExpiry,ssoExpiryText} from '../src/aws/sso.ts';
 import {emit} from '../src/standing/events.ts';
 import {loadMetricDefinitions,assertReadOnlySelect} from '../src/metrics/definitions.ts';
 import {computeMetrics,historyRange,recordSnapshot,weekStart} from '../src/metrics/compute.ts';
@@ -124,6 +125,15 @@ if(args[0]==='quota') {
   const {readBook,quotaSummary}=await import('../src/quota/book.ts');
   const book=await readBook(paths);
   console.log(JSON.stringify({...book,summary:await quotaSummary(paths,new Date())},null,2));
+  process.exit(0);
+}
+if(args[0]==='aws'&&args[1]==='sso-expiry') {
+  // Spec 068 AC-2: the SSO session's expiry from the CLI's cache; only expiresAt is read, and no aws is spawned.
+  const profile=flag('--profile')??process.env.AWS_PROFILE??cfg.aws?.profile;
+  if(!profile){console.error('no profile: pass --profile, set AWS_PROFILE, or add an aws block to agents/scheduler.yaml');process.exit(1);}
+  const r=ssoExpiry(profile);
+  if('error' in r){console.error(r.error);process.exit(1);}
+  console.log(ssoExpiryText(r));
   process.exit(0);
 }
 if(args[0]==='aws-check'||args[0]==='aws') {

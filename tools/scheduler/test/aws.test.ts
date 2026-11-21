@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { awsCheck, awsPull, awsStatus } from "../src/aws/check.ts";
+import { ssoExpiry } from "../src/aws/sso.ts";
 import { redact } from "../src/aws/cli.ts";
 import { awsTick, pull } from "../src/aws/cost.ts";
 import { forecastUsd } from "../src/aws/book.ts";
@@ -347,7 +348,7 @@ describe("the commands (spec 022 AC-3, AC-10; spec 050 AC-6 to AC-8)", () => {
   it("aws-check prints identity, cost, cap and the SSO expiry, and exits 0 only when both calls succeed", async () => {
     const w = await awsWorld();
     w.setCost(12.5);
-    const out = await awsCheck(w.ctx, home(sso, "2027-01-01T00:00:00Z"));
+    const out = await awsCheck(w.ctx, { HOME: home(sso, "2027-01-01T00:00:00Z") });
     expect(out.exitCode).toBe(0);
     const text = out.lines.join("\n");
     expect(text).toContain(`(account ${ACCOUNT})`);
@@ -357,16 +358,16 @@ describe("the commands (spec 022 AC-3, AC-10; spec 050 AC-6 to AC-8)", () => {
     expect(text).toContain("sso session expires: 2027-01-01T00:00:00Z");
     expect(text).not.toContain("SSOSECRET");
     w.fail("ce", true);
-    expect((await awsCheck(w.ctx, home("[profile panelator-delivery]\nregion = us-east-2\n"))).exitCode).toBe(1);
-    expect((await awsCheck(w.ctx, home("[profile panelator-delivery]\nregion = us-east-2\n"))).lines.join("\n")).toContain("not SSO");
+    expect((await awsCheck(w.ctx, { HOME: home("[profile panelator-delivery]\nregion = us-east-2\n") })).exitCode).toBe(1);
+    expect((await awsCheck(w.ctx, { HOME: home("[profile panelator-delivery]\nregion = us-east-2\n") })).lines.join("\n")).toContain("not SSO");
   });
 
   it("aws-check exits 1 for another account, and at cap 0 skips the cost call and exits 0 on a match", async () => {
     const w = await awsWorld();
     w.setIdentity("999999999999");
-    expect((await awsCheck(w.ctx, home(sso))).exitCode).toBe(1);
+    expect((await awsCheck(w.ctx, { HOME: home(sso) })).exitCode).toBe(1);
     const z = await awsWorld({ cap: 0 });
-    const out = await awsCheck(z.ctx, home(sso));
+    const out = await awsCheck(z.ctx, { HOME: home(sso) });
     expect(out.exitCode).toBe(0);
     expect(out.lines).toContain("cost call skipped: aws_cap_usd is 0; panelator-scheduler aws pull makes one (about one cent)");
     expect(ceCalls(z)).toEqual([]);
@@ -404,5 +405,37 @@ describe("what the AWS code may and may not do (spec 022 AC-1, AC-6, AC-11; spec
   it("never sets a parameter and adds no action kind", () => {
     for (const f of all.filter((f) => relative(srcDir, f).startsWith("aws/"))) expect(readFileSync(f, "utf8"), f).not.toMatch(/setParameter|setParameterMode/);
     expect(readFileSync(join(srcDir, "..", "..", "..", "agents", "actions.yaml"), "utf8")).not.toMatch(/aws/i);
+  });
+});
+
+describe("ssoExpiry (spec 068 AC-2)", () => {
+  const FIX = join(import.meta.dirname, "fixtures", "aws-home");
+  const env = { HOME: FIX };
+  it("reads expiresAt for an sso_session profile and for a legacy start URL, and says none for a plain profile", () => {
+    expect(ssoExpiry("panelator-delivery", env)).toEqual({ expires_at: "2027-01-01T00:00:00Z" });
+    expect(ssoExpiry("legacy", env)).toEqual({ expires_at: "2027-02-01T00:00:00Z" });
+    expect(ssoExpiry("plain", env)).toEqual({ none: true });
+  });
+  it("errors for a missing profile, config file, cache file or expiresAt", () => {
+    expect(ssoExpiry("nope", env)).toEqual({ error: `no profile nope in ${join(FIX, ".aws", "config")}` });
+    expect(ssoExpiry("x", { HOME: join(FIX, "absent") })).toMatchObject({ error: expect.stringContaining("no profile x in") });
+    const dir = join(tmpdir(), `sso-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    const cfg = join(dir, "config");
+    writeFileSync(cfg, "[profile p]\nsso_session = s\n");
+    const e = { AWS_CONFIG_FILE: cfg, AWS_SSO_CACHE_DIR: dir };
+    expect(ssoExpiry("p", e)).toEqual({ error: "no cached SSO token found (run aws sso login)" });
+    const file = join(dir, `${createHash("sha1").update("s").digest("hex")}.json`);
+    writeFileSync(file, "not json");
+    expect(ssoExpiry("p", e)).toEqual({ error: "no cached SSO token found (run aws sso login)" });
+    writeFileSync(file, JSON.stringify({ accessToken: "SSOSECRET" }));
+    expect(ssoExpiry("p", e)).toEqual({ error: "no expiresAt in the cached token" });
+    writeFileSync(file, JSON.stringify({ expiresAt: "garbage" }));
+    expect(ssoExpiry("p", e)).toEqual({ error: "no expiresAt in the cached token" });
+    writeFileSync(file, JSON.stringify({ expiresAt: "2030-05-05T00:00:00Z", accessToken: "SSOSECRET" }));
+    expect(ssoExpiry("p", e)).toEqual({ expires_at: "2030-05-05T00:00:00Z" });
+  });
+  it("never returns or prints the token", () => {
+    for (const p of ["panelator-delivery", "legacy", "plain", "nope"]) expect(JSON.stringify(ssoExpiry(p, env))).not.toContain("SSOSECRET");
   });
 });

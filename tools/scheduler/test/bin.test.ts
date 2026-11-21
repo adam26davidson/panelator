@@ -71,3 +71,30 @@ describe("bin/scheduler.ts configuration errors", () => {
     expect(readdirSync(join(r.stateDir, "agents")).sort()).toEqual(names);
   }, 30_000);
 });
+
+describe("panelator-scheduler aws sso-expiry (spec 068 AC-2)", () => {
+  const fixtureHome = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "aws-home");
+  function sso(extra: string[], env: Record<string, string> = {}) {
+    const root = mkdtempSync(join(tmpdir(), "bin-sso-"));
+    const config = join(root, "config.json");
+    writeFileSync(config, JSON.stringify({
+      repo: "o/r", maintainer: "m", state_dir: join(root, "state"),
+      app: { id: 1, installation_id: 1, private_key_path: join(root, "key.pem"), bot_login: "bot[bot]" },
+      credentials: { dir: join(root, "credentials") }, telegram: { credentials_path: join(root, "telegram.json") },
+    }));
+    const clean = { ...process.env, HOME: fixtureHome, ...env };
+    delete clean.AWS_PROFILE;
+    return spawnSync(process.execPath, [bin, "aws", "sso-expiry", ...extra, "--config", config], { encoding: "utf8", timeout: 25_000, env: { ...clean, ...env } });
+  }
+  it("prints the cached expiry, none for a non-SSO profile, and exits 1 with a reason otherwise", () => {
+    const ok = sso(["--profile", "panelator-delivery"]);
+    expect([ok.status, ok.stdout.trim(), ok.stderr]).toEqual([0, "2027-01-01T00:00:00Z", ""]); expect([ok.status, ok.stdout.trim()]).toEqual([0, "2027-01-01T00:00:00Z"]);
+    expect(ok.stdout + ok.stderr).not.toContain("SSOSECRET");
+    expect(sso([], { AWS_PROFILE: "legacy" }).stdout.trim()).toBe("2027-02-01T00:00:00Z");
+    expect(sso(["--profile", "plain"]).stdout.trim()).toBe("none");
+    const missing = sso(["--profile", "nope"]);
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toContain("no profile nope in");
+    expect(sso([]).status).toBe(1);
+  });
+});

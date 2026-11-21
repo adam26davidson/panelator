@@ -95,6 +95,14 @@ describe("catalogue (AC-1, AC-8)", () => {
   ])("fails loading for %s", (_n, fn, re) => {
     expect(mutate(fn)).toThrow(re);
   });
+  it("loads an optional renew_steps list (spec 068 AC-2) and rejects an empty one", () => {
+    const c = repoCatalogue();
+    expect(c["aws-sso"].renew_steps?.[0]).toContain("aws sso login --sso-session default");
+    expect(c["aws-sso"].renew_steps?.[1]).toContain("cred check aws-sso");
+    expect(c["github-app-key"].renew_steps).toBeUndefined();
+    expect(mutate((e) => { e[2].renew_steps = []; })).toThrow(/aws-sso/);
+    expect(mutate((e) => { e[2].renew_steps = ["x"]; })).not.toThrow();
+  });
   it("describes the index", async () => {
     const t = await setup();
     await t.store.writeSecret("github-app-key", keys.priv, "maintainer");
