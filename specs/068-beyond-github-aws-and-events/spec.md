@@ -331,7 +331,9 @@ section 2, second bullet)
   AC-7), then the `maintainer.contact` event spec 026 AC-2 records for the
   `sent` entry has `kind` equal to `request.type` (`credential`, `funds` or
   `first_contact`) instead of `question`, `label: "request"`, `text` the
-  rendered message, and `payload.request` the request object as sent; one
+  question's own text as spec 026 records it today (the question sentence the
+  driver passes; the request's fields are in `payload.request`, not
+  re-rendered into `text`), and `payload.request` the request object as sent; one
   event, not one for `question` and one for the type. Reminders stay `kind:
   reminder`. Given the answer (spec 030 AC-8, after the scheduler's own step
   and before the stage resumes), then one `maintainer.contact` event is
@@ -378,8 +380,8 @@ section 2, second bullet)
   the answer event, which shares the kind and the comment id, from being taken
   for the question. `groupContacts` needs nothing: it groups by `kind` and
   `label`, whatever they are. `reflection.test.ts` gains a sent credential
-  request that is still open and asserts its rendered text in
-  `open_questions`.
+  request that is still open and asserts its question text (the sentence
+  the send event carries) in `open_questions`.
 - AC-4. Amended by [102-scheduler-alerts-reach-telegram](../102-scheduler-alerts-reach-telegram/spec.md) AC-2: `channel` is also `queued` when the Telegram notifier held the notice for the channel's return. **A notification's event names the channel that carried it.**
   `Notifier.notify` resolves to `{ channel: "telegram" | "log" }`: the
   `LogNotifier` returns `log`; the `TelegramNotifier` of spec 030 AC-9
