@@ -230,7 +230,7 @@ section 2, second bullet)
   030 AC-7 and AC-8 is unchanged; the event is recorded beside it, by
   `src/state/questions.ts` for the send (where spec 026 section 5 put the
   `sent` contact) and by the pre-resume step of AC-8 for the answer.
-- AC-4. **A notification's event names the channel that carried it.**
+- AC-4. Amended by [102-scheduler-alerts-reach-telegram](../102-scheduler-alerts-reach-telegram/spec.md) AC-2: `channel` is also `queued` when the Telegram notifier held the notice for the channel's return. **A notification's event names the channel that carried it.**
   `Notifier.notify` resolves to `{ channel: "telegram" | "log" }`: the
   `LogNotifier` returns `log`; the `TelegramNotifier` of spec 030 AC-9
   returns `telegram` after a successful send and `log` when Telegram is off

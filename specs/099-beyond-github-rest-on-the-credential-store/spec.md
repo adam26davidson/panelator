@@ -201,7 +201,7 @@ AC-11 says.
 
 **Alerts** (spec 030 AC-9, AC-10)
 
-- AC-6. **Every notification reaches the chat.** Given Telegram on, then the
+- AC-6. Amended by [102-scheduler-alerts-reach-telegram](../102-scheduler-alerts-reach-telegram/spec.md) AC-2: a send that fails or finds Telegram off queues the notice in `telegram/outbox.json` and sends it when the channel is back instead of retrying nothing, and the `question` and `question-reminder` gates are not sent by the notifier (its AC-1). **Every notification reaches the chat.** Given Telegram on, then the
   service's notifier is `rateLimited(recordedNotifier(TelegramNotifier(LogNotifier)))`:
   the log line is written as today and the notification is sent to the chat
   as one message headed `<gate>: <label>` with `#<issue>` when the issue is
