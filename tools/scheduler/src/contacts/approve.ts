@@ -1,11 +1,11 @@
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { validate } from "../schema/validate.ts";
+import { validateSchema } from "../credentials/catalogue.ts";
 import type { StatePaths } from "../state/paths.ts";
 import { readParties, type Party } from "./gate.ts";
 
 export async function writeParties(paths: Pick<StatePaths, "contactsParties">, parties: Party[]): Promise<void> {
-  const v = validate("contacts", parties);
+  const v = validateSchema("contacts", parties);
   if (!v.ok) throw new Error(`invalid parties: ${v.errors.join("; ")}`);
   await mkdir(dirname(paths.contactsParties), { recursive: true });
   await writeFile(paths.contactsParties + ".tmp", JSON.stringify(parties, null, 2) + "\n");

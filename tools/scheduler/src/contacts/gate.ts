@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { validate } from "../schema/validate.ts";
+import { validateSchema } from "../credentials/catalogue.ts";
 import type { ParameterStore } from "../parameters/store.ts";
 import type { StatePaths } from "../state/paths.ts";
 
@@ -15,7 +15,7 @@ export async function readParties(paths: Pick<StatePaths, "contactsParties">): P
     throw e;
   }
   const data = JSON.parse(raw) as unknown;
-  const v = validate("contacts", data);
+  const v = validateSchema("contacts", data);
   if (!v.ok) throw new Error(`contacts/parties.json: ${v.errors.join("; ")}`);
   return data as Party[];
 }

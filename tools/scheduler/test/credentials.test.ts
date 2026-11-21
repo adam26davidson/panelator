@@ -9,14 +9,14 @@ import { applyAction, loadActionLevels, registryActionsCheck, KINDS, type Action
 import { ActionLog } from "../src/actions/log.ts";
 import { undoAction } from "../src/actions/undo.ts";
 import { agentsDir, defaultConfigPath, loadConfig } from "../src/config.ts";
-import { loadCatalogue, profileNames } from "../src/credentials/catalogue.ts";
+import { loadCatalogue, profileNames, validateSchema } from "../src/credentials/catalogue.ts";
+import { validate } from "../src/schema/validate.ts";
 import { runCheck, type CheckContext } from "../src/credentials/check.ts";
 import { credCommand } from "../src/credentials/commands.ts";
 import { appPrivateKey, appPrivateKeySource, CredentialStore } from "../src/credentials/store.ts";
 import { createAppClient } from "../src/github/auth.ts";
 import { loadParameterDefinitions } from "../src/parameters/definitions.ts";
 import { ParameterStore } from "../src/parameters/store.ts";
-import { validate } from "../src/schema/validate.ts";
 import { loadRegistry } from "../src/standing/registry.ts";
 import { EVENT_NAMES } from "../src/standing/events.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
@@ -417,7 +417,7 @@ describe("credential check input (spec 099 AC-12)", () => {
     expect(Object.keys(input.checks)).toEqual(["fake-token"]);
     expect(input.scope).toEqual({ status: "failed", reason: "also o/other" });
     expect(input.entries[0]).toMatchObject({ name: "fake-token", set: true, renew: "command", expiry: "probe" });
-    expect(validate("credential-check-input", input)).toEqual({ ok: true });
+    expect(validateSchema("credential-check-input", input)).toEqual({ ok: true });
     expect(JSON.stringify(input)).not.toContain(SECRET);
     expect(JSON.stringify(input)).not.toContain("plain");
     expect(readdirSync(t.paths.root)).toBeDefined();
@@ -426,8 +426,8 @@ describe("credential check input (spec 099 AC-12)", () => {
     const def = loadRegistry(join(agentsDir, "standing"), EVENT_NAMES, registryActionsCheck(join(agentsDir, "actions.yaml")))["credential-check"]!;
     expect(def).toMatchObject({ tier: "standard", worktree: "none", profile: "none", input: "credential-check-input", output: "credential-check-result", actions: ["renew_credential"], trigger: { schedule: "1d", events: ["credential_expiry"] } });
     expect(def.credentials ?? []).toEqual([]);
-    expect(validate("credential-check-result", { summary: "s", warnings: [{ name: "a", expires_at: null, steps: ["x"] }] })).toEqual({ ok: true });
-    expect(validate("credential-check-result", { summary: "s", warnings: [{ name: "a" }] })).toMatchObject({ ok: false });
+    expect(validateSchema("credential-check-result", { summary: "s", warnings: [{ name: "a", expires_at: null, steps: ["x"] }] })).toEqual({ ok: true });
+    expect(validateSchema("credential-check-result", { summary: "s", warnings: [{ name: "a" }] })).toMatchObject({ ok: false });
   });
 });
 

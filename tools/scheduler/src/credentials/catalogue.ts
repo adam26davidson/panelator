@@ -1,7 +1,38 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { validate } from "../schema/validate.ts";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import addFormatsModule from "ajv-formats";
+import { schemaDir, validate, type SchemaName, type Validation } from "../schema/validate.ts";
+
+const addFormats = addFormatsModule.default;
+
+/** The schemas spec 099 adds under schemas/scheduler/. They are registered here, beside the catalogue they describe, because
+ * schema/validate.ts's closed name list is outside spec 099's file scope; `validateSchema` serves both lists. */
+export const SPEC_099_SCHEMAS = ["profile", "contacts", "credential-check-input", "credential-check-result"] as const;
+export type Spec099Schema = (typeof SPEC_099_SCHEMAS)[number];
+
+let extra: Ajv2020 | null = null;
+function extraAjv(): Ajv2020 {
+  if (extra) return extra;
+  extra = new Ajv2020({ allErrors: true, strict: true });
+  addFormats(extra);
+  // credential-check-result.json extends standing-result.json, which refers to action.json and finding.json.
+  for (const name of [...SPEC_099_SCHEMAS, "standing-result", "action", "finding"]) {
+    extra.addSchema(JSON.parse(readFileSync(join(schemaDir, `${name}.json`), "utf8")), `${name}.json`);
+  }
+  return extra;
+}
+
+/** `validate` for every schema name: spec 099's four from the registry above, the rest from schema/validate.ts. */
+export function validateSchema(name: string, data: unknown): Validation {
+  if (!(SPEC_099_SCHEMAS as readonly string[]).includes(name)) return validate(name as SchemaName, data);
+  const fn = extraAjv().getSchema(`${name}.json`);
+  if (!fn) throw new Error(`unknown schema: ${name}`);
+  if (fn(data)) return { ok: true };
+  const errors = (fn.errors ?? []).map((e) => `${e.instancePath || "/"} ${e.message ?? ""}${Object.keys(e.params ?? {}).length ? " " + JSON.stringify(e.params) : ""}`.trim());
+  return { ok: false, errors };
+}
 
 export const BUILTINS = ["github-app", "telegram-get-me"] as const;
 export type Builtin = (typeof BUILTINS)[number];

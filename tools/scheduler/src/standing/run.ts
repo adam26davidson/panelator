@@ -5,10 +5,10 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {SCOPE_FIX} from '../contacts/scope.ts';
 import {buildCredentialCheckInput} from './credential-check-input.ts';
 import {readJsonFile,writeJsonAtomic} from '../credentials/check.ts';
+import {validateSchema} from '../credentials/catalogue.ts';
 import {entriesFor,type DriverDeps} from '../chain/driver.ts';
 import type {StandingDefinition,StageDefinition} from '../types.ts';
 import type {ParameterStore} from '../parameters/store.ts';
-import {validate,type SchemaName} from '../schema/validate.ts';
 import {runStage,type StageOutcome} from '../runner/run.ts';
 import {retryDecision,afterFallback} from '../runner/retry.ts';
 import {modelLimitFallback,planLaunch,quotaParams,readBook,waitAfterLimit} from '../quota/book.ts';
@@ -89,7 +89,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
   const input=reflectionInput??(def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now):def.input==='credential-check-input'&&d.checkContext&&d.catalogue?await buildCredentialCheckInput({paths:d.paths,catalogue:d.catalogue,probe:d.checkContext,warnDays:d.cfg.credentials.warn_days,scope:d.scope??(async()=>({status:'failed' as const,reason:'no scope check wired'})),now},received,state.last_run?.at??null):def.input==='infra-health-input'?await buildInfraHealthInput({paths:d.paths,freeSpace:d.freeSpace},received,state.last_run?.at??null,now):null);
   if(def.input==='credential-check-input'&&(input as {scope?:{status:string;reason?:string}}|null)?.scope?.status==='failed')await d.notifier.notify({issue:0,gate:'infra',label:'contact-scope',text:`${(input as {scope:{reason:string}}).scope.reason}; ${SCOPE_FIX}`}).catch(()=>{});
   const parameters=await d.parameters.all();
-  const inputCheck=validate(def.input as SchemaName,input??{events:received,since:state.last_run?.at??null,parameters});
+  const inputCheck=validateSchema(def.input,input??{events:received,since:state.last_run?.at??null,parameters});
   if(!inputCheck.ok)throw new Error(`standing input: ${inputCheck.errors.join('; ')}`);
   const profile=def.profile==='none'?null:resolveProfile(d.agentsDir,def.profile);
   // Standing agents have no write or GitHub tool, even when a profile normally supplies one.

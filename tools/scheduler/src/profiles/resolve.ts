@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 import type { Profile } from "../types.ts";
-import { validate } from "../schema/validate.ts";
+import { validateSchema } from "../credentials/catalogue.ts";
 
 export function listProfiles(agentsDir: string): string[] {
   return readdirSync(join(agentsDir, "profiles"), { withFileTypes: true })
@@ -22,7 +22,7 @@ export function resolveProfile(agentsDir: string, name: string): Profile {
   if (!/^[a-z][a-z0-9-]*$/.test(name) || !existsSync(join(dir, "profile.yaml"))) throw new Error(`unknown profile: ${name}`);
   const y = parse(readFileSync(join(dir, "profile.yaml"), "utf8")) as Record<string, unknown>;
   if (Object.hasOwn(y, "credential_hook")) throw new Error(`profile ${name}: unknown key credential_hook (use credentials: [<name>, ...])`);
-  const v = validate("profile", y);
+  const v = validateSchema("profile", y);
   if (!v.ok) throw new Error(`profile ${name}: ${v.errors.join("; ")}`);
   const tools = Array.isArray(y.tools) ? (y.tools as string[]) : [];
   const criteriaFile = typeof y.review_criteria === "string" ? y.review_criteria : null;

@@ -6,7 +6,6 @@ import { finished } from "node:stream/promises";
 import { JsonlSplitter } from "../adapters/jsonl.ts";
 import { normalizeFilerResult } from "../filer/normalize.ts";
 import type { Adapter, Judgement, RunOutcome, StageRun } from "../adapters/types.ts";
-import { validate, type SchemaName } from "../schema/validate.ts";
 import { renderReplyPrompt, renderPrompt, type StageInput } from "../stages/prompt.ts";
 import { appendFindings } from "../state/findings.ts";
 import type { StatePaths } from "../state/paths.ts";
@@ -15,7 +14,8 @@ import type { Harness, Profile, AgentDefinition, AgentStageName } from "../types
 import { renderStandingPrompt } from '../standing/registry.ts';
 import { stageEnv } from "./credentials.ts";
 import { writeShims } from "../credentials/shims.ts";
-import type { CredentialEntry } from "../credentials/catalogue.ts";
+import { validate } from "../schema/validate.ts";
+import { validateSchema, type CredentialEntry } from "../credentials/catalogue.ts";
 import { spawnBounded, type SpawnResult } from "./process.ts";
 import { linkProfileSkills } from "./skills.ts";
 import { observeRun, type Limit } from "../quota/book.ts";
@@ -217,7 +217,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
         parsed = JSON.parse(raw);
         // Spec 025 AC-2: the recorded shapes are put right first; result.json keeps what the model returned.
         if (req.def.output === "filer-result") ({ result: parsed, notes: normalised } = normalizeFilerResult(parsed));
-        const v = validate(req.def.output as SchemaName, parsed);
+        const v = validateSchema(req.def.output, parsed);
         // Spec 044 AC-1: the conversation shape is a result only for a conversation turn.
         if (v.ok && req.def.kind !== 'standing' && req.conversation !== true && typeof parsed === 'object' && parsed !== null && Object.hasOwn(parsed, 'conversation')) resultErrors = [OUTSIDE_CONVERSATION];
         else if (v.ok) result = parsed;
