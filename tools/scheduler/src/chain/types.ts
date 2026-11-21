@@ -87,6 +87,8 @@ export interface ChainState {
   checksRerun: boolean;
   /** Spec 060 AC-3: the PR head whose failed check was re-run once; a new head clears it. */
   checkRerun: string | null;
+  /** Spec 101 AC-4: the last fix for a failed required check returned the head unchanged without an `out_of_scope` verdict; the next fix's input says so. */
+  unchangedWithoutVerdict: boolean;
   /** Spec 060 AC-4: the block's condition while blocked; `blocks` counts this issue's blocks and is kept in the ledger. */
   blocked: { on: BlockCondition | null; since: string | null; check: string | null; main_sha: string | null; blocks: number } | null;
   /** Spec 011 AC-1, spec 040: the branch and head a stage left when its result carried a question, one entry per branch; an entry is kept until a PR is bound on its branch or the attempt is discarded. */
