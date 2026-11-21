@@ -2708,13 +2708,13 @@ describe('requests, alerts and the credential check (spec 099 section 6)', () =>
       w.deps.telegram = channel;
       const { TelegramNotifier } = await import('../src/notify/telegram.ts');
       const { LogNotifier } = await import('../src/notify/log.ts');
-      const notifier = TelegramNotifier(new LogNotifier(w.paths.serviceLog), { telegram: () => channel, alertsPath: w.paths.telegramAlerts, log: () => {} });
+      const notifier = TelegramNotifier(new LogNotifier(w.paths.serviceLog), { telegram: () => channel, alertsPath: w.paths.telegramAlerts, outboxPath: w.paths.telegramOutbox, now: () => new Date(), log: () => {} });
       expect(await notifier.notify({ issue: 0, gate: 'infra', label: 'disk', text: 'volume full' })).toEqual({ channel: 'telegram' });
       expect(server.sent[0]!.text).toBe('infra: disk\n\nvolume full');
       server.fail('sendMessage', 500);
-      expect(await notifier.notify({ issue: 0, gate: 'infra', label: 'disk2', text: 'again' })).toEqual({ channel: 'log' });
+      expect(await notifier.notify({ issue: 0, gate: 'infra', label: 'disk2', text: 'again' })).toEqual({ channel: 'queued' });
       const lines = readFileSync(w.paths.serviceLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-      expect(lines.filter((l) => l.kind === 'notify').map((l) => l.channel)).toEqual(['telegram', 'log']);
+      expect(lines.filter((l) => l.kind === 'notify').map((l) => l.channel)).toEqual(['telegram', 'queued']);
       const u = { update_id: 3, message: { message_id: 2000, date: Math.floor(Date.now() / 1000), chat: { id: 42 }, text: 'ok thanks', reply_to_message: { message_id: 1 } } };
       await w.scheduler.handleTelegramUpdate(u);
       expect(String(server.sent.at(-1)!.text)).toContain('Alerts take no reply');

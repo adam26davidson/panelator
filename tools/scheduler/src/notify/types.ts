@@ -8,8 +8,15 @@ export interface Notification {
 }
 
 /** Spec 099 AC-6: which channel carried the notification; `suppressed` is the rate limiter dropping it. */
-export interface NotifyResult { channel: "telegram" | "log" | "suppressed" }
+export interface NotifyResult { channel: "telegram" | "log" | "queued" | "suppressed" }
+
+/** Spec 102 AC-6: which sent entries (and queued notices) a clear re-arms: the issue and gate, and the label exactly or by prefix. */
+export interface ClearSelector { issue: number; gate: string; label?: string; labelPrefix?: string }
 
 export interface Notifier {
-  notify(n: Notification, extra?: { channel?: "telegram" | "log" }): Promise<NotifyResult | void>;
+  notify(n: Notification, extra?: { channel?: "telegram" | "log" | "queued" }): Promise<NotifyResult | void>;
+  /** Spec 102 AC-3: send the notices the chat could not take; resolves to the number sent. */
+  flush?(): Promise<number>;
+  /** Spec 102 AC-6: the condition cleared; the next notice of it is sent at once. */
+  clear?(sel: ClearSelector): Promise<void>;
 }
