@@ -13,10 +13,10 @@ const ok = async () => ({ bytes: 20 * GIB, inodes: 1e6 });
 
 describe("probeHost (spec 100 AC-1)", () => {
   it("passes when space is fine and both hosts answer, with HEAD, manual redirect and a timeout signal", async () => {
-    const fetch = vi.fn(async () => new Response(null, { status: 200 }));
+    const fetch = vi.fn(async (_u: string, _i?: RequestInit) => new Response(null, { status: 200 }));
     expect(await probeHost({ paths: statePaths(root), fetch: fetch as never, freeSpace: ok })).toBeNull();
     expect(fetch.mock.calls.map((c) => c[0])).toEqual(PROBE_HOSTS.map((h) => `https://${h}/`));
-    const init = fetch.mock.calls[0][1] as unknown as RequestInit;
+    const init = fetch.mock.calls[0][1]!;
     expect(init.method).toBe("HEAD");
     expect(init.redirect).toBe("manual");
     expect(init.signal).toBeInstanceOf(AbortSignal);

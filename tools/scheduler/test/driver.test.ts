@@ -212,6 +212,23 @@ describe("driveChain", () => {
     expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "review", attempt: c.state.attempt });
   }, 60_000);
 
+  it("a pending verify carries the downtime inside its window, so a long gap does not spend a fix (spec 100 AC-7)", async () => {
+    const run = async (host: DriverDeps["host"]) => {
+      const { deps, claim, sha } = await setup((sha) => ({ plan: [plan], implement: [impl(sha)] }), (sha) => ghRoutes(sha, { checks: [{ id: 1, name: "test", status: "in_progress", conclusion: null }] }));
+      deps.host = host;
+      const r = await driveChain(deps, claim, () => false);
+      expect(r.state.stage).toBe("verify");
+      const since = new Date(Date.now() - 7 * 3_600_000).toISOString();
+      const c: Claim = { ...r, state: { ...r.state, pendingSince: since } };
+      return (await step(deps, c)).claim.state;
+    };
+    const seen: [string, number][] = [];
+    const host = { downtimeMs: (from: string, to: number) => { seen.push([from, to]); return 6 * 3_600_000; } } as unknown as DriverDeps["host"];
+    expect(await run(host)).toMatchObject({ stage: "verify" });
+    expect(seen).toHaveLength(1);
+    expect(await run(undefined)).toMatchObject({ stage: "fix", checksRerun: true });
+  }, 60_000);
+
   it("waits on pending checks and starts fix with the failing log (AC-14)", async () => {
     const { deps, claim, sha } = await setup((sha) => ({ plan: [plan], implement: [impl(sha)] }), (sha) => ghRoutes(sha, { checks: [{ id: 1, name: "test", status: "in_progress", conclusion: null }] }));
     const r = await driveChain(deps, claim, () => false);

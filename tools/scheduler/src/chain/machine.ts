@@ -683,7 +683,8 @@ function verifyChecks(state: ChainState, event: Extract<ChainEvent, { type: "che
     // Spec 097 AC-1: GitHub runs no workflow on a PR that conflicts with main, so its checks are not waited on. The branch is
     // rebased and pushed (spec 060's rebase_push); a conflict comes back as spec 024's rebase_conflict, else verify polls again.
     if (event.conflicts) return { state: { ...checked, pendingSince: since }, actions: [{ type: "rebase_push" }, { type: "wait", seconds: PENDING_WAIT_S }] };
-    if (Date.parse(event.at) - Date.parse(since) < VERIFY_PENDING_MAX_H * 3_600_000) {
+    // Spec 100 AC-7: only time the scheduler was running and not paused counts.
+    if (Date.parse(event.at) - Date.parse(since) - (event.downtime_ms ?? 0) < VERIFY_PENDING_MAX_H * 3_600_000) {
       return { state: { ...checked, pendingSince: since }, actions: [{ type: "wait", seconds: PENDING_WAIT_S }] };
     }
     if (!checked.pr) throw new Error(`verify without a PR (issue ${state.issue})`);

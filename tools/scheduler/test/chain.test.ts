@@ -690,6 +690,15 @@ describe("chain: questions (AC-8, AC-12 to AC-15, AC-17)", () => {
     const r = transition(at("spec", { track: "spec", specMode: "write" }), specOk({ verdict: "question", question: q }));
     expect(r.state).toMatchObject({ stage: "question-check", askingStage: "spec", question: q, track: "spec", specMode: "write" });
   });
+  it("downtime inside the pending window does not count toward the six hours (spec 100 AC-7)", () => {
+    const pending = (at: string, downtime_ms?: number) => ({ type: "checks" as const, status: "pending" as const, sensitive: false, at, pending: ["ci/test"], ...(downtime_ms === undefined ? {} : { downtime_ms }) });
+    let r = transition(at("verify", { pr: pr3 }), pending(AT));
+    r = transition(r.state, pending(plusH(7), 6 * 3_600_000));
+    expect(r.actions).toEqual([{ type: "wait", seconds: 60 }]);
+    expect(r.state).toMatchObject({ stage: "verify", pendingSince: AT });
+    r = transition(r.state, pending(plusH(7), 0));
+    expect(r.actions[0]).toEqual({ type: "rerun_checks", sha: pr3.head_sha });
+  });
   it("checks pending six hours re-run and investigate first, then ask (AC-17)", () => {
     const pending = (at: string) => ({ type: "checks" as const, status: "pending" as const, sensitive: false, at, pending: ["ci/test", "ci/lint"] });
     let r = transition(at("verify", { pr: pr3 }), pending(AT));
