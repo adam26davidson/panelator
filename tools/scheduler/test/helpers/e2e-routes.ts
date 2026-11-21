@@ -8,7 +8,7 @@ import type { FreeSpace } from "../../src/runner/host-space.ts";
 import type { Adapter, StageRun } from "../../src/adapters/types.ts";
 import { agentsDir, defaultConfigPath, loadConfig } from "../../src/config.ts";
 import { GitHubClient } from "../../src/github/client.ts";
-import type { Notification } from "../../src/notify/types.ts";
+import type { ClearSelector, Notification } from "../../src/notify/types.ts";
 import { Scheduler, type SchedulerDeps } from "../../src/service/loop.ts";
 import { ServiceLog } from "../../src/service/log.ts";
 import { SleepInhibitor } from "../../src/service/inhibit.ts";
@@ -142,11 +142,11 @@ export async function standingWorld(results:Record<string,Scripted[]>,freeSpace:
     {method:'POST',path:/^\/repos\/o\/r\/security-advisories$/,reply:()=>({status:201,body:{ghsa_id:'GHSA-fixture'}})},
     {method:'GET',path:/^\/repos\/o\/r\/commits\/[^/]+\/check-runs$/,reply:()=>({body:{total_count:1,check_runs:[{id:1,name:'test',status:'completed',conclusion:'success'}]}})},
   ];
-  const mock=mockGitHub(routes),gh=new GitHubClient(new Octokit({auth:'x',request:{fetch:mock.fetch}}),'o/r'),adapter=scripted(results),notifications:Notification[]=[];
-  const deps:SchedulerDeps={cfg,paths,registry,parameters,gh,botLogin:BOT,notifier:recordedNotifier({notify:async n=>{notifications.push(n);}},paths),stages:loadStageDefinitions(join(agentsDir,'stages')),agentsDir,metrics:loadMetricDefinitions(join(agentsDir,'metrics')),repoDir:pair.repo,binDir:join(pair.root,'bin'),adapterFor:()=>adapter,systemdScope:false,now:()=>now,log:()=>{},freeSpace:(path)=>freeSpace(path),fetchOrigin:async()=>{},unitActive:async()=>false,stopUnit:async()=>{},serviceLog:new ServiceLog(paths.serviceLog),inhibitor:new SleepInhibitor({enabled:false}),fastForward:async()=>({moved:false,changedPaths:[]}),sleep:async()=>{},monotonic:()=>0,requestRestart:()=>{}};
+  const mock=mockGitHub(routes),gh=new GitHubClient(new Octokit({auth:'x',request:{fetch:mock.fetch}}),'o/r'),adapter=scripted(results),notifications:Notification[]=[],clears:ClearSelector[]=[],clearFails={v:false};
+  const deps:SchedulerDeps={cfg,paths,registry,parameters,gh,botLogin:BOT,notifier:recordedNotifier({notify:async n=>{notifications.push(n);},clear:async sel=>{if(clearFails.v)throw new Error('clear boom');clears.push(sel);}},paths),stages:loadStageDefinitions(join(agentsDir,'stages')),agentsDir,metrics:loadMetricDefinitions(join(agentsDir,'metrics')),repoDir:pair.repo,binDir:join(pair.root,'bin'),adapterFor:()=>adapter,systemdScope:false,now:()=>now,log:()=>{},freeSpace:(path)=>freeSpace(path),fetchOrigin:async()=>{},unitActive:async()=>false,stopUnit:async()=>{},serviceLog:new ServiceLog(paths.serviceLog),inhibitor:new SleepInhibitor({enabled:false}),fastForward:async()=>({moved:false,changedPaths:[]}),sleep:async()=>{},monotonic:()=>0,requestRestart:()=>{}};
   let probeCause:string|null=null;deps.probeHost=async()=>probeCause;
   const scheduler=new Scheduler(deps);
-  return {pair,paths,registry,parameters,deps,scheduler,adapter,mock,gh,issues,closed,hooks,comments,notifications,setNow:(value:Date)=>{now=value;},/** Spec 100: what the host probe reports from now on (null: the host can work). */setProbe:(cause:string|null)=>{probeCause=cause;}};
+  return {pair,paths,registry,parameters,deps,scheduler,adapter,mock,gh,issues,closed,hooks,comments,notifications,clears,clearFails,setNow:(value:Date)=>{now=value;},/** Spec 100: what the host probe reports from now on (null: the host can work). */setProbe:(cause:string|null)=>{probeCause=cause;}};
 }
 
 export interface MockPr { number: number; head: string; sha: string; body: string; state: "open" | "closed"; merged: boolean }
@@ -333,6 +333,7 @@ export async function chainWorld(opts: {
   const gh = mockGitHub(routes);
   const adapter = scripted(opts.results);
   const notifications: Notification[] = [];
+  const clears: ClearSelector[] = [];
   const logs: Record<string, unknown>[] = [];
   const registry=loadRegistry(join(agentsDir,'standing'),EVENT_NAMES,registryActionsCheck(join(agentsDir,'actions.yaml')));
   const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsDir,'parameters.yaml'),cfg,registry));
@@ -344,7 +345,7 @@ export async function chainWorld(opts: {
   await writeAgentState(paths,'infra-health',{...(await readAgentState(paths,'infra-health'))!,paused:true,paused_by:'maintainer'});
   const deps: SchedulerDeps = {
     cfg, paths, registry, parameters, gh: new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r"),
-    notifier: recordedNotifier({ notify: async (n) => { notifications.push(n); } }, paths),
+    notifier: recordedNotifier({ notify: async (n) => { notifications.push(n); }, clear: async (sel) => { clears.push(sel); } }, paths),
     stages: loadStageDefinitions(join(agentsDir, "stages")), agentsDir, repoDir: pair.repo, binDir: join(pair.root, "bin"),
     adapterFor: () => adapter, systemdScope: false, now: () => new Date(), log: (rec) => { logs.push(rec); },
     fetchOrigin: async () => { git(pair.repo, "fetch", "-q", "origin"); },
@@ -357,7 +358,7 @@ export async function chainWorld(opts: {
   const scheduler = new Scheduler(deps);
 
   return {
-    deps,scheduler,pair, paths, cfg, gh, filed, adapter, notifications, logs, labels, labelLog, comments, prComments, prs, addedByPr, mergeRequests,
+    deps,scheduler,pair, paths, cfg, gh, filed, adapter, notifications, clears, logs, labels, labelLog, comments, prComments, prs, addedByPr, mergeRequests,
     rerequested, rerunFailedJobs,
     /** Spec 060: what each commit's `test` check reports from now on. */
     setChecks(fn: (sha: string) => { status: string; conclusion: string | null }) { checkFor = fn; },

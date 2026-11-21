@@ -18,6 +18,8 @@ export interface Config {
   /** the strongest model, used for rescue attempts (spec 006 AC-1) */
   rescue_model: string;
   notify_rate_limit_hours: number;
+  /** Spec 102 AC-5: the collapse window of a lasting-condition gate. */
+  notify_repeat_hours: number;
   bounds: { design_revisions: number };
   /** check-run names the verify stage waits on; [] means every check run on the head SHA */
   required_checks: string[];
@@ -114,6 +116,7 @@ export function loadConfig(path: string): Config {
     reflection_max_issues: num("reflection_max_issues", 8),
     rescue_model: typeof raw.rescue_model === "string" && raw.rescue_model ? raw.rescue_model : "claude-fable-5-2",
     notify_rate_limit_hours: num("notify_rate_limit_hours", 4),
+    notify_repeat_hours: num("notify_repeat_hours", 24),
     bounds: { design_revisions: designRevisions },
     required_checks: Array.isArray(raw.required_checks) ? (raw.required_checks as string[]) : [],
     state_dir: expandHome(String(raw.state_dir ?? "~/.local/state/panelator-scheduler")),

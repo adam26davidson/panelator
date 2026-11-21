@@ -83,7 +83,7 @@ await initializeAgents(paths,registry,parameters,new Date());
 const actionLog=new ActionLog(paths.actionsLog,paths);
 // Spec 099 AC-6: one chain for every notification; the poller attaches the Telegram channel once it is up.
 let attachedTelegram:TelegramChannel|null=null;
-const notifier=rateLimited(recordedNotifier(TelegramNotifier(new LogNotifier(paths.serviceLog),{telegram:()=>attachedTelegram,alertsPath:paths.telegramAlerts,log:rec=>serviceLog.write(rec)}),paths),cfg.notify_rate_limit_hours);
+const notifier=rateLimited(recordedNotifier(TelegramNotifier(new LogNotifier(paths.serviceLog),{telegram:()=>attachedTelegram,alertsPath:paths.telegramAlerts,outboxPath:paths.telegramOutbox,now:()=>new Date(),log:rec=>serviceLog.write(rec)}),paths),{hours:cfg.notify_rate_limit_hours,repeatHours:cfg.notify_repeat_hours,path:paths.notifySent});
 const awsContext:AwsContext={config:cfg.aws,paths,cli:cfg.aws?awsCli(cfg.aws):undefined,parameters,
  notifier,notifyHours:cfg.notify_rate_limit_hours,
  now:()=>new Date(),log:rec=>serviceLog.write(rec),emitEvent:(event,payload)=>emit(paths,registry,event,payload,new Date()),state:newAwsState()};

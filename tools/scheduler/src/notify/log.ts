@@ -8,7 +8,7 @@ export class LogNotifier implements Notifier {
   constructor(logPath: string) {
     this.path = logPath;
   }
-  async notify(n: Notification, extra?: { channel?: "telegram" | "log" }): Promise<NotifyResult> {
+  async notify(n: Notification, extra?: { channel?: "telegram" | "log" | "queued" }): Promise<NotifyResult> {
     await mkdir(dirname(this.path), { recursive: true });
     await appendFile(this.path, JSON.stringify({ kind: "notify", at: new Date().toISOString(), ...n, ...(extra?.channel ? { channel: extra.channel } : {}) }) + "\n");
     return { channel: "log" };

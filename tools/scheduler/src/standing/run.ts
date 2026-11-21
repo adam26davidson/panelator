@@ -218,6 +218,12 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  await updateAgentState(d.paths,def.name,current=>{const n={...current,last_run:{at,run_id:runId,outcome},summary:summary||error,next_run:next,failures:0,pending_events:current.pending_events.filter(e=>!received.some(r=>JSON.stringify(r)===JSON.stringify(e)))};if(over)delete n.outage;if(outcome==='ok')delete n.reflection;return n;});
  if(outcome!=='ok') {
   await appendFindings(d.paths,{issue:0,stage:def.name,run_id:runId,timestamp:at},[{what:`standing agent ${def.name} failed twice: ${failureCause(error,transient)}`,where:`agents/standing/${def.name}.md`,evidence:error,noticed_how:'standing run retry exhausted'}],{exclude:def.name});
-  await filer.notify(`Standing agent ${def.name} failed twice: ${error}`);
+  await filer.notify(`Standing agent ${def.name} failed twice: ${error}`,`failed:${failureCause(error,transient)}`);
+ }
+ // Spec 102 AC-6: a run that ends ok clears the failure and outage conditions, so the next failure notifies at once; the filer's own `<name>:<ref>` notices are not touched.
+ if(outcome==='ok'){
+  for(const sel of [{issue:0,gate:'standing',labelPrefix:`${def.name}:failed:`},{issue:0,gate:'infra',label:`${def.name}:outage`}]){
+   try{await d.notifier.clear?.(sel);}catch(e){d.log({kind:'error',agent:def.name,error:`notify clear: ${(e as Error).message}`});}
+  }
  }
 }
