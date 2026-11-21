@@ -24,11 +24,11 @@ export type SchemaName =
   | "question-log-entry"
   | "standing-definition" | "standing-result" | "action" | "action-log-entry"
   | "parameter-definition" | "parameters" | "filer-result" | "triage-entry" | "agent-state" | "filer-input" | "audit-input" | "infra-health-input"
-  | "event" | "aws-cost" | "aws-ledger" | "credential-index" | "credential-catalogue" | "metric-definition" | "metrics-report" | "contacts-log-entry" | "reflection-input" | "reflection-result" | "reflection-plan";
+  | "event" | "aws-cost" | "aws-ledger" | "credential-index" | "credential-catalogue" | "metric-definition" | "metrics-report" | "contacts-log-entry" | "reflection-input" | "reflection-result" | "reflection-plan" | "host";
 
 const NAMES: SchemaName[] = [
   "standing-definition", "standing-result", "action", "action-log-entry", "parameter-definition", "parameters", "filer-result", "triage-entry", "agent-state", "filer-input", "audit-input", "infra-health-input",
-  "event", "aws-cost", "aws-ledger", "credential-index", "credential-catalogue", "metric-definition", "metrics-report", "contacts-log-entry", "reflection-input", "reflection-result", "reflection-plan",
+  "event", "aws-cost", "aws-ledger", "credential-index", "credential-catalogue", "metric-definition", "metrics-report", "contacts-log-entry", "reflection-input", "reflection-result", "reflection-plan", "host",
   "finding",
   "plan-result",
   "implement-result",

@@ -444,3 +444,12 @@ describe("contacts-log-entry (spec 083 AC-3)", () => {
     expect(validate("contacts-log-entry", { ...refused, at: "yesterday" }).ok).toBe(false);
   });
 });
+
+describe("host schema (spec 100)", () => {
+  const good = { paused: { since: "2026-11-01T00:00:00Z", cause: "ENOSPC", probes: 1, next_probe_at: "2026-11-01T00:01:00Z", notified: false }, last_seen_at: null, downtime: [{ from: "2026-11-01T00:00:00Z", to: "2026-11-01T01:00:00Z", reason: "host" }] };
+  it("accepts a full state", () => expect(validate("host", good).ok).toBe(true));
+  it("rejects an unknown field and a bad reason", () => {
+    expect(validate("host", { ...good, extra: 1 }).ok).toBe(false);
+    expect(validate("host", { ...good, downtime: [{ ...good.downtime[0], reason: "nap" }] }).ok).toBe(false);
+  });
+});

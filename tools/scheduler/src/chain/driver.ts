@@ -118,6 +118,8 @@ export interface DriverDeps {
   fetchOrigin: () => Promise<void>;
   /** Spec 059 test seam: reads free space for the pre-flight check; production leaves it unset (statfs). */
   freeSpace?: (path: string) => Promise<FreeSpace>;
+  /** Spec 100: the host monitor; absent means no downtime is known. */
+  host?: import("../service/host.ts").HostMonitor;
 }
 
 export type StepStatus = "continue" | "waiting" | "ended";
@@ -1208,7 +1210,11 @@ async function verifyEvent(deps: DriverDeps, claim: Claim): Promise<ChainEvent> 
     const noRun = required.length ? required.some((n) => !summary.runs.some((r) => r.name === n)) : summary.runs.length === 0;
     const conflicts = noRun && (await deps.gh.pullRequest(pr.number)).mergeable === false;
     if (conflicts) deps.log({ kind: "verify-not-mergeable", issue: claim.issue, pr: pr.number, sha: pr.head_sha });
-    return { type: "checks", status: "pending", sensitive, at: deps.now().toISOString(), pending, ...(conflicts ? { conflicts } : {}) };
+    // Spec 100 AC-7: the downtime inside the pending window, so the six-hour bound counts running time only.
+    const at = deps.now();
+    const since = claim.state.pendingSince;
+    const downtime_ms = since ? deps.host?.downtimeMs(since, at.getTime()) ?? 0 : 0;
+    return { type: "checks", status: "pending", sensitive, at: at.toISOString(), pending, downtime_ms, ...(conflicts ? { conflicts } : {}) };
   }
   return { type: "checks", status: summary.status, sensitive, at: deps.now().toISOString() };
 }

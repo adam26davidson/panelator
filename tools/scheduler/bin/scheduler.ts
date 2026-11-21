@@ -15,6 +15,8 @@ import { fastForwardMain, fetchOrigin } from "../src/service/git.ts";
 import { SleepInhibitor } from "../src/service/inhibit.ts";
 import { ServiceLog } from "../src/service/log.ts";
 import { Scheduler } from "../src/service/loop.ts";
+import { probeHost } from "../src/service/host.ts";
+import { statfsFreeSpace } from "../src/runner/host-space.ts";
 import { systemdStopUnit, systemdUnitActive } from "../src/service/units.ts";
 import { loadStageDefinitions } from "../src/stages/definition.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
@@ -223,6 +225,8 @@ const scheduler: Scheduler = new Scheduler({
   refreshToken: () => app.refreshTokenFile(paths).then(() => {}),
   log: (rec) => serviceLog.write(rec), fetchOrigin: () => fetchOrigin(repoRoot),
   aws: awsContext, botLogin, serviceLog, inhibitor,
+  // Spec 100: the real host probe (GitHub's hosts over the global fetch, statfs); the scheduler builds its host monitor around it.
+  probeHost: () => probeHost({ paths, fetch: globalThis.fetch, freeSpace: statfsFreeSpace, log: (rec) => serviceLog.write(rec) }),
   fastForward: () => fastForwardMain(repoRoot), sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   monotonic: () => Number(process.hrtime.bigint() / 1_000_000n),
   // Called on every idle tick while a restart is pending; only the first call acts.

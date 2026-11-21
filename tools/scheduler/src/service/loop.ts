@@ -24,7 +24,7 @@ import { rankIssues, classifyWork, classOf } from "../shortlist/rank.ts";
 import type { IssueData } from "../types.ts";
 import { selectEligible } from "../shortlist/select.ts";
 import { listClaims, readClaim, removeClaim, writeClaim, type Claim, type Outage } from "../state/claims.ts";
-import { CEILING_MIN_FAILURES, CEILING_MIN_SPAN_MS, DISK_FULL, forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, PAST_CEILING, failureCause, transientCause } from "../chain/transient.ts";
+import { CEILING_MIN_FAILURES, CEILING_MIN_SPAN_MS, DISK_FULL, forgiveTransientChainErrors, outageBackoffS, OUTAGE_ALARM_MS, OUTAGE_CEILING_MS, PAST_CEILING, failureCause, outageAgeMs, transientCause } from "../chain/transient.ts";
 import { readLedger, writeLedger } from "../state/ledger.ts";
 import { listBlocked, removeBlocked, writeBlocked, type BlockedRecord } from "../state/blocked.ts";
 import { recordChecks } from "../events/ci.ts";
@@ -39,6 +39,7 @@ import { expiryEvents } from "../credentials/check.ts";
 import type { CredentialEntry } from "../credentials/catalogue.ts";
 import type { CredentialStore } from "../credentials/store.ts";
 import { sweepVolumes } from "./sweep.ts";
+import { HostMonitor } from "./host.ts";
 import { readToken } from "../state/token.ts";
 import type { SleepInhibitor } from "./inhibit.ts";
 import type { ServiceLog } from "./log.ts";
@@ -74,6 +75,8 @@ export interface SchedulerDeps extends DriverDeps {
   scanChildren?: () => Promise<unknown>;
   /** Spec 022: the delivery-system AWS step of a tick; absent means no step (a context without a config is "AWS off"). */
   aws?: AwsContext;
+  /** Spec 100: the host probe the default monitor uses (null when the host can work, else the cause); test seam, bin supplies a monitor with the real probe. */
+  probeHost?: () => Promise<string | null>;
 }
 
 /** Spec 060 AC-7: main's checks are read for a blocked record at most this often while main's head stays the same. */
@@ -163,6 +166,8 @@ export class Scheduler {
       // finding names) is honoured whatever emitEvent the service or a test supplied.
       onFindingsQueued(deps.paths,(count,offset,exclude)=>emit(deps.paths,deps.registry!,'finding_queued',{count,offset},deps.now(),exclude));
     }
+    // Spec 100: the monitor the loop, the driver and the standing runner share; without a probe the host always passes.
+    deps.host ??= new HostMonitor({ paths: deps.paths, now: () => deps.now(), write: (rec) => deps.serviceLog.write(rec), notifier: deps.notifier, emitEvent: (event, payload, exclude) => deps.emitEvent?.(event, payload, exclude) ?? Promise.resolve(), probe: deps.probeHost ?? (() => Promise.resolve(null)) });
     this.#drive = opts.driveChain ?? defaultDriveChain;
   }
 
@@ -288,18 +293,22 @@ export class Scheduler {
    */
   async #countTransient(issue: number, cause: string, error: string): Promise<void> {
     const d = this.#deps;
+    // Spec 100 AC-2: when the host cannot work the scheduler pauses and nothing is recorded: the claim keeps whatever outage it had.
+    if (await d.host!.onTransient(cause, error)) return;
     const claim = await readClaim(d.paths, issue);
     if (!claim) return;
     const now = d.now();
     const prev = claim.outage;
+    // Spec 100 AC-8: the outage's age counts running time only.
+    const ageMs = outageAgeMs(prev?.since ?? now.toISOString(), now.getTime(), prev ? d.host!.downtimeMs(prev.since, now.getTime()) : 0);
     if (!prev) d.serviceLog.write({ kind: "transient-outage", issue, cause, error });
     const count = (prev?.count ?? 0) + 1;
     const since = prev?.since ?? now.toISOString();
-    const alarm = !prev?.alarmed && (cause === DISK_FULL || now.getTime() - Date.parse(since) >= OUTAGE_ALARM_MS);
+    const alarm = !prev?.alarmed && (cause === DISK_FULL || ageMs >= OUTAGE_ALARM_MS);
     const outage: Outage = {
       since, count, last: error.slice(0, HISTORY_ENTRY_MAX), retry_at: new Date(now.getTime() + outageBackoffS(count) * 1000).toISOString(), alarmed: Boolean(prev?.alarmed) || alarm,
     };
-    if (now.getTime() - Date.parse(since) >= OUTAGE_CEILING_MS) {
+    if (ageMs >= OUTAGE_CEILING_MS) {
       // AC-13: past the ceiling the failure counts as genuine, toward MAX_CHAIN_FAILURES and the chain_error release, once
       // enough failures past it show the outage is real and not a laptop that slept through the day.
       const past = { since: prev?.past_ceiling?.since ?? now.toISOString(), failures: (prev?.past_ceiling?.failures ?? 0) + 1 };
@@ -317,7 +326,7 @@ export class Scheduler {
       if (!first) return;
       d.serviceLog.write({ kind: "transient-outage-ceiling", issue, since, failures: count, cause });
       await appendFindings(d.paths, { issue, stage: stuckStage(claim.state), run_id: "transient-outage", timestamp: now.toISOString() }, [{
-        what: "network outage outlasted the retry ceiling", where: `issue #${issue}, stage ${claim.state.stage}`,
+        what: `transient failures outlast the retry ceiling while the host probe passes: ${cause}`, where: `issue #${issue}, stage ${claim.state.stage}`,
         evidence: `${count} transient failures since ${since} (${cause}); counted as genuine from now on; last: ${outage.last}`, noticed_how: "scheduler transient error",
       }]);
       if (carriesPending(claim)) {
@@ -334,7 +343,7 @@ export class Scheduler {
     }
     await writeClaim(d.paths, { ...claim, outage, last_activity_at: now.toISOString() });
     if (!alarm) return;
-    const hours = Math.floor((now.getTime() - Date.parse(since)) / 3600_000);
+    const hours = Math.floor(ageMs / 3600_000);
     // Spec 059 AC-4: a full disk does not clear itself, so it alarms on its first failure, under a kind of its own.
     const disk = cause === DISK_FULL;
     d.serviceLog.write({ kind: "transient-outage-alarm", issue, since, failures: count, cause });
@@ -374,7 +383,7 @@ export class Scheduler {
     }
     const ghActivity = await d.gh.issueActivityAt(claim.issue).catch(() => claim.last_activity_at);
     const last = ghActivity > claim.last_activity_at ? ghActivity : claim.last_activity_at;
-    const g = livenessGate(last, claim.run_id !== null, d.now(), d.cfg.liveness_hours);
+    const g = livenessGate(last, claim.run_id !== null, d.now(), d.cfg.liveness_hours, d.host!.downtimeMs(last, d.now().getTime()));
     // Spec 023: a waiting claim is not stalled, before or after its reset: each tick starts it or it is queued for a slot, and starting it leaves `waiting`.
     if (g.ok || !expirable(claim) || claim.state.stage === "waiting") return false;
     await this.#expire(claim);
@@ -605,6 +614,21 @@ export class Scheduler {
     return { holds: !failed && !pending, rec: { ...rec, last_check: now.toISOString(), checked_sha: pending ? rec.checked_sha : head } };
   }
 
+  /** Spec 064 AC-1, AC-2: the scheduler's own sweep of the temp and state volumes; a failure never stops the tick. */
+  async #sweep(info: TickInfo): Promise<void> {
+    const d = this.#deps;
+    await sweepVolumes({ paths: d.paths, repoDir: d.repoDir, agentsDir: d.agentsDir, now: d.now, gh: d.gh, parameters: d.parameters, freeSpace: d.freeSpace, log: (rec) => d.serviceLog.write(rec), notifier: d.notifier, emitEvent: d.emitEvent, activeIssues: () => [...this.#active.keys()] }).catch((e) => info.errors.push(`sweep: ${(e as Error).message}`));
+  }
+
+  /** Spec 100 AC-3: what a paused tick does: the notice if due, the usage prune and the volume sweep; nothing else. */
+  async #pausedTick(info: TickInfo): Promise<TickInfo> {
+    const d = this.#deps;
+    await d.host!.noticeIfDue().catch((e) => info.errors.push(`host notice: ${(e as Error).message}`));
+    await pruneUsage(d.paths, d.now()).catch((e) => info.errors.push(`prune: ${(e as Error).message}`));
+    await this.#sweep(info);
+    return info;
+  }
+
   async tick(): Promise<TickInfo> {
     if (this.#ticking) return { eligible: 0, claimed: [], released: [], held: 0, standing: [], errors: ["tick already in progress"], restartPending: this.#restartPending };
     this.#ticking = true;
@@ -615,6 +639,11 @@ export class Scheduler {
       if(!existsSync(d.paths.eventsBackfilled))await backfillEvents(d.paths,rec=>d.serviceLog.write(rec));
       await this.#sample();
       if(d.registry && d.parameters)await initializeAgents(d.paths,d.registry,d.parameters,d.now());
+      // Spec 100 AC-3, AC-4: a paused host waits; the tick that finds the probe passing goes on with its ordinary work.
+      const host = d.host!;
+      await host.beginTick();
+      await host.startupGap(d.cfg.poll_interval_s).catch((e) => d.log({ kind: "error", error: `host downtime: ${(e as Error).message}` }));
+      if (host.paused && !(await host.probeIfDue())) return await this.#pausedTick(info);
       const token = await readToken(d.paths).catch(() => null);
       if (token && new Date(token.expires_at).getTime() - d.now().getTime() < TOKEN_REFRESH_MARGIN_MS) await this.#refreshToken();
       let mainMoved = false;
@@ -630,6 +659,9 @@ export class Scheduler {
         }
       } catch (e) {
         info.errors.push(`freshness: ${(e as Error).message}`);
+        // Spec 100 AC-2: a transient freshness failure with a failing host probe pauses the scheduler before any claim is read.
+        const cause = transientCause(e);
+        if (cause !== null && (await host.onTransient(cause, (e as Error).message))) return await this.#pausedTick(info);
       }
       // Spec 031 AC-3: the first tick after start and every move of main; a failure waits for the next move, never stops the tick.
       if (fresh && (this.#firstTick || mainMoved)) {
@@ -657,7 +689,7 @@ export class Scheduler {
       }catch(e){info.errors.push(`main checks: ${(e as Error).message}`);}
       await pruneUsage(d.paths, d.now()).catch((e) => info.errors.push(`prune: ${(e as Error).message}`));
       // Spec 064 AC-1, AC-2: the scheduler's own sweep of the temp and state volumes; a failure never stops the tick.
-      await sweepVolumes({ paths: d.paths, repoDir: d.repoDir, agentsDir: d.agentsDir, now: d.now, gh: d.gh, parameters: d.parameters, freeSpace: d.freeSpace, log: (rec) => d.serviceLog.write(rec), notifier: d.notifier, emitEvent: d.emitEvent, activeIssues: () => [...this.#active.keys()] }).catch((e) => info.errors.push(`sweep: ${(e as Error).message}`));
+      await this.#sweep(info);
 
       // Spec 072 AC-3: at most hourly, the first time on the first tick; a failure is logged and never stops the tick.
       if (d.plainFiles && (this.#plainFilesCheckedAt === null || d.now().getTime() - this.#plainFilesCheckedAt >= 3_600_000)) {
@@ -885,7 +917,9 @@ export class Scheduler {
       this.#ticking = false;
       // Spec 013 AC-10: the quota book's limits and what waits on them, when there are any.
       const quota = await quotaSummary(d.paths, d.now()).catch(() => null);
-      d.serviceLog.tick({ ...info, active: [...this.#active.keys()], ...(quota ? { quota } : {}) });
+      await d.host!.markSeen().catch((e) => d.log({ kind: "error", error: `host seen: ${(e as Error).message}` }));
+      const hostSummary = d.host!.summary();
+      d.serviceLog.tick({ ...info, active: [...this.#active.keys()], ...(quota ? { quota } : {}), ...(hostSummary ? { host: hostSummary } : {}) });
       if (this.#restartPending && this.active === 0) d.requestRestart();
     }
   }
@@ -906,6 +940,7 @@ export class Scheduler {
       const mono = d.monotonic() - lastMono;
       if (wall - mono > intervalMs) {
         d.serviceLog.write({ kind: "resumed", slept_ms: wall - mono });
+        await d.host!.recordSleep(wall - mono).catch((e) => d.log({ kind: "error", error: `host sleep: ${(e as Error).message}` }));
         await this.#refreshToken();
       }
     }

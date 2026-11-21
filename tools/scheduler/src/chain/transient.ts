@@ -95,16 +95,21 @@ export function outageBackoffS(count: number): number {
 /** AC-8: an outage this long raises one notification, one finding and one infra_alarm event. */
 export const OUTAGE_ALARM_MS = 2 * 3600_000;
 /**
- * AC-13: an outage this long is no longer treated as transient: a deterministic failure (a host that does not resolve, a
- * port that refuses) would otherwise retry forever. Its failures count as genuine from then on.
+ * AC-13 (spec 100 AC-8): an outage this long, counted in running time, is no longer treated as transient while the host
+ * probe passes: a deterministic failure (a URL that does not resolve, a port that refuses) would otherwise retry for
+ * ever. A failure the host probe refuses never reaches the outage: the scheduler pauses instead.
  */
 export const OUTAGE_CEILING_MS = 24 * 3600_000;
 /**
- * AC-13: the outage's age is wall-clock time and counts a laptop asleep; its failures count as genuine only once this
- * many failed past the ceiling, spanning at least CEILING_MIN_SPAN_MS.
+ * AC-13: its failures count as genuine only once this many failed past the ceiling, spanning at least
+ * CEILING_MIN_SPAN_MS. The outage's age is its active age (see outageAgeMs): downtime does not count.
  */
 export const CEILING_MIN_FAILURES = 3;
 export const CEILING_MIN_SPAN_MS = 30 * 60_000;
+/** Spec 100 AC-8: the age of an outage that began at `since`, less the time the scheduler was not running or was paused. */
+export function outageAgeMs(since: string, now: number, downtimeMs: number): number {
+  return Math.max(0, now - Date.parse(since) - downtimeMs);
+}
 /** AC-13: the prefix of the error a failure past the ceiling is counted with; the release's history entry carries it. */
 export const PAST_CEILING = "outage past ceiling: ";
 

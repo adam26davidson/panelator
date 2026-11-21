@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "host.json",
+  "title": "Scheduler host state (spec 100)",
+  "type": "object",
+  "required": ["paused", "last_seen_at", "downtime"],
+  "additionalProperties": false,
+  "properties": {
+    "paused": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["since", "cause", "probes", "next_probe_at", "notified"],
+          "additionalProperties": false,
+          "properties": {
+            "since": { "type": "string", "format": "date-time" },
+            "cause": { "type": "string", "minLength": 1 },
+            "probes": { "type": "integer", "minimum": 1 },
+            "next_probe_at": { "type": "string", "format": "date-time" },
+            "notified": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "last_seen_at": { "oneOf": [{ "type": "null" }, { "type": "string", "format": "date-time" }] },
+    "downtime": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from", "to", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "from": { "type": "string", "format": "date-time" },
+          "to": { "type": "string", "format": "date-time" },
+          "reason": { "enum": ["host", "sleep", "stopped"] }
+        }
+      }
+    }
+  }
+}

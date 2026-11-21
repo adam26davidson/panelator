@@ -172,3 +172,11 @@ describe("failureCause (spec 093 AC-3)", () => {
     expect(Array.from(out).at(-1)).toBe("😀");
   });
 });
+
+describe("outageAgeMs (spec 100 AC-8)", () => {
+  it("is the age less the downtime, never negative", async () => {
+    const { outageAgeMs } = await import("../src/chain/transient.ts");
+    expect(outageAgeMs("2026-11-01T00:00:00Z", Date.parse("2026-11-02T06:00:00Z"), 29 * 3600_000)).toBe(3600_000);
+    expect(outageAgeMs("2026-11-01T00:00:00Z", Date.parse("2026-11-01T01:00:00Z"), 5 * 3600_000)).toBe(0);
+  });
+});
