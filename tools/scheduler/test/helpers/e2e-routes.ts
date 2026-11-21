@@ -142,7 +142,7 @@ export async function standingWorld(results:Record<string,Scripted[]>,freeSpace:
     {method:'POST',path:/^\/repos\/o\/r\/security-advisories$/,reply:()=>({status:201,body:{ghsa_id:'GHSA-fixture'}})},
     {method:'GET',path:/^\/repos\/o\/r\/commits\/[^/]+\/check-runs$/,reply:()=>({body:{total_count:1,check_runs:[{id:1,name:'test',status:'completed',conclusion:'success'}]}})},
   ];
-  const mock=mockGitHub(routes),gh=new GitHubClient(new Octokit({auth:'x',request:{fetch:mock.fetch}}),'o/r'),adapter=scripted(results),notifications:Notification[]=[],clears:ClearSelector[]=[];
+  const mock=mockGitHub(routes),gh=new GitHubClient(new Octokit({auth:'x',request:{fetch:mock.fetch}}),'o/r'),adapter=scripted(results),notifications:Notification[]=[],clears:ClearSelector[]=[],clearFails={v:false};
   const deps:SchedulerDeps={cfg,paths,registry,parameters,gh,botLogin:BOT,notifier:recordedNotifier({notify:async n=>{notifications.push(n);},clear:async sel=>{if(clearFails.v)throw new Error('clear boom');clears.push(sel);}},paths),stages:loadStageDefinitions(join(agentsDir,'stages')),agentsDir,metrics:loadMetricDefinitions(join(agentsDir,'metrics')),repoDir:pair.repo,binDir:join(pair.root,'bin'),adapterFor:()=>adapter,systemdScope:false,now:()=>now,log:()=>{},freeSpace:(path)=>freeSpace(path),fetchOrigin:async()=>{},unitActive:async()=>false,stopUnit:async()=>{},serviceLog:new ServiceLog(paths.serviceLog),inhibitor:new SleepInhibitor({enabled:false}),fastForward:async()=>({moved:false,changedPaths:[]}),sleep:async()=>{},monotonic:()=>0,requestRestart:()=>{}};
   let probeCause:string|null=null;deps.probeHost=async()=>probeCause;
   const scheduler=new Scheduler(deps);
