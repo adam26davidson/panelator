@@ -10,9 +10,12 @@ import {
   matchUpdate,
   openQuestionsList,
   NO_OPEN_QUESTION,
+  ALERT_NO_REPLY,
   type PendingSelection,
 } from "./questions.ts";
 import { saveJson } from "./poller.ts";
+import { REQUEST_BUTTONS } from "../chain/question.ts";
+import { readAlertIds } from "../notify/telegram.ts";
 import { neutraliseMarkers } from "../github/markers.ts";
 interface Journal {
   ignored_issue_comments?: number[];
@@ -128,6 +131,7 @@ export class TelegramAnswers {
         ),
       ],
       journal.selection,
+      await readAlertIds(d.paths.telegramAlerts),
     );
     if (match.kind === "answer" || match.kind === "pick") {
       let r = records.find((r) => r.nonce === match.record.nonce);
@@ -183,7 +187,8 @@ export class TelegramAnswers {
           };
           await writePaused(d.paths, r);
         }
-        if (!(await answeredEntry(d.paths, r.question_comment_id!)))
+        // Spec 099 AC-5: a request's answer is logged by the resume, after the scheduler has acted on it.
+        if (!r.question.request && !(await answeredEntry(d.paths, r.question_comment_id!)))
           await appendQuestionLog(d.paths, {
             issue: r.issue,
             at: d.now().toISOString(),
@@ -219,6 +224,9 @@ export class TelegramAnswers {
           at: d.now().toISOString(),
           update_id: u.update_id,
         };
+    } else if (match.kind === "alert-reply") {
+      const open = records.filter((r) => r.phase === "paused" && r.telegram?.message_id);
+      await channel.sendReply(`${ALERT_NO_REPLY}\n${openQuestionsList(open).text}`, u.message?.message_id);
     } else if (match.kind === "none")
       await channel.sendReply(NO_OPEN_QUESTION, u.message?.message_id);
     if (match.kind === "ignore" && u.callback_query)
@@ -236,6 +244,11 @@ export class TelegramAnswers {
       this.wake();
       if (u.callback_query) {
         await this.d.telegram!.answerCallback(u.callback_query.id);
+        if (u.callback_query.data?.startsWith("r:")) {
+          const n = Number(u.callback_query.data.split(":")[2]);
+          const label = r.question.request ? REQUEST_BUTTONS[r.question.request.type as keyof typeof REQUEST_BUTTONS]?.[n - 1] : undefined;
+          await this.d.telegram!.replaceKeyboard(u.callback_query.message!.message_id, { inline_keyboard: [[{ text: `Chosen: ${label ?? ""}`.slice(0, 64), callback_data: "answered" }]] });
+        }
         if (u.callback_query.data?.startsWith("q:")) {
           const n = Number(u.callback_query.data.split(":")[2]);
           await this.d.telegram!.replaceKeyboard(

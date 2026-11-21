@@ -94,6 +94,11 @@ of this kind without one, is sent back once with the missing fields named in the
 asking again with the request completed is not asking the question again, whatever mode you
 are in. A second incomplete request is a failed run.
 
+**Reach of the App's token.** The App's installation token reaches `adam26davidson/panelator`
+only. A `404` or `403` from `gh` or `git` on another repository means ask first: raise a capability
+question with a `first_contact` request, and a write there also needs a `credential` request. The
+`gh` shim refuses nothing itself; GitHub answers.
+
 With a decide input present, do not ask the question that was sent back again, in any
 wording: decide it. Only a new blocker that your decision does not settle may be
 escalated: set `"new_blocker": true`. The question check then judges it, with the question

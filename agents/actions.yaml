@@ -31,3 +31,6 @@ cred_import:
 cred_remove:
   level: 1
   description: Delete a stored credential and its index entry (maintainer command only).
+renew_credential:
+  level: 1
+  description: Run a catalogue entry's renew command through its wrapper, check the credential and record its new expiry (the secret is never in the request).

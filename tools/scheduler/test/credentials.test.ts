@@ -9,14 +9,14 @@ import { applyAction, loadActionLevels, registryActionsCheck, KINDS, type Action
 import { ActionLog } from "../src/actions/log.ts";
 import { undoAction } from "../src/actions/undo.ts";
 import { agentsDir, defaultConfigPath, loadConfig } from "../src/config.ts";
-import { loadCatalogue, profileNames } from "../src/credentials/catalogue.ts";
+import { loadCatalogue, profileNames, validateSchema } from "../src/credentials/catalogue.ts";
+import { validate } from "../src/schema/validate.ts";
 import { runCheck, type CheckContext } from "../src/credentials/check.ts";
 import { credCommand } from "../src/credentials/commands.ts";
 import { appPrivateKey, appPrivateKeySource, CredentialStore } from "../src/credentials/store.ts";
 import { createAppClient } from "../src/github/auth.ts";
 import { loadParameterDefinitions } from "../src/parameters/definitions.ts";
 import { ParameterStore } from "../src/parameters/store.ts";
-import { validate } from "../src/schema/validate.ts";
 import { loadRegistry } from "../src/standing/registry.ts";
 import { EVENT_NAMES } from "../src/standing/events.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
@@ -282,3 +282,156 @@ describe("the App key at start-up (AC-9)", () => {
     expect((err as Error).message).not.toContain(bodyLine(keys.priv));
   });
 });
+
+// ---- spec 099 AC-2: shims and cred-exec ----
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { writeShims } from "../src/credentials/shims.ts";
+import { stageEnv } from "../src/runner/credentials.ts";
+import { buildCredentialCheckInput } from "../src/standing/credential-check-input.ts";
+
+const helpers = join(dirname(fileURLToPath(import.meta.url)), "helpers");
+const testCataloguePath = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "test-catalogue.yaml");
+const testCatalogue = () => loadCatalogue(testCataloguePath, known());
+const binDir = join(dirname(fileURLToPath(import.meta.url)), "..", "bin");
+
+async function shimEnv(secret = "S3CRET-fake-value") {
+  const root = mkdtempSync(join(tmpdir(), "shim-"));
+  const store = new CredentialStore({ dir: join(root, "store"), systemdCreds: fake });
+  await store.writeSecret("fake-token", secret, "maintainer");
+  const state = join(root, "state");
+  mkdirSync(state);
+  const config = join(root, "scheduler.yaml");
+  writeFileSync(config, readFileSync(defaultConfigPath, "utf8") + `\ncredentials:\n  dir: ${join(root, "store")}\n`);
+  const runDir = join(root, "run");
+  mkdirSync(runDir);
+  const shimDir = await writeShims(runDir, Object.values(testCatalogue()), { configPath: config, binDir, cataloguePath: testCataloguePath });
+  const env = { ...process.env, PANELATOR_SYSTEMD_CREDS: fake, PATH: `${shimDir}:${helpers}:${process.env.PATH}` };
+  return { root, state, shimDir: shimDir!, env, runDir };
+}
+
+describe("shims (spec 099 AC-2)", () => {
+  it("rejects a wrapper command with a slash and writes no shim for a run without credentials", async () => {
+    const entries = parse(readFileSync(testCataloguePath, "utf8")) as any[];
+    entries[0].wrapper.command = "bin/fakecmd";
+    const p = join(mkdtempSync(join(tmpdir(), "cat-")), "c.yaml");
+    writeFileSync(p, stringify(entries));
+    expect(() => loadCatalogue(p, known())).toThrow(/fake-token/);
+    const run = mkdtempSync(join(tmpdir(), "run-"));
+    expect(await writeShims(run, [], { configPath: "x", binDir })).toBeNull();
+    expect(existsSync(join(run, "bin"))).toBe(false);
+  });
+  it("puts the shim directory first on PATH only when there is one", () => {
+    expect(stageEnv("/b", "/s", undefined, undefined, "/r/bin").PATH.startsWith("/r/bin:/b:")).toBe(true);
+    expect(stageEnv("/b", "/s").PATH.startsWith("/b:")).toBe(true);
+  });
+  it("gives the wrapped child the secret and nobody else; writes nothing and leaks nothing", async () => {
+    const t = await shimEnv();
+    const r = spawnSync("fakecmd", ["--env"], { env: t.env, encoding: "utf8" });
+    expect(r.stdout.trim()).toBe("FAKE_SECRET=set");
+    expect(r.status).toBe(0);
+    const echoed = spawnSync("fakecmd", ["--echo-secret"], { env: t.env, encoding: "utf8" });
+    expect(echoed.stdout.trim()).toBe("S3CRET-fake-value");
+    const own = spawnSync("sh", ["-c", 'echo "${FAKE_SECRET-unset}"'], { env: t.env, encoding: "utf8" });
+    expect(own.stdout.trim()).toBe("unset");
+    const exit = spawnSync("fakecmd", ["x", "y"], { env: { ...t.env, FAKECMD_EXIT: "3" }, encoding: "utf8" });
+    expect(exit.status).toBe(3);
+    expect(exit.stdout.trim()).toBe("args: x y");
+    expect(readdirSync(t.state)).toEqual([]);
+    for (const f of walk(t.runDir)) expect(readFileSync(f, "utf8")).not.toContain("S3CRET-fake-value");
+  });
+  it("fails without the secret in its text when the secret is missing", async () => {
+    const t = await shimEnv();
+    const r = spawnSync("fakecmd", ["--env"], { env: { ...t.env, FAKE_SYSTEMD_CREDS_FAIL: "1" }, encoding: "utf8" });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("cred-exec");
+    expect(r.stderr).not.toContain("S3CRET");
+  });
+});
+
+
+{
+
+const helpers = join(import.meta.dirname, "helpers");
+const fixture = join(import.meta.dirname, "fixtures", "test-catalogue.yaml");
+const binDir = join(import.meta.dirname, "..", "bin");
+const fake = join(helpers, "fake-systemd-creds");
+const SECRET = "S3CRET-renew-value";
+
+async function setup(entryPatch: Record<string, unknown> = {}) {
+  const root = mkdtempSync(join(tmpdir(), "cc-"));
+  const paths = statePaths(join(root, "state"));
+  await ensureStateDirs(paths);
+  const store = new CredentialStore({ dir: join(root, "store"), systemdCreds: fake });
+  await store.writeSecret("fake-token", SECRET, "maintainer");
+  const config = join(root, "scheduler.yaml");
+  writeFileSync(config, readFileSync(defaultConfigPath, "utf8") + `\ncredentials:\n  dir: ${join(root, "store")}\n`);
+  const catalogue = loadCatalogue(fixture, { profiles: ["backend"], agents: [] });
+  const entry = { ...catalogue["fake-token"]!, ...entryPatch } as (typeof catalogue)[string];
+  const failures: string[] = [];
+  const log = new ActionLog(paths.actionsLog, paths);
+  const parameters = new ParameterStore(paths, loadParameterDefinitions(join(agentsDir, "parameters.yaml"), { slots: 1 } as never, {}));
+  const probe = { store, app: { id: 1, installation_id: 1, private_key_path: "", bot_login: "" }, now: () => new Date("2026-11-20T10:00:00Z") };
+  process.env.PANELATOR_SYSTEMD_CREDS = fake;
+  process.env.PATH = `${helpers}:${process.env.PATH!.split(":").filter((p) => p !== helpers).join(":")}`;
+  const ctx: ActionContext = {
+    paths, parameters, log, levels: loadActionLevels(join(agentsDir, "actions.yaml")), now: () => new Date("2026-11-20T10:00:00Z"),
+    gh: { rerunWorkflowRun: async () => {}, cancelWorkflowRun: async () => {} },
+    credentials: { store, catalogue: { "fake-token": entry }, probe, configPaths: { "github-app-key": "", "telegram-bot": "" }, shim: { configPath: config, binDir, cataloguePath: fixture, runDir: join(root, "run") }, onRenewFailure: (n, r) => failures.push(`${n}: ${r}`) },
+  };
+  const renew = (args: Record<string, unknown> = { name: "fake-token" }) => applyAction(ctx, { agent: "credential-check", run_id: "r", kind: "renew_credential", args, why: "expiring within seven days, renew it" }, ["renew_credential"]);
+  return { root, paths, store, ctx, entry, failures, renew, probe };
+}
+
+describe("renew_credential (spec 099 AC-13)", () => {
+  it("renews through the shim, records the expiry from the probe, and has no undo", async () => {
+    const t = await setup();
+    process.env.FAKECMD_EXPIRES = "2031-02-03T04:05:06Z";
+    const row = await t.renew();
+    delete process.env.FAKECMD_EXPIRES;
+    expect(row.status).toBe("applied");
+    expect((await t.store.readIndex())["fake-token"]!.expires_at).toBe("2031-02-03T04:05:06.000Z");
+    expect(row.undo).toBeNull();
+    expect(row.reason).toBe("a rotated secret cannot be un-rotated");
+    const undone = await undoAction(t.ctx, row.id, "maintainer");
+    expect(undone).toMatchObject({ status: "refused", reason: "action is not undoable: a rotated secret cannot be un-rotated" });
+    expect(t.failures).toEqual([]);
+  });
+  it("fails with the reason for a manual entry, a failing command and an unknown name", async () => {
+    const manual = await setup({ renew: "manual" });
+    expect(await manual.renew()).toMatchObject({ status: "failed", reason: expect.stringContaining("by hand") });
+    expect(manual.failures).toHaveLength(1);
+    const bad = await setup();
+    process.env.FAKECMD_RENEW_FAIL = "1";
+    const row = await bad.renew();
+    delete process.env.FAKECMD_RENEW_FAIL;
+    expect(row).toMatchObject({ status: "failed", reason: expect.stringContaining("renew command failed") });
+    expect(await bad.renew({ name: "nope" })).toMatchObject({ status: "refused" });
+    expect(await bad.renew({ name: "fake-token", extra: 1 })).toMatchObject({ status: "refused" });
+  });
+});
+
+describe("credential check input (spec 099 AC-12)", () => {
+  it("runs runCheck per entry and the scope check once, validates, and holds no secret", async () => {
+    const t = await setup();
+    let scopeCalls = 0;
+    const input = await buildCredentialCheckInput({ paths: t.paths, catalogue: t.ctx.credentials!.catalogue, probe: t.probe, warnDays: 7, scope: async () => (scopeCalls++, { status: "failed", reason: "also o/other" }), now: new Date("2026-11-20T10:00:00Z") }, [], null);
+    expect(scopeCalls).toBe(1);
+    expect(Object.keys(input.checks)).toEqual(["fake-token"]);
+    expect(input.scope).toEqual({ status: "failed", reason: "also o/other" });
+    expect(input.entries[0]).toMatchObject({ name: "fake-token", set: true, renew: "command", expiry: "probe" });
+    expect(validateSchema("credential-check-input", input)).toEqual({ ok: true });
+    expect(JSON.stringify(input)).not.toContain(SECRET);
+    expect(JSON.stringify(input)).not.toContain("plain");
+    expect(readdirSync(t.paths.root)).toBeDefined();
+  });
+  it("the checked-in agent loads with its limits and the result schema accepts warnings", () => {
+    const def = loadRegistry(join(agentsDir, "standing"), EVENT_NAMES, registryActionsCheck(join(agentsDir, "actions.yaml")))["credential-check"]!;
+    expect(def).toMatchObject({ tier: "standard", worktree: "none", profile: "none", input: "credential-check-input", output: "credential-check-result", actions: ["renew_credential"], trigger: { schedule: "1d", events: ["credential_expiry"] } });
+    expect(def.credentials ?? []).toEqual([]);
+    expect(validateSchema("credential-check-result", { summary: "s", warnings: [{ name: "a", expires_at: null, steps: ["x"] }] })).toEqual({ ok: true });
+    expect(validateSchema("credential-check-result", { summary: "s", warnings: [{ name: "a" }] })).toMatchObject({ ok: false });
+  });
+});
+
+}

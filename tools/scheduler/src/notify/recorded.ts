@@ -6,8 +6,9 @@ import { record } from "../events/store.ts";
 export function recordedNotifier(inner: Notifier, paths: StatePaths, clock: () => Date = () => new Date()): Notifier {
   return {
     async notify(n) {
-      await inner.notify(n);
-      await record(paths, "maintainer.contact", clock(), { channel: "log", kind: n.contact?.kind ?? "notification", ...(n.issue ? { issue: n.issue } : {}), label: n.label || n.gate, text: n.text, ...(n.contact?.request ? { request: n.contact.request } : {}) }, n.issue ? { issue: n.issue } : {});
+      const res = await inner.notify(n);
+      await record(paths, "maintainer.contact", clock(), { channel: res?.channel ?? "log", kind: n.contact?.kind ?? "notification", ...(n.issue ? { issue: n.issue } : {}), label: n.label || n.gate, text: n.text, ...(n.contact?.request ? { request: n.contact.request } : {}) }, n.issue ? { issue: n.issue } : {});
+      return res;
     },
   };
 }

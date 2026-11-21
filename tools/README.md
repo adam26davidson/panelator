@@ -41,6 +41,9 @@ undo, which needs the App). Use `node tools/scheduler/bin/scheduler.ts` followed
 
 - `agent list`, `agent pause <name>`, `agent resume <name>`, `agent run <name>`.
 - `action list [--since <ISO time>]`, `action undo <id>`.
+- `contacts list` prints the approved parties (`contacts/parties.json`; `[]` when none) and `contacts remove <party>` removes one and writes a `removed` line to the contacts log (spec 099 AC-9). First contact on GitHub is enforced by the App installation's scope, not by the `gh` shim (ADR 0014): the scope check (`GET /app/installations`, `GET /installation/repositories`) runs at start-up, in `--check-auth` (which prints `installation scope ok` or the reason it failed) and in the credential check's pre-run.
+- `credentials: [<name>, ...]` in a profile's `profile.yaml` or a standing definition's front matter lists the catalogue entries a run may use; the run gets `<run dir>/bin/<command>` shims first on `PATH`, each running `tools/scheduler/bin/cred-exec.ts <name> -- <command> [args]` (a separate entry point that loads only the configuration, the catalogue and the store, and writes nothing). `wrapper.command` is a bare name matching `^[a-z][a-z0-9._-]*$`.
+- The scheduler emits `credential_expiry` (hourly step, at most once per credential per day, from the index only) and the `credential-check` standing agent (daily, or on that event) renews what `renew.command` can renew (`renew_credential`) and warns about the rest; every notification also reaches the Telegram chat (`channel` in the service log says which carried it), and a reply to one gets "Alerts take no reply".
 - `contacts log [--since <ISO time>]` (the first-contact gate's log: refused calls and removed parties; writes nothing).
 - `param list`, `param set <name> <value>`, `param mode <name> auto|locked` (prints the parameter's new state; recorded in the parameter history).
 

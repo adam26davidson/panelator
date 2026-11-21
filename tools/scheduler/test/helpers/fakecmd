@@ -1,0 +1,10 @@
+#!/bin/sh
+# Spec 099 section 3 test entry: prints whether FAKE_SECRET is set, an ISO time for --expiry, exits as arranged.
+case "$1" in
+  --check) [ -n "$FAKE_SECRET" ] && [ "${FAKECMD_CHECK_FAIL:-}" = "" ] && echo ok && exit 0; echo "check failed" >&2; exit 1 ;;
+  --expiry) echo "${FAKECMD_EXPIRES:-2030-01-01T00:00:00Z}"; exit 0 ;;
+  --renew) [ -n "$FAKECMD_RENEW_FAIL" ] && { echo "renew failed" >&2; exit 1; }; echo renewed; exit 0 ;;
+  --env) if [ -n "${FAKE_SECRET+x}" ]; then echo "FAKE_SECRET=set"; else echo "FAKE_SECRET=unset"; fi; exit 0 ;;
+  --echo-secret) echo "$FAKE_SECRET"; exit 0 ;;
+  *) echo "args: $*"; exit "${FAKECMD_EXIT:-0}" ;;
+esac

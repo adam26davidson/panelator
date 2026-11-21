@@ -1,7 +1,7 @@
 import {KINDS,applyAction,exact,type ActionKind,type ActionContext} from './index.ts';
 async function target(c:ActionContext,id:unknown){
  const row=(await c.log.list()).find(e=>e.id===id);
- if(!row||row.status!=='applied'||!row.undo)throw new Error('action is not undoable');
+ if(!row||row.status!=='applied'||!row.undo)throw new Error(row?.status==='applied'&&row.reason?`action is not undoable: ${row.reason}`:'action is not undoable');
  if(!KINDS[row.undo.kind] || c.levels[row.undo.kind]!==1)throw new Error('inverse action is not level 1');
  const reason=await KINDS[row.undo.kind].check(row.undo.args,{...c,reversing:true});if(reason)throw new Error(reason);return row;
 }

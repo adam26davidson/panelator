@@ -98,6 +98,13 @@
         "type": "string"
       }
     },
+    "credentials": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$"
+      }
+    },
     "fallback": {
       "type": "string",
       "minLength": 1

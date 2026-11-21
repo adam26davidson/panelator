@@ -1,3 +1,6 @@
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { checkCredentialNames } from "../src/credentials/catalogue.ts";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -21,13 +24,22 @@ describe("profiles", () => {
   it("resolves web-ui with the UI review criteria (spec 098 AC-3)", () => {
     const p = resolveProfile(agentsDir, "web-ui");
     expect(p.tools).toEqual(resolveProfile(agentsDir, "backend").tools);
-    expect(p.credentialHook).toBeUndefined();
+    expect(p.credentials).toEqual([]);
     for (const s of ["390x844", "820x1180", "1440x900", "44 CSS pixels", "14 CSS pixels", "WCAG AA", "tokens.html", "flow.md", "catalog:"]) {
       expect(p.reviewCriteria).toContain(s);
     }
     for (const s of ["design/", "flow.md", "catalog:", "pnpm test"]) {
       expect(p.instructions).toContain(s);
     }
+  });
+  it("rejects credential_hook and a name outside the catalogue (spec 099 AC-1)", () => {
+    const root = mkdtempSync(join(tmpdir(), "prof-"));
+    mkdirSync(join(root, "profiles", "x"), { recursive: true });
+    writeFileSync(join(root, "profiles", "x", "profile.yaml"), "name: x\ntools: [Read]\ncredential_hook: null\n");
+    expect(() => resolveProfile(root, "x")).toThrow(/credential_hook/);
+    expect(() => checkCredentialNames({}, { profiles: { x: ["nope"] }, agents: {} })).toThrow(/profile x.*nope/);
+    expect(() => checkCredentialNames({}, { profiles: {}, agents: { a: ["nope"] } })).toThrow(/agent a.*nope/);
+    for (const n of listProfiles(agentsDir)) expect(resolveProfile(agentsDir, n).credentials).toEqual([]);
   });
   it("resolves security with review criteria", () => {
     const p = resolveProfile(agentsDir, "security");

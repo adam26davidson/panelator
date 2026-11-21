@@ -23,13 +23,18 @@ import {loadRegistry} from '../src/standing/registry.ts';
 import {EVENT_NAMES} from '../src/standing/events.ts';
 import {initializeAgents,listAgentStates} from '../src/standing/state.ts';
 import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
+import {TelegramNotifier} from '../src/notify/telegram.ts';
+import type {TelegramChannel} from '../src/telegram/channel.ts';
+import {contactsCommand} from '../src/contacts/commands.ts';
+import {checkInstallationScope,SCOPE_FIX} from '../src/contacts/scope.ts';
 import {readContactLog} from '../src/contacts/log.ts';
 import {ParameterStore} from '../src/parameters/store.ts';
 import {setParameterModeCommand} from '../src/parameters/command.ts';
 import {registryActionsCheck,loadActionLevels,applyAction} from '../src/actions/index.ts';
 import {ActionLog} from '../src/actions/log.ts';
 import {undoAction} from '../src/actions/undo.ts';
-import {loadCatalogue,profileNames} from '../src/credentials/catalogue.ts';
+import {resolveProfile} from '../src/profiles/resolve.ts';
+import {loadCatalogue,profileNames,checkCredentialNames} from '../src/credentials/catalogue.ts';
 import {storeFromConfig,appPrivateKey,appPrivateKeySource} from '../src/credentials/store.ts';
 import {credCommand} from '../src/credentials/commands.ts';
 import {awsCli} from '../src/aws/cli.ts';
@@ -69,12 +74,16 @@ const {registry,parameters,levels,catalogue,metrics}=(()=>{try {
   const registry=loadRegistry(join(agentsRoot,'standing'),EVENT_NAMES,kinds);
   const parameters=new ParameterStore(paths,loadParameterDefinitions(join(agentsRoot,'parameters.yaml'),cfg,registry));
   const catalogue=loadCatalogue(join(agentsRoot,'credentials.yaml'),{profiles:profileNames(agentsRoot),agents:Object.keys(registry)});
+  checkCredentialNames(catalogue,{profiles:Object.fromEntries(profileNames(agentsRoot).map(n=>[n,resolveProfile(agentsRoot,n).credentials??[]])),agents:Object.fromEntries(Object.values(registry).map(d=>[d.name,d.credentials??[]]))});
   return {registry,parameters,levels:loadActionLevels(join(agentsRoot,'actions.yaml')),catalogue,metrics:loadMetricDefinitions(join(agentsRoot,'metrics'))};
 }catch(e){fail((e as Error).message);}})();
 await initializeAgents(paths,registry,parameters,new Date());
 const actionLog=new ActionLog(paths.actionsLog,paths);
+// Spec 099 AC-6: one chain for every notification; the poller attaches the Telegram channel once it is up.
+let attachedTelegram:TelegramChannel|null=null;
+const notifier=rateLimited(recordedNotifier(TelegramNotifier(new LogNotifier(paths.serviceLog),{telegram:()=>attachedTelegram,alertsPath:paths.telegramAlerts,log:rec=>serviceLog.write(rec)}),paths),cfg.notify_rate_limit_hours);
 const awsContext:AwsContext={config:cfg.aws,paths,cli:cfg.aws?awsCli(cfg.aws):undefined,parameters,
- notifier:rateLimited(recordedNotifier(new LogNotifier(paths.serviceLog),paths),cfg.notify_rate_limit_hours),notifyHours:cfg.notify_rate_limit_hours,
+ notifier,notifyHours:cfg.notify_rate_limit_hours,
  now:()=>new Date(),log:rec=>serviceLog.write(rec),emitEvent:(event,payload)=>emit(paths,registry,event,payload,new Date()),state:newAwsState()};
 
 // Local administration works without service auth or the main-only checkout requirement.
@@ -138,6 +147,7 @@ if(['param','agent','action','cred','contacts'].includes(args[0])) {
       for(const line of out.lines)console.log(line);
       process.exit(out.exitCode);
     }
+    else if(command==='contacts'&&(verb==='list'||verb==='remove')){const out=await contactsCommand(verb,name,{paths,now:()=>new Date()});for(const l of out.lines)console.log(l);process.exit(out.exitCode);}
     else if(command==='contacts'&&verb==='log')console.log(JSON.stringify(await readContactLog(paths,flag('--since')),null,2));
     else if(command==='action'&&verb==='list')console.log(JSON.stringify(await actionLog.list(flag('--since')),null,2));
     else if(command==='param'&&verb==='set') {
@@ -153,7 +163,7 @@ if(['param','agent','action','cred','contacts'].includes(args[0])) {
       if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
     } else if(command==='action'&&verb==='undo') {
       const row=await undoAction(ctx,name,'maintainer');if(row.status!=='applied')throw new Error(row.reason);console.log(JSON.stringify(row));
-    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; contacts log [--since time]; cred set|list|check|import|remove; quota');
+    } else throw new Error('usage: param list|set <name> <value>|mode <name> auto|locked; agent list|pause|resume|run <name>; action list [--since time]|undo <id>; contacts list|remove <party>|log [--since time]; cred set|list|check|import|remove; quota');
     process.exit(0);
   }catch(e){console.error((e as Error).message);process.exit(1);}
 }
@@ -181,8 +191,14 @@ if (!origin.startsWith("https://")) fail(`origin must be an https URL (stages ca
 const app = createAppClient(cfg.app, privateKey);
 const token = await app.refreshTokenFile(paths);
 const botLogin = await app.botLogin();
+const scope = await checkInstallationScope({ app, installationId: cfg.app.installation_id, repo: cfg.repo }).catch((e): { status: "failed"; reason: string } => ({ status: "failed", reason: `scope check failed: ${(e as Error).message}` }));
+if (scope.status === "failed") {
+  serviceLog.write({ kind: "contact-scope", reason: scope.reason });
+  if (!has("--check-auth")) await notifier.notify({ issue: 0, gate: "infra", label: "contact-scope", text: `${scope.reason}; ${SCOPE_FIX}` }).catch(() => {});
+}
 if (has("--check-auth")) {
   console.log(`bot ${botLogin}, token expires ${token.expires_at}`);
+  console.log(scope.status === "ok" ? `installation scope ok (${cfg.repo} only)` : `installation scope FAILED: ${scope.reason}; ${SCOPE_FIX}`);
   process.exit(0);
 }
 const stopRefresh = app.startTokenRefresh(paths);
@@ -199,8 +215,8 @@ if(telegram?.source==='store')fromStore.add('telegram-bot');
 let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
-  cfg, paths, gh, telegram: null,registry,metrics,plainFiles:{store:credStore,paths:{'github-app-key':cfg.app.private_key_path,...(cfg.telegram?{'telegram-bot':cfg.telegram.credentials_path}:{})},fromStore}, parameters, notifier: rateLimited(recordedNotifier(new LogNotifier(paths.serviceLog), paths), cfg.notify_rate_limit_hours),
-  stages: loadStageDefinitions(join(agentsRoot, "stages")), agentsDir: agentsRoot, repoDir: repoRoot, binDir,
+  cfg, paths, gh, telegram: null,registry,metrics,credentials:{store:credStore,catalogue,warnDays:cfg.credentials.warn_days},plainFiles:{store:credStore,paths:{'github-app-key':cfg.app.private_key_path,...(cfg.telegram?{'telegram-bot':cfg.telegram.credentials_path}:{})},fromStore}, parameters, notifier,
+  stages: loadStageDefinitions(join(agentsRoot, "stages")), agentsDir: agentsRoot, repoDir: repoRoot, binDir, configPath: flag("--config") ?? defaultConfigPath, catalogue, scope: () => checkInstallationScope({ app, installationId: cfg.app.installation_id, repo: cfg.repo }), checkContext: { store: credStore, app: cfg.app, now: () => new Date() },
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),
   stopUnit: (unit) => systemdStopUnit(unit, { enabled: cfg.systemd.scope }),
@@ -222,7 +238,7 @@ const scheduler: Scheduler = new Scheduler({
   },
 });
 
-const telegramPoller=telegram?new TelegramPoller(telegram.client,paths.telegramOffset,cfg.telegram!.long_poll_timeout_s,u=>scheduler.handleTelegramUpdate(u),rec=>serviceLog.write(rec),undefined,u=>scheduler.confirmTelegramUpdate(u),()=>scheduler.setTelegram(telegram)):null;
+const telegramPoller=telegram?new TelegramPoller(telegram.client,paths.telegramOffset,cfg.telegram!.long_poll_timeout_s,u=>scheduler.handleTelegramUpdate(u),rec=>serviceLog.write(rec),undefined,u=>scheduler.confirmTelegramUpdate(u),()=>{attachedTelegram=telegram;scheduler.setTelegram(telegram);}):null;
 telegramPoller?.start();
 for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => {scheduler.stop(sig);void telegramPoller?.stop();});
 
