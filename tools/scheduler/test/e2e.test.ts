@@ -1845,7 +1845,7 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   expect(st).toMatchObject({failures:0,last_run:{outcome:'failed'}});
   const queue=await readJsonLines<{finding:{what:string;evidence:string}}>(w.paths.findingsQueue);
   expect(queue).toHaveLength(1);expect(queue[0].finding.evidence.startsWith('outage past ceiling: ')).toBe(true);expect(queue[0].finding.what).toBe('standing agent operator failed twice: EAI_AGAIN');
-  expect(w.notifications).toHaveLength(1);expect(st.next_run).not.toBeNull();expect(st.pending_events).toEqual([]);
+  expect(w.notifications).toHaveLength(1);expect(w.notifications[0]).toMatchObject({gate:'standing',label:'operator:failed:EAI_AGAIN'});expect(st.next_run).not.toBeNull();expect(st.pending_events).toEqual([]);
  },60000);
  it('a GitHub 404 while applying a filer result is a genuine failure, not an outage (spec 045 AC-1)',async()=>{
   const w=await standingWorld({'findings-filer':[{summary:'filed',decisions:[{ref:'1',outcome:'file',reason:'verified',issue:{title:'Bug',body:'Evidence',class:'class:bug'}}]}]});
@@ -1856,6 +1856,14 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   const st=(await readAgentState(w.paths,'findings-filer'))!;
   expect(st.failures).toBe(1);expect(st.outage).toBeUndefined();expect(st.postponed_until).toBeUndefined();
   expect(log.kinds('findings-filer','standing-error')).toHaveLength(1);
+ },60000);
+ it('the failed-twice notification is keyed by the cause, so repeats of one cause share an identity (spec 102 AC-7)',async()=>{
+  const w=await standingWorld({'findings-filer':[undefined,undefined],operator:[{summary:'quiet'},{summary:'quiet'}]});
+  const base=w.adapter;
+  w.deps.adapterFor=()=>({...base,judge:(e:unknown[],x:number|null,t:boolean)=>{const j=base.judge(e,x,t);return j.outcome==='failed'?{...j,reason:'spawn: spawn E2BIG'}:j;}}) as never;
+  const state=(await readAgentState(w.paths,'findings-filer'))!;state.next_run=w.deps.now().toISOString();await writeAgentState(w.paths,'findings-filer',state);
+  await w.scheduler.tick();await idle(w);await w.scheduler.tick();await idle(w);
+  expect(w.notifications.filter(n=>n.gate==='standing')).toEqual([{issue:0,gate:'standing',label:'findings-filer:failed:spawn: spawn E2BIG',text:'Standing agent findings-filer failed twice: spawn: spawn E2BIG'}]);
  },60000);
  it('a twice-failed filer is not woken by its own failure finding before its schedule (spec 020 AC-1, AC-2, AC-5)',async()=>{
   const w=await failFilerTwice();
@@ -2708,13 +2716,13 @@ describe('requests, alerts and the credential check (spec 099 section 6)', () =>
       w.deps.telegram = channel;
       const { TelegramNotifier } = await import('../src/notify/telegram.ts');
       const { LogNotifier } = await import('../src/notify/log.ts');
-      const notifier = TelegramNotifier(new LogNotifier(w.paths.serviceLog), { telegram: () => channel, alertsPath: w.paths.telegramAlerts, log: () => {} });
+      const notifier = TelegramNotifier(new LogNotifier(w.paths.serviceLog), { telegram: () => channel, alertsPath: w.paths.telegramAlerts, outboxPath: w.paths.telegramOutbox, now: () => new Date(), log: () => {} });
       expect(await notifier.notify({ issue: 0, gate: 'infra', label: 'disk', text: 'volume full' })).toEqual({ channel: 'telegram' });
       expect(server.sent[0]!.text).toBe('infra: disk\n\nvolume full');
       server.fail('sendMessage', 500);
-      expect(await notifier.notify({ issue: 0, gate: 'infra', label: 'disk2', text: 'again' })).toEqual({ channel: 'log' });
+      expect(await notifier.notify({ issue: 0, gate: 'infra', label: 'disk2', text: 'again' })).toEqual({ channel: 'queued' });
       const lines = readFileSync(w.paths.serviceLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-      expect(lines.filter((l) => l.kind === 'notify').map((l) => l.channel)).toEqual(['telegram', 'log']);
+      expect(lines.filter((l) => l.kind === 'notify').map((l) => l.channel)).toEqual(['telegram', 'queued']);
       const u = { update_id: 3, message: { message_id: 2000, date: Math.floor(Date.now() / 1000), chat: { id: 42 }, text: 'ok thanks', reply_to_message: { message_id: 1 } } };
       await w.scheduler.handleTelegramUpdate(u);
       expect(String(server.sent.at(-1)!.text)).toContain('Alerts take no reply');

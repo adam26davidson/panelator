@@ -86,4 +86,15 @@ describe("loadConfig", () => {
     expect(c.state_dir).not.toContain("~");
     expect(c.app.private_key_path).not.toContain("~");
   });
+  it("reads notify_repeat_hours with a default of 24 and leaves notify_rate_limit_hours at 4 (spec 102 AC-5)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cfg-"));
+    const p = join(dir, "s.yaml");
+    const base = "repo: a/b\nmaintainer: a\napp: {bot_login: bot}\n";
+    writeFileSync(p, base);
+    expect(loadConfig(p).notify_repeat_hours).toBe(24);
+    expect(loadConfig(p).notify_rate_limit_hours).toBe(4);
+    writeFileSync(p, base + "notify_repeat_hours: 12\n");
+    expect(loadConfig(p).notify_repeat_hours).toBe(12);
+    expect(loadConfig(p).notify_rate_limit_hours).toBe(4);
+  });
 });
