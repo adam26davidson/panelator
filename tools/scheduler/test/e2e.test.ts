@@ -1845,6 +1845,7 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   expect(st).toMatchObject({failures:0,last_run:{outcome:'failed'}});
   const queue=await readJsonLines<{finding:{what:string;evidence:string}}>(w.paths.findingsQueue);
   expect(queue).toHaveLength(1);expect(queue[0].finding.evidence.startsWith('outage past ceiling: ')).toBe(true);expect(queue[0].finding.what).toBe('standing agent operator failed twice: EAI_AGAIN');
+  expect(w.notifications.at(-1)).toMatchObject({gate:'standing',label:'operator:failed:EAI_AGAIN'});
   expect(w.notifications).toHaveLength(1);expect(st.next_run).not.toBeNull();expect(st.pending_events).toEqual([]);
  },60000);
  it('a GitHub 404 while applying a filer result is a genuine failure, not an outage (spec 045 AC-1)',async()=>{

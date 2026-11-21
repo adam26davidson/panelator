@@ -120,7 +120,7 @@ export function TelegramNotifier(inner: Notifier, deps: { telegram: () => Telegr
       return exclusive(flushLocked);
     },
     async clear(sel: ClearSelector): Promise<void> {
-      await exclusive(async () => {
+      if (!sel.keepQueued) await exclusive(async () => {
         const outbox = await readOutbox(deps.outboxPath);
         const kept = outbox.filter((e) => !matchesClear(e.identity, sel));
         if (kept.length !== outbox.length) await writeJsonAtomic(deps.outboxPath, kept);

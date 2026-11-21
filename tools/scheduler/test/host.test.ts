@@ -124,6 +124,19 @@ describe("HostMonitor", () => {
     expect(log.some((r) => r.kind === "host-resumed")).toBe(true);
     expect((await readHostState(statePaths(root))).downtime).toMatchObject([{ reason: "host", from: "2026-11-01T00:00:00.000Z" }]);
   });
+  it("clears the host notice on resume but keeps a queued one (spec 102 AC-6)", async () => {
+    const clears: unknown[] = [];
+    let cause: string | null = "EAI_AGAIN";
+    const clock = { t: Date.parse("2026-11-01T00:00:00Z") };
+    const m = new HostMonitor({ paths: statePaths(root), now: () => new Date(clock.t), write: () => {}, notifier: { notify: async () => {}, clear: async (sel) => { clears.push(sel); } }, emitEvent: async () => {}, probe: async () => cause });
+    await m.beginTick();
+    await m.onTransient("EAI_AGAIN", "boom");
+    expect(clears).toEqual([]);
+    cause = null;
+    clock.t = Date.parse(m.paused!.next_probe_at);
+    expect(await m.probeIfDue()).toBe(true);
+    expect(clears).toEqual([{ issue: 0, gate: "infra", label: "host", keepQueued: true }]);
+  });
   it("notifies once after two hours, and at once for ENOSPC", async () => {
     const a = make(async () => "EAI_AGAIN");
     await a.m.beginTick();

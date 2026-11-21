@@ -10,8 +10,8 @@ export interface Notification {
 /** Spec 099 AC-6: which channel carried the notification; `suppressed` is the rate limiter dropping it. */
 export interface NotifyResult { channel: "telegram" | "log" | "queued" | "suppressed" }
 
-/** Spec 102 AC-6: which sent notices a cleared condition re-arms. */
-export type ClearSelector = { issue: number; gate: string; label?: string; labelPrefix?: string };
+/** Spec 102 AC-6: which sent notices a cleared condition re-arms; `keepQueued` leaves a matching notice in the outbox (the host pause notice is still sent after the resume, AC-4). */
+export type ClearSelector = { issue: number; gate: string; label?: string; labelPrefix?: string; keepQueued?: boolean };
 
 export interface Notifier {
   notify(n: Notification, extra?: { channel?: "telegram" | "log" | "queued" }): Promise<NotifyResult | void>;
