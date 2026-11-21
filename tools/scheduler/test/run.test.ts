@@ -10,7 +10,7 @@ import type { StageDefinition } from "../src/types.ts";
 
 const script = join(import.meta.dirname, "fixtures", "stage-script.ts");
 const planDef: StageDefinition = {
-  name: "plan", kind: "agent", harness: "claude", model: "claude-fable-5-1", tier: "strong",
+  name: "plan", kind: "agent", harness: "claude", model: "claude-fable-5-2", tier: "strong",
   bounds: { timeout_min: 1, max_turns: 10, max_cost_usd: 1 }, permission: "no-prompt", worktree: "issue", profile: "none",
   input: "stage-input", output: "plan-result", prompt: "Plan {{issue}}\n{{spec}}\nWrite {{result_path}}",
 };

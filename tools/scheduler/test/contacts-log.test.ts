@@ -89,7 +89,7 @@ describe("a run's environment names its actor (AC-5)", () => {
       const dump = join(root, "env.json");
       const wrapped = { ...adapter, buildCommand: (r: Parameters<typeof adapter.buildCommand>[0]) => { const c = adapter.buildCommand(r); return { ...c, env: { ...c.env, ENV_DUMP_FILE: dump } }; } };
       const ctx: RunnerContext = { paths, adapter: wrapped, systemdScope: false, binDir: join(root, "bin"), now: () => new Date("2026-10-12T00:00:00Z"), sessionId: () => "s" };
-      const def = { name, kind, harness: "claude", model: "claude-fable-5-1", tier: "strong", bounds: { timeout_min: 1, max_turns: 10, max_cost_usd: 1 }, permission: "no-prompt", worktree: "issue", profile: "none", input: "stage-input", output: "plan-result", prompt: "p {{result_path}}" } as unknown as StageDefinition;
+      const def = { name, kind, harness: "claude", model: "claude-fable-5-2", tier: "strong", bounds: { timeout_min: 1, max_turns: 10, max_cost_usd: 1 }, permission: "no-prompt", worktree: "issue", profile: "none", input: "stage-input", output: "plan-result", prompt: "p {{result_path}}" } as unknown as StageDefinition;
       const req = { def, input: { issue: { number: 7, title: "t", body: "b" }, spec: "", result_path: "", profile_instructions: "" }, issue: 7, attempt: 1, worktree, profile: null, runId: `run-${name}-1` } as unknown as StageRequest;
       await runStage(ctx, req);
       expect(JSON.parse(readFileSync(dump, "utf8"))).toEqual({ actor: name, run_id: `run-${name}-1` });

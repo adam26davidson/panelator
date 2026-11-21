@@ -10,7 +10,7 @@ const minimal = `---
 name: review
 kind: agent
 harness: claude
-model: claude-fable-5-1
+model: claude-fable-5-2
 tier: strong
 bounds: { timeout_min: 40, max_turns: 150, max_cost_usd: 6 }
 permission: no-prompt
@@ -40,9 +40,9 @@ describe("parseStageDefinition", () => {
     expect(() => parseStageDefinition(minimal.replace("tier: strong", "tier: strong\nfallback: claude-opus-5-5"))).toThrow(/fallback/);
   });
   it("accepts a strong-tier fallback only on an independent stage (AC-26)", () => {
-    const withFallback = minimal.replace("tier: strong", "tier: strong\nfallback: claude-fable-5-1");
+    const withFallback = minimal.replace("tier: strong", "tier: strong\nfallback: claude-fable-5-2");
     const d = parseStageDefinition(withFallback.replace("tier: strong", "tier: strong\nindependent: true"));
-    expect(d.fallback).toBe("claude-fable-5-1");
+    expect(d.fallback).toBe("claude-fable-5-2");
     expect(d.independent).toBe(true);
     expect(() => parseStageDefinition(withFallback)).toThrow(/may not name a fallback/);
     expect(() => parseStageDefinition(withFallback.replace("tier: strong", "tier: strong\nindependent: false"))).toThrow(/may not name a fallback/);
@@ -69,11 +69,11 @@ describe("committed stage definitions", () => {
   });
   it("define the question check as an independent pi stage with a Claude fallback (AC-12, AC-26)", () => {
     const q = loadStageDefinitions(`${agentsDir}/stages`)["question-check"];
-    expect(q).toMatchObject({ harness: "pi", model: "openai/gpt-6.1-sol", independent: true, fallback: "claude-fable-5-1", input: "stage-input", tier: "strong", output: "question-check-result" });
+    expect(q).toMatchObject({ harness: "pi", model: "openai/gpt-6.1-sol", independent: true, fallback: "claude-fable-5-2", input: "stage-input", tier: "strong", output: "question-check-result" });
   });
   it("define the spec stage as strong tier with the spec profile and no fallback (AC-21)", () => {
     const s = loadStageDefinitions(`${agentsDir}/stages`).spec;
-    expect(s).toMatchObject({ tier: "strong", profile: "spec", output: "spec-result", harness: "claude", model: "claude-fable-5-1" });
+    expect(s).toMatchObject({ tier: "strong", profile: "spec", output: "spec-result", harness: "claude", model: "claude-fable-5-2" });
     expect(s.fallback).toBeUndefined();
     expect(s.independent).toBe(false);
   });
@@ -86,7 +86,7 @@ describe("the design stage (spec 029)", () => {
     spec_path: "specs/030-console/spec.md", design_problem: "missing home.tablet.png", viewports: "mobile 390x844, tablet 820x1180, desktop 1440x900",
   };
   it("is strong tier on Claude with the design profile and result schema (AC-1)", () => {
-    expect(defs.design).toMatchObject({ name: "design", tier: "strong", harness: "claude", profile: "design", input: "stage-input", output: "design-result", model: "claude-fable-5-1" });
+    expect(defs.design).toMatchObject({ name: "design", tier: "strong", harness: "claude", profile: "design", input: "stage-input", output: "design-result", model: "claude-fable-5-2" });
     expect(defs.design.independent).toBe(false);
   });
   it("renderPrompt fills spec_path, design_problem and viewports, and NONE when absent", () => {

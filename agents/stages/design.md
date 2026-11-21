@@ -2,7 +2,7 @@
 name: design
 kind: agent
 harness: claude
-model: claude-fable-5-1
+model: claude-fable-5-2
 independent: false
 tier: strong
 effort: high

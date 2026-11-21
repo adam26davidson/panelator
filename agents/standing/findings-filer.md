@@ -3,7 +3,7 @@ name: findings-filer
 kind: standing
 trigger: {events: [finding_queued, issue_abandoned, capability_answered], schedule: 1d}
 harness: claude
-model: claude-fable-5-1
+model: claude-fable-5-2
 tier: strong
 effort: high
 bounds: {timeout_min: 30, max_turns: 100, max_cost_usd: 6}

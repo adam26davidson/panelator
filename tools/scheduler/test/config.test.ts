@@ -40,7 +40,7 @@ describe("loadConfig", () => {
     expect(c.liveness_hours).toBe(2);
     expect(c.state_dir.startsWith("/")).toBe(true);
     expect(c.required_checks).toEqual(["test"]);
-    expect(c.rescue_model).toBe("claude-fable-5-1");
+    expect(c.rescue_model).toBe("claude-fable-5-2");
     expect(c.labels.stops_pipeline).toBe("stops-pipeline");
   });
   it("defaults labels.stops_pipeline when absent and reads it when set (spec 063 AC-4)", () => {
@@ -70,7 +70,7 @@ describe("loadConfig", () => {
     const dir = mkdtempSync(join(tmpdir(), "cfg-"));
     const p = join(dir, "s.yaml");
     writeFileSync(p, "repo: a/b\nmaintainer: a\napp: {id: 1, installation_id: 1, private_key_path: /k, bot_login: \"x[bot]\"}\n");
-    expect(loadConfig(p).rescue_model).toBe("claude-fable-5-1");
+    expect(loadConfig(p).rescue_model).toBe("claude-fable-5-2");
   });
   it("rejects slots below 1", () => {
     const dir = mkdtempSync(join(tmpdir(), "cfg-"));

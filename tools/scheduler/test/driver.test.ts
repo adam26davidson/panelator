@@ -181,7 +181,7 @@ describe("driveChain", () => {
     const { deps, claim, gh, adapter, paths, sha } = await setup((sha) => ({ plan: [plan], implement: [impl(sha)], review: [approve] }));
     const final = await driveChain(deps, claim, () => false);
     expect(final.state.stage).toBe("done");
-    expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "implement:claude-sonnet-5-5", "review:claude-fable-5-1"]);
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-2", "implement:claude-sonnet-5-5", "review:claude-fable-5-2"]);
     expect(gh.calls.find((c) => c.method === "PUT")?.body).toEqual({ merge_method: "squash", sha });
     expect(gh.calls.filter((c) => c.method === "DELETE").map((c) => c.url)).toContain("/repos/o/r/issues/7/labels/in-progress");
     expect(await listClaims(paths)).toEqual([]);
@@ -242,7 +242,7 @@ describe("driveChain", () => {
   it("retries a failed plan once, then escalates to a rescue plan with no label or notification (spec 006 AC-1)", async () => {
     const { deps, claim, notifications, adapter, gh } = await setup(() => ({ plan: [] }));
     const c = await steps(deps, claim, 3);
-    expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1"]);
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-2", "plan:claude-fable-5-2"]);
     expect(c.state).toMatchObject({ stage: "plan", attempt: 1, rescues: 1, rescueRun: true });
     expect(c.state.history.at(-1)).toMatch(/^plan: failed twice/);
     expect(notifications).toEqual([]);
@@ -270,7 +270,7 @@ describe("driveChain", () => {
     c = (await step(deps, c)).claim;
     expect(c.state).toMatchObject({ stage: "implement", rescues: 1, rescueRun: true, pr: null });
     expect(c.state.history).toContain("implement attempt 2 failed: result: pr mismatch");
-    expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "implement:claude-sonnet-5-5", "implement:claude-sonnet-5-5"]);
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-2", "implement:claude-sonnet-5-5", "implement:claude-sonnet-5-5"]);
     expect(notifications).toEqual([]);
     expect(gh.calls.find((call) => call.method === "PUT")).toBeUndefined();
   }, 60_000);
@@ -342,7 +342,7 @@ describe("driveChain", () => {
     deps.log = (r) => { logs.push(r); };
     let c = (await step(deps, claim)).claim;
     c = (await step(deps, c)).claim;
-    expect(adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-2"]);
     expect(c.state.stage).toBe("implement");
     expect(git(claim.worktree, "rev-parse", "HEAD").trim()).toBe(git(pair.repo, "rev-parse", "origin/main").trim());
     // Spec 005, AC-2: the stray commit was saved as a patch before the reset.
@@ -526,7 +526,7 @@ describe("driveChain", () => {
     const firmware = { ...plan, domain: "firmware" };
     const { deps, claim, adapter, notifications } = await setup(() => ({ plan: [firmware, { ...firmware }] }));
     const c = await steps(deps, claim, 3);
-    expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1"]);
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-2", "plan:claude-fable-5-2"]);
     expect(c.state).toMatchObject({ stage: "plan", rescues: 1, rescueRun: true });
     expect(c.state.history.at(-1)).toContain("profile not available: firmware (implementation profiles: backend, web-ui)");
     expect(notifications).toEqual([]);
@@ -536,7 +536,7 @@ describe("driveChain", () => {
     const spec = { ...plan, domain: "spec" };
     const { deps, claim, adapter } = await setup(() => ({ plan: [spec, { ...spec }] }));
     const c = await steps(deps, claim, 3);
-    expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1"]);
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-2", "plan:claude-fable-5-2"]);
     // plan-result.json's domain enum already refuses "spec" before the I4 check runs, so the plan fails as an invalid result.
     expect(c.state.history.at(-1)).toMatch(/profile not available: spec|result: invalid/);
     expect(c.state).toMatchObject({ stage: "plan", rescues: 1, rescueRun: true });
@@ -581,7 +581,7 @@ describe("driver: escalation (spec 006 AC-1 to AC-5, AC-7)", () => {
     // The plan stage's own model is the configured rescue model, so a distinct id shows which one ran.
     deps.cfg = { ...deps.cfg, rescue_model: "claude-rescue-test" };
     const c = await steps(deps, claim, 4);
-    expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1", "plan:claude-rescue-test"]);
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-2", "plan:claude-fable-5-2", "plan:claude-rescue-test"]);
     expect(c.state.rescues).toBe(1);
     expect(JSON.parse(readFileSync(ledgerFile(paths), "utf8")).rescues).toBe(1);
     const rescue = readdirSync(paths.runs).find((d) => d.startsWith("7-plan-1-") && d.includes("-rescue"))!;
@@ -591,7 +591,7 @@ describe("driver: escalation (spec 006 AC-1 to AC-5, AC-7)", () => {
   it("runs a rescued implement on the rescue model, not the stage's own (AC-1)", async () => {
     const { deps, claim, adapter } = await setup(() => ({ plan: [plan], implement: [] }));
     await steps(deps, claim, 5);
-    expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "implement:claude-sonnet-5-5", "implement:claude-sonnet-5-5", "implement:claude-fable-5-1"]);
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-2", "implement:claude-sonnet-5-5", "implement:claude-sonnet-5-5", "implement:claude-fable-5-2"]);
   }, 60_000);
 
   it("re-plans with PR 9 open: comments on it, closes it and deletes issue-7 from the action, saving its branch as a patch (AC-2, review focus 6, C10)", async () => {
@@ -866,9 +866,9 @@ describe("driver: rate limits (spec 006 AC-26)", () => {
     const r = await step(deps, c);
     expect(r.status).toBe("waiting");
     expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "question-check" });
-    expect(ran).toEqual(["question-check:openai/gpt-6.1-sol", "question-check:claude-fable-5-1"]);
+    expect(ran).toEqual(["question-check:openai/gpt-6.1-sol", "question-check:claude-fable-5-2"]);
     const usage = readdirSync(paths.usage).map((f) => JSON.parse(readFileSync(join(paths.usage, f), "utf8")));
-    expect(usage.map((u) => [u.stage, u.model]).sort()).toEqual([["question-check", "claude-fable-5-1"], ["question-check", "openai/gpt-6.1-sol"]]);
+    expect(usage.map((u) => [u.stage, u.model]).sort()).toEqual([["question-check", "claude-fable-5-2"], ["question-check", "openai/gpt-6.1-sol"]]);
   }, 60_000);
 });
 
@@ -905,7 +905,7 @@ describe("driver: quota (spec 013)", () => {
   }
 
   it("postpones a strong stage to the stated reset and starts no run before it (AC-4, AC-5, AC-6)", async () => {
-    const w = await world({ "claude-fable-5-1": [SESSION, plan] }, "2026-10-29T02:58:53Z");
+    const w = await world({ "claude-fable-5-2": [SESSION, plan] }, "2026-10-29T02:58:53Z");
     const c = at(w.claim, { stage: "plan" });
     await writeClaim(w.paths, c);
     let r = await step(w.deps, c);
@@ -921,64 +921,64 @@ describe("driver: quota (spec 013)", () => {
     r = await step(w.deps, again);
     expect(r.claim.state).toMatchObject({ stage: "waiting", postponedUntil: "2026-10-29T07:10:00.000Z" });
     expect(w.logs.find((l) => l.kind === "quota-wait")).toMatchObject({ issue: 7, stage: "plan", key: "claude" });
-    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-2"]);
     expect(readdirSync(w.paths.usage)).toHaveLength(1);
     w.setNow("2026-10-29T07:11:00Z");
     r = await step(w.deps, r.claim);
     r = await step(w.deps, r.claim);
-    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-fable-5-1"]);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-2", "plan:claude-fable-5-2"]);
     expect(r.claim.state.stage).toBe("implement");
   }, 60_000);
 
   it("moves a strong stage to the next-best Claude model on a model-only limit, then launches there directly (AC-9)", async () => {
-    const w = await world({ "claude-fable-5-1": [FABLE], "claude-opus-5-5": [plan, plan] }, "2026-10-29T07:15:00Z");
+    const w = await world({ "claude-fable-5-2": [FABLE], "claude-opus-5-5": [plan, plan] }, "2026-10-29T07:15:00Z");
     const c = at(w.claim, { stage: "plan" });
     await writeClaim(w.paths, c);
     const r = await step(w.deps, c);
-    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5"]);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-2", "plan:claude-opus-5-5"]);
     expect(r.claim.state.stage).toBe("implement");
-    expect(w.logs.filter((l) => l.kind === "quota-fallback")).toEqual([{ kind: "quota-fallback", issue: 7, stage: "plan", from: "claude-fable-5-1", to: "claude-opus-5-5", key: "claude:fable" }]);
+    expect(w.logs.filter((l) => l.kind === "quota-fallback")).toEqual([{ kind: "quota-fallback", issue: 7, stage: "plan", from: "claude-fable-5-2", to: "claude-opus-5-5", key: "claude:fable" }]);
     const again = at(r.claim, { stage: "plan" });
     await step(w.deps, again);
-    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5", "plan:claude-opus-5-5"]);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-2", "plan:claude-opus-5-5", "plan:claude-opus-5-5"]);
     const usage = readdirSync(w.paths.usage).map((f) => JSON.parse(readFileSync(join(w.paths.usage, f), "utf8")).model).sort();
-    expect(usage).toEqual(["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5-5"]);
+    expect(usage).toEqual(["claude-fable-5-2", "claude-opus-5-5", "claude-opus-5-5"]);
   }, 60_000);
 
   it("moves a rescue to the next-best Claude model under a Fable limit, then launches there directly (AC-9; ADR 0003 amendment 2026-11-17)", async () => {
-    const w = await world({ "claude-fable-5-1": [FABLE], "claude-opus-5-5": [plan, plan] }, "2026-10-29T07:15:00Z");
+    const w = await world({ "claude-fable-5-2": [FABLE], "claude-opus-5-5": [plan, plan] }, "2026-10-29T07:15:00Z");
     const c = at(w.claim, { stage: "plan", rescueRun: true, rescues: 1 });
     await writeClaim(w.paths, c);
     let r = await step(w.deps, c);
-    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5"]);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-2", "plan:claude-opus-5-5"]);
     expect(r.claim.state).toMatchObject({ stage: "implement", rescueRun: false, rescues: 1 });
-    expect(w.logs.filter((l) => l.kind === "quota-fallback")).toEqual([{ kind: "quota-fallback", issue: 7, stage: "plan", from: "claude-fable-5-1", to: "claude-opus-5-5", key: "claude:fable" }]);
+    expect(w.logs.filter((l) => l.kind === "quota-fallback")).toEqual([{ kind: "quota-fallback", issue: 7, stage: "plan", from: "claude-fable-5-2", to: "claude-opus-5-5", key: "claude:fable" }]);
     expect(w.logs.filter((l) => l.kind === "stage").at(-1)).toMatchObject({ outcome: "ok", rescue: true, fallback: "claude-opus-5-5", run_id: expect.stringMatching(/-rescue-fallback$/) });
     // Started again while the Fable limit holds, the rescue launches on Opus without a 429 first.
     w.setNow("2026-10-29T07:20:00Z");
     r = await step(w.deps, at(r.claim, { stage: "plan", rescueRun: true }));
-    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5", "plan:claude-opus-5-5"]);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-2", "plan:claude-opus-5-5", "plan:claude-opus-5-5"]);
     expect(r.claim.state).toMatchObject({ stage: "implement", rescueRun: false, rescues: 1 });
     expect(w.logs.filter((l) => l.kind === "stage").at(-1)).toMatchObject({ outcome: "ok", rescue: true, fallback: "claude-opus-5-5", run_id: expect.stringMatching(/-rescue-fallback$/) });
   }, 60_000);
 
   it("postpones a rescue when the fallback model is limited too (AC-9, spec 006 AC-27)", async () => {
-    const w = await world({ "claude-fable-5-1": [FABLE], "claude-opus-5-5": ["You've hit your Opus limit · resets 9pm (UTC)"] }, "2026-10-29T07:15:00Z");
+    const w = await world({ "claude-fable-5-2": [FABLE], "claude-opus-5-5": ["You've hit your Opus limit · resets 9pm (UTC)"] }, "2026-10-29T07:15:00Z");
     const c = at(w.claim, { stage: "plan", rescueRun: true, rescues: 1 });
     await writeClaim(w.paths, c);
     let r = await step(w.deps, c);
-    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5"]);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-2", "plan:claude-opus-5-5"]);
     expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "plan", rescueRun: true, rescues: 1, postponedUntil: "2026-10-29T07:30:00.000Z" });
     // Started again while both limits hold, the rescue waits and runs nothing.
     r = await step(w.deps, at(r.claim, { stage: "plan", postponedUntil: null }));
-    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1", "plan:claude-opus-5-5"]);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-2", "plan:claude-opus-5-5"]);
     expect(r.claim.state).toMatchObject({ stage: "waiting", rescueRun: true, rescues: 1 });
     expect(w.logs.filter((l) => l.kind === "quota-wait").at(-1)).toMatchObject({ stage: "plan", key: "claude:fable" });
   }, 60_000);
 
   it("caps a session wait at quota.session_window as set in the parameter store (AC-1, AC-8)", async () => {
     // 8:10 Berlin read an hour after it passed would be tomorrow; with a 2h window the wait is 2h.
-    const w = await world({ "claude-fable-5-1": ["You've hit your session limit · resets 8:10am (Europe/Berlin)"] }, "2026-10-29T08:10:00Z");
+    const w = await world({ "claude-fable-5-2": ["You've hit your session limit · resets 8:10am (Europe/Berlin)"] }, "2026-10-29T08:10:00Z");
     await w.deps.parameters!.setParameter("quota.session_window", "2h", "maintainer");
     const c = at(w.claim, { stage: "plan" });
     await writeClaim(w.paths, c);
@@ -990,19 +990,19 @@ describe("driver: quota (spec 013)", () => {
   }, 60_000);
 
   it("never moves a strong stage to another Claude model on a weekly limit (AC-9)", async () => {
-    const w = await world({ "claude-fable-5-1": ["You've hit your weekly limit · resets Nov 3, 9am (Europe/Berlin)"] }, "2026-10-29T07:15:00Z");
+    const w = await world({ "claude-fable-5-2": ["You've hit your weekly limit · resets Nov 3, 9am (Europe/Berlin)"] }, "2026-10-29T07:15:00Z");
     const c = at(w.claim, { stage: "plan" });
     await writeClaim(w.paths, c);
     const r = await step(w.deps, c);
-    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-2"]);
     expect(r.claim.state).toMatchObject({ stage: "waiting", postponedUntil: "2026-11-03T08:00:00.000Z" });
     expect(w.logs.filter((l) => l.kind === "quota-fallback")).toEqual([]);
   }, 60_000);
 
   it("defers a strong stage to the window's end once, then runs it (AC-8)", async () => {
-    const w = await world({ "claude-fable-5-1": [plan] }, "2026-10-29T03:00:00Z");
+    const w = await world({ "claude-fable-5-2": [plan] }, "2026-10-29T03:00:00Z");
     const u = (over: Record<string, unknown>) => ({
-      run_id: `u${Math.random()}`, issue: 1, stage: "plan", attempt: 1, outcome: "ok" as const, harness: "claude" as const, model: "claude-fable-5-1", cost_usd: 4, input_tokens: 0, output_tokens: 0,
+      run_id: `u${Math.random()}`, issue: 1, stage: "plan", attempt: 1, outcome: "ok" as const, harness: "claude" as const, model: "claude-fable-5-2", cost_usd: 4, input_tokens: 0, output_tokens: 0,
       cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0, wall_seconds: 1, started_at: "", ended_at: "", events_path: "", ...over,
     });
     const okJ = { outcome: "ok" as const, reason: null, apiErrorStatus: null, finalText: null };
@@ -1019,17 +1019,17 @@ describe("driver: quota (spec 013)", () => {
     expect(w.logs.find((l) => l.kind === "quota-defer")).toMatchObject({ issue: 7, stage: "plan", estimate: 4, spent: 20, capacity: 20, until: "2026-10-29T05:01:00.000Z" });
     // Started again before the end (a restart), it is not deferred a second time in the same window.
     r = await step(w.deps, at(r.claim, { stage: "plan", postponedUntil: null }));
-    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-2"]);
     expect(r.claim.state.stage).toBe("implement");
   }, 60_000);
 
   it("waits instead when the model-limit fallback parameter is off (AC-9)", async () => {
-    const w = await world({ "claude-fable-5-1": [FABLE] }, "2026-10-29T07:15:00Z");
+    const w = await world({ "claude-fable-5-2": [FABLE] }, "2026-10-29T07:15:00Z");
     await w.deps.parameters!.setParameter("quota.model_limit_fallback", false, "maintainer");
     const c = at(w.claim, { stage: "plan" });
     await writeClaim(w.paths, c);
     const r = await step(w.deps, c);
-    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(w.adapter.ran).toEqual(["plan:claude-fable-5-2"]);
     expect(r.claim.state).toMatchObject({ stage: "waiting", postponedUntil: "2026-10-29T07:30:00.000Z" });
   }, 60_000);
 });
@@ -1246,7 +1246,7 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
     expect(existsSync(join(paths.root, "merges.jsonl"))).toBe(false);
     expect(readdirSync(paths.patches).filter((f) => f.includes("deleted-branch"))).toEqual([]);
     await steps(deps, r.claim, 2);
-    expect(adapter.ran).toEqual(["plan:claude-fable-5-1", "implement:claude-sonnet-5-5"]);
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-2", "implement:claude-sonnet-5-5"]);
     expect(adapter.heads).toEqual(["issue-7", "issue-7"]);
   }, 60_000);
 
@@ -1358,7 +1358,7 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
       expect(input).toMatchObject({ spec_path: "specs/010-thing/spec.md", design_problem: "the design is incomplete: missing editor-empty.png", viewports: expect.stringContaining("tablet 820x1180") });
       expect(validate("stage-input", input).ok).toBe(true);
       expect(adapter.heads).toEqual(["design-7"]);
-      expect(adapter.ran).toEqual(["design:claude-fable-5-1"]);
+      expect(adapter.ran).toEqual(["design:claude-fable-5-2"]);
     }, 60_000);
 
     it("fails a result with a screen of two renders, or without stories, as an invalid result (AC-2)", async () => {
@@ -1395,7 +1395,7 @@ describe("driver: spec track (spec 006 AC-4, AC-19, AC-21, AC-22)", () => {
       const c = at(env.claim, { stage: "fix", track: "design", pr: { number: 12, head_sha: env.sha }, pendingFixInput: "Review requested changes" });
       await writeClaim(env.paths, c);
       await step(env.deps, c);
-      expect(env.adapter.ran).toEqual(["fix:claude-fable-5-1"]);
+      expect(env.adapter.ran).toEqual(["fix:claude-fable-5-2"]);
       expect(env.adapter.heads).toEqual(["design-7"]);
       expect(inputOf(env.paths, "7-fix-").profile_instructions).toContain("Design profile");
     }, 60_000);
@@ -2176,7 +2176,7 @@ describe("driver: the chain keeps its work (spec 015)", () => {
     const c: Claim = { ...at(claim, { stage: "plan" }), stageRun: { stage: "plan", attempt: 2, run_id: "7-plan-2-x", result: plan, start: "0".repeat(40), security: false, sensitive: false } };
     await writeClaim(paths, c);
     const r = await step(deps, c);
-    expect(adapter.ran).toEqual(["plan:claude-fable-5-1"]);
+    expect(adapter.ran).toEqual(["plan:claude-fable-5-2"]);
     expect(r.claim.state.stage).toBe("implement");
     expect(r.claim.stageRun).toBeUndefined();
   }, 60_000);
@@ -2229,7 +2229,7 @@ describe("driver: the chain keeps its work (spec 015)", () => {
     expect(kept.state.stage).toBe("review");
     expect(kept.stageRun?.stage).toBe("review");
     const r = await step(deps, kept);
-    expect(adapter.ran).toEqual(["review:claude-fable-5-1"]);
+    expect(adapter.ran).toEqual(["review:claude-fable-5-2"]);
     expect(logs).toContainEqual(expect.objectContaining({ kind: "stage-result-kept", stage: "review" }));
     expect(logs).toContainEqual(expect.objectContaining({ kind: "pr-closed", pr: 9 }));
     expect(r.claim.state).toMatchObject({ stage: "plan", replans: 1, pr: null });
@@ -2254,7 +2254,7 @@ describe("driver: a rebase respects merged main (spec 024)", () => {
     const { deps, claim, adapter, sha } = await setup(() => ({ review: [approve] }), undefined, (pair, wt) => { conflicting(pair, wt); mergeMainResolved(wt); });
     const atReview: Claim = { ...claim, state: { ...claim.state, stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } } };
     const r = await step(deps, atReview);
-    expect(adapter.ran).toEqual(["review:claude-fable-5-1"]);
+    expect(adapter.ran).toEqual(["review:claude-fable-5-2"]);
     expect(r.claim.state).toMatchObject({ stage: "merge", fixes: 0, conflictPending: false, history: [] });
     expect(head(claim.worktree)).toBe(sha);
   }, 60_000);
@@ -2297,7 +2297,7 @@ describe("driver: a rebase respects merged main (spec 024)", () => {
     expect(input).toMatch(/merge origin\/main into it rather than rebasing/);
     expect(r.claim.state).toMatchObject({ stage: "verify", fixes: 1, conflictPending: false });
     expect((await steps(deps, r.claim, 2)).state.stage).toBe("merge");
-    expect(adapter.ran).toEqual(["fix:claude-sonnet-5-5", "review:claude-fable-5-1"]);
+    expect(adapter.ran).toEqual(["fix:claude-sonnet-5-5", "review:claude-fable-5-2"]);
     expect(git(claim.worktree, "rev-list", "--merges", "--count", "origin/main..HEAD").trim()).toBe("2");
   }, 60_000);
 

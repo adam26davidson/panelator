@@ -8,7 +8,7 @@ import type { StageRun } from "../src/adapters/types.ts";
 const fx = async (n: string) => (await readJsonlFile(join(import.meta.dirname, "fixtures", "streams", n))).records;
 
 const run: StageRun = {
-  runId: "r", stage: "review", attempt: 1, issue: 7, prompt: "Review and write /tmp/r.json", model: "claude-fable-5-1",
+  runId: "r", stage: "review", attempt: 1, issue: 7, prompt: "Review and write /tmp/r.json", model: "claude-fable-5-2",
   bounds: { timeout_min: 40, max_turns: 150, max_cost_usd: 6 }, worktree: "/w", sessionId: "11111111-1111-4111-8111-111111111111",
   resultPath: "/tmp/r.json", profile: null, effort: "high",
 };
@@ -35,7 +35,7 @@ describe("claudeAdapter.buildCommand (AC-18)", () => {
     expect(argv).not.toContain(run.prompt);
     expect(argv.slice(argv.indexOf("--output-format"), argv.indexOf("--output-format") + 2)).toEqual(["--output-format", "stream-json"]);
     expect(argv).toContain("--verbose");
-    expect(argv.slice(argv.indexOf("--model"), argv.indexOf("--model") + 2)).toEqual(["--model", "claude-fable-5-1"]);
+    expect(argv.slice(argv.indexOf("--model"), argv.indexOf("--model") + 2)).toEqual(["--model", "claude-fable-5-2"]);
     expect(argv.slice(argv.indexOf("--max-turns"), argv.indexOf("--max-turns") + 2)).toEqual(["--max-turns", "150"]);
     expect(argv.slice(argv.indexOf("--max-budget-usd"), argv.indexOf("--max-budget-usd") + 2)).toEqual(["--max-budget-usd", "6"]);
     expect(argv.slice(argv.indexOf("--session-id"), argv.indexOf("--session-id") + 2)).toEqual(["--session-id", run.sessionId]);

@@ -1,4 +1,4 @@
-{"type":"system","subtype":"init","cwd":"/w","session_id":"s","model":"claude-fable-5-1","permissionMode":"dontAsk","claude_code_version":"2.1.287","plugins":[],"mcp_servers":[],"uuid":"u1"}
+{"type":"system","subtype":"init","cwd":"/w","session_id":"s","model":"claude-fable-5-2","permissionMode":"dontAsk","claude_code_version":"2.1.287","plugins":[],"mcp_servers":[],"uuid":"u1"}
 {"type":"system","subtype":"api_retry","attempt":1,"max_retries":1,"retry_delay_ms":0,"error_status":null,"error":"unknown","no_response":{"waited_ms":181000,"retry_wait_ms":599000},"session_id":"s","uuid":"u2"}
 {"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":539,"error_status":null,"error":"unknown","session_id":"s","uuid":"r1"}
 {"type":"system","subtype":"api_retry","attempt":2,"max_retries":10,"retry_delay_ms":1194,"error_status":null,"error":"unknown","session_id":"s","uuid":"r2"}

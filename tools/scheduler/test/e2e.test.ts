@@ -1309,7 +1309,7 @@ describe("end to end: a stage run that cannot reach the API waits out the outage
     const a = agents(() => w);
     w = await chainWorld({ files: repoFiles(), results: { plan: [PLAN], implement: [a.implement(9)], review: [NETWORK_DOWN, APPROVE] } });
     const own = w.deps.stages.review.model;
-    w.deps.stages.review = { ...w.deps.stages.review, independent: true, fallback: "claude-fable-5-1", tier: "standard" };
+    w.deps.stages.review = { ...w.deps.stages.review, independent: true, fallback: "claude-fable-5-2", tier: "standard" };
     const c = clock(w);
     await w.tick();
     expect(w.adapter.ran).toEqual(["plan", "implement", "review"]);
@@ -1897,7 +1897,7 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
  it('a standing agent already blocked when it comes due starts no run and waits for the reset (spec 013 AC-7)',async()=>{
   const w=await standingWorld({operator:[{summary:'after the reset'}]});
   const t0=new Date('2026-10-01T00:00:00Z');
-  await observeRun(w.paths,{run_id:'x',issue:7,stage:'review',attempt:1,outcome:'failed',harness:'claude',model:'claude-fable-5-1',cost_usd:0,input_tokens:0,output_tokens:0,cache_read_tokens:0,cache_write_tokens:0,turns:1,tool_calls:0,wall_seconds:1,started_at:t0.toISOString(),ended_at:t0.toISOString(),events_path:''},{outcome:'failed',reason:"You've hit your session limit · resets 3am (UTC)",apiErrorStatus:429,finalText:null},t0);
+  await observeRun(w.paths,{run_id:'x',issue:7,stage:'review',attempt:1,outcome:'failed',harness:'claude',model:'claude-fable-5-2',cost_usd:0,input_tokens:0,output_tokens:0,cache_read_tokens:0,cache_write_tokens:0,turns:1,tool_calls:0,wall_seconds:1,started_at:t0.toISOString(),ended_at:t0.toISOString(),events_path:''},{outcome:'failed',reason:"You've hit your session limit · resets 3am (UTC)",apiErrorStatus:429,finalText:null},t0);
   const state=(await readAgentState(w.paths,'operator'))!;state.next_run=t0.toISOString();await writeAgentState(w.paths,'operator',state);
   await w.scheduler.tick();await idle(w);
   expect(w.adapter.ran).toEqual([]);
@@ -1911,7 +1911,7 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   const seen:{running?:string;run?:string}={};
   const w=await standingWorld({operator:[(run:StageRun)=>{seen.running=JSON.parse(readFileSync(join(w.paths.agents,'operator.json'),'utf8')).running?.run_id;seen.run=run.runId;return {summary:'on opus'};}]});
   const t0=new Date('2026-10-01T00:00:00Z');
-  await observeRun(w.paths,{run_id:'x',issue:7,stage:'review',attempt:1,outcome:'failed',harness:'claude',model:'claude-fable-5-1',cost_usd:0,input_tokens:0,output_tokens:0,cache_read_tokens:0,cache_write_tokens:0,turns:1,tool_calls:0,wall_seconds:1,started_at:t0.toISOString(),ended_at:t0.toISOString(),events_path:''},{outcome:'failed',reason:"You've reached your Fable limit. Switch to another model.",apiErrorStatus:429,finalText:null},t0);
+  await observeRun(w.paths,{run_id:'x',issue:7,stage:'review',attempt:1,outcome:'failed',harness:'claude',model:'claude-fable-5-2',cost_usd:0,input_tokens:0,output_tokens:0,cache_read_tokens:0,cache_write_tokens:0,turns:1,tool_calls:0,wall_seconds:1,started_at:t0.toISOString(),ended_at:t0.toISOString(),events_path:''},{outcome:'failed',reason:"You've reached your Fable limit. Switch to another model.",apiErrorStatus:429,finalText:null},t0);
   const state=(await readAgentState(w.paths,'operator'))!;state.next_run=t0.toISOString();await writeAgentState(w.paths,'operator',state);
   await w.scheduler.tick();await idle(w);
   expect(w.adapter.runs.map(r=>r.model)).toEqual(['claude-opus-5-5']);
@@ -1968,7 +1968,7 @@ const FAILED_TWICE='standing agent findings-filer failed twice';
   expect(await readJsonLines(w.paths.findingsQueue)).toHaveLength(0);expect(w.notifications).toHaveLength(0);
   const ticks=readFileSync(w.paths.serviceLog,'utf8').trim().split('\n').map(l=>JSON.parse(l)).filter(r=>r.kind==='tick');
   // AC-10: the tick line shows the limit and the agent waiting on it while it lasts.
-  expect(ticks[1].quota).toEqual({limits:[{key:'claude:claude-fable-5-1',scope:'unknown',resets_at:'2026-10-01T00:15:00.000Z',source:'backoff'}],waiting:[{what:'agent:operator',until:'2026-10-01T00:15:00.000Z'}]});
+  expect(ticks[1].quota).toEqual({limits:[{key:'claude:claude-fable-5-2',scope:'unknown',resets_at:'2026-10-01T00:15:00.000Z',source:'backoff'}],waiting:[{what:'agent:operator',until:'2026-10-01T00:15:00.000Z'}]});
   expect(ticks.at(-1).quota).toBeUndefined();
  },30000);
 });

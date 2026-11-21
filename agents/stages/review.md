@@ -2,7 +2,7 @@
 name: review
 kind: agent
 harness: claude
-model: claude-fable-5-1
+model: claude-fable-5-2
 tier: strong
 effort: high
 bounds: { timeout_min: 40, max_turns: 150, max_cost_usd: 6 }

@@ -112,7 +112,7 @@ export function loadConfig(path: string): Config {
     liveness_hours: num("liveness_hours", 2),
     retry_cost_limit_usd: num("retry_cost_limit_usd", 1),
     reflection_max_issues: num("reflection_max_issues", 8),
-    rescue_model: typeof raw.rescue_model === "string" && raw.rescue_model ? raw.rescue_model : "claude-fable-5-1",
+    rescue_model: typeof raw.rescue_model === "string" && raw.rescue_model ? raw.rescue_model : "claude-fable-5-2",
     notify_rate_limit_hours: num("notify_rate_limit_hours", 4),
     bounds: { design_revisions: designRevisions },
     required_checks: Array.isArray(raw.required_checks) ? (raw.required_checks as string[]) : [],
