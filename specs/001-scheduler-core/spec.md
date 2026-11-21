@@ -116,7 +116,7 @@ fake harness and a mocked GitHub API unless marked (real).
   when verify runs, then review does not start; given a check failed, then a
   fix stage starts with the failing check's log excerpt as input; given
   checks are pending, then the chain waits and re-polls.
-- AC-15. Given a claimed issue with no run in flight and no commit, comment
+- AC-15. Amended by [100-host-outage-pauses-scheduler](../100-host-outage-pauses-scheduler/spec.md) AC-6: the two hours count only time the scheduler was running and not paused. Given a claimed issue with no run in flight and no commit, comment
   or label change for 2 hours, when a poll completes, then the claim is
   released, uncommitted changes in its worktree are saved as a patch in the
   state directory, and a comment on the issue says so. *(Amended by spec

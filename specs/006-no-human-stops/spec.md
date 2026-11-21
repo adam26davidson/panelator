@@ -401,7 +401,7 @@ AC-10 second sentence, AC-13)
   hours, then one reminder is sent: an issue comment that @-mentions the
   maintainer, and one notification. No second reminder is sent. The issue is
   never abandoned or released for lack of an answer.
-- AC-17. Amended by [097-verify-rebases-conflicting-pr](../097-verify-rebases-conflicting-pr/spec.md) AC-1 and AC-3: a pending PR that GitHub reports not mergeable, with a required check that has no run, is not waited on; it is rebased and pushed at once, and a conflict goes to the fix as spec 024's rebase_conflict. The six-hour path applies to the other pending PRs. **Any stage can report what it cannot do.** Given a plan, implement or
+- AC-17. Amended by [100-host-outage-pauses-scheduler](../100-host-outage-pauses-scheduler/spec.md) AC-7: the six hours of pending checks count only time the scheduler was running and not paused. Amended by [097-verify-rebases-conflicting-pr](../097-verify-rebases-conflicting-pr/spec.md) AC-1 and AC-3: a pending PR that GitHub reports not mergeable, with a required check that has no run, is not waited on; it is rebased and pushed at once, and a conflict goes to the fix as spec 024's rebase_conflict. The six-hour path applies to the other pending PRs. **Any stage can report what it cannot do.** Given a plan, implement or
   fix result that carries an `escalation` (kind `capability`, `product` or
   `technical`; `other` does not validate there), then the question goes to the
   question check (AC-12) with that stage as the asking stage. A result with an

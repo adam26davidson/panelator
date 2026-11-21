@@ -165,7 +165,7 @@ root only).
   records: three refused `Bash` calls, label `ENOSPC`), on the same events
   with one `Bash` result replaced by command output (`null`), and on a run
   with no `Bash` call (`null`).
-- AC-3. **The pre-flight check refuses a launch into a full volume.** Given
+- AC-3. Amended by [100-host-outage-pauses-scheduler](../100-host-outage-pauses-scheduler/spec.md) AC-2 and AC-5: when the host probe finds the space low the scheduler pauses with the notice at once; the claim's outage is recorded only when the probe passes. **The pre-flight check refuses a launch into a full volume.** Given
   a due stage whose quota check passes, when `runAgentStage` reaches the
   point before `syncWorktree` (before the worktree is fetched, reset or
   rebased), then it calls `checkHostSpace(paths, worktree)`; given any
@@ -189,7 +189,7 @@ root only).
   before `git worktree add` (and before the run for `worktree: none`), so a
   refused standing launch takes spec 045 AC-1's path for an error thrown
   around the run: postponed, counted toward nothing.
-- AC-4. Amended by [063-pipeline-stopping-finding-ranks-first](../063-pipeline-stopping-finding-ranks-first/spec.md) AC-6: the "disk space blocks the chain" finding carries stops_pipeline: true. **A host-refused run is postponed, not counted, and alarms at
+- AC-4. Amended by [100-host-outage-pauses-scheduler](../100-host-outage-pauses-scheduler/spec.md) AC-2 and AC-5: a host-refused run pauses the scheduler when the probe finds the space low; the claim's outage and its alarm are recorded only when the probe passes. Amended by [063-pipeline-stopping-finding-ranks-first](../063-pipeline-stopping-finding-ranks-first/spec.md) AC-6: the "disk space blocks the chain" finding carries stops_pipeline: true. **A host-refused run is postponed, not counted, and alarms at
   once.** Given a stage run that spawned and whose `StageOutcome.hostRefusal`
   is not `null`, whatever its outcome and result, then the driver undoes its
   own rebase (spec 015 AC-1), logs `{ kind: "stage-host-refused", issue,
