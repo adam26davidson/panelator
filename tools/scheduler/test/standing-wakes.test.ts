@@ -216,3 +216,18 @@ describe('the standing runner clears its conditions on an ok run (spec 102 AC-6)
   expect(logs.filter(l=>l.kind==='error'&&l.agent===FILER&&String(l.error).startsWith('notify clear: '))).toHaveLength(2);
  },30000);
 });
+
+describe('infra health over a torn service log (spec 103 AC-3)',()=>{
+ it('reaches the model and logs no standing-error',async()=>{
+  const w=await standingWorld({'infra-health':[{summary:'all well'}]});
+  await writeAgentState(w.paths,'infra-health',{...(await readAgentState(w.paths,'infra-health'))!,paused:false,paused_by:null});
+  for(const name of [FILER,'action-audit','operator'])await writeAgentState(w.paths,name,{...(await readAgentState(w.paths,name))!,paused:true,paused_by:'maintainer'});
+  const due=new Date('2026-10-01T07:00:00Z');w.setNow(due);
+  const at=new Date(due.getTime()-3600_000).toISOString();
+  writeFileSync(w.paths.serviceLog,'\u0000'.repeat(40)+'\n'+'\u0000'.repeat(40)+JSON.stringify({at,kind:'tick'})+'\n');
+  await tick(w);
+  expect(w.adapter.ran).toEqual(['infra-health']);
+  const logged=await readJsonLines<{kind:string}>(w.paths.serviceLog);
+  expect(logged.filter(r=>r.kind==='standing-error')).toEqual([]);
+ },30000);
+});
