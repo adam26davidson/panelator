@@ -225,9 +225,23 @@ describe('infra health over a torn service log (spec 103 AC-3)',()=>{
   const due=new Date('2026-10-01T07:00:00Z');w.setNow(due);
   const at=new Date(due.getTime()-3600_000).toISOString();
   writeFileSync(w.paths.serviceLog,'\u0000'.repeat(40)+'\n'+'\u0000'.repeat(40)+JSON.stringify({at,kind:'tick'})+'\n');
+  const logs:Record<string,unknown>[]=[];w.deps.log=r=>{logs.push(r as Record<string,unknown>);};
   await tick(w);
   expect(w.adapter.ran).toEqual(['infra-health']);
-  const logged=await readJsonLines<{kind:string}>(w.paths.serviceLog);
-  expect(logged.filter(r=>r.kind==='standing-error')).toEqual([]);
+  expect(logs.filter(r=>r.kind==='standing-error')).toEqual([]);
+  // the runner passes d.log to the builder: the torn service log is reported once
+  expect(logs.filter(r=>r.kind==='jsonl-skipped-lines')).toMatchObject([{file:w.paths.serviceLog,skipped:1,recovered:1}]);
+ },30000);
+ it('the action audit run reports a torn parameter history through the runner log (spec 103 AC-5)',async()=>{
+  const w=await standingWorld({'action-audit':[{summary:'all well'}]});
+  await writeAgentState(w.paths,'action-audit',{...(await readAgentState(w.paths,'action-audit'))!,paused:false,paused_by:null});
+  for(const name of Object.keys(w.registry).filter(n=>n!=='action-audit'))await writeAgentState(w.paths,name,{...(await readAgentState(w.paths,name))!,paused:true,paused_by:'maintainer'});
+  const due=new Date('2026-10-20T07:00:00Z');w.setNow(due);
+  await writeAgentState(w.paths,'action-audit',{...(await readAgentState(w.paths,'action-audit'))!,next_run:due.toISOString()});
+  writeFileSync(w.paths.parametersHistory,'\u0000'.repeat(40)+'\n');
+  const logs:Record<string,unknown>[]=[];w.deps.log=r=>{logs.push(r as Record<string,unknown>);};
+  await tick(w);
+  expect(w.adapter.ran).toEqual(['action-audit']);
+  expect(logs.filter(r=>r.kind==='jsonl-skipped-lines'&&r.file===w.paths.parametersHistory)).toMatchObject([{skipped:1,recovered:0}]);
  },30000);
 });

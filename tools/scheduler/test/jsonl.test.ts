@@ -148,9 +148,10 @@ describe("readRecentJsonLines", () => {
   });
   it("does not stop at a chunk that holds only a torn line", async () => {
     const fresh = (i: number) => JSON.stringify({ i, at: T(1) });
-    const torn = "\u0000".repeat(50);
     const lineLen = fresh(1).length + 1;
-    const p = tmp([fresh(1), fresh(2), torn, fresh(3), fresh(4)]);
+    const torn = "\u0000".repeat(lineLen - 1); // as long as a record, so chunks of two lines fall on line boundaries
+    // the middle chunk read holds two torn lines and nothing else: it says nothing about time, the read goes on
+    const p = tmp([fresh(1), fresh(2), torn, torn, torn, torn, fresh(3), fresh(4)]);
     const got = await readRecentJsonLines<R>(p, cutoff, { chunkBytes: lineLen * 2 });
     expect(got.map((r) => r.i)).toEqual([1, 2, 3, 4]);
   });
