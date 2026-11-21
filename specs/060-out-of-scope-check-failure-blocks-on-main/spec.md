@@ -189,7 +189,7 @@ is the state of section 3's AC-4.
   AC-4 with condition `{ kind: "main_green", check: <name>, main_sha }`.
   Given the same event on the issue track, then the fix runs as today and the
   `main` field is ignored.
-- AC-3. **One re-run before the fix.** Given the event of AC-2 but with
+- AC-3. Amended by [101-out-of-scope-check-failure-costs-nothing](../101-out-of-scope-check-failure-costs-nothing/spec.md) AC-2 and AC-3: the re-run re-runs the failed jobs of the check's workflow run through actions: write, and checkRerun is cleared by a new head only. **One re-run before the fix.** Given the event of AC-2 but with
   `<name>` not in `main.failed`, and `state.checkRerun` not equal to the
   PR's head SHA, then the machine sets `checkRerun` to the head SHA, notes
   `check <name> failed; re-run requested once` in the history, and emits
@@ -236,7 +236,7 @@ is the state of section 3's AC-4.
   `paths` a non-empty array of strings); `FixResult` gains the field;
   `agents/stages/fix.md` documents it in a few lines. The paragraph is not
   added on the issue track.
-- AC-6. **An out-of-scope verdict blocks instead of counting.** Given a
+- AC-6. Amended by [101-out-of-scope-check-failure-costs-nothing](../101-out-of-scope-check-failure-costs-nothing/spec.md) AC-5: the block sets fixes to 0 and returns the rescue the verdict's run spent. **An out-of-scope verdict blocks instead of counting.** Given a
   `stage_ok` for `fix` on the spec or design track whose result carries
   `out_of_scope`, whose `head_sha` equals the PR's head, and whose every
   path is outside the PR's scope, when `state.blocked?.blocks ?? 0` (the
@@ -285,7 +285,7 @@ is the state of section 3's AC-4.
   check green, then review runs as today. Given it finds the check failed
   again, then AC-2, AC-3 and the fix follow again, with `checkRerun` clear
   for the new head.
-- AC-9. **Nothing is counted or lost.** Given a chain blocked by AC-2 or
+- AC-9. Amended by [101-out-of-scope-check-failure-costs-nothing](../101-out-of-scope-check-failure-costs-nothing/spec.md) AC-5: after a verdict block, fixes is 0 and the rescue spent reaching the verdict is returned; the other counters are as before the block. **Nothing is counted or lost.** Given a chain blocked by AC-2 or
   AC-6 and resumed by AC-7, then `fixes`, `rescues`, `specRescues`,
   `replans`, `specRevisions` and `attempt` are as before the block, the PR
   is open on the same branch with its commits, `heldWork` is unchanged, and
