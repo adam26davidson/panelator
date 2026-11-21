@@ -114,15 +114,15 @@ describe("state reader (spec 103)", () => {
       const got = await readRecentJsonLines<{ i: number; at: string }>(f, "2026-06-01T00:00:00Z", { chunkBytes: 100 });
       expect(got.map((r) => r.i)).toEqual([7, 8]);
       writeFileSync(f, [fresh(0), ...[1, 2, 3, 4, 5, 6].map(old)].join("\n") + "\n");
-      expect((await readRecentJsonLines<{ i: number }>(f, "2026-06-01T00:00:00Z", { chunkBytes: 100 })).map((r) => r.i)).toEqual([]);
+      expect((await readRecentJsonLines<{ i: number; at: string }>(f, "2026-06-01T00:00:00Z", { chunkBytes: 100 })).map((r) => r.i)).toEqual([]);
       writeFileSync(f, [...[1, 2].map(old), fresh(3)].join("\n") + "\n");
-      expect((await readRecentJsonLines<{ i: number }>(f, "2026-06-01T00:00:00Z", { chunkBytes: 100 })).map((r) => r.i)).toEqual([3]);
+      expect((await readRecentJsonLines<{ i: number; at: string }>(f, "2026-06-01T00:00:00Z", { chunkBytes: 100 })).map((r) => r.i)).toEqual([3]);
     });
     it("parses a line that straddles two chunks once, whole", async () => {
       const f = join(dir(), "s.jsonl");
       const rows = Array.from({ length: 30 }, (_, i) => JSON.stringify({ at: "2026-11-10T00:00:00Z", i, p: "é".repeat(i + 1) }));
       writeFileSync(f, rows.join("\n") + "\n");
-      for (const chunkBytes of [7, 50, 101]) expect((await readRecentJsonLines<{ i: number }>(f, "2026-11-01T00:00:00Z", { chunkBytes })).map((r) => r.i)).toEqual(rows.map((_, i) => i));
+      for (const chunkBytes of [7, 50, 101]) expect((await readRecentJsonLines<{ i: number; at: string }>(f, "2026-11-01T00:00:00Z", { chunkBytes })).map((r) => r.i)).toEqual(rows.map((_, i) => i));
     });
   });
 });
