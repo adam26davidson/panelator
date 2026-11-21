@@ -124,7 +124,7 @@ describe("result schemas", () => {
 
   it("accepts chain and standing agent names in usage records (008 AC-3)", () => {
     const rec = (stage: string) => validate("usage-record", {
-      run_id: "r1", issue: 1, stage, attempt: 1, outcome: "ok", harness: "claude", model: "claude-fable-5-1",
+      run_id: "r1", issue: 1, stage, attempt: 1, outcome: "ok", harness: "claude", model: "claude-fable-5-2",
       cost_usd: 0.1, input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_write_tokens: 0,
       turns: 1, tool_calls: 0, wall_seconds: 2.5, started_at: "2026-10-12T00:00:00Z", ended_at: "2026-10-12T00:00:02Z",
       events_path: "runs/r1/events.jsonl",

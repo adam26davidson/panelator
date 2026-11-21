@@ -3,7 +3,7 @@ name: charter-reflection
 kind: standing
 trigger: {schedule: 7d}
 harness: claude
-model: claude-fable-5-1
+model: claude-fable-5-2
 tier: strong
 bounds: {timeout_min: 45, max_turns: 80, max_cost_usd: 8}
 permission: no-prompt

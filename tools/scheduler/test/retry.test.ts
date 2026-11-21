@@ -31,9 +31,9 @@ describe("retryDecision (AC-25)", () => {
 });
 
 describe("independent strong-tier stages (AC-26)", () => {
-  const check: StageDefinition = { ...base, name: "question-check", harness: "pi", model: "openai/gpt-6.1-sol", fallback: "claude-fable-5-1", tier: "strong", independent: true };
+  const check: StageDefinition = { ...base, name: "question-check", harness: "pi", model: "openai/gpt-6.1-sol", fallback: "claude-fable-5-2", tier: "strong", independent: true };
   it("fall back on 429 regardless of tier and cost", () => {
-    expect(retryDecision(check, j429, 99, 1)).toEqual({ kind: "fallback", model: "claude-fable-5-1", harness: "claude" });
+    expect(retryDecision(check, j429, 99, 1)).toEqual({ kind: "fallback", model: "claude-fable-5-2", harness: "claude" });
   });
   it("a non-independent strong stage still postpones", () => {
     expect(retryDecision({ ...check, independent: false }, j429, 99, 1)).toEqual({ kind: "postpone" });

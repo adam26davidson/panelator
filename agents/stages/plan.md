@@ -2,7 +2,7 @@
 name: plan
 kind: agent
 harness: claude
-model: claude-fable-5-1
+model: claude-fable-5-2
 tier: strong
 effort: high
 bounds: { timeout_min: 30, max_turns: 80, max_cost_usd: 5 }

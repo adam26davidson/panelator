@@ -13,9 +13,9 @@ const at = (s: string) => new Date(s);
 
 describe("parseLimit (spec 013 AC-1 to AC-3)", () => {
   it("reads a session limit's reset in its zone, today or tomorrow", () => {
-    expect(parseLimit(SESSION, "claude", "claude-fable-5-1", at("2026-10-29T02:58:53Z"))).toEqual({ key: "claude", scope: "session", resetsAt: at("2026-10-29T07:10:00Z") });
+    expect(parseLimit(SESSION, "claude", "claude-fable-5-2", at("2026-10-29T02:58:53Z"))).toEqual({ key: "claude", scope: "session", resetsAt: at("2026-10-29T07:10:00Z") });
     // 8:10 Berlin already passed: tomorrow.
-    expect(parseLimit(SESSION, "claude", "claude-fable-5-1", at("2026-10-29T08:00:00Z")).resetsAt).toEqual(at("2026-10-30T07:10:00Z"));
+    expect(parseLimit(SESSION, "claude", "claude-fable-5-2", at("2026-10-29T08:00:00Z")).resetsAt).toEqual(at("2026-10-30T07:10:00Z"));
     // Before the DST change Berlin is UTC+2.
     expect(parseLimit(SESSION, "claude", "x", at("2026-10-20T03:00:00Z")).resetsAt).toEqual(at("2026-10-20T06:10:00Z"));
   });
@@ -29,7 +29,7 @@ describe("parseLimit (spec 013 AC-1 to AC-3)", () => {
     expect(parseLimit("You've hit your weekly limit · resets Nov 3, 9am (Europe/Berlin)", "claude", "m", now)).toEqual({ key: "claude", scope: "weekly", resetsAt: at("2026-11-03T08:00:00Z") });
   });
   it("reads model limits, with or without a reset", () => {
-    expect(parseLimit(FABLE, "claude", "claude-fable-5-1", at("2026-10-29T07:15:00Z"))).toEqual({ key: "claude:fable", scope: "model", resetsAt: null });
+    expect(parseLimit(FABLE, "claude", "claude-fable-5-2", at("2026-10-29T07:15:00Z"))).toEqual({ key: "claude:fable", scope: "model", resetsAt: null });
     expect(parseLimit("You've hit your Opus limit · resets 9pm (UTC)", "claude", "claude-opus-5-5", at("2026-10-29T07:15:00Z"))).toEqual({ key: "claude:opus", scope: "model", resetsAt: at("2026-10-29T21:00:00Z") });
   });
   it("keys an unrecognised message, zone or time by harness and model with no reset", () => {
@@ -54,13 +54,13 @@ describe("parseLimit (spec 013 AC-1 to AC-3)", () => {
   });
   it("keys a limit naming no known model family by harness and model (AC-2)", () => {
     const now = at("2026-10-29T07:15:00Z");
-    expect(parseLimit("You've hit your Claude Fable limit · resets 9pm (UTC)", "claude", "claude-fable-5-1", now)).toMatchObject({ key: "claude:fable", scope: "model" });
-    expect(parseLimit("You've reached your extra usage limit", "claude", "claude-fable-5-1", now)).toEqual({ key: "claude:claude-fable-5-1", scope: "unknown", resetsAt: null });
+    expect(parseLimit("You've hit your Claude Fable limit · resets 9pm (UTC)", "claude", "claude-fable-5-2", now)).toMatchObject({ key: "claude:fable", scope: "model" });
+    expect(parseLimit("You've reached your extra usage limit", "claude", "claude-fable-5-2", now)).toEqual({ key: "claude:claude-fable-5-2", scope: "unknown", resetsAt: null });
   });
   it("matches keys against models", () => {
     expect(keyCovers("claude", "claude", "claude-opus-5-5")).toBe(true);
     expect(keyCovers("claude", "pi", "openai/gpt-6.1-sol")).toBe(false);
-    expect(keyCovers("claude:fable", "claude", "claude-fable-5-1")).toBe(true);
+    expect(keyCovers("claude:fable", "claude", "claude-fable-5-2")).toBe(true);
     expect(keyCovers("claude:fable", "claude", "claude-opus-5-5")).toBe(false);
     expect(keyCovers("pi:openai/gpt-6.1-sol", "pi", "openai/gpt-6.1-sol")).toBe(true);
   });
@@ -73,13 +73,13 @@ function setup() {
 let n = 0;
 function usage(over: Partial<UsageRecord>): UsageRecord {
   return {
-    run_id: `r${n++}`, issue: 1, stage: "review", attempt: 1, outcome: "ok", harness: "claude", model: "claude-fable-5-1", cost_usd: 4, input_tokens: 0, output_tokens: 0,
+    run_id: `r${n++}`, issue: 1, stage: "review", attempt: 1, outcome: "ok", harness: "claude", model: "claude-fable-5-2", cost_usd: 4, input_tokens: 0, output_tokens: 0,
     cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0, wall_seconds: 3, started_at: "2026-10-29T02:10:00Z", ended_at: "2026-10-29T02:15:00Z", events_path: "", ...over,
   };
 }
 const ok = { outcome: "ok" as const, reason: null, apiErrorStatus: null, finalText: null };
 const limited = (reason: string) => ({ outcome: "failed" as const, reason, apiErrorStatus: 429, finalText: null });
-const strong = { what: "issue:1", stage: "review", tier: "strong" as const, harness: "claude" as const, model: "claude-fable-5-1" };
+const strong = { what: "issue:1", stage: "review", tier: "strong" as const, harness: "claude" as const, model: "claude-fable-5-2" };
 
 describe("the quota book", () => {
   it("records a stated limit and blocks every Claude model until it (AC-4, AC-6)", async () => {
@@ -122,7 +122,7 @@ describe("the quota book", () => {
     const paths = setup(); await ensureStateDirs(paths);
     const now = at("2026-10-29T07:15:00Z");
     await observeRun(paths, usage({ outcome: "failed", cost_usd: 0, started_at: now.toISOString() }), limited(FABLE), now);
-    expect(await planLaunch(paths, strong, DEFAULT_QUOTA_PARAMS, now)).toEqual({ kind: "run", model: "claude-opus-5-5", harness: "claude", note: { kind: "quota-fallback", from: "claude-fable-5-1", key: "claude:fable" } });
+    expect(await planLaunch(paths, strong, DEFAULT_QUOTA_PARAMS, now)).toEqual({ kind: "run", model: "claude-opus-5-5", harness: "claude", note: { kind: "quota-fallback", from: "claude-fable-5-2", key: "claude:fable" } });
     expect(await planLaunch(paths, strong, { ...DEFAULT_QUOTA_PARAMS, modelFallback: false }, now)).toMatchObject({ kind: "wait", key: "claude:fable", until: "2026-10-29T07:30:00.000Z" });
     // An Opus stage is not covered by the Fable limit.
     expect(await planLaunch(paths, { ...strong, model: "claude-opus-5-5" }, DEFAULT_QUOTA_PARAMS, now)).toEqual({ kind: "run", model: "claude-opus-5-5", harness: "claude" });
@@ -149,7 +149,7 @@ describe("the quota book", () => {
     book = await readBook(paths);
     expect(book.window).toMatchObject({ start: "2026-10-29T07:10:30.000Z", end: "2026-10-29T12:10:30.000Z", spent_usd: 34 });
     const later = at("2026-10-29T09:00:00Z");
-    expect(await planLaunch(paths, strong, DEFAULT_QUOTA_PARAMS, later)).toEqual({ kind: "run", model: "claude-fable-5-1", harness: "claude" });
+    expect(await planLaunch(paths, strong, DEFAULT_QUOTA_PARAMS, later)).toEqual({ kind: "run", model: "claude-fable-5-2", harness: "claude" });
     await observeRun(paths, usage({ stage: "implement", model: "claude-sonnet-5-5", cost_usd: 3, started_at: "2026-10-29T09:00:00Z" }), ok, later);
     expect(await planLaunch(paths, strong, DEFAULT_QUOTA_PARAMS, later)).toMatchObject({ kind: "wait", until: "2026-10-29T12:10:30.000Z", defer: { estimate: 4, spent: 37, capacity: 40 } });
     // Standard tier is not deferred; planning off is not deferred.
@@ -163,15 +163,15 @@ describe("the quota book", () => {
     writeFileSync(join(paths.usage, "a.json"), JSON.stringify(usage({ run_id: "a", cost_usd: 3 })));
     writeFileSync(join(paths.usage, "b.json"), JSON.stringify(usage({ run_id: "b", cost_usd: 0, outcome: "failed" })));
     await planLaunch(paths, strong, DEFAULT_QUOTA_PARAMS, at("2026-10-29T09:00:00Z"));
-    expect((await readBook(paths)).costs).toEqual({ "review|claude-fable-5-1": [3] });
+    expect((await readBook(paths)).costs).toEqual({ "review|claude-fable-5-2": [3] });
   });
 
   it("waitAfterLimit uses the blocking limit, else a short backoff", async () => {
     const paths = setup(); await ensureStateDirs(paths);
     const now = at("2026-10-29T02:58:53Z");
-    expect(await waitAfterLimit(paths, "claude", "claude-fable-5-1", now)).toBe("2026-10-29T03:13:53.000Z");
+    expect(await waitAfterLimit(paths, "claude", "claude-fable-5-2", now)).toBe("2026-10-29T03:13:53.000Z");
     await observeRun(paths, usage({ outcome: "failed", started_at: now.toISOString() }), limited(SESSION), now);
-    expect(await waitAfterLimit(paths, "claude", "claude-fable-5-1", now)).toBe("2026-10-29T07:10:00.000Z");
+    expect(await waitAfterLimit(paths, "claude", "claude-fable-5-2", now)).toBe("2026-10-29T07:10:00.000Z");
   });
 
   it("escalates repeated just-reset hits through the backoff (AC-1, AC-3)", async () => {

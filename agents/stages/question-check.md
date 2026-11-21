@@ -3,7 +3,7 @@ name: question-check
 kind: agent
 harness: pi
 model: openai/gpt-6.1-sol
-fallback: claude-fable-5-1
+fallback: claude-fable-5-2
 independent: true
 tier: strong
 effort: high
