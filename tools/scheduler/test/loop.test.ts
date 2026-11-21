@@ -8,10 +8,6 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, w
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { rateLimited } from "../src/notify/rate-limit.ts";
-import { recordedNotifier } from "../src/notify/recorded.ts";
-import { LogNotifier } from "../src/notify/log.ts";
-import { TelegramNotifier } from "../src/notify/telegram.ts";
 import { Octokit } from "octokit";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { agentsDir, defaultConfigPath, loadConfig } from "../src/config.ts";
@@ -1080,41 +1076,6 @@ describe("Scheduler.tick: transient failures (spec 015)", () => {
       u.allowErrors(/freshness/);
       expect((await u.s.tick()).errors.join()).toContain("freshness");
       expect(existsSync(u.paths.host) ? hostFile(u.paths).paused : null).toBeNull();
-    }, 60_000);
-
-    it("a host-pause notice the chat cannot take is sent by the tick after the resume; a notice raised before the channel attaches is sent on the first tick after (spec 102 AC-4)", async () => {
-      let failing = true;
-      const t = await outageSetup(async (_d, c) => { if (failing) throw dns(); return c; });
-      const server = await fakeTelegram();
-      onTestFinished(() => server.close());
-      let chan: ReturnType<typeof telegramChannel> | null = null;
-      const alerts = join(t.paths.root, "telegram", "alerts.json");
-      const chain = rateLimited(recordedNotifier(TelegramNotifier(new LogNotifier(t.paths.serviceLog), { telegram: () => chan, alertsPath: alerts, outboxPath: t.paths.telegramOutbox, log: () => {} }), t.paths), { hours: 4, repeatHours: 24, path: t.paths.notifySent });
-      t.deps.notifier = chain;
-      delete t.deps.host;
-      const s = new Scheduler(t.deps, { driveChain: async (_d, c) => { if (failing) throw dns(); return c; } });
-      t.allowErrors(/.*/);
-      t.setProbe("EAI_AGAIN");
-      await s.tick();
-      await settle();
-      t.advance(3 * 3600);
-      await s.tick();
-      await settle();
-      expect(server.sent).toHaveLength(0);
-      expect(JSON.parse(readFileSync(t.paths.telegramOutbox, "utf8"))).toEqual([expect.objectContaining({ gate: "infra", label: "host" })]);
-      // The channel attaches while the host is still paused: the next tick sends it.
-      chan = telegramChannel(new TelegramClient("secret", 42, server.url));
-      server.fail("sendMessage", 500, 1);
-      await s.tick();
-      expect(server.sent).toHaveLength(0);
-      t.setProbe(null);
-      failing = false;
-      t.advance(1800);
-      await s.tick();
-      await settle();
-      expect(server.sent).toHaveLength(1);
-      expect(String(server.sent[0].text)).toMatch(/^infra: host\n\nqueued .*\n\nThe scheduler is paused: the host cannot work \(EAI_AGAIN\)\. It has been paused for .* \(since 2026-10-12T12:00:/s);
-      expect(JSON.parse(readFileSync(t.paths.telegramOutbox, "utf8"))).toEqual([]);
     }, 60_000);
 
     it("a paused tick only sweeps and prunes, re-probes on a backoff and resumes on the tick that passes, 30 h later, with nothing released (AC-3, AC-4, AC-6)", async () => {

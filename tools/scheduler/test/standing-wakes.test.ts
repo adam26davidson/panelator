@@ -118,12 +118,6 @@ describe('the repair turn (spec 025 AC-3 to AC-6)',()=>{
   expect(await readAgentState(w.paths,FILER)).toMatchObject({failures:0,last_run:{outcome:'failed'}});
   expect((await readJsonLines<{finding:{what:string}}>(w.paths.findingsQueue)).at(-1)?.finding.what).toBe('standing agent findings-filer failed twice: result: invalid');
   expect(w.notifications).toHaveLength(1);
-  expect(w.notifications[0]).toMatchObject({issue:0,gate:'standing',label:'findings-filer:failed:result: invalid',text:'Standing agent findings-filer failed twice: result: invalid'});
- },30000);
- it('an ok run clears the agent\'s standing and outage notices (spec 102 AC-6)',async()=>{
-  const w=await standingWorld({[FILER]:[good]});
-  await queue(w);await tick(w);
-  expect(w.clears).toEqual([{issue:0,gate:'standing',labelPrefix:'findings-filer:'},{issue:0,gate:'infra',label:'findings-filer:outage'}]);
  },30000);
  it('a run that failed some other way gets no repair turn',async()=>{
   const w=await standingWorld({[FILER]:[undefined,good]});

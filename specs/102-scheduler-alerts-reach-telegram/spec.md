@@ -252,13 +252,9 @@ of them); a reply to one is handled by spec 099 AC-7.
 - Marks (section 4 of the process): spec 099 AC-6, spec 068 AC-4 and spec 001
   AC-27 carry `Amended by` marks naming this spec's AC-2, AC-2 and AC-5.
 - Tests: `tools/scheduler/test/notify.test.ts` (AC-1, AC-2, AC-3, AC-5,
-  AC-6, AC-8), the standing runner's test for AC-7 and the standing clear
-  (`tools/scheduler/test/standing-wakes.test.ts`, with the stub notifier's
-  `clears` capture in `tools/scheduler/test/helpers/e2e-routes.ts`), the host
-  test for the host clear (`tools/scheduler/test/host.test.ts`), a loop test
-  for AC-4 built on spec 100's host test harness
-  (`tools/scheduler/test/loop.test.ts`), and the `TelegramNotifier`
-  construction in `tools/scheduler/test/e2e.test.ts` (it passes `outboxPath`).
+  AC-6, AC-8), the standing runner's test for AC-7 and the standing clear,
+  the host test for the host clear, and a loop test for AC-4 built on spec
+  100's host test harness.
 
 ## 5. Verification
 

@@ -279,3 +279,112 @@ describe("spec 102 rateLimited windows (AC-5, AC-6)", () => {
     expect(Object.keys(JSON.parse(readFileSync(path, "utf8")))).toEqual(["0:standing:other"]);
   });
 });
+
+// ---- spec 102: the standing runner, the host monitor and the loop (AC-4, AC-6, AC-7) ----
+import { writeFileSync as writeSync102 } from "node:fs";
+import { NETWORK_DOWN, standingWorld } from "./helpers/e2e-routes.ts";
+import { appendFindings } from "../src/state/findings.ts";
+import { readAgentState, writeAgentState } from "../src/standing/state.ts";
+import { HostMonitor } from "../src/service/host.ts";
+import { ensureStateDirs } from "../src/state/paths.ts";
+import type { ClearSelector } from "../src/notify/types.ts";
+
+describe("spec 102 through the standing runner and the host monitor", () => {
+  type World = Awaited<ReturnType<typeof standingWorld>>;
+  const FILER = "findings-filer";
+  const T0 = "2026-10-01T00:00:00.000Z";
+  const idle = async (w: World) => { for (let i = 0; i < 1000 && w.scheduler.active; i++) await new Promise((r) => setTimeout(r, 25)); expect(w.scheduler.active).toBe(0); };
+  const tickAt = async (w: World, at: string) => { w.setNow(new Date(at)); await w.scheduler.tick(); await idle(w); };
+  const queue = (w: World) => appendFindings(w.paths, { issue: 7, stage: "review", run_id: "r1", timestamp: w.deps.now().toISOString() }, [{ what: "a finding", where: "a.txt", evidence: "observed", noticed_how: "review" }]);
+  const dueNow = async (w: World, name: string, extra: Record<string, unknown> = {}) => { const st = (await readAgentState(w.paths, name))!; await writeAgentState(w.paths, name, { ...st, ...extra, next_run: w.deps.now().toISOString() }); };
+  /** The world's stub notifier, with the clears the runner asks for captured beside its notifications. */
+  const captureClears = (w: World) => { const clears: ClearSelector[] = []; w.deps.notifier = recordedNotifier({ notify: async (x) => { w.notifications.push(x); }, clear: async (sel) => { clears.push(sel); } }, w.paths); return clears; };
+  const good = { summary: "ok", decisions: [{ ref: "1", outcome: "discard", reason: "not an issue" }] };
+
+  it("AC-7: a standing failure's label is its cause: the error's first line", async () => {
+    const w = await standingWorld({ [FILER]: [good, good] });
+    captureClears(w);
+    w.deps.adapterFor = () => ({ ...w.adapter, buildCommand() { throw new Error("spawn: spawn E2BIG"); } });
+    await queue(w);
+    await tickAt(w, T0);
+    expect((await readAgentState(w.paths, FILER))?.failures).toBe(1);
+    await tickAt(w, "2026-10-01T00:01:00.000Z");
+    expect(await readAgentState(w.paths, FILER)).toMatchObject({ failures: 0, last_run: { outcome: "failed" } });
+    expect(w.notifications).toEqual([{ issue: 0, gate: "standing", label: "findings-filer:failed:spawn: spawn E2BIG", text: "Standing agent findings-filer failed twice: spawn: spawn E2BIG" }]);
+  }, 60_000);
+
+  it("AC-7: an outage past the ceiling is labelled by its transient cause", async () => {
+    const w = await standingWorld({ operator: [NETWORK_DOWN, NETWORK_DOWN] });
+    captureClears(w);
+    await dueNow(w, "operator", { outage: { since: "2026-09-29T23:00:00.000Z", count: 10, last: "x", alarmed: true, past_ceiling: { since: "2026-09-30T23:29:00.000Z", failures: 2 } } });
+    await tickAt(w, T0);
+    let st = (await readAgentState(w.paths, "operator"))!;
+    expect(st).toMatchObject({ failures: 1, outage: { ceiling: true } });
+    await tickAt(w, new Date(Date.parse(st.postponed_until!) + 1000).toISOString());
+    st = (await readAgentState(w.paths, "operator"))!;
+    expect(st).toMatchObject({ failures: 0, last_run: { outcome: "failed" } });
+    expect(w.notifications).toEqual([expect.objectContaining({ issue: 0, gate: "standing", label: "operator:failed:EAI_AGAIN" })]);
+  }, 60_000);
+
+  it("AC-6: an ok run clears the agent's standing and outage notices", async () => {
+    const w = await standingWorld({ [FILER]: [good] });
+    const clears = captureClears(w);
+    await queue(w);
+    await tickAt(w, T0);
+    expect((await readAgentState(w.paths, FILER))?.last_run?.outcome).toBe("ok");
+    expect(clears).toEqual([{ issue: 0, gate: "standing", labelPrefix: "findings-filer:" }, { issue: 0, gate: "infra", label: "findings-filer:outage" }]);
+  }, 60_000);
+
+  it("AC-6: the host monitor clears the host notice on resume but keeps a queued one", async () => {
+    const root = mkdtempSync(join(tmpdir(), "host102-"));
+    const paths = statePaths(root);
+    await ensureStateDirs(paths);
+    const clears: unknown[] = [];
+    let cause: string | null = "EAI_AGAIN";
+    const clock = { t: Date.parse("2026-11-01T00:00:00.000Z") };
+    const m = new HostMonitor({ paths, now: () => new Date(clock.t), write: () => {}, notifier: { notify: async () => {}, clear: async (sel) => { clears.push(sel); } }, emitEvent: async () => {}, probe: async () => cause });
+    await m.beginTick();
+    await m.onTransient("EAI_AGAIN", "boom");
+    expect(clears).toEqual([]);
+    cause = null;
+    clock.t = Date.parse(m.paused!.next_probe_at);
+    expect(await m.probeIfDue()).toBe(true);
+    expect(clears).toEqual([{ issue: 0, gate: "infra", label: "host", keepQueued: true }]);
+  });
+
+  it("AC-4: a host-pause notice the chat cannot take is sent by the tick after the resume; the attach alone sends it once the chat accepts", async () => {
+    const w = await standingWorld({ [FILER]: [NETWORK_DOWN, good] });
+    const server = await fake099();
+    try {
+      let chan: ReturnType<typeof telegramChannel> | null = null;
+      const chain = rateLimited(recordedNotifier(TelegramNotifier(new Log099(w.paths.serviceLog), { telegram: () => chan, alertsPath: w.paths.telegramAlerts, outboxPath: w.paths.telegramOutbox, log: () => {}, clock: () => w.deps.now() }), w.paths), { hours: 4, repeatHours: 24, path: w.paths.notifySent }, () => w.deps.now());
+      w.deps.notifier = chain;
+      // The monitor the loop and the runner share takes the chain too (the world built it over the stub).
+      w.deps.host = new HostMonitor({ paths: w.paths, now: () => w.deps.now(), write: (rec) => w.deps.serviceLog.write(rec), notifier: chain, emitEvent: async () => {}, probe: () => w.deps.probeHost!() });
+      await queue(w);
+      w.setProbe("EAI_AGAIN");
+      await tickAt(w, T0);
+      expect(JSON.parse(readFileSync(w.paths.host, "utf8")).paused).toMatchObject({ cause: "EAI_AGAIN", since: T0 });
+      // Two hours on: the long-pause notice is raised while Telegram is off, so it is queued.
+      await tickAt(w, "2026-10-01T02:01:00.000Z");
+      expect(server.sent).toHaveLength(0);
+      expect(await readOutbox(w.paths.telegramOutbox)).toEqual([expect.objectContaining({ gate: "infra", label: "host", repeats: 1 })]);
+      // The channel attaches while the host is still paused and the chat still refuses: the notice stays queued.
+      chan = telegramChannel(new TelegramClient("secret", 42, server.url));
+      server.fail("sendMessage", 500, 1);
+      await tickAt(w, "2026-10-01T02:02:00.000Z");
+      expect(server.sent).toHaveLength(0);
+      expect(await readOutbox(w.paths.telegramOutbox)).toHaveLength(1);
+      // The host is back: the tick that resumes flushes the one notice, which names the pause's cause and start.
+      w.setProbe(null);
+      const next = JSON.parse(readFileSync(w.paths.host, "utf8")).paused.next_probe_at as string;
+      await tickAt(w, new Date(Date.parse(next) + 1000).toISOString());
+      expect(JSON.parse(readFileSync(w.paths.host, "utf8")).paused).toBeNull();
+      expect(server.sent).toHaveLength(1);
+      expect(String(server.sent[0].text)).toMatch(/^infra: host\n\nqueued 2026-10-01T02:01:00\.000Z\n\nThe scheduler is paused: the host cannot work \(EAI_AGAIN\)\. It has been paused for 2 h \(since 2026-10-01T00:00:00\.000Z\)/);
+      expect(server.sent[0].reply_markup).toBeUndefined();
+      expect(await readOutbox(w.paths.telegramOutbox)).toEqual([]);
+      expect(readFileSync(w.paths.serviceLog, "utf8").match(/"kind":"notify".*"channel":"queued"/g)).toHaveLength(1);
+    } finally { await server.close(); }
+  }, 120_000);
+});

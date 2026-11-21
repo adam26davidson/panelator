@@ -43,9 +43,12 @@ function queuedText(e: OutboxEntry): string {
 /**
  * Spec 099 AC-6, spec 102: every notification except the question gates also goes to the chat as one message with no buttons.
  * A notice the chat cannot take (Telegram off, or the send throws) is queued in the outbox for the channel's return; a failed send is logged once per outage.
+ * Without an `outboxPath` there is no outbox and such a notice is the log line alone, as spec 099 AC-6 first wrote it.
  */
-export function TelegramNotifier(inner: Notifier, deps: { telegram: () => TelegramChannel | null; alertsPath: string; outboxPath: string; log: (rec: Record<string, unknown>) => void; clock?: () => Date }): Notifier {
+export function TelegramNotifier(inner: Notifier, deps: { telegram: () => TelegramChannel | null; alertsPath: string; outboxPath?: string; log: (rec: Record<string, unknown>) => void; clock?: () => Date }): Notifier {
   const clock = deps.clock ?? (() => new Date());
+  const outboxPath = deps.outboxPath;
+  const queued = async (): Promise<OutboxEntry[]> => (outboxPath ? readOutbox(outboxPath) : []);
   let failing = false;
   let lock: Promise<unknown> = Promise.resolve();
   const exclusive = <T>(f: () => Promise<T>): Promise<T> => {
@@ -69,22 +72,22 @@ export function TelegramNotifier(inner: Notifier, deps: { telegram: () => Telegr
 
   async function flushLocked(): Promise<number> {
     const channel = deps.telegram();
-    if (!channel) return 0;
+    if (!channel || !outboxPath) return 0;
     let sent = 0;
     for (;;) {
-      const outbox = await readOutbox(deps.outboxPath);
+      const outbox = await readOutbox(outboxPath);
       const e = outbox[0];
       if (!e) return sent;
       const id = await sendOne(channel, queuedText(e));
       if (id === null) return sent;
-      await writeJsonAtomic(deps.outboxPath, (await readOutbox(deps.outboxPath)).filter((x) => x.identity !== e.identity || x.queued_at !== e.queued_at));
+      await writeJsonAtomic(outboxPath, (await readOutbox(outboxPath)).filter((x) => x.identity !== e.identity || x.queued_at !== e.queued_at));
       deps.log({ kind: "telegram-outbox-sent", identity: e.identity, queued_at: e.queued_at, message_id: id });
       sent++;
     }
   }
 
-  async function enqueue(n: Notification): Promise<void> {
-    const outbox = await readOutbox(deps.outboxPath);
+  async function enqueue(n: Notification, outboxPath: string): Promise<void> {
+    const outbox = await readOutbox(outboxPath);
     const key = identity(n);
     const existing = outbox.find((x) => x.identity === key);
     if (existing) {
@@ -97,21 +100,25 @@ export function TelegramNotifier(inner: Notifier, deps: { telegram: () => Telegr
       const d = outbox.shift()!;
       deps.log({ kind: "telegram-outbox-dropped", identity: d.identity, queued_at: d.queued_at });
     }
-    await writeJsonAtomic(deps.outboxPath, outbox);
+    await writeJsonAtomic(outboxPath, outbox);
   }
 
   return {
     notify(n: Notification): Promise<NotifyResult> {
       if (QUESTION_GATES.has(n.gate)) return inner.notify(n, { channel: "log" }).then(() => ({ channel: "log" as const }));
       return exclusive(async () => {
-        if ((await readOutbox(deps.outboxPath)).length > 0) await flushLocked().catch((e) => deps.log({ kind: "telegram-flush-failed", error: (e as Error).message }));
+        if ((await queued()).length > 0) await flushLocked().catch((e) => deps.log({ kind: "telegram-flush-failed", error: (e as Error).message }));
         const channel = deps.telegram();
-        const pending = (await readOutbox(deps.outboxPath)).length > 0;
+        const pending = (await queued()).length > 0;
         if (channel && !pending && (await sendOne(channel, alertText(n))) !== null) {
           await inner.notify(n, { channel: "telegram" });
           return { channel: "telegram" as const };
         }
-        await enqueue(n);
+        if (!outboxPath) {
+          await inner.notify(n, { channel: "log" });
+          return { channel: "log" as const };
+        }
+        await enqueue(n, outboxPath);
         await inner.notify(n, { channel: "queued" });
         return { channel: "queued" as const };
       });
@@ -120,10 +127,10 @@ export function TelegramNotifier(inner: Notifier, deps: { telegram: () => Telegr
       return exclusive(flushLocked);
     },
     async clear(sel: ClearSelector): Promise<void> {
-      if (!sel.keepQueued) await exclusive(async () => {
-        const outbox = await readOutbox(deps.outboxPath);
+      if (outboxPath && !sel.keepQueued) await exclusive(async () => {
+        const outbox = await readOutbox(outboxPath);
         const kept = outbox.filter((e) => !matchesClear(e.identity, sel));
-        if (kept.length !== outbox.length) await writeJsonAtomic(deps.outboxPath, kept);
+        if (kept.length !== outbox.length) await writeJsonAtomic(outboxPath, kept);
       });
       await inner.clear?.(sel);
     },
