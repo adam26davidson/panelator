@@ -34,8 +34,23 @@
           }
         }
       }
+    },
+    "skipped_lines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string" },
+          "skipped": { "type": "integer" },
+          "recovered": { "type": "integer" },
+          "offsets": { "type": "array", "items": { "type": "integer" } },
+          "lines": { "type": "array", "items": { "type": "integer" } }
+        },
+        "required": ["file", "skipped", "recovered", "offsets"],
+        "additionalProperties": true
+      }
     }
   },
-  "required": ["since", "events", "disk_sweep", "free_space", "agents", "service_log", "actions", "aws"],
+  "required": ["since", "events", "disk_sweep", "free_space", "agents", "service_log", "actions", "aws", "skipped_lines"],
   "additionalProperties": true
 }

@@ -19,7 +19,9 @@ own infrastructure since {{since}} and act only within the limits below. The inp
 events with their payloads, the disk sweep's report (`disk_sweep`) and the current free space of the
 checked volumes (`free_space`), the delivery system's AWS account (`aws`: whether it is on, the cap, the
 month's `cost` from the last pull and the open `reservations` of the ledger), the standing agents' state, the last 24 hours of the service log
-(tick summaries, stops and `disk-sweep*` lines) and the action log of the last 7 days:
+(tick summaries, stops, `disk-sweep*` lines and `jsonl-skipped-lines` records), the action log of the
+last 7 days and `skipped_lines`: one entry per file this build read that held a line it skipped or
+recovered (`file`, `skipped`, `recovered`, `offsets`, and `lines` when the whole file was read):
 {{events}}
 Parameters: {{parameters}}
 {{profile_instructions}}
@@ -65,6 +67,15 @@ Limits. Every action needs a `why` of at least 20 characters naming the evidence
 - The scheduler restarts itself after merges; `restart_service` is not an action. When the service log
   shows the service stopping and restarting more than three times in 24 hours, file a finding with the
   log lines as evidence.
+- A torn line (one that did not parse, or parsed after leading NUL bytes were stripped): when the same
+  offsets of a file appear in two or more reports (this build's `skipped_lines` and an earlier
+  `jsonl-skipped-lines` record of the last day, or two earlier ones), file one finding per file, with
+  `what` "torn line(s) in <file>" (the path relative to the state root), the offsets, line numbers and
+  counts as `evidence`, `noticed_how` "infra health input", and the repair rule: a NUL prefix is
+  removed by hand keeping the record it covers; a NUL-only line is left, or removed only in a file that
+  no stored offset indexes; `events/*.jsonl` is never edited, because `index.sqlite` stores byte
+  offsets into it. A single report with no earlier one is not yet a finding (a line torn by the crash
+  the scheduler is restarting from is expected once).
 - Anything that needs a reviewed PR, funds, a credential or first contact with an outside party is a
   finding, not an action.
 

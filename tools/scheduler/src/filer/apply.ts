@@ -25,7 +25,7 @@ export async function applyFilerResult(d:FilerDeps,runId:string,input:FilerInput
   if(dec.issue?.blocked_by!==undefined&&dec.issue.blocked_until!==undefined)throw new Error(`blocked_by and blocked_until are exclusive: ${dec.ref}`);
   if(dec.question && !['product','technical'].includes(dec.question.kind))throw new Error('design flaw question must be product or technical');
  }
- const triage=await readJsonLines<TriageEntry>(d.paths.findingsTriage);
+ const triage=await readJsonLines<TriageEntry>(d.paths.findingsTriage,{log:d.log});
  // The cursor follows the triage log, so a batch aborted half way still moves it past what it applied (spec 014 AC-4).
  try{await applyDecisions(d,runId,input,result,triage);}
  finally{const line=settledCursor(input.cursor,triage);await writeFile(d.paths.findingsCursor+'.tmp',JSON.stringify({line}));await rename(d.paths.findingsCursor+'.tmp',d.paths.findingsCursor);}
