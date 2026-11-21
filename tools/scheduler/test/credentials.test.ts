@@ -392,6 +392,9 @@ describe("renew_credential (spec 099 AC-13)", () => {
     expect(row.status).toBe("applied");
     expect((await t.store.readIndex())["fake-token"]!.expires_at).toBe("2031-02-03T04:05:06.000Z");
     expect(row.undo).toBeNull();
+    expect(row.reason).toBe("a rotated secret cannot be un-rotated");
+    const undone = await undoAction(t.ctx, row.id, "maintainer");
+    expect(undone).toMatchObject({ status: "refused", reason: "action is not undoable: a rotated secret cannot be un-rotated" });
     expect(t.failures).toEqual([]);
   });
   it("fails with the reason for a manual entry, a failing command and an unknown name", async () => {

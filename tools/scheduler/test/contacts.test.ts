@@ -42,8 +42,8 @@ describe("contacts gate (spec 099 AC-8, AC-9)", () => {
     expect((await contactsCommand("list", undefined, deps)).lines[0]).toBe("[]");
     await approveParty(paths, entry);
     expect((await contactsCommand("list", undefined, deps)).lines[0]).toContain("example.org");
-    expect((await contactsCommand("remove", "nope", deps)).exitCode).toBe(1);
-    expect((await contactsCommand("remove", "example.org", deps)).exitCode).toBe(0);
+    expect(await contactsCommand("remove", "nope", deps)).toEqual({ lines: ["unknown party nope"], exitCode: 1 });
+    expect(await contactsCommand("remove", "example.org", deps)).toEqual({ lines: [JSON.stringify(entry)], exitCode: 0 });
     expect(await readParties(paths)).toEqual([]);
     expect(await readContactLog(paths)).toMatchObject([{ event: "removed", actor: "maintainer", party: "example.org", entry }]);
   });

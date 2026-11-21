@@ -34,7 +34,7 @@ export interface ActionContext {
 export interface ActionKind {
  changesMode:false;
  check(args:Record<string,unknown>,ctx:ActionContext):Promise<string|null>;
- apply(args:Record<string,unknown>,ctx:ActionContext):Promise<{undo:Inverse|null; undoes?:string}>;
+ apply(args:Record<string,unknown>,ctx:ActionContext):Promise<{undo:Inverse|null; undoes?:string; reason?:string}>;
 }
 export const KINDS:Record<string,ActionKind>={set_parameter:setParameterKind,pause_agent:pauseAgentKind,resume_agent:resumeAgentKind,run_agent:runAgentKind,rerun_workflow:rerunWorkflowKind,undo:undoKind,sweep_volume:sweepVolumeKind,cred_set:credSetKind,cred_check:credCheckKind,cred_import:credImportKind,cred_remove:credRemoveKind,renew_credential:renewCredentialKind};
 export function loadActionLevels(path:string):Record<string,1|2> {
@@ -86,7 +86,7 @@ async function applyUnlocked(ctx:ActionContext,request:ActionRequest,allowed:str
  }
  try {
   const result=await handler!.apply(request.args,c);
-  const row=await ctx.log.settle(pending.id,'applied',undefined,result.undo);
+  const row=await ctx.log.settle(pending.id,'applied',result.undo===null?result.reason:undefined,result.undo);
   if(result.undoes)await ctx.log.markUndone(result.undoes);
   return row;
  }catch(e){return ctx.log.settle(pending.id,e instanceof ParameterLockedError?'refused':'failed',(e as Error).message);}

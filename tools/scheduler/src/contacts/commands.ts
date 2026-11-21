@@ -9,10 +9,10 @@ export async function contactsCommand(verb: string, party: string | undefined, d
   if (verb === "list") return { lines: [JSON.stringify(parties, null, 2)], exitCode: 0 };
   if (verb === "remove") {
     const found = party ? parties.find((p) => p.party === party) : undefined;
-    if (!party || !found) return { lines: [`no approved party ${party ?? ""}`.trim()], exitCode: 1 };
+    if (!party || !found) return { lines: [`unknown party ${party ?? ""}`.trim()], exitCode: 1 };
     await writeParties(deps.paths, parties.filter((p) => p.party !== party));
     await appendContactLog(deps.paths, { at: deps.now().toISOString(), event: "removed", actor: "maintainer", party, entry: found });
-    return { lines: [`removed ${party}`], exitCode: 0 };
+    return { lines: [JSON.stringify(found)], exitCode: 0 };
   }
   return { lines: ["usage: contacts list|remove <party>|log [--since time]"], exitCode: 1 };
 }

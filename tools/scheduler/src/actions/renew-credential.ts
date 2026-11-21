@@ -26,6 +26,6 @@ export const renewCredentialKind: ActionKind = {
       const at = probe.output.split("\n").pop()?.trim() ?? "";
       if (probe.code === 0 && !Number.isNaN(Date.parse(at))) await cr.store.writeExpiry(entry.name, new Date(at).toISOString());
     }
-    return { undo: null };
+    return { undo: null, reason: "a rotated secret cannot be un-rotated" };
   },
 };
