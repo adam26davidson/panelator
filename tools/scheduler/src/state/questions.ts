@@ -28,9 +28,18 @@ export async function appendQuestionLog(p: StatePaths, entry: QuestionLogEntry, 
   await appendFile(p.questionsLog, JSON.stringify(entry) + "\n");
   await record(p, "question", entry.at, entry as unknown as Record<string, unknown>, { issue: entry.issue });
   if (entry.event === "sent" || entry.event === "reminded") {
+    // Spec 068 AC-3: a sent request is one contact whose kind is the request's type, carrying the request.
+    const asRequest = entry.event === "sent" && entry.request !== undefined;
     await record(p, "maintainer.contact", entry.at, {
-      channel: entry.channel ?? "issue", kind: entry.event === "sent" ? "question" : "reminder", issue: entry.issue,
-      ...(entry.question_comment_id === undefined ? {} : { question_comment_id: entry.question_comment_id }), label: entry.asking_stage, text: contactText,
+      channel: entry.channel ?? "issue", kind: asRequest ? entry.request!.type : entry.event === "sent" ? "question" : "reminder", issue: entry.issue,
+      ...(entry.question_comment_id === undefined ? {} : { question_comment_id: entry.question_comment_id }), label: asRequest ? "request" : entry.asking_stage, text: contactText,
+      ...(asRequest ? { request: entry.request } : {}),
+    }, { issue: entry.issue });
+  } else if (entry.event === "answered" && entry.request !== undefined) {
+    await record(p, "maintainer.contact", entry.at, {
+      channel: entry.channel ?? "issue", kind: entry.request.type, issue: entry.issue,
+      ...(entry.question_comment_id === undefined ? {} : { question_comment_id: entry.question_comment_id }), label: "answer", text: entry.answer ?? "",
+      request: entry.request, ...(entry.outcome === undefined ? {} : { outcome: entry.outcome }),
     }, { issue: entry.issue });
   }
 }
