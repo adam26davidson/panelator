@@ -1,6 +1,7 @@
 import {appendFile,readFile,readdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {withStateLock} from '../parameters/store.ts';
+import {readJsonLines} from '../state/jsonl.ts';
 import type {StatePaths} from '../state/paths.ts';
 import type {GitHubClient} from '../github/client.ts';
 import type {Finding,IssueData} from '../types.ts';
@@ -46,10 +47,7 @@ export function recordKey(q:Record<string,unknown>):string {
  const rest={...q};for(const k of ['ref','run_id','timestamp','repeat','advisory_failed','advisory_attempts','duplicate_refs','rests_on_pr_closed'])delete rest[k];
  return JSON.stringify(canon(rest));
 }
-export async function readJsonLines<T>(path:string):Promise<T[]> {
- let text:string;try{text=await readFile(path,'utf8');}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return [];throw e;}
- return text.split('\n').filter(Boolean).map(l=>JSON.parse(l) as T);
-}
+export {readJsonLines} from '../state/jsonl.ts';
 export interface FilerDeps {paths:StatePaths;gh:GitHubClient;botLogin:string;now:()=>Date;classes:string[];stopsPipelineLabel:string;notify:(text:string,key?:string)=>Promise<void>;log?:(entry:Record<string,unknown>)=>void}
 /** A PR's state, or null when GitHub could not say. A number that is no PR leaves the discard resting on nothing, so it counts as closed. */
 async function restingPrState(d:FilerDeps,pr:number):Promise<'open'|'merged'|'closed'|null> {
@@ -84,7 +82,7 @@ async function discardsToReoffer(d:FilerDeps,queue:unknown[],triage:TriageEntry[
 }
 export async function buildFilerInput(d:FilerDeps):Promise<FilerInput> {
  let cursor=0;try{cursor=JSON.parse(await readFile(d.paths.findingsCursor,'utf8')).line;}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
- const queue=await withStateLock(d.paths.findingsQueue,()=>readJsonLines<{finding:Finding}>(d.paths.findingsQueue)) as ({finding:Finding}|undefined)[],triage=await readJsonLines<TriageEntry>(d.paths.findingsTriage);
+ const queue=await withStateLock(d.paths.findingsQueue,()=>readJsonLines<{finding:Finding}>(d.paths.findingsQueue,{positional:true,log:d.log})),triage=await readJsonLines<TriageEntry>(d.paths.findingsTriage,{log:d.log});
  const last=new Map<string,TriageEntry>();for(const t of triage)last.set(t.ref,t);
  const openBot=await d.gh.listOpenIssuesByAuthor(d.botLogin);
  const failed=[...last.values()].filter(t=>isFailedAdvisory(t)&&queue[Number(t.ref)-1]);
