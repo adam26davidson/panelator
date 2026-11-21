@@ -154,6 +154,18 @@ export class GitHubClient {
     }
   }
 
+  /** Spec 101 AC-2: re-run the failed jobs of one workflow run (actions: write). False on 404, 409 or 422; any other error is thrown. */
+  async rerunFailedJobs(runId: number): Promise<boolean> {
+    try {
+      await this.octokit.request("POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs", { ...this.base, run_id: runId, request: { retries: 0 } });
+      return true;
+    } catch (e) {
+      const status = (e as { status?: number }).status;
+      if (status === 404 || status === 409 || status === 422) return false;
+      throw e;
+    }
+  }
+
   /** One issue's state, author and merged linked pull requests; null for a missing issue or a pull request (spec 028 AC-6, AC-5). */
   async issue(n: number): Promise<IssueState | null> {
     let data: Rec;
@@ -199,7 +211,7 @@ export class GitHubClient {
       total = response.data.total_count;
       return response.data;
     });
-    const runs: CheckRun[] = raw.map((r) => ({ name: r.name, id: Number(r.id), status: r.status, conclusion: r.conclusion ?? null }));
+    const runs: CheckRun[] = raw.map((r) => ({ name: r.name, id: Number(r.id), status: r.status, conclusion: r.conclusion ?? null, details_url: r.details_url ? String(r.details_url) : null }));
     if (runs.length !== total) throw new Error(`check runs incomplete: got ${runs.length}, server reports ${total}`);
     const considered = required.length ? runs.filter((r) => required.includes(r.name)) : runs;
     const missing = required.filter((n) => !runs.some((r) => r.name === n));
