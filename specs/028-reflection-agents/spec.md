@@ -106,7 +106,7 @@ scheduler (spec 008 AC-5).
   clears what it received as spec 008 AC-3 says. The registry test of spec
   008 AC-1 accepts the key and rejects `min_events` under 1 or without
   `events`. The filer and the audit keep the default and are unchanged.
-- AC-5. Amended by [073-reflection-reads-planned-children](../073-reflection-reads-planned-children/spec.md) AC-2: `design_tree` is built from `designTreeReport` with the issue listing, so each design's planned children carry their issue, `done` and `dead` beside the file children's `exists`. **The scheduler builds the input.** `reflection-input` is built by
+- AC-5. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-3: `open_questions` also takes a question's text from the `maintainer.contact` event of a sent request (kind `credential`, `funds` or `first_contact`, label `request`). Amended by [073-reflection-reads-planned-children](../073-reflection-reads-planned-children/spec.md) AC-2: `design_tree` is built from `designTreeReport` with the issue listing, so each design's planned children carry their issue, `done` and `dead` beside the file children's `exists`. **The scheduler builds the input.** `reflection-input` is built by
   `tools/scheduler/src/reflection/input.ts` for the period from the agent's
   last successful run (or 28 days back on the first run) to now:
   - `period`, `agent`, `parameters` (the store), `agents` (every standing

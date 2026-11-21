@@ -16,6 +16,14 @@ notification's layout and its one event);
 payload gains `request`, `outcome` and the `telegram` channel); and
 [064-disk-sweep-and-infra-health](../064-disk-sweep-and-infra-health/spec.md)
 AC-5 (the infra health definition, input and prompt gain their AWS half).
+Revised 2026-11-21 to answer the plan stage's ten questions: section 1 ("What
+`main` has, and what is left") and the paragraphs marked *(agent's call)*. The
+revision adds four marks: spec 030 AC-2 again and
+[099-beyond-github-rest-on-the-credential-store](../099-beyond-github-rest-on-the-credential-store/spec.md)
+AC-12 (an entry's optional `renew_steps`), spec 099 AC-2 (`cred-exec.ts` and
+`runCheck` for a `provider: aws` entry), and
+[028-reflection-agents](../028-reflection-agents/spec.md) AC-5
+(`open_questions` reads a request's send).
 Class: tooling. Domain: backend.
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
@@ -88,19 +96,29 @@ were on `main`:
   input, scales down until the forecast is under the cap and back up when it
   is, filing a finding for what it cannot scale or cannot explain.
 
-**What `main` must have before this is built.** The implementation needs the
-implementations of spec 022 (issue #37: `tools/scheduler/src/aws/`, the fake
-`aws` under `test/helpers/`, `aws/ledger.json`, `aws/cost.json`) and of spec
-030 (`tools/scheduler/src/credentials/`, `agents/credentials.yaml`,
-`src/notify/telegram.ts`, the request rendering of AC-7 and the pre-resume
-step of AC-8) merged. Spec 026 is on `main` (issue #93 closed:
-`src/events/`, `schemas/scheduler/event.json`, `src/notify/recorded.ts`),
-as is spec 064 (`agents/standing/infra-health.md`, `sweep_volume`). Until
-spec 022's and spec 030's implementations are on `main`, the plan stage
-finds those paths missing and does not start this build; the issue should
-carry `blocked` (spec 066) until then. Nothing here is written so that it has
-to change if either of those lands in a later revision than its spec: the
-interfaces this spec builds on are the ones their specs fix by name.
+**What `main` has, and what is left** *(agent's call, answering the plan
+stage; read from `main` at 8cebdd3)*. Specs 022, 026, 030 (through specs 069
+and 099), 050 and 064 are implemented on `main`, so nothing blocks this build
+and the issue needs no `blocked` label. Part of this spec landed with them (PR
+#365 and spec 099's implementation). For a criterion listed as built, the
+implement stage changes no code: it checks that the named test exists and
+passes, and adds the test when it is missing.
+
+- **Built.** AC-1's catalogue entry with its eight `access` actions
+  (`agents/credentials.yaml`; `credentials.test.ts` loads it). AC-4 whole:
+  `notify` resolving to `{ channel }`, `suppressed` from the rate limiter, the
+  wiring order in `bin/scheduler.ts`, the recorder writing `contact.kind` and
+  `request` (`notify.test.ts`). AC-5 whole: the funds text and the `contact`
+  field in `src/aws/ledger.ts` (`aws.test.ts`). AC-9's list in the entry.
+- **To build.** AC-1's `provider: aws` path for the check and for `cred
+  exec`. AC-2: `src/aws/sso.ts`, the `aws sso-expiry` command, the expiry
+  written to the index, `renew_steps`. AC-3: both request events, `outcome` on
+  the event schema, the reflection reader. AC-6, AC-7 and AC-8 whole. AC-9's
+  `tools/README.md` text and its capability question. AC-10's recorded runs.
+
+[102-scheduler-alerts-reach-telegram](../102-scheduler-alerts-reach-telegram/spec.md)
+is a spec on `main` whose implementation is not; AC-4 and AC-10 say what holds
+in either order, so neither build waits for the other.
 
 ## 2. Out of scope
 
@@ -180,9 +198,65 @@ section 2, first bullet)
   working credential. The probe spawns no `aws` at all (AC-2), which is the
   one refinement of that rule, and the grep is unaffected. Given no `aws`
   block in `agents/scheduler.yaml`, then the entry still loads (the catalogue
-  is repository content), `cred list` shows it missing, its check fails with
-  "aws: off" and nothing calls `aws`; the recorded chains of earlier specs
+  is repository content), `cred list` shows it missing, its check is skipped
+  with the reason "aws: off" gives below and nothing calls `aws`; the recorded chains of earlier specs
   run unchanged.
+
+  *(agent's call)* **How the check runs.** `runCheck`
+  (`src/credentials/check.ts`) gains a branch for an entry with `provider:
+  aws`, taken before the "wrapper not built" result. `CheckContext` gains
+  `aws?: { config?: AwsConfig; cli: (profile: string) => AwsCli; env:
+  NodeJS.ProcessEnv }`, built in `bin/scheduler.ts` from the `aws` block
+  (`cli` is `awsCli({ profile, region: config.region })`). In order: no
+  `aws.config` gives `{ status: "skipped", reason: "aws: off: no aws block in
+  agents/scheduler.yaml" }` and reads nothing; a secret that cannot be read
+  gives `failed` with the store's reason, which names `cred set aws-sso`; the
+  secret, trimmed, is the profile name, and one that does not match
+  `^[A-Za-z0-9_.-]+$` gives `failed` with "not a profile name"; otherwise `sts
+  get-caller-identity` runs through `aws.cli(<the profile>)`, and the result
+  is `ok` when `Account` equals `account_id`, else `failed` with spec 022
+  AC-2's reason or the CLI error's first line. This check does not touch
+  `AwsContext.state` and sends no `aws-access` notification; spec 022 AC-2's
+  own identity check does that. After the identity call, whatever its result,
+  `runCheck` calls `ssoExpiry(<the profile>, aws.env)` in process (AC-2) and
+  writes the index: `{ expires_at }` through `store.writeExpiry`, `{ none }`
+  sets `expires_at` to null (`writeExpiry` accepts null), `{ error }` leaves
+  the index as it is and does not change the check's result. `cred set`, `cred
+  check`, a "Done" answer (spec 099 AC-5) and the credential check's pre-run
+  (spec 099 AC-12) all call `runCheck`, so all four refresh the expiry.
+  Nothing spawns the entry's `expiry.probe` string: it names the command a
+  person runs, and `renew_credential`'s probe runner is not reached for a
+  `renew: manual` entry. Every other string check (the test catalogue's
+  `fakecmd --check`) stays `skipped` with "wrapper not built": no entry on
+  `main` needs one, and the general command check is not this issue's.
+
+  *(agent's call)* **Skipped, not failed, without an `aws` block.** A
+  deployment with no `aws` block does not use the credential, so its check is
+  `skipped`: `cred check aws-sso` prints `aws-sso: check skipped: aws: off: no
+  aws block in agents/scheduler.yaml` and exits 0, `last_check` stays null, no
+  `credential_expiry` event is produced, and the credential check's agent,
+  which warns only for a failed check or a near expiry, does not warn. With an
+  `aws` block and the credential not set, the check is `failed` and the daily
+  warning carries the `setup` steps: AWS is in use and the last setup steps
+  were not done.
+
+  *(agent's call)* **`cred exec` for this entry.** The code is
+  `bin/cred-exec.ts` (spec 099 AC-2), not `src/credentials/commands.ts`; it is
+  the path infra health's `aws` shim takes. It gains a branch for `provider:
+  aws`. The first word after `--` must be `aws`, the wrapper's command
+  (anything else exits 1 with "cred-exec: aws-sso wraps aws only"), and is
+  dropped. An argument `--profile`, `--region` or `--output`, bare or with
+  `=`, exits 1 with "cred-exec: --profile, --region and --output are set by
+  the scheduler". With no `aws` block it exits 1 with "cred-exec: aws: off".
+  Otherwise it finds `aws` on `PATH` with the shim directory removed, as it
+  finds any command today, and calls `awsCli({ profile: <the secret, trimmed>,
+  region: <the block's> }, { command: <that path>, env: <the environment
+  without the shim directory> }).run(<the remaining args>)`. On success it
+  prints the parsed value as `JSON.stringify(value, null, 2)` on stdout and
+  exits 0; on failure it prints the error's message, which `cli.ts` has
+  already redacted and cut, on stderr and exits 1. Stdin is not passed, the
+  timeout is `cli.ts`'s, and `AWS_PROFILE` is set in no child environment for
+  this entry.
 - AC-2. **The expiry comes from the CLI's cache, and the token is never
   read.** `panelator-scheduler aws sso-expiry [--profile <name>]` (default:
   `AWS_PROFILE`, else the `aws` block's `profile`) prints the session's
@@ -202,11 +276,52 @@ section 2, first bullet)
   `expires_at` in the index), then the credential check (spec 030 AC-13)
   carries `aws-sso` in its `warnings` when the session ends within
   `warn_days` or the last check failed, and the scheduler sends one
-  `credential-expiry` notification with the entry's `setup` steps (the login
-  step first), once per day, over Telegram when it is on (spec 030 AC-9).
+  `credential-expiry` notification with the entry's `renew_steps` (below; the
+  login step first), once per day, over Telegram when it is on (spec 030 AC-9).
   Spec 022 AC-2's `aws-access` notification on an identity failure is
   unchanged and separate: it says AWS went off, the warning says how to log
   in again.
+
+  *(agent's call)* **The reader's shape.** `ssoExpiry(profile: string, env:
+  NodeJS.ProcessEnv = process.env): { expires_at: string } | { none: true } |
+  { error: string }` moves from `src/aws/check.ts` to `src/aws/sso.ts`
+  together with `profileStanza`; `check.ts` keeps no copy. The config file is
+  `env.AWS_CONFIG_FILE` when set, else `<home>/.aws/config`; the cache
+  directory is `env.AWS_SSO_CACHE_DIR` when set, else `<home>/.aws/sso/cache`;
+  `<home>` is `env.HOME`, else `os.homedir()`; each of the two paths is
+  resolved on its own. (`AWS_SSO_CACHE_DIR` is this scheduler's variable, for
+  tests; the AWS CLI does not read it.) Results: a config file that cannot be
+  read, or no stanza for the profile, is `{ error: "no profile <name> in
+  <config path>" }`; a stanza with neither `sso_session` nor `sso_start_url`
+  is `{ none: true }`; no cache file, or one that does not parse, is `{ error:
+  "no cached SSO token found (run aws sso login)" }`; a file without
+  `expiresAt`, or with one `Date.parse` rejects, is `{ error: "no expiresAt in
+  the cached token" }`; otherwise `{ expires_at: <the string as cached> }`.
+  The file is parsed and only `expiresAt` is taken from the parsed value,
+  which is not kept, passed on or logged; that is what "never read into a
+  variable" means above. `aws sso-expiry` prints `expires_at`, or `none`, or
+  the error on stderr with exit 1, and needs no `aws` block when `--profile`
+  or `AWS_PROFILE` names the profile. `aws-check`'s line keeps its words: `sso
+  session expires: ` followed by `expires_at` as cached, `not SSO` for `none`,
+  or the error's text. The one case that changes is a missing config file or
+  stanza, which printed `not SSO` and now prints the error. `awsCheck(ctx,
+  home?)` becomes `awsCheck(ctx, env?)`, and `aws.test.ts`'s fixtures pass `{
+  HOME: <dir> }`. The index stores `new Date(expires_at).toISOString()`.
+
+  *(agent's call)* **The login step comes from the catalogue.** A catalogue
+  entry may carry an optional `renew_steps`, a list of at least one string:
+  what the maintainer does to renew a credential that is already set up
+  (`schemas/scheduler/credential-catalogue.json`, `CredentialEntry`).
+  `aws-sso`'s is, in order: run `aws sso login --sso-session default`; run
+  `panelator-scheduler cred check aws-sso`, which prints `check ok` and
+  records the new expiry; if the check still fails, `panelator-scheduler
+  aws-check` says why, and the full setup is in `agents/credentials.yaml`.
+  Where `src/standing/run.ts` builds a `credential-expiry` notification for a
+  warning, the steps are the entry's `renew_steps` when it has them and the
+  credential is set in the index, else its `setup` as today. The order is
+  therefore the scheduler's, read from the catalogue, and a recorded run
+  asserts it whatever steps the scripted result carries.
+  `agents/standing/credential-check.md` and the check's input are unchanged.
 
 **Events for every contact** (design section 7; spec 026 AC-2; spec 030
 section 2, second bullet)
@@ -229,7 +344,42 @@ section 2, second bullet)
   `question_comment_id` set on both events. The question log entry of spec
   030 AC-7 and AC-8 is unchanged; the event is recorded beside it, by
   `src/state/questions.ts` for the send (where spec 026 section 5 put the
-  `sent` contact) and by the pre-resume step of AC-8 for the answer.
+  `sent` contact) and for the
+  answer as the next paragraph says.
+
+  *(agent's call)* **One writer for both events.** `appendQuestionLog` in
+  `src/state/questions.ts` records both. For a `sent` entry that carries
+  `request`, the contact it already records has `kind: request.type`, `label:
+  "request"` and `request`; a `sent` entry without one, and every `reminded`
+  entry, is recorded as today. For an `answered` entry that carries `request`,
+  it records the answer event: `channel` the entry's (`issue` when absent),
+  `kind: request.type`, `label: "answer"`, `text` the entry's `answer`,
+  `request`, `outcome` the entry's, with `issue` and `question_comment_id`. An
+  `answered` entry without a request records no contact, as today. The two
+  call sites in `src/service/loop.ts` (`#resume` and `#answerCapability`)
+  already pass `request`, `outcome`, `channel` and the answer that
+  `applyRequestAnswer` (`src/chain/driver.ts`) returned, and they write the
+  entry only when the question has no answered entry yet, so the event is
+  recorded once per question. Neither they, nor `src/chain/question.ts`, nor
+  `src/contacts/approve.ts` (which only writes `contacts/parties.json`)
+  changes. `text` is whichever answer the stage receives, including spec 099
+  AC-5's two, `done (not checked: <reason>)` and `done (unverified: <name> is
+  not in the catalogue)`, both with `outcome: text`, and a first contact's
+  approval text with `outcome: approved`. `schemas/scheduler/event.json` gains
+  `outcome` on the payload here, and `request`, an untyped object on `main`,
+  gains its required `type` enum.
+
+  *(agent's call)* **Reflection still finds the question's text.**
+  `openQuestions` in `src/reflection/input.ts` (spec 028 AC-5) takes each open
+  question's text from the `maintainer.contact` event of its send. Its
+  selection becomes: payload `kind` `question`, or payload `kind` one of
+  `credential`, `funds`, `first_contact` with payload `label` `request`;
+  matched by issue and `question_comment_id` as today. The `label` test keeps
+  the answer event, which shares the kind and the comment id, from being taken
+  for the question. `groupContacts` needs nothing: it groups by `kind` and
+  `label`, whatever they are. `reflection.test.ts` gains a sent credential
+  request that is still open and asserts its rendered text in
+  `open_questions`.
 - AC-4. Amended by [102-scheduler-alerts-reach-telegram](../102-scheduler-alerts-reach-telegram/spec.md) AC-2: `channel` is also `queued` when the Telegram notifier held the notice for the channel's return. **A notification's event names the channel that carried it.**
   `Notifier.notify` resolves to `{ channel: "telegram" | "log" }`: the
   `LogNotifier` returns `log`; the `TelegramNotifier` of spec 030 AC-9
@@ -257,6 +407,12 @@ section 2, second bullet)
   `{ channel: log, kind: funds }`; a second notification of the same label
   within the rate limit leaves no event; a notification without `contact`
   leaves `kind: notification` as today.
+
+  *(agent's call)* Built on `main` (section 1). A send that failed, or
+  Telegram off, gives `log` until spec 102's implementation is on `main` and
+  `queued` after it, as the mark above says. This criterion's test that
+  asserts `channel: log` for a refused send is changed to `queued` by spec
+  102's implementation, not by this spec's.
 
 **The funds request over Telegram** (design section 8, "Funds"; spec 022
 AC-7; spec 030 section 2, third bullet)
@@ -286,6 +442,11 @@ AC-7; spec 030 section 2, third bullet)
   admit the reservation (the whole expected cost). The other AWS labels
   (`aws-access`, `aws-cap-80`, `aws-cap-hit`, `aws-forecast`) need nothing:
   spec 030 AC-9 forwards every label with the notification's own text.
+
+  *(agent's call)* Built on `main` (section 1); the text there also has a
+  `Refused: <reason>` line after `Asked by`, which stays. The event's
+  `channel` is whatever `notify` returned (AC-4): this criterion fixes the
+  kind, the request and that there is one event, not the channel.
 
 **Infra health's AWS half** (design sections 6.1, 6.2 and 8; spec 022 AC-6
 and AC-9; spec 030 section 2, fourth bullet; spec 064 AC-5)
@@ -345,6 +506,19 @@ and AC-9; spec 030 section 2, fourth bullet; spec 064 AC-5)
   `setParameter` under `src/aws/`) still passes. Only infra health's
   `actions` list and the maintainer's `panelator-scheduler action undo`
   reach the kind.
+
+  *(agent's call)* **The event and the wiring.** The `aws.reserve` payload in
+  `schemas/scheduler/event.json` gains `scaled` in its `outcome` enum and an
+  optional `direction` (`up` or `down`); the scaled event carries the
+  reservation's `id`, `what`, `why` and `by`, the `expected_monthly_usd` now
+  in force, `outcome: "scaled"` and `direction`. `ActionContext`
+  (`src/actions/index.ts`) gains `aws?: AwsContext`, set to the one
+  `AwsContext` that `bin/scheduler.ts` builds, in the service's action context
+  (so the `applyAction` calls of `src/standing/run.ts` carry it) and in the
+  `action` command's. `aws_scale`'s `check` refuses with "aws: off" when it is
+  absent or has no `config`, and with "aws: off: <reason>" when `ensureOn`
+  (spec 022 AC-2) is false. `aws_scale` returns its `undo` from `apply`, as
+  `ActionKind.apply` allows; `applyAction` computes none for it.
 - AC-8. **Infra health gets the ledger and the alarm.**
   `agents/standing/infra-health.md` (spec 064 AC-5) gains `credentials:
   [aws-sso]` (spec 030 AC-2's optional key; the shim exists per spec 030
@@ -386,6 +560,20 @@ and AC-9; spec 030 section 2, fourth bullet; spec 064 AC-5)
   `aws_scale`. The result is applied by the scheduler as every standing
   result (spec 008 AC-5); `aws_scale` goes through `applyAction` with the
   agent's `allowed` list.
+
+  *(agent's call)* **Where `on` comes from.** `buildInfraHealthInput`'s deps
+  gain `aws?: AwsContext`, passed by `src/standing/run.ts` from the service's
+  deps (`src/service/loop.ts` holds it as `aws`). With no context or no
+  `config`, the value is the "no aws block" one above and nothing is called.
+  Otherwise, when the identity has not been checked in this process
+  (`state.identityAt` is null), the builder calls `ensureOn` first, as
+  `panelator-scheduler aws` and `reserveSpend` do: one free `sts` call through
+  `src/aws/cli.ts`, so the first run after a restart sees the true state, not
+  a false "off". Then `on` is `state.on === true`, `off_reason` is
+  `state.reason` when off, `cap_usd` is `readCap`, and `cost` and
+  `reservations` come from `readCost` and `readLedger` (`src/aws/book.ts`).
+  `infra-health-input.test.ts` covers the three states: no block, off with a
+  reason, on.
 - AC-9. **The policy asks for what `aws_scale` calls.** The six actions
   `aws_scale` needs (`lambda:PutFunctionConcurrency`,
   `lambda:DeleteFunctionConcurrency`, `cloudfront:GetDistributionConfig`,
@@ -400,6 +588,10 @@ and AC-9; spec 030 section 2, fourth bullet; spec 064 AC-5)
   cannot pass, following spec 022 section 8's pattern; until then it builds
   and tests against the fake `aws`. Nothing under `budgets:`,
   `organizations:` or `iam:` is asked for.
+
+  *(agent's call)* The entry's list is on `main` (section 1); the
+  `tools/README.md` text and the capability question are what is left of this
+  criterion.
 - AC-10. **Live cases end to end.** Recorded worlds (`e2e.test.ts`,
   `helpers/e2e-routes.ts`; the fake `aws`, Telegram, `systemd-creds` and the
   fixture home) drive and assert:
@@ -407,11 +599,12 @@ and AC-9; spec 030 section 2, fourth bullet; spec 064 AC-5)
     three days: the probe writes `expires_at` to the index without reading
     the token, the hourly step emits `credential_expiry` once, the
     credential check returns one `aws-sso` warning, one `credential-expiry`
-    message reaches the fake Telegram with the login step first, logged with
+    message reaches the fake Telegram with the login step first (from
+    `renew_steps`, whatever steps the scripted result carries), logged with
     `channel: telegram`, and nothing twice that day (AC-1, AC-2);
   - the same with the fake identity returning another account: the check
-    fails, `aws-access` is sent once (spec 022 AC-2), and the credential
-    check warns once with the setup steps (AC-1);
+    fails, `aws-access` is sent once (spec 022 AC-2), and the credential check warns once with the `renew_steps`, the credential
+    being set (AC-1, AC-2);
   - a credential question with a complete request sent and answered "Done"
     with the check passing: two `maintainer.contact` events, `kind:
     credential`, the first `label: request` with `request`, the second
@@ -422,7 +615,18 @@ and AC-9; spec 030 section 2, fourth bullet; spec 064 AC-5)
     has the `Amount`, `Purpose` and `Charter goal` lines and the two
     cap-raising steps, one event `{ kind: funds, channel: telegram, request
     }`, no `kind: notification` event for it; the same with the fake
-    Telegram refusing: `channel: log` (AC-4, AC-5);
+    Telegram refusing: still one event with `kind: funds`, whose `channel`
+    equals the `channel` of the service log line for that send and is not
+    `telegram`. *(agent's call)* The literal is `log` when the build's base
+    lacks spec 102's implementation and `queued` when it has it; the test
+    asserts the literal for its base, and whichever of the two
+    implementations lands second changes that literal in its own PR (AC-4,
+    AC-5);
+  - no `aws` block: `cred check aws-sso` prints `check skipped` and exits
+    0, the credential check's input has `checks["aws-sso"].status`
+    `skipped`, and no `credential_expiry` event or `credential-expiry`
+    notification names `aws-sso`; with a block and the credential not set,
+    the check fails and one warning carries the `setup` steps (AC-1);
   - a ledger with reservation A (`scale` of kind `lambda-concurrency`, up 6
     USD, down 1 USD) and reservation B (no descriptor), a cap of 10 USD and
     a pull whose forecast is 12 USD: `infra_alarm` of kind
@@ -472,6 +676,19 @@ stays:
 - Spec 064 AC-5: `Amended by ... AC-8: the definition gains credentials
   aws-sso and the action aws_scale, the input gains aws, and the prompt
   handles the aws_forecast_over_cap alarm.`
+- Spec 030 AC-2, a second mark: `Amended by ... AC-2: an entry may carry an
+  optional renew_steps list, the steps that renew a credential already set
+  up.`
+- Spec 099 AC-2: `Amended by ... AC-1: for a provider: aws entry,
+  cred-exec.ts runs the call through src/aws/cli.ts with the stored profile
+  and prints its JSON, and runCheck runs that entry's check and reads its
+  expiry.`
+- Spec 099 AC-12: `Amended by ... AC-2: the notification carries the entry's
+  renew_steps when it has them and the credential is set, else its setup
+  steps.`
+- Spec 028 AC-5: `Amended by ... AC-3: open_questions also takes a
+  question's text from the maintainer.contact event of a sent request (kind
+  credential, funds or first_contact, label request).`
 
 (The `...` above stands for the same link in every mark.) Spec 030 AC-13 is
 not marked: the credential check's rule is unchanged and `aws-sso` is one
@@ -480,53 +697,75 @@ subscriber now acts on it. Spec 050 AC-3 is not marked: no kind is added.
 
 ## 5. Interfaces and files
 
-- `agents/credentials.yaml`: the `aws-sso` entry (AC-1, AC-9).
-- `tools/scheduler/src/aws/sso.ts` (new): `ssoExpiry(profile, env)` (AC-2);
-  `src/aws/check.ts`: `aws-check`'s expiry line uses it; `src/aws/cli.ts`:
-  unchanged except that the profile may be passed per call (AC-1).
-- `tools/scheduler/src/aws/scale.ts` (new): the three kinds' calls and the
-  descriptor's validation (AC-6, AC-7); `src/aws/ledger.ts`: `scale` on
-  `reserveSpend`'s input and the record, `scale.state`, the effective
-  `expected_monthly_usd`, the `scaled` outcome (AC-6, AC-7), the `contact`
-  field on the funds notification and no event of its own (AC-5).
-- `tools/scheduler/src/actions/aws-scale.ts` (new): `awsScaleKind`;
-  `actions/index.ts`: `KINDS.aws_scale`; `agents/actions.yaml`: the entry
-  (AC-7).
-- `tools/scheduler/src/credentials/check.ts` and `commands.ts`: the
-  `provider: aws` path for `check` and `cred exec` through `src/aws/cli.ts`
-  with the stored profile (AC-1).
-- `tools/scheduler/src/notify/types.ts`: the `notify` return and `contact`
-  on `Notification`; `notify/log.ts`, `notify/rate-limit.ts`,
-  `notify/telegram.ts`, `notify/recorded.ts`: the return value and its use
-  (AC-4); `bin/scheduler.ts`: the wiring order and the `aws sso-expiry`
-  command (AC-2, AC-4).
-- `tools/scheduler/src/state/questions.ts`: the `sent` contact's kind,
-  label and `request` (AC-3); `src/contacts/approve.ts` (spec 030's
-  pre-resume step): the answer event (AC-3).
-- `tools/scheduler/src/standing/infra-health-input.ts` and
-  `schemas/scheduler/infra-health-input.json`: `aws` (AC-8);
-  `agents/standing/infra-health.md`: `credentials`, `actions`, the prompt
-  (AC-8).
-- `schemas/scheduler/event.json`: `request` and `outcome` on the
-  `maintainer.contact` payload (AC-4); `schemas/scheduler/aws-ledger.json`:
-  `scale` (AC-6); `schemas/scheduler/credential-catalogue.json`: nothing new
-  (the entry fits spec 030's shape).
-- `tools/scheduler/test/`: `aws.test.ts` (the descriptor, `aws_scale`'s
-  checks and calls, the forecast after a scale, `ssoExpiry` over fixture
-  files and the never-read-token assertion), `credentials.test.ts` (the
-  entry, the `provider: aws` path), `notify.test.ts` (the return value, the
-  recorder's channel and `contact`), `events.test.ts` (the schema's new
-  properties), `actions.test.ts` (`aws_scale` in `KINDS`), `stages.test.ts`
-  (the prompt pins), `e2e.test.ts` and `helpers/e2e-routes.ts` (AC-10); the
-  fake `aws` under `test/helpers/` gains the AC-7 calls; a fixture home
-  under `test/fixtures/aws-home/` with `.aws/config` and two cache files.
-- `tools/README.md`: `aws sso-expiry`, the `aws-sso` entry, the six policy
-  actions (AC-2, AC-9).
-- `specs/030-beyond-github/spec.md`, `specs/022-delivery-aws-account/spec.md`,
-  `specs/026-event-store/spec.md`, `specs/064-disk-sweep-and-infra-health/spec.md`:
-  the marks of section 4 (this spec PR).
-- `docs/delivery-system-design.md`: this spec under `## Children` (this spec
-  PR).
+- *(agent's call)* This list is the revision's, from `main` at 8cebdd3;
+  paths without a prefix are under `tools/scheduler/`.
+- `agents/credentials.yaml`: the `aws-sso` entry is on `main`; it gains
+  `renew_steps` (AC-2). `schemas/scheduler/credential-catalogue.json` and
+  `src/credentials/catalogue.ts` (`CredentialEntry`): the optional
+  `renew_steps`.
+- `src/aws/sso.ts` (new): `ssoExpiry(profile, env)` and `profileStanza`,
+  moved from `src/aws/check.ts` (AC-2). `src/aws/check.ts`: `aws-check`'s
+  expiry line uses it, `awsCheck(ctx, env?)`, and the open reservations show
+  `scale.kind` and `scale.state` (AC-6). `src/aws/cli.ts`: unchanged.
+- `src/credentials/check.ts`: `CheckContext.aws` and `runCheck`'s `provider:
+  aws` branch (AC-1). `src/credentials/store.ts`: `writeExpiry` accepts null.
+  `bin/cred-exec.ts`: the `provider: aws` branch (AC-1).
+  `src/credentials/commands.ts`: unchanged.
+- `src/aws/scale.ts` (new): the three kinds' calls and the descriptor's
+  validation (AC-6, AC-7). `src/aws/book.ts`: `scale` on `Reservation`.
+  `src/aws/ledger.ts`: `scale` on `reserveSpend`'s input and the record,
+  `scale.state`, the effective `expected_monthly_usd`, the `scaled` outcome
+  (AC-6, AC-7); its funds notification and `contact` field are on `main`
+  (AC-5).
+- `src/actions/aws-scale.ts` (new): `awsScaleKind`. `src/actions/index.ts`:
+  `KINDS.aws_scale` and `aws` on `ActionContext`. `agents/actions.yaml`: the
+  entry (AC-7).
+- `src/notify/`: on `main`, unchanged (AC-4).
+- `bin/scheduler.ts`: the `aws sso-expiry` command (dispatched before
+  `aws`'s status view), `CheckContext.aws`, and `aws` on the action context
+  (AC-1, AC-2, AC-7).
+- `src/state/questions.ts`: the `sent` contact's kind, label and `request`,
+  and the answer event (AC-3). `src/service/loop.ts`'s two answer call sites,
+  `src/chain/driver.ts`, `src/chain/question.ts` and
+  `src/contacts/approve.ts`: unchanged.
+- `src/reflection/input.ts`: `openQuestions`' selection (AC-3).
+- `src/standing/infra-health-input.ts` and
+  `schemas/scheduler/infra-health-input.json`: `aws` (AC-8).
+  `src/standing/run.ts`: `aws` passed to the input builder, and the
+  `credential-expiry` steps taken from `renew_steps` (AC-2, AC-8).
+  `src/service/loop.ts`: its `aws` passed on to the standing run's deps where
+  it is not already. `agents/standing/infra-health.md`: `credentials`,
+  `actions`, the prompt (AC-8).
+- `schemas/scheduler/event.json`: `outcome` and the typed `request` on the
+  `maintainer.contact` payload (AC-3; an untyped `request` is on `main`);
+  `scaled` and `direction` on the `aws.reserve` payload (AC-7).
+  `schemas/scheduler/aws-ledger.json`: `scale` (AC-6).
+- `test/`: `aws.test.ts` (the descriptor, `aws_scale`'s checks and calls,
+  the forecast after a scale, `ssoExpiry` over fixture files with each result
+  of AC-2, the never-read-token assertion, `aws-check`'s line);
+  `credentials.test.ts` (`renew_steps`, `runCheck`'s `provider: aws` branch:
+  skipped, not set, wrong account, ok with the expiry written, `none` clearing
+  it); `bin.test.ts` (`cred-exec.ts`'s `provider: aws` branch and its
+  refusals, `aws sso-expiry`); `events.test.ts` (the schema's new properties,
+  the request's send and answer events); `reflection.test.ts` (AC-3);
+  `infra-health-input.test.ts` (AC-8); `standing.test.ts` (the notification's
+  steps); `actions.test.ts` (`aws_scale` in `KINDS`); `stages.test.ts` (the
+  prompt pins); `e2e.test.ts` and `helpers/e2e-routes.ts` (AC-10).
+  `notify.test.ts` is on `main` and is checked, not rewritten (AC-4).
+  `test/helpers/fake-aws` gains the AC-7 calls; a fixture home under
+  `test/fixtures/aws-home/` holds `.aws/config` and two cache files. A test
+  may sit in a neighbouring file of this directory when that is where its
+  subject is already tested.
+- `tools/README.md`: `aws sso-expiry`, the `aws-sso` entry and its
+  `renew_steps`, the six policy actions with the policy JSON (AC-2, AC-9).
+- `specs/030-beyond-github/spec.md`,
+  `specs/022-delivery-aws-account/spec.md`, `specs/026-event-store/spec.md`,
+  `specs/064-disk-sweep-and-infra-health/spec.md`,
+  `specs/099-beyond-github-rest-on-the-credential-store/spec.md`,
+  `specs/028-reflection-agents/spec.md`: the marks of section 4 (this spec's
+  PRs).
+- `docs/delivery-system-design.md`: this spec under `## Children` (done in
+  the first spec PR).
 
 No file outside `tools/scheduler/`, `agents/`, `schemas/scheduler/` and
 `dev-logs/` is changed by the implementation except `tools/README.md`.
