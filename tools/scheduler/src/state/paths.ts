@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 export interface StatePaths {
   /** Spec 072 AC-4: when the plain-credential-file reminder last went out, and for which files. */
   plainFilesReminder: string;
+  /** Spec 100: the host monitor's state (pause, last tick seen, downtime log). */
+  host: string;
   telegramOffset: string;
   telegramPending: string;
   root: string;
@@ -58,6 +60,7 @@ export interface StatePaths {
 export function statePaths(root: string): StatePaths {
   return {
     root,
+    host: join(root, 'host.json'),
     telegramOffset:join(root,'telegram','offset.json'),
     plainFilesReminder: join(root, "plain-files-reminder.json"),
     telegramPending:join(root,'telegram','pending.json'),

@@ -303,3 +303,14 @@ describe("designScopeGate (spec 029 AC-2)", () => {
     });
   });
 });
+
+describe("livenessGate with downtime (spec 100 AC-6)", () => {
+  const now = new Date("2026-10-12T10:00:00Z");
+  const last = "2026-10-12T00:00:00Z";
+  it("does not expire a claim whose idle time is mostly downtime", () => {
+    expect(livenessGate(last, false, now, 2, (9 * 60 + 50) * 60_000).ok).toBe(true);
+  });
+  it("expires once the running idle time exceeds the window", () => {
+    expect(livenessGate(last, false, now, 2, 7 * 3_600_000).ok).toBe(false);
+  });
+});
