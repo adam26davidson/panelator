@@ -630,18 +630,30 @@ and AC-9; spec 030 section 2, fourth bullet; spec 064 AC-5)
     notification names `aws-sso`; with a block and the credential not set,
     the check fails and one warning carries the `setup` steps (AC-1);
   - a ledger with reservation A (`scale` of kind `lambda-concurrency`, up 6
-    USD, down 1 USD) and reservation B (no descriptor), a cap of 10 USD and
-    a pull whose forecast is 12 USD: `infra_alarm` of kind
-    `aws_forecast_over_cap` wakes infra health, whose scripted result
-    requests `aws_scale` down for A; the fake `aws` records one
-    `put-function-concurrency` call; the ledger shows A `down` at 1 USD,
-    `forecast_usd` 7 USD, one `aws.reserve` event `outcome: scaled`, one
-    `aws-forecast` recovery notification, the action log `applied` with an
-    `undo` of direction `up`; the agent's finding names B as "cannot scale:
-    no descriptor" (AC-6 to AC-8);
-  - the next sweep with the cap raised to 20 USD: the scripted result
-    requests `up` for A, the forecast ends 12 USD, A is `up` at 6 USD; a
-    request for `up` again is refused "already up"; a request for a released
+    USD, down 1 USD) and reservation B (8 USD, no descriptor), a cap of 10
+    USD, the clock on the 15th day of a 30-day month and a pull whose
+    actual is 4 USD. Spec 022 AC-5's forecast, unchanged, gives for that
+    fixture: reserved 14 USD, trend 4 / 15 x 30 = 8 USD, ledger view 4 + 14
+    x 15 / 30 = 11 USD, so `forecast_usd` 11 USD, over the cap.
+    `infra_alarm` of kind `aws_forecast_over_cap` wakes infra health, whose
+    scripted result requests `aws_scale` down for A; the fake `aws` records
+    one `put-function-concurrency` call; the ledger shows A `down` at 1
+    USD, `reserved_usd` 9 USD and `forecast_usd` equal to the forecast
+    recomputed with A at 1 USD (ledger view 4 + 9 x 15 / 30 = 8.5 USD,
+    trend 8 USD, so 8.5 USD), which is at or below the cap, so one
+    `aws-forecast` recovery notification is sent; one `aws.reserve` event
+    `outcome: scaled`, the action log `applied` with an `undo` of direction
+    `up`; the agent's finding names B as "cannot scale: no descriptor".
+    The saving of 5 USD lowers the forecast by 2.5 USD, not 5: the ledger
+    view counts a reservation only over the days left in the month, and
+    the trend does not move. The figures are what spec 022 AC-5's formula
+    gives for the fixture; where a figure here and the formula disagree,
+    the formula governs and the test asserts the relation (AC-6 to AC-8);
+  - the next sweep with the cap raised to 20 USD, at the same clock date
+    and with the same pulled actual of 4 USD: the scripted result requests
+    `up` for A, the forecast ends at the value recomputed with A at 6 USD
+    (11 USD again, at or below the new cap), A is `up` at 6 USD; a request
+    for `up` again is refused "already up"; a request for a released
     reservation is refused; a request while the forecast would exceed the
     cap is refused with its reason (AC-7);
   - every earlier recorded chain (specs 006, 007, 008, 011, 013, 015, 020,
