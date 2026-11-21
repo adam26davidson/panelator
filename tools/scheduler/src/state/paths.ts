@@ -35,6 +35,10 @@ export interface StatePaths {
   credentialsExpiryState: string;
   /** Spec 099 AC-7: ids of the messages the notifier sent. */
   telegramAlerts: string;
+  /** Spec 102 AC-2: notices the chat could not take, kept until the channel is back. */
+  telegramOutbox: string;
+  /** Spec 102 AC-5: identity -> ISO time of the last notification sent, so a restart keeps the collapse windows. */
+  notifySent: string;
   agents: string;
   mainChecks: string;
   findingsCursor: string;
@@ -77,6 +81,8 @@ export function statePaths(root: string): StatePaths {
     contactsParties: join(root, 'contacts', 'parties.json'),
     credentialsExpiryState: join(root, 'credentials', 'expiry-state.json'),
     telegramAlerts: join(root, 'telegram', 'alerts.json'),
+    telegramOutbox: join(root, 'telegram', 'outbox.json'),
+    notifySent: join(root, 'notify', 'sent.json'),
     agents: join(root, 'agents'),
     mainChecks: join(root, 'main-checks.json'),
     findingsCursor: join(root, 'findings', 'cursor.json'),
@@ -112,5 +118,5 @@ export function statePaths(root: string): StatePaths {
 }
 
 export async function ensureStateDirs(p: StatePaths): Promise<void> {
-  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.blocked, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), p.agents, p.events, p.reflections, dirname(p.eligibleMarks), dirname(p.awsCost)]) await mkdir(d, { recursive: true });
+  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.blocked, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), p.agents, p.events, p.reflections, dirname(p.eligibleMarks), dirname(p.awsCost), dirname(p.notifySent)]) await mkdir(d, { recursive: true });
 }

@@ -192,4 +192,11 @@ describe("savePatch", () => {
     expect(readFileSync(c!, "utf8")).toBe("diff c\n");
     expect(await savePatch(p, 7, "  \n", now)).toBeNull();
   });
+  it("keeps the alert outbox and the sent map (spec 102)", async () => {
+    const p = fresh();
+    await ensureStateDirs(p);
+    expect(p.telegramOutbox).toBe(join(p.root, "telegram", "outbox.json"));
+    expect(p.notifySent).toBe(join(p.root, "notify", "sent.json"));
+    expect(statSync(join(p.root, "notify")).isDirectory()).toBe(true);
+  });
 });
