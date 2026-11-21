@@ -121,6 +121,16 @@ it('builds the action audit from the context window, grouped by kind and status'
  const input=await buildAuditInput(paths,'2026-10-10T00:00:00Z',new Date('2026-10-27'));
  expect(input.kinds.set_parameter.entries).toHaveLength(2);expect(input.kinds.set_parameter.undone).toBe(1);expect(input.kinds.set_parameter.refused).toBe(1);expect(input.parameter_history).toHaveLength(1);
 });
+it('builds the action audit over torn lines and reports each file (spec 103 AC-5)',async()=>{
+ const {paths}=await stateSetup();const NUL='\u0000'.repeat(20);
+ const row=(at:string,status:string)=>JSON.stringify({at,kind:'set_parameter',status});
+ await writeFile(paths.actionsLog,[row('2026-10-01','applied'),NUL,NUL+row('2026-10-20','refused')].join('\n')+'\n');
+ await writeFile(paths.parametersHistory,[JSON.stringify({name:'slots',old:1,new:2}),NUL].join('\n')+'\n');
+ const logs:Record<string,unknown>[]=[];
+ const input=await buildAuditInput(paths,'2026-10-10T00:00:00Z',new Date('2026-10-27'),r=>{logs.push(r);});
+ expect(input.kinds.set_parameter.entries).toHaveLength(2);expect(input.kinds.set_parameter.refused).toBe(1);expect(input.parameter_history).toHaveLength(1);
+ expect(logs.map(l=>[l.kind,l.file,l.skipped,l.recovered])).toEqual([['jsonl-skipped-lines',paths.actionsLog,1,1],['jsonl-skipped-lines',paths.parametersHistory,1,0]]);
+});
 it('persists main check transitions without repeating after restart',async()=>{
  const {paths,registry,now}=await stateSetup();
  registry['findings-filer'].trigger.events!.push('ci_failure_main');
