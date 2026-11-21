@@ -74,6 +74,8 @@ describe("catalogue (AC-1, AC-8)", () => {
     expect(c["github-app-key"].check).toEqual({ builtin: "github-app" });
     expect(c["telegram-bot"].check).toEqual({ builtin: "telegram-get-me" });
     expect(c["aws-sso"].check).toBe("aws sts get-caller-identity");
+    expect(c["aws-sso"]).toMatchObject({ provider: "aws", used_by: ["infra-health"], wrapper: { command: "aws", env: "AWS_PROFILE" }, expiry: { probe: "panelator-scheduler aws sso-expiry" }, renew: "manual" });
+    expect(c["aws-sso"].access).toEqual(["sts:GetCallerIdentity", "ce:GetCostAndUsage", "lambda:PutFunctionConcurrency", "lambda:DeleteFunctionConcurrency", "cloudfront:GetDistributionConfig", "cloudfront:UpdateDistribution", "dynamodb:DescribeTable", "dynamodb:UpdateTable"]);
     expect(validate("credential-catalogue", parse(readFileSync(join(agentsDir, "credentials.yaml"), "utf8"))).ok).toBe(true);
     expect(c["github-app-key"].setup.at(-1) + c["github-app-key"].setup.join("")).toContain("cred set github-app-key <");
   });

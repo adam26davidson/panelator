@@ -224,7 +224,7 @@ describe("end to end: the aws-sso credential (spec 068 AC-10)", () => {
     expect(off.events("credential_expiry")).toEqual([]);
     expect(off.sent.filter((s) => s.text.includes("aws-sso"))).toEqual([]);
     const input = (await import("../src/standing/credential-check-input.ts")).buildCredentialCheckInput;
-    const built = await input({ paths: off.paths, catalogue: off.cat, probe: off.deps.checkContext as never, warnDays: 7, scope: async () => ({ status: "ok" as const }), now: off.deps.now }, [], null);
+    const built = await input({ paths: off.paths, catalogue: off.cat, probe: off.deps.checkContext as never, warnDays: 7, scope: async () => ({ status: "ok" as const }), now: off.deps.now() }, [], null);
     expect((built as any).checks["aws-sso"].status).toBe("skipped");
 
     const on = await credWorld({ set: false, due: true });
