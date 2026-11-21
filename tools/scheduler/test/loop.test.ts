@@ -1153,6 +1153,61 @@ describe("Scheduler.tick: transient failures (spec 015)", () => {
       expect(await t.claim()).toBeTruthy();
     }, 60_000);
 
+    it("a pending self-restart neither resumes nor releases a claim waiting on its checks, and keeps when it began (spec 104 AC-1, AC-3; issue #412)", async () => {
+      let calls = 0;
+      const t = await outageSetup(async (_d, c) => { calls++; return c; });
+      const now = t.deps.now().getTime();
+      const c0 = await t.claim();
+      // The #254 case: the claim went to verify, then nothing polled it for longer than the liveness window.
+      await writeClaim(t.paths, { ...c0, last_activity_at: new Date(now - 3 * 3600_000).toISOString() });
+      t.deps.fastForward = async () => ({ moved: true, changedPaths: ["tools/scheduler/src/x.ts"] });
+      const first = await t.s.tick();
+      await settle();
+      expect(first.restartPending).toBe(true);
+      expect(first.released).toEqual([]);
+      expect(hostFile(t.paths).restart_pending_since).toBe(t.deps.now().toISOString());
+      const since = hostFile(t.paths).restart_pending_since;
+      t.deps.fastForward = async () => ({ moved: false, changedPaths: [] });
+      t.advance(3600);
+      const later = await t.s.tick();
+      await settle();
+      expect(later.released).toEqual([]);
+      expect(calls).toBe(0);
+      expect(await t.claim()).toBeTruthy();
+      expect(logs(t.paths, "stale-claim")).toEqual([]);
+      // A later tick keeps the first moment.
+      expect(hostFile(t.paths).restart_pending_since).toBe(since);
+    }, 60_000);
+
+    it("the next process counts the previous one's pending restart as downtime, so the waiting claim is resumed, not released (spec 104 AC-2)", async () => {
+      let calls = 0;
+      const t = await outageSetup(async (_d, c) => { calls++; return c; });
+      const now = t.deps.now().getTime();
+      const c0 = await t.claim();
+      await writeClaim(t.paths, { ...c0, last_activity_at: new Date(now - 3 * 3600_000).toISOString() });
+      // The previous process saw its last tick a moment ago (a short gap: no `stopped` interval), its restart pending for 2 h 55 min.
+      const since = new Date(now - (2 * 3600 + 55 * 60) * 1000).toISOString();
+      writeFileSync(t.paths.host, JSON.stringify({ paused: null, last_seen_at: new Date(now - 30_000).toISOString(), downtime: [], restart_pending_since: since }));
+      const tick = await t.s.tick();
+      await settle();
+      expect(tick.released).toEqual([]);
+      expect(calls).toBe(1);
+      const state = hostFile(t.paths);
+      expect(state.restart_pending_since).toBeUndefined();
+      // The test's poll interval is short, so the 30 s gap is a `stopped` interval too; the union counts once.
+      expect(state.downtime).toContainEqual({ from: since, to: t.deps.now().toISOString(), reason: "restart" });
+      expect(logs(t.paths, "downtime")).toContainEqual(expect.objectContaining({ reason: "restart", ms: (2 * 3600 + 55 * 60) * 1000 }));
+    }, 60_000);
+
+    it("without the pending-restart interval the same idle claim is released (spec 104 AC-2, control)", async () => {
+      const t = await outageSetup(async (_d, c) => c);
+      const now = t.deps.now().getTime();
+      const c0 = await t.claim();
+      await writeClaim(t.paths, { ...c0, last_activity_at: new Date(now - 3 * 3600_000).toISOString() });
+      writeFileSync(t.paths.host, JSON.stringify({ paused: null, last_seen_at: new Date(now - 30_000).toISOString(), downtime: [] }));
+      expect((await t.s.tick()).released).toEqual([7]);
+    }, 60_000);
+
     it("a downtime shorter than the idle time less the window still releases (AC-6)", async () => {
       const t = await outageSetup(async (_d, c) => c);
       const now = t.deps.now().getTime();
