@@ -199,7 +199,7 @@ of a stamp is now minus the stamp minus the downtime between them.
   `claimed`, `released` and `standing` are empty. A chain or standing run in
   flight when the pause began runs to its end; its result is applied as
   today (a transient rejection takes AC-2 and keeps the pause).
-- AC-4. **Re-probe on a backoff, resume on the tick that passes.** Given a
+- AC-4. Amended by [102-scheduler-alerts-reach-telegram](../102-scheduler-alerts-reach-telegram/spec.md) AC-4: the resume also clears the pause's notification identity. **Re-probe on a backoff, resume on the tick that passes.** Given a
   paused tick with `next_probe_at` reached, when the probe fails again, then
   `probes` is one more and `next_probe_at` is `outageBackoffS(probes)` after
   now (60 s doubling, capped at 1800 s); the cause recorded is the first

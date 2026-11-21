@@ -201,7 +201,7 @@ AC-11 says.
 
 **Alerts** (spec 030 AC-9, AC-10)
 
-- AC-6. **Every notification reaches the chat.** Given Telegram on, then the
+- AC-6. Amended by [102-scheduler-alerts-reach-telegram](../102-scheduler-alerts-reach-telegram/spec.md) AC-1, AC-2 and AC-3: a notification another path already delivers to the chat is not sent again, a notification the chat cannot take is held and delivered when it can, and the four-hour limiter is the collapser. **Every notification reaches the chat.** Given Telegram on, then the
   service's notifier is `rateLimited(recordedNotifier(TelegramNotifier(LogNotifier)))`:
   the log line is written as today and the notification is sent to the chat
   as one message headed `<gate>: <label>` with `#<issue>` when the issue is

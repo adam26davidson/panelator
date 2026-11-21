@@ -335,7 +335,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
 
 **Alerts over Telegram** (design section 8, "Telegram carries ... alerts")
 
-- AC-9. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-4: `notify` resolves to the channel that carried the notification, and the recorder sits between the rate limiter and the `TelegramNotifier`. **Every notification reaches the chat.** Given Telegram on, then the
+- AC-9. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-4: `notify` resolves to the channel that carried the notification, and the recorder sits between the rate limiter and the `TelegramNotifier`. Amended by [102-scheduler-alerts-reach-telegram](../102-scheduler-alerts-reach-telegram/spec.md) AC-1: a notification whose delivery to the chat another path already makes is not sent again. **Every notification reaches the chat.** Given Telegram on, then the
   service's `Notifier` is a `TelegramNotifier` wrapping the `LogNotifier`
   and the rate limiter of spec 001: every notification is written to the
   service log as today and then sent to the chat as one message headed by
