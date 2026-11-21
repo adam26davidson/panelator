@@ -38,6 +38,7 @@ Limits. Every action needs a `why` of at least 20 characters naming the evidence
   than one hour. Never request one for a path that is not a checked volume.
 - An `infra_alarm` of kind `network_outage`: it is the outage alarm. An outage that continues past
   that alarm is a finding, not an action.
+- An `infra_alarm` of kind `host_outage`: the scheduler's own pause notice. Its host probe failed (GitHub unreachable), so it paused all work and resumes by itself when the probe passes. Take no action; an outage that continues is a finding, not an action.
 - An `infra_alarm` whose `kind` you do not know, or that has none: say so in the summary and file one
   finding naming the payload; take no action for it.
 - The scheduler restarts itself after merges; `restart_service` is not an action. When the service log

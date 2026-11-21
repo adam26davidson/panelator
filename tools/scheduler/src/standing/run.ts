@@ -17,7 +17,7 @@ import {applyAction,loadActionLevels} from '../actions/index.ts';
 import {appendFindings} from '../state/findings.ts';
 import {buildFilerInput,type FilerDeps} from '../filer/input.ts';
 import {applyFilerResult,type FilerResult} from '../filer/apply.ts';
-import {transientCause,transientRun,outageBackoffS,OUTAGE_ALARM_MS,OUTAGE_CEILING_MS,CEILING_MIN_FAILURES,CEILING_MIN_SPAN_MS,PAST_CEILING,failureCause} from '../chain/transient.ts';
+import {transientCause,transientRun,outageBackoffS,OUTAGE_ALARM_MS,OUTAGE_CEILING_MS,outageAgeMs,CEILING_MIN_FAILURES,CEILING_MIN_SPAN_MS,PAST_CEILING,failureCause} from '../chain/transient.ts';
 import {checkHostSpace} from '../runner/host-space.ts';
 import {HISTORY_ENTRY_MAX} from '../chain/machine.ts';
 import {buildAuditInput} from './audit-input.ts';
@@ -161,8 +161,10 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
  let keepOutage=false;
  if(transient!==null) {
   const cause=transient,at=d.now(),nowMs=at.getTime(),prev=state.outage;
+  // Spec 100 AC-2: when the host cannot work the scheduler pauses; the agent keeps its failures, events and schedule and nothing is recorded on it.
+  if(d.host&&await d.host.onTransient(cause,error)){d.log({kind:'standing-host-paused',agent:def.name,cause,error});return;}
   const count=(prev?.count??0)+1,since=prev?.since??at.toISOString(),last=error.slice(0,HISTORY_ENTRY_MAX);
-  const until=new Date(nowMs+outageBackoffS(count)*1000).toISOString(),age=nowMs-Date.parse(since);
+  const until=new Date(nowMs+outageBackoffS(count)*1000).toISOString(),age=outageAgeMs(since,nowMs,d.host?.downtimeMs(since,nowMs)??0);
   if(!prev)d.log({kind:'standing-outage',agent:def.name,cause,error});
   d.log({kind:'standing-postponed',agent:def.name,error:`${error}; postponed until ${until}`});
   // AC-5: one alarm per agent per outage, once it is two hours old.

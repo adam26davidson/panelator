@@ -124,8 +124,9 @@ export async function standingWorld(results:Record<string,Scripted[]>,freeSpace:
   ];
   const mock=mockGitHub(routes),gh=new GitHubClient(new Octokit({auth:'x',request:{fetch:mock.fetch}}),'o/r'),adapter=scripted(results),notifications:Notification[]=[];
   const deps:SchedulerDeps={cfg,paths,registry,parameters,gh,botLogin:BOT,notifier:recordedNotifier({notify:async n=>{notifications.push(n);}},paths),stages:loadStageDefinitions(join(agentsDir,'stages')),agentsDir,metrics:loadMetricDefinitions(join(agentsDir,'metrics')),repoDir:pair.repo,binDir:join(pair.root,'bin'),adapterFor:()=>adapter,systemdScope:false,now:()=>now,log:()=>{},freeSpace:(path)=>freeSpace(path),fetchOrigin:async()=>{},unitActive:async()=>false,stopUnit:async()=>{},serviceLog:new ServiceLog(paths.serviceLog),inhibitor:new SleepInhibitor({enabled:false}),fastForward:async()=>({moved:false,changedPaths:[]}),sleep:async()=>{},monotonic:()=>0,requestRestart:()=>{}};
+  let probeCause:string|null=null;deps.probeHost=async()=>probeCause;
   const scheduler=new Scheduler(deps);
-  return {pair,paths,registry,parameters,deps,scheduler,adapter,mock,gh,issues,closed,hooks,comments,notifications,setNow:(value:Date)=>{now=value;}};
+  return {pair,paths,registry,parameters,deps,scheduler,adapter,mock,gh,issues,closed,hooks,comments,notifications,setNow:(value:Date)=>{now=value;},/** Spec 100: what the host probe reports from now on (null: the host can work). */setProbe:(cause:string|null)=>{probeCause=cause;}};
 }
 
 export interface MockPr { number: number; head: string; sha: string; body: string; state: "open" | "closed"; merged: boolean }
@@ -147,6 +148,8 @@ export async function chainWorld(opts: {
   /** Spec 065 AC-7: a second open issue (#8) with this body, and how many chains the loop may run at once. */
   second?: { body: string };
   slots?: number;
+  /** Spec 100: the host probe's answer as a function of the tick count (1 for the first): its cause, or null when the host can work. Passing when unset. */
+  host?: (tick: number) => string | null | Promise<string | null>;
 }) {
   const pair = repoPair(opts.files);
   const paths: StatePaths = statePaths(join(pair.root, "state"));
@@ -326,7 +329,9 @@ export async function chainWorld(opts: {
     unitActive: async () => false, stopUnit: async () => {}, freeSpace: (path) => (opts.freeSpace ?? AMPLE_SPACE)(path),
     botLogin: BOT, serviceLog: new ServiceLog(paths.serviceLog), inhibitor: new SleepInhibitor({ enabled: false }),
     fastForward: async () => ({ moved: false, changedPaths: [] }), sleep: async () => {}, monotonic: () => 0, requestRestart: () => {},
+    probeHost: async () => (opts.host ?? (() => null))(ticks),
   };
+  let ticks = 0;
   const scheduler = new Scheduler(deps);
 
   return {
@@ -352,6 +357,7 @@ export async function chainWorld(opts: {
     get secondBody() { return secondBody; },
     /** One tick, then wait for the chains it started to stop (ended, paused or waiting). */
     async tick() {
+      ticks++;
       const t = await scheduler.tick();
       for (let i = 0; i < 600 && scheduler.active > 0; i++) await new Promise((r) => setTimeout(r, 50));
       if (scheduler.active > 0) throw new Error("chain still running after 30s");

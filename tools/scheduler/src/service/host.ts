@@ -171,6 +171,8 @@ export class HostMonitor {
     if (cur.paused) return true;
     const now = this.#d.now();
     this.#lastError = error;
+    // The cause recorded is the probe's: what the host cannot do, not the label of the one failure that asked.
+    cause = result;
     await this.#save({ ...cur, paused: { since: now.toISOString(), cause, probes: 1, next_probe_at: new Date(now.getTime() + outageBackoffS(1) * 1000).toISOString(), notified: false } });
     this.#d.write({ kind: "host-paused", cause, error });
     return true;
