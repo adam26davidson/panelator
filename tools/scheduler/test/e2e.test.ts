@@ -2666,6 +2666,10 @@ describe('requests, alerts and the credential check (spec 099 section 6)', () =>
     w.deps.checkContext = { store, app: w.deps.cfg.app, telegramBaseUrl: server.url, now: () => new Date() };
     return { w, server };
   }
+  /** Spec 068 AC-3: the maintainer.contact events of the world, oldest first. */
+  const contacts = (w: ChainWorld): Record<string, any>[] => readdirSync(w.paths.events).filter((f) => f.endsWith('.jsonl')).sort()
+    .flatMap((f) => readFileSync(join(w.paths.events, f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))).filter((e) => e.kind === 'maintainer.contact').map((e) => e.payload);
+  const funds = { type: 'funds', amount_usd: 12, purpose: 'a larger console instance', charter_goal: 'a console the maintainer can reach' };
   const press = async (w: ChainWorld, server: Awaited<ReturnType<typeof fakeTelegram>>, n: number) => {
     const [r] = await listPaused(w.paths);
     const u = { update_id: 1, callback_query: { id: 'cb', data: `r:${r.nonce}:${n}`, message: { message_id: r.telegram!.message_id!, date: Math.floor(Date.now() / 1000), chat: { id: 42 } } } };
@@ -2681,6 +2685,12 @@ describe('requests, alerts and the credential check (spec 099 section 6)', () =>
       expect(String(sent.text)).toContain('1. create the bot');
       const entry = await press(w, server, 1);
       expect(entry).toMatchObject({ answer: 'done (verified)', outcome: 'verified', request: { type: 'credential' } });
+      // Spec 068 AC-3: one event for the send and one for the answer, both of kind credential; none of kind question for this send.
+      const mine = contacts(w).filter((c) => c.kind === 'credential');
+      expect(mine.map((c) => [c.label, c.outcome])).toEqual([['request', undefined], ['answer', 'verified']]);
+      expect(mine[0]).toMatchObject({ request: { type: 'credential', name: 'telegram-bot' }, text: 'Can you do it?' });
+      expect(mine[1]).toMatchObject({ text: 'done (verified)', channel: 'telegram', question_comment_id: mine[0].question_comment_id });
+      expect(contacts(w).filter((c) => c.kind === 'question' && c.text === 'Can you do it?')).toEqual([]);
       expect(w.mergeRequests).toEqual([9]);
       expect(JSON.stringify(w.logs)).not.toContain('123:abc');
     } finally { await server.close(); }
@@ -2694,6 +2704,24 @@ describe('requests, alerts and the credential check (spec 099 section 6)', () =>
       expect(entry).toMatchObject({ answer: 'done (check failed: unauthorized)', outcome: 'check_failed' });
     } finally { await server.close(); }
   }, 120000);
+  it("a first-contact request denied by button records outcome denied, and a funds request answered by text records outcome text (spec 068 AC-3)", async () => {
+    const denied = await requestWorld(firstContact);
+    try {
+      await denied.w.tick();
+      const entry = await press(denied.w, denied.server, 2);
+      expect(entry).toMatchObject({ outcome: 'denied' });
+      expect(contacts(denied.w).filter((c) => c.kind === 'first_contact').map((c) => [c.label, c.outcome])).toEqual([['request', undefined], ['answer', 'denied']]);
+    } finally { await denied.server.close(); }
+    const { w, server } = await requestWorld(funds);
+    try {
+      await w.tick();
+      const [r] = await listPaused(w.paths);
+      const u = { update_id: 5, message: { message_id: 3000, date: Math.floor(Date.now() / 1000), chat: { id: 42 }, text: 'Yes, I will raise the cap tonight.', reply_to_message: { message_id: r.telegram!.message_id! } } };
+      await w.scheduler.handleTelegramUpdate(u); await w.scheduler.confirmTelegramUpdate(u); await w.tick();
+      expect(contacts(w).filter((c) => c.kind === 'funds').map((c) => [c.label, c.outcome, c.channel])).toEqual([['request', undefined, 'issue'], ['answer', 'text', 'telegram']]);
+      expect(contacts(w).find((c) => c.kind === 'funds' && c.label === 'answer')!.text).toContain('raise the cap tonight');
+    } finally { await server.close(); }
+  }, 120000);
   it('a first-contact request approved by button registers the party and tells the stage no channel can reach it; no other repository is touched', async () => {
     const { w, server } = await requestWorld(firstContact);
     try {
@@ -2701,6 +2729,7 @@ describe('requests, alerts and the credential check (spec 099 section 6)', () =>
       expect(String(server.sent[0]!.text)).toContain('> Hello\n> there');
       const entry = await press(w, server, 1);
       expect(entry).toMatchObject({ outcome: 'approved' });
+      expect(contacts(w).filter((c) => c.kind === 'first_contact').map((c) => [c.label, c.outcome])).toEqual([['request', undefined], ['answer', 'approved']]);
       expect(entry.answer).toBe('approved (recorded; no channel can reach example.org yet: a credential that can is a credential request)');
       const { readParties } = await import('../src/contacts/gate.ts');
       expect((await readParties(w.paths)).map((p) => p.party)).toEqual(['example.org']);

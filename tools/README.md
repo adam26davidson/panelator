@@ -112,6 +112,58 @@ aws:
   both pass; at cap 0 no cost call is made). `panelator-scheduler aws [--json]` prints the cost record and the
   reservations. `panelator-scheduler aws pull` forces a pull, even at cap 0.
 
+### The `aws-sso` credential, `aws_scale` and the funds request (spec 068)
+
+- `agents/credentials.yaml` has the entry `aws-sso` (`provider: aws`): the secret is the profile name of the `aws`
+  block (`panelator-scheduler cred set aws-sso`, then `cred check aws-sso`). Every `aws` call for it goes through
+  `src/aws/cli.ts` with `--profile <the secret>`, `--region` and `--output json`: the check (`sts get-caller-identity`,
+  ok only for the configured `account_id`) and `cred exec aws-sso -- aws <args>` (the shim infra health's `aws` takes;
+  `--profile`, `--region` and `--output` are refused, the output is the parsed JSON). Without an `aws` block the check
+  is `skipped` ("aws: off") and nothing warns.
+- `panelator-scheduler aws sso-expiry [--profile <name>]` prints the SSO session's `expiresAt` from the AWS CLI's cache
+  (`~/.aws/sso/cache/<sha1 of the session name>.json`; `AWS_CONFIG_FILE` and `AWS_SSO_CACHE_DIR` override the paths for
+  tests), `none` for a profile that is not SSO, or exits 1 with a reason. Only `expiresAt` is read, never the token.
+  `cred set`, `cred check` and the credential check's pre-run write the expiry into the credential index.
+- The entry's `renew_steps` are what the maintainer gets in the `credential-expiry` message once the credential is set
+  up: 1. `aws sso login --sso-session default`; 2. `panelator-scheduler cred check aws-sso`; 3. `aws-check` if it still
+  fails.
+- `aws_scale` (level 1; infra health and `action undo`) moves a ledger reservation between the two states its launcher
+  wrote in the reservation's `scale` descriptor (`lambda-concurrency`, `cloudfront-distribution`,
+  `dynamodb-throughput`), within the cap; infra health uses it on an `aws_forecast_over_cap` alarm.
+- A refused reservation is a funds request: the `aws-funds` message lists `Amount`, `Purpose` and `Charter goal`, then the two
+  steps that raise the cap (`param set aws_cap_usd <cap + shortfall>` and the budget amount in the management account),
+  and is recorded once as a `maintainer.contact` event of kind `funds` with the request.
+
+The six policy actions `aws_scale` needs, beside spec 022's `sts:GetCallerIdentity` and `ce:GetCostAndUsage`, are added
+to the `PanelatorDelivery` permission set's inline policy on resources whose names start `panelator-`; nothing under
+`budgets:`, `organizations:` or `iam:` is asked for:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:PutFunctionConcurrency",
+        "lambda:DeleteFunctionConcurrency",
+        "cloudfront:GetDistributionConfig",
+        "cloudfront:UpdateDistribution",
+        "dynamodb:DescribeTable",
+        "dynamodb:UpdateTable"
+      ],
+      "Resource": [
+        "arn:aws:lambda:*:*:function:panelator-*",
+        "arn:aws:cloudfront::*:distribution/*",
+        "arn:aws:dynamodb:*:*:table/panelator-*"
+      ]
+    }
+  ]
+}
+```
+
+(CloudFront distribution ARNs carry no name, so that one statement resource is the account's distributions.)
+
 ## Events (spec 026)
 
 The scheduler appends every run, stage transition, merge, CI result, review, finding, action, question, pause,
