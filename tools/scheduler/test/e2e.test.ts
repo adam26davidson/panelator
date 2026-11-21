@@ -2747,4 +2747,25 @@ describe('requests, alerts and the credential check (spec 099 section 6)', () =>
     await runStandingAgent(deps as never, def, (await readAgentState(w.paths, 'credential-check'))!);
     expect(keys().filter((k) => k === 'credential-expiry:fake-token')).toHaveLength(1);
   }, 60000);
+
+  it.each([[true, 'Log in again by hand'], [false, 'Run fakecmd --renew']])('the credential-expiry steps are the entry\'s renew_steps when the credential is set (%s), else its setup (spec 068 AC-2)', async (isSet, expected) => {
+    const { loadCatalogue } = await import('../src/credentials/catalogue.ts');
+    const { CredentialStore } = await import('../src/credentials/store.ts');
+    const { parse, stringify } = await import('yaml');
+    const w = await standingWorld({ 'credential-check': [{ summary: 'one warning', warnings: [{ name: 'fake-token', expires_at: '2026-10-04T00:00:00Z', steps: ['scripted steps'] }] }] });
+    const store = new CredentialStore({ dir: join(w.pair.root, 'cred-store'), systemdCreds: FAKE_CREDS });
+    if (isSet) await store.writeSecret('fake-token', 's', 'maintainer');
+    const src = join(import.meta.dirname, 'fixtures', 'test-catalogue.yaml');
+    const entries = parse(readFileSync(src, 'utf8')) as any[];
+    entries.find((e) => e.name === 'fake-token').renew_steps = ['Log in again by hand'];
+    const cat = join(w.pair.root, 'catalogue.yaml');
+    writeFileSync(cat, stringify(entries));
+    const catalogue = loadCatalogue(cat, { profiles: ['backend'], agents: [] });
+    const deps = { ...w.deps, parameters: w.parameters, catalogue, checkContext: { store, app: w.deps.cfg.app, now: () => w.deps.now() }, scope: async () => ({ status: 'ok' as const }) };
+    w.setNow(new Date('2026-10-01T12:00:00Z'));
+    await runStandingAgent(deps as never, w.registry['credential-check']!, (await readAgentState(w.paths, 'credential-check'))!);
+    const text = w.notifications.find((n) => n.gate === 'credential-expiry')!.text;
+    expect(text).toContain(expected);
+    expect(text).not.toContain('scripted steps');
+  }, 60000);
 });

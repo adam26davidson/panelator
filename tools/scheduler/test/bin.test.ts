@@ -98,3 +98,62 @@ describe("panelator-scheduler aws sso-expiry (spec 068 AC-2)", () => {
     expect(sso([]).status).toBe(1);
   });
 });
+
+describe("cred-exec for a provider: aws entry (spec 068 AC-1)", () => {
+  const credExec = join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "cred-exec.ts");
+  const helpers = join(dirname(fileURLToPath(import.meta.url)), "helpers");
+  async function world(opts: { aws?: boolean } = {}) {
+    const { symlinkSync, mkdirSync } = await import("node:fs");
+    const { CredentialStore } = await import("../src/credentials/store.ts");
+    const { defaultConfigPath } = await import("../src/config.ts");
+    const root = mkdtempSync(join(tmpdir(), "credexec-aws-"));
+    const store = new CredentialStore({ dir: join(root, "store"), systemdCreds: join(helpers, "fake-systemd-creds") });
+    await store.writeSecret("aws-sso", "panelator-delivery\n", "maintainer");
+    let yaml = readFileSync(defaultConfigPath, "utf8");
+    if (opts.aws === false) yaml = yaml.replace(/^aws:[\s\S]*?(?=^decide:)/m, "");
+    const config = join(root, "scheduler.yaml");
+    writeFileSync(config, yaml + `\ncredentials:\n  dir: ${join(root, "store")}\n`);
+    const fx = join(root, "fx");
+    mkdirSync(fx);
+    writeFileSync(join(fx, "identity.json"), JSON.stringify({ Account: "849692148420" }));
+    writeFileSync(join(fx, "calls.log"), "");
+    const awsDir = join(root, "awsbin");
+    mkdirSync(awsDir);
+    symlinkSync(join(helpers, "fake-aws"), join(awsDir, "aws"));
+    const shim = join(root, "shim");
+    mkdirSync(shim);
+    writeFileSync(join(shim, "aws"), "#!/bin/sh\necho SHIM; exit 9\n", { mode: 0o755 });
+    const env = { ...process.env, AWS_PROFILE: "leaky", FAKE_AWS_DIR: fx, PANELATOR_SYSTEMD_CREDS: join(helpers, "fake-systemd-creds"), PANELATOR_SHIM_DIR: shim, PATH: `${shim}:${awsDir}:${process.env.PATH}` };
+    const exec = (...rest: string[]) => spawnSync(process.execPath, [credExec, "--config", config, "aws-sso", "--", ...rest], { encoding: "utf8", env, timeout: 25_000 });
+    const calls = () => readFileSync(join(fx, "calls.log"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as string[]);
+    return { exec, calls, fx };
+  }
+  it("runs the call through src/aws/cli.ts with the stored profile and prints its JSON", async () => {
+    const w = await world();
+    const r = w.exec("aws", "sts", "get-caller-identity");
+    expect([r.status, r.stderr]).toEqual([0, ""]);
+    expect(JSON.parse(r.stdout)).toEqual({ Account: "849692148420" });
+    expect(r.stdout).toContain('\n  "Account"');
+    expect(w.calls()).toEqual([["sts", "get-caller-identity", "--profile", "panelator-delivery", "--region", "us-east-2", "--output", "json"]]);
+  });
+  it("refuses another command, --profile/--region/--output, and a failing call prints the redacted error", async () => {
+    const w = await world();
+    expect(w.exec("ls")).toMatchObject({ status: 1, stderr: expect.stringContaining("cred-exec: aws-sso wraps aws only") });
+    for (const a of [["--profile", "x"], ["--profile=x"], ["--region", "r"], ["--output=text"]]) {
+      const r = w.exec("aws", "sts", "get-caller-identity", ...a);
+      expect([r.status, r.stderr]).toEqual([1, "cred-exec: --profile, --region and --output are set by the scheduler\n"]);
+    }
+    expect(w.calls()).toEqual([]);
+    writeFileSync(join(w.fx, "fail-sts"), "");
+    const f = w.exec("aws", "sts", "get-caller-identity");
+    expect(f.status).toBe(1);
+    expect(f.stderr).toContain("cred-exec: aws sts get-caller-identity failed");
+    expect(f.stderr).not.toContain("FAKESECRET123");
+    expect(f.stdout).toBe("");
+  });
+  it("exits 1 with 'aws: off' when there is no aws block", async () => {
+    const w = await world({ aws: false });
+    expect(w.exec("aws", "sts", "get-caller-identity")).toMatchObject({ status: 1, stderr: "cred-exec: aws: off\n" });
+    expect(w.calls()).toEqual([]);
+  });
+});

@@ -140,7 +140,9 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
     lines.push(`${action.kind} ${JSON.stringify(action.args)}: ${row.status}${row.reason?` (${row.reason})`:''}`);
    }
    for(const f of renewFailures)await notifyCredential(f.name,null,d.catalogue?.[f.name]?.setup??[],`renewal failed: ${f.reason}`);
-   for(const w of (body as {warnings?:{name:string;expires_at:string|null;steps:string[]}[]}).warnings??[])await notifyCredential(w.name,w.expires_at,d.catalogue?.[w.name]?.setup??w.steps,'needs renewal by hand');
+   const setNow=(await d.checkContext?.store.readIndex().catch(()=>({})))??{};
+   // Spec 068 AC-2: a credential that is already set up is renewed by the entry's renew_steps; one that is not, by its setup.
+   for(const w of (body as {warnings?:{name:string;expires_at:string|null;steps:string[]}[]}).warnings??[]){const e=d.catalogue?.[w.name];await notifyCredential(w.name,w.expires_at,(e?.renew_steps&&(setNow as Record<string,unknown>)[w.name]?e.renew_steps:e?.setup)??w.steps,'needs renewal by hand');}
    return lines;
   };
   // Spec 099 AC-12, AC-13: one `credential-expiry` notification per credential per day (tracked in expiry-state.json under `notified`).

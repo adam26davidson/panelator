@@ -1,7 +1,9 @@
 import { createPrivateKey } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { Config } from "../config.ts";
+import type { AwsConfig, Config } from "../config.ts";
+import type { AwsCli } from "../aws/cli.ts";
+import { ssoExpiry } from "../aws/sso.ts";
 import { createAppClient } from "../github/auth.ts";
 import { TelegramClient, TelegramApiError } from "../telegram/client.ts";
 import { BUILTINS, type CredentialEntry } from "./catalogue.ts";
@@ -15,6 +17,8 @@ export interface CheckContext {
   fetch?: typeof fetch;
   telegramBaseUrl?: string;
   now: () => Date;
+  /** Spec 068 AC-1: what a `provider: aws` entry's check needs; absent `config` means AWS is off. */
+  aws?: { config?: AwsConfig; cli: (profile: string) => AwsCli; env: NodeJS.ProcessEnv };
 }
 
 const failed = (reason: string): CheckResult => ({ status: "failed", reason });
@@ -60,10 +64,35 @@ async function telegramGetMe(ctx: CheckContext): Promise<CheckResult> {
 
 const PROBES: Record<(typeof BUILTINS)[number], (ctx: CheckContext) => Promise<CheckResult>> = { "github-app": githubApp, "telegram-get-me": telegramGetMe };
 
+/** Spec 068 AC-1: the `aws-sso` check, through src/aws/cli.ts with the stored profile; then the expiry from the CLI's cache. */
+async function awsProvider(entry: CredentialEntry, ctx: CheckContext): Promise<CheckResult> {
+  const aws = ctx.aws;
+  if (!aws?.config) return { status: "skipped", reason: "aws: off: no aws block in agents/scheduler.yaml" };
+  let profile: string;
+  try {
+    profile = (await ctx.store.readSecret(entry.name)).trim();
+  } catch (e) {
+    return failed((e as Error).message);
+  }
+  if (!/^[A-Za-z0-9_.-]+$/.test(profile)) return failed("not a profile name");
+  let result: CheckResult;
+  try {
+    const id = (await aws.cli(profile).run(["sts", "get-caller-identity"])) as { Account?: string };
+    result = id.Account === aws.config.account_id ? { status: "ok" } : failed(`profile ${profile} is in account ${id.Account ?? "unknown"}, not ${aws.config.account_id}`);
+  } catch (e) {
+    result = failed((e as Error).message.split("\n")[0]);
+  }
+  const expiry = ssoExpiry(profile, aws.env);
+  if ("expires_at" in expiry) await ctx.store.writeExpiry(entry.name, new Date(expiry.expires_at).toISOString());
+  else if ("none" in expiry) await ctx.store.writeExpiry(entry.name, null);
+  return result;
+}
+
 /** The one function that runs an entry's check and the only writer of the index's check fields (spec 069 AC-5). */
 export async function runCheck(entry: CredentialEntry, ctx: CheckContext): Promise<CheckResult> {
   let result: CheckResult;
-  if (typeof entry.check === "string") result = { status: "skipped", reason: "wrapper not built" };
+  if (entry.provider === "aws" && typeof entry.check === "string") result = await awsProvider(entry, ctx);
+  else if (typeof entry.check === "string") result = { status: "skipped", reason: "wrapper not built" };
   else {
     try {
       result = await PROBES[entry.check.builtin](ctx);

@@ -85,6 +85,7 @@ const actionLog=new ActionLog(paths.actionsLog,paths);
 // Spec 099 AC-6: one chain for every notification; the poller attaches the Telegram channel once it is up.
 let attachedTelegram:TelegramChannel|null=null;
 const notifier=rateLimited(recordedNotifier(TelegramNotifier(new LogNotifier(paths.serviceLog),{telegram:()=>attachedTelegram,alertsPath:paths.telegramAlerts,outboxPath:paths.telegramOutbox,now:()=>new Date(),log:rec=>serviceLog.write(rec)}),paths),{hours:cfg.notify_rate_limit_hours,repeatHours:cfg.notify_repeat_hours,path:paths.notifySent});
+const awsForCheck={config:cfg.aws,cli:(profile:string)=>awsCli({profile,region:cfg.aws?.region??''}),env:process.env};
 const awsContext:AwsContext={config:cfg.aws,paths,cli:cfg.aws?awsCli(cfg.aws):undefined,parameters,
  notifier,notifyHours:cfg.notify_rate_limit_hours,
  now:()=>new Date(),log:rec=>serviceLog.write(rec),emitEvent:(event,payload)=>emit(paths,registry,event,payload,new Date()),state:newAwsState()};
@@ -148,7 +149,7 @@ if(['param','agent','action','cred','contacts'].includes(args[0])) {
   let client:GitHubClient|undefined;
   const remote=async()=>client??=new GitHubClient(createAppClient(cfg.app,await appPrivateKey(cfg,credStore)).octokit,cfg.repo);
   const ctx={paths,parameters,log:actionLog,levels,now:()=>new Date(),gh:{rerunWorkflowRun:async(id:number)=>(await remote()).rerunWorkflowRun(id),cancelWorkflowRun:async(id:number)=>(await remote()).cancelWorkflowRun(id)},
-   credentials:{store:credStore,catalogue,probe:{store:credStore,app:cfg.app,now:()=>new Date()},configPaths:{'github-app-key':cfg.app.private_key_path,'telegram-bot':cfg.telegram!.credentials_path}}};
+   credentials:{store:credStore,catalogue,probe:{store:credStore,app:cfg.app,now:()=>new Date(),aws:awsForCheck},configPaths:{'github-app-key':cfg.app.private_key_path,'telegram-bot':cfg.telegram!.credentials_path}}};
   try {
     const [command,verb,name,value]=args;
     if(command==='param'&&verb==='list')console.log(JSON.stringify(await parameters.all(),null,2));
@@ -228,7 +229,7 @@ let exitCode = 0;
 let restartRequested = false;
 const scheduler: Scheduler = new Scheduler({
   cfg, paths, gh, telegram: null,registry,metrics,credentials:{store:credStore,catalogue,warnDays:cfg.credentials.warn_days},plainFiles:{store:credStore,paths:{'github-app-key':cfg.app.private_key_path,...(cfg.telegram?{'telegram-bot':cfg.telegram.credentials_path}:{})},fromStore}, parameters, notifier,
-  stages: loadStageDefinitions(join(agentsRoot, "stages")), agentsDir: agentsRoot, repoDir: repoRoot, binDir, configPath: flag("--config") ?? defaultConfigPath, catalogue, scope: () => checkInstallationScope({ app, installationId: cfg.app.installation_id, repo: cfg.repo }), checkContext: { store: credStore, app: cfg.app, now: () => new Date() },
+  stages: loadStageDefinitions(join(agentsRoot, "stages")), agentsDir: agentsRoot, repoDir: repoRoot, binDir, configPath: flag("--config") ?? defaultConfigPath, catalogue, scope: () => checkInstallationScope({ app, installationId: cfg.app.installation_id, repo: cfg.repo }), checkContext: { store: credStore, app: cfg.app, now: () => new Date(), aws: awsForCheck },
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),
   stopUnit: (unit) => systemdStopUnit(unit, { enabled: cfg.systemd.scope }),
