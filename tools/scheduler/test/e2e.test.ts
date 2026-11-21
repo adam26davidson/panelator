@@ -2718,7 +2718,7 @@ describe('requests, alerts and the credential check (spec 099 section 6)', () =>
       const [r] = await listPaused(w.paths);
       const u = { update_id: 5, message: { message_id: 3000, date: Math.floor(Date.now() / 1000), chat: { id: 42 }, text: 'Yes, I will raise the cap tonight.', reply_to_message: { message_id: r.telegram!.message_id! } } };
       await w.scheduler.handleTelegramUpdate(u); await w.scheduler.confirmTelegramUpdate(u); await w.tick();
-      expect(contacts(w).filter((c) => c.kind === 'funds').map((c) => [c.label, c.outcome, c.channel])).toEqual([['request', undefined, 'issue'], ['answer', 'text', 'telegram']]);
+      expect(contacts(w).filter((c) => c.kind === 'funds').map((c) => [c.label, c.outcome, c.channel])).toEqual([['request', undefined, 'telegram'], ['answer', 'text', 'telegram']]);
       expect(contacts(w).find((c) => c.kind === 'funds' && c.label === 'answer')!.text).toContain('raise the cap tonight');
     } finally { await server.close(); }
   }, 120000);
