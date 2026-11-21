@@ -133,7 +133,7 @@ notifier recording what it is given, and an injected clock.
   it again. A failure of the check (index unreadable, a `stat` error other
   than not-found) is logged as `{ kind: "plain-files-check-failed", error }`
   and never stops the tick; the next check is an hour later.
-- AC-4. **One message, at most weekly, naming every file.** Given the named
+- AC-4. Amended by [102-scheduler-alerts-reach-telegram](../102-scheduler-alerts-reach-telegram/spec.md) AC-4: the reminder is the notification alone; the direct `telegram.sendReply` and the `plain-files-reminder-failed` line go. **One message, at most weekly, naming every file.** Given the named
   files are not empty, then a reminder is sent when the state file
   `plain-files-reminder.json` (section 5) is absent, or names a file list
   that lacks one of the named files, or its `sent_at` is 7 days or more
