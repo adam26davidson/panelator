@@ -304,6 +304,24 @@ describe("spec 006 calls", () => {
     await expect(c.rerequestCheckRun(3)).rejects.toMatchObject({ status: 403 });
     await expect(c.rerequestCheckRun(1)).rejects.toMatchObject({ status: 401 });
   }, 20_000); // octokit spaces write requests about a second apart
+  it("rerunFailedJobs is true on 201, false on 404, 409 and 422, rethrows 403 and 401, and does not retry (spec 101 AC-2)", async () => {
+    const at = (id: number, status: number): Route => ({ method: "POST", path: new RegExp(`^/repos/o/r/actions/runs/${id}/rerun-failed-jobs$`), reply: () => ({ status, body: { message: "x" } }) });
+    const { c, gh } = client([at(1, 201), at(4, 404), at(9, 409), at(22, 422), at(3, 403), at(5, 401), at(6, 500)]);
+    expect(await c.rerunFailedJobs(1)).toBe(true);
+    expect(await c.rerunFailedJobs(4)).toBe(false);
+    expect(await c.rerunFailedJobs(9)).toBe(false);
+    expect(await c.rerunFailedJobs(22)).toBe(false);
+    await expect(c.rerunFailedJobs(3)).rejects.toMatchObject({ status: 403 });
+    await expect(c.rerunFailedJobs(5)).rejects.toMatchObject({ status: 401 });
+    await expect(c.rerunFailedJobs(6)).rejects.toMatchObject({ status: 500 });
+    expect(gh.calls.filter((x) => x.url.includes("/actions/runs/6/")).length).toBe(1);
+  }, 30_000);
+  it("checks carries details_url on every run, null when the API omits it (spec 101 AC-2)", async () => {
+    const runs = [{ id: 1, name: "test", status: "completed", conclusion: "failure", details_url: "https://github.com/o/r/actions/runs/500/job/600" }, { id: 2, name: "lint", status: "completed", conclusion: "success" }];
+    const { c } = client([{ method: "GET", path: /\/commits\/abc\/check-runs$/, reply: () => ({ body: { total_count: 2, check_runs: runs } }) }]);
+    const sum = await c.checks("abc", ["test"]);
+    expect(sum.runs.map((r) => r.details_url)).toEqual(["https://github.com/o/r/actions/runs/500/job/600", null]);
+  });
   it("pullRequest maps the body", async () => {
     const pr = { number: 9, base: { ref: "main" }, head: { ref: "issue-12", sha: "a".repeat(40) }, html_url: "u", body: "Closes #12", mergeable: true, mergeable_state: "clean", merged: false, state: "open" };
     const { c } = client([{ method: "GET", path: /^\/repos\/o\/r\/pulls\/9$/, reply: () => ({ body: pr }) }]);

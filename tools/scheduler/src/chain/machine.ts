@@ -74,7 +74,7 @@ export function initialChainState(issue: number, specProblem: string | null = nu
     track: "issue", rescues: 0, specRescues: 0, replans: 0, specRevisions: 0, designRevisions: 0, specAnswers: 0, decideReturns: 0, incompleteRequests: 0, history: [],
     rescueRun: false, specMode: null, specProblem, designProblem, question: null, askingStage: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
     pendingAnswer: null, recordIds: [], recordKind: null, recordAnswer: false, decideInput: null, decidedQuestion: null, parkedPr: null, pendingSince: null, checksRerun: false, securityPass: false,
-    chainFailures: null, chainErrors: 0, heldWork: [], checkRerun: null, blocked: null, reserved: { spec: null, adr: null },
+    chainFailures: null, chainErrors: 0, heldWork: [], checkRerun: null, unchangedWithoutVerdict: false, blocked: null, reserved: { spec: null, adr: null },
     ...(ledger ? seedFromLedger(ledger) : {}),
   };
 }
@@ -510,7 +510,15 @@ function outOfScopeVerdict(
   if (!state.pendingFixInput?.startsWith("A required check failed:")) return { note: "out_of_scope ignored: the fix is not for a failed required check" };
   if (event.scope && !event.scope.ok) return { note: "out_of_scope ignored: the unchanged head's diff violates the scope" };
   if ((state.blocked?.blocks ?? 0) >= MAX_BLOCKS) return { note: "block bound reached" };
-  const noted = note({ ...state, rescueRun: false }, `fix: cause outside the PR's scope: ${verdict.cause} (paths: ${verdict.paths.join(", ")})`);
+  // Spec 101 AC-5: what the failure spent is returned; the verdict proves it was never a failure of the work.
+  const returnedFixes = state.fixes;
+  const returnRescue = state.rescueRun && (state.track === "spec" ? state.specRescues : state.rescues) > 0;
+  let noted = note({ ...state, rescueRun: false }, `fix: cause outside the PR's scope: ${verdict.cause} (paths: ${verdict.paths.join(", ")})`);
+  noted = {
+    ...noted, fixes: 0, unchangedWithoutVerdict: false,
+    ...(returnRescue ? (state.track === "spec" ? { specRescues: state.specRescues - 1 } : { rescues: state.rescues - 1 }) : {}),
+  };
+  noted = note(noted, returnRescue ? `block: returned ${returnedFixes} fixes and the rescue spent on main's failure` : `block: returned ${returnedFixes} fixes`);
   return block(noted, { kind: "paths", paths: verdict.paths, main_sha: event.mainSha ?? "" }, verdict.cause);
 }
 
@@ -541,7 +549,15 @@ function stageOk(state: ChainState, event: StageOk): Step {
         ? { number: (result as ImplementResult).pr_number, head_sha: result.head_sha }
         : state.pr ? { ...state.pr, head_sha: result.head_sha } : null;
       const fixes = event.stage === "fix" ? state.fixes + 1 : state.fixes;
-      const done = { ...unholdIfBound(settle(state, event.stage)), pr, fixes, conflictPending: false, checkRerun: null };
+      // Spec 101 AC-3: one re-run per head; only a new head clears it.
+      const headUnchanged = event.stage === "fix" && result.head_sha === state.pr?.head_sha;
+      const unverdicted = headUnchanged && state.track !== "issue" && (state.pendingFixInput?.startsWith("A required check failed:") ?? false)
+        && !("out_of_scope" in result && result.out_of_scope !== undefined);
+      if (unverdicted) state = note(state, "fix returned the head unchanged without a verdict");
+      const done = {
+        ...unholdIfBound(settle(state, event.stage)), pr, fixes, conflictPending: false,
+        checkRerun: headUnchanged ? state.checkRerun : null, unchangedWithoutVerdict: unverdicted,
+      };
       if (!scope.ok) {
         const text = `Diff touches files outside the plan's file scope:\n${violationList(scope.violations)}`;
         const noted = note(done, text);
@@ -583,7 +599,7 @@ function stageOk(state: ChainState, event: StageOk): Step {
       const scope = scopeOf(state, event);
       const done: ChainState = {
         ...unholdIfBound(settle(state, "spec")), pr: { number: r.pr_number, head_sha: r.head_sha }, fixes: 0, scopeViolations: 0, specMode: null,
-        pendingFixInput: null, conflictPending: false, checkRerun: null,
+        pendingFixInput: null, conflictPending: false, checkRerun: null, unchangedWithoutVerdict: false,
       };
       if (scope.ok) return { state: { ...done, stage: "verify" }, actions: [{ type: "verify" }] };
       // AC-22: handled like implement's first violation; the fix's second violation follows the spec-track rule.
@@ -602,7 +618,7 @@ function stageOk(state: ChainState, event: StageOk): Step {
       const scope = scopeOf(state, event);
       const done: ChainState = {
         ...unholdIfBound(settle(state, "design")), pr: { number: r.pr_number, head_sha: r.head_sha }, fixes: 0, scopeViolations: 0,
-        pendingFixInput: null, conflictPending: false, checkRerun: null,
+        pendingFixInput: null, conflictPending: false, checkRerun: null, unchangedWithoutVerdict: false,
       };
       if (scope.ok) return { state: { ...done, stage: "verify" }, actions: [{ type: "verify" }] };
       const text = `Diff touches files outside the design PR's scope:\n${violationList(scope.violations)}`;
@@ -727,7 +743,7 @@ type PostMergeGate = NonNullable<Extract<ChainEvent, { type: "merge_result" }>["
 
 /** The counters a merged spec or design PR starts the next stage with. */
 const FRESH: Partial<ChainState> = {
-  fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, conflictPending: false, pendingFixInput: null, pendingSince: null, checksRerun: false, checkRerun: null,
+  fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, conflictPending: false, pendingFixInput: null, pendingSince: null, checksRerun: false, checkRerun: null, unchangedWithoutVerdict: false,
   rescueRun: false, specProblem: null, specMode: null, decideInput: null, decidedQuestion: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
   recordIds: [], recordKind: null,
   recordAnswer: false, securityPass: false,
@@ -1017,7 +1033,7 @@ function baseTransition(state: ChainState, event: ChainEvent, bounds: Bounds): S
         }
         return toFix(state, `PR not mergeable:\n${event.detail ?? ""}`);
       }
-      if (event.type === "head_moved") return { state: { ...state, stage: "verify", checkRerun: null, pr: { ...state.pr!, head_sha: event.head_sha } }, actions: [{ type: "verify" }] };
+      if (event.type === "head_moved") return { state: { ...state, stage: "verify", checkRerun: null, unchangedWithoutVerdict: false, pr: { ...state.pr!, head_sha: event.head_sha } }, actions: [{ type: "verify" }] };
       break;
     case "paused":
       if (event.type === "answered") return answered(state, event);
@@ -1026,7 +1042,7 @@ function baseTransition(state: ChainState, event: ChainEvent, bounds: Bounds): S
       // Spec 060 AC-8: the loop found the condition true; the PR is rebased and pushed, then verified again. Nothing is counted.
       if (event.type === "unblocked") {
         return {
-          state: { ...state, stage: "verify", attempt: 1, blocked: state.blocked && { ...state.blocked, on: null, since: null }, checkRerun: null, pendingSince: null },
+          state: { ...state, stage: "verify", attempt: 1, blocked: state.blocked && { ...state.blocked, on: null, since: null }, checkRerun: null, unchangedWithoutVerdict: false, pendingSince: null },
           actions: [{ type: "rebase_push" }, { type: "verify" }],
         };
       }

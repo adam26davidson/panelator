@@ -121,7 +121,7 @@ the failing test or job fails for a cause that no file inside this PR's scope ca
 widen the diff: return the head unchanged and add `"out_of_scope": { "cause": "...", "paths": ["..."] }`
 beside `head_sha` and `addressed`. `cause` is one paragraph naming the failing test or step and why it
 is main's; `paths` are the repository files, outside the scope, whose change would clear it (at least
-one). The chain then waits for main to change one of them. On the issue track the field is recorded
+one). The chain then waits for main to change one of them. On these pull requests a run that returns the head unchanged without `out_of_scope` is a counted fix and the next run is told so; a finding that names the cause is not a verdict. On the issue track the field is recorded
 and treated as a fix that changed nothing.
 
 **Follow-up.** When the maintainer's answer is present but the reply asks for more detail

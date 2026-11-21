@@ -36,7 +36,7 @@ import {readJsonLines,type TriageEntry} from '../src/filer/input.ts';
 import { openIndex } from "../src/events/index.ts";
 import { EVENT_KINDS } from "../src/events/kinds.ts";
 import { validate } from "../src/schema/validate.ts";
-import { OUT_OF_SCOPE, chainWorld, standingWorld, scripted, HOST_REFUSED, RATE_LIMITED, NETWORK_DOWN, UNREACHABLE_REASON, worldPaths, type ChainWorld } from "./helpers/e2e-routes.ts";
+import { OUT_OF_SCOPE, UNCHANGED_WITH_FINDING, MERGE_MAIN_FIX, chainWorld, standingWorld, scripted, HOST_REFUSED, RATE_LIMITED, NETWORK_DOWN, UNREACHABLE_REASON, worldPaths, type ChainWorld } from "./helpers/e2e-routes.ts";
 import { checkedPaths } from "../src/runner/host-space.ts";
 import { git, repoPair, withDesign, withTopDesign } from "./helpers/repo-pair.ts";
 import { fileDesignChildren } from "../src/children/scan.ts";
@@ -2208,11 +2208,13 @@ describe("end to end: a check failing outside the PR's scope waits for main (spe
     await w.tick();
     // The re-requested check reports as pending first; the chain waits for the next poll and reads it again.
     expect(w.adapter.ran).toEqual(["spec"]);
-    expect(w.rerequested).toEqual([41]);
+    expect(w.rerunFailedJobs).toEqual([500]);
+    expect(w.rerequested).toEqual([]);
     await w.tick();
 
     expect(w.adapter.ran).toEqual(["spec", "fix"]);
-    expect(w.rerequested).toEqual([41]);
+    expect(w.rerunFailedJobs).toEqual([500]);
+    expect(w.rerequested).toEqual([]);
     expect(runsOf(w, "fix")[0].input.fix_input).toContain("out_of_scope");
     expect(runsOf(w, "fix")[0].input.fix_input).toContain("A required check failed:\ntest\nFAIL tools/design-stage/test/render.test.ts");
     expect(blockedRecord(w)).toMatchObject({ condition: { kind: "paths", paths: [".github/workflows/ci.yml"] }, state: { fixes: 0, specRescues: 0, rescues: 0 } });
@@ -2234,6 +2236,50 @@ describe("end to end: a check failing outside the PR's scope waits for main (spe
     expect(w.onMain(".github/workflows/ci.yml")).toBe("name: ci\n");
     expect(JSON.parse(readFileSync(join(w.paths.escalations, "7.json"), "utf8"))).toMatchObject({ blocks: 1, specRescues: 0 });
   }, 120_000);
+
+  it("spec 101 AC-7: issue #116's record replayed: a flaky-looking failure is re-run, two verdict-less fixes and the rescue are returned by the block, and the resume past a conflict reaches review", async () => {
+    let w!: ChainWorld;
+    const a = agents(() => w);
+    let bad = "";
+    const withLine = (children: string) => `# Product spec\n\nParent: docs/charter.md\n\n## Children\n\n- \`specs/010-thing/spec.md\`\n${children}`;
+    const spec = a.spec(12, { ...specFiles, [PARENT]: withLine("- `specs/011-pr-line/spec.md`\n") });
+    w = await chainWorld({
+      files: repoFiles({ spec: null }),
+      results: {
+        ...rest(), review: [APPROVE, APPROVE, APPROVE], spec: [(run: StageRun) => { const r = spec(run); bad = r.head_sha; return r; }],
+        fix: [UNCHANGED_WITH_FINDING, UNCHANGED_WITH_FINDING, OUT_OF_SCOPE(["tools/scheduler/test/loop.test.ts"], "tools/scheduler/test/loop.test.ts is a flaky test no file of this PR can change"), MERGE_MAIN_FIX(PARENT)],
+        implement: [a.implement(13, { "a.txt": "pr 13\n" })],
+      },
+    });
+    w.setChecks((sha) => (sha === bad ? FAILED : GREEN));
+    await w.tick();
+    expect(w.adapter.ran).toEqual(["spec"]);
+    expect(w.rerunFailedJobs).toEqual([500]);
+    expect(w.rerequested).toEqual([]);
+    for (let i = 0; i < 8 && !blockedRecord(w); i++) await w.tick();
+
+    expect(w.adapter.ran).toEqual(["spec", "fix", "fix", "fix"]);
+    expect(runsOf(w, "fix")[2].model).toBe(w.cfg.rescue_model);
+    expect(runsOf(w, "fix")[0].input.fix_input).not.toContain("The previous fix run returned the head unchanged");
+    expect(runsOf(w, "fix")[1].input.fix_input).toMatch(/^The previous fix run returned the head unchanged and no `out_of_scope` verdict\./);
+    expect(w.rerunFailedJobs).toEqual([500]);
+    const rec = blockedRecord(w)!;
+    expect(rec.state).toMatchObject({ stage: "blocked", fixes: 0, specRescues: 0, blocked: { blocks: 1 } });
+    expect(rec.state.history.filter((h) => h.endsWith("re-run requested once"))).toHaveLength(1);
+    expect(rec.state.history.filter((h) => h === "fix returned the head unchanged without a verdict")).toHaveLength(2);
+    expect(queued(w)[0].finding).toMatchObject({ where: "tools/scheduler/test/loop.test.ts" });
+
+    // Main moves the parent's Children section and the named file: the block resumes, the rebase conflicts, the conflict fix runs.
+    w.moveMain({ [PARENT]: withLine("- `specs/012-main-line/spec.md`\n"), "tools/scheduler/test/loop.test.ts": "// fixed\n" });
+    await w.tick();
+
+    expect(w.logs.filter((r) => r.kind === "error")).toEqual([]);
+    expect(w.logs.some((r) => r.kind === "rebase-conflict-on-resume")).toBe(true);
+    expect(w.adapter.ran).toEqual(["spec", "fix", "fix", "fix", "fix", "review", "review", "plan", "implement", "review"]);
+    expect(blockedRecord(w)).toBeNull();
+    expect(w.mergeRequests).toEqual([12, 13]);
+    expect(JSON.parse(readFileSync(join(w.paths.escalations, "7.json"), "utf8"))).toMatchObject({ specRescues: 0, blocks: 1 });
+  }, 180_000);
 
   it("with the block bound spent in the ledger, the verdict is counted as a fix and the fix loop runs as today", async () => {
     let w!: ChainWorld;

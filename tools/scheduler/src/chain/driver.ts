@@ -429,6 +429,9 @@ async function heldWorkText(deps: DriverDeps, claim: Claim): Promise<string | un
   ].join("\n");
 }
 
+/** Spec 101 AC-4: put before the next fix's input when the previous fix for a failed check returned the head unchanged without a verdict. */
+export const UNCHANGED_WITHOUT_VERDICT_PARAGRAPH = "The previous fix run returned the head unchanged and no `out_of_scope` verdict. On this PR that is a counted fix and the fix loop ends in the issue's abandonment. Either change a file inside this PR's scope that clears the failure, or return your head unchanged with `out_of_scope: { cause, paths }` as described below; a finding is not a verdict.";
+
 async function buildInput(
   deps: DriverDeps, claim: Claim, issueTitle: string, issueBody: string, specText: string, ci: string | undefined, answered: string | undefined, reported?: string,
 ): Promise<StageInput> {
@@ -438,6 +441,7 @@ async function buildInput(
   if (fixInput?.includes(ROOT)) fixInput = `${CHARTER_REVERT_LINE}\n${fixInput}`;
   if (fixInput !== undefined && s.stage === "fix" && (s.track === "spec" || s.track === "design") && fixInput.includes("A required check failed:")) {
     fixInput = `${fixInput}\n\n${OUT_OF_SCOPE_PARAGRAPH}`;
+    if (s.unchangedWithoutVerdict) fixInput = `${UNCHANGED_WITHOUT_VERDICT_PARAGRAPH}\n\n${fixInput}`;
   }
   // The question a resumed stage answers: on the state while it is asked, from the log's answered entry once it is answered (AC-15).
   let question = s.question;
@@ -1327,12 +1331,21 @@ export async function sendPausedQuestion(deps:DriverDeps,rec:PausedRecord):Promi
  return rec;
 }
 
-/** Spec 060 AC-3: re-request one failed check run; a refusal or an error is logged, never thrown. */
+/**
+ * Spec 060 AC-3, spec 101 AC-2: re-run the failed jobs of the workflow run that produced one failed check run (actions: write).
+ * A refusal or an error is logged, never thrown.
+ */
 async function rerunCheck(deps: DriverDeps, claim: Claim, id: number): Promise<void> {
   const sha = claim.state.pr?.head_sha;
   try {
-    const ok = await deps.gh.rerequestCheckRun(id);
-    deps.log({ kind: ok ? "rerun-check" : "rerun-check-refused", issue: claim.issue, sha, id });
+    const summary = await deps.gh.checks(sha ?? "", deps.cfg.required_checks);
+    const url = summary.runs.find((r) => r.id === id)?.details_url ?? null;
+    const m = url === null ? null : /\/actions\/runs\/(\d+)\//.exec(url);
+    if (!m) { deps.log({ kind: "rerun-check-refused", issue: claim.issue, sha, id, reason: "no workflow run in details_url" }); return; }
+    const runId = Number(m[1]);
+    const ok = await deps.gh.rerunFailedJobs(runId);
+    if (ok) deps.log({ kind: "rerun-check", issue: claim.issue, sha, id, run_id: runId });
+    else deps.log({ kind: "rerun-check-refused", issue: claim.issue, sha, id, run_id: runId, reason: "not re-runnable" });
   } catch (e) {
     deps.log({ kind: "rerun-check-error", issue: claim.issue, sha, id, error: (e as Error).message });
   }

@@ -2,7 +2,7 @@ import {TelegramClient} from '../src/telegram/client.ts';
 import {telegramChannel} from '../src/telegram/channel.ts';
 import {fakeTelegram} from './helpers/fake-telegram.ts';
 import {emptyTelegram,listPaused,type PausedRecord} from '../src/state/paused.ts';
-import {completePause, OUT_OF_SCOPE_PARAGRAPH, specMoveReason} from "../src/chain/driver.ts";
+import {completePause, OUT_OF_SCOPE_PARAGRAPH, UNCHANGED_WITHOUT_VERDICT_PARAGRAPH, specMoveReason} from "../src/chain/driver.ts";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -2479,7 +2479,7 @@ describe("driver: a run that cannot reach the API waits out the outage (spec 092
 });
 
 describe("driver: a check failing outside the PR's scope (spec 060)", () => {
-  const failedRun = { id: 41, name: "test", status: "completed", conclusion: "failure" };
+  const failedRun: Record<string, unknown> = { id: 41, name: "test", status: "completed", conclusion: "failure", details_url: "https://github.com/o/r/actions/runs/500/job/600" };
   const logRoute: Route = { method: "GET", path: /^\/repos\/o\/r\/actions\/jobs\/\d+\/logs$/, reply: () => ({ body: "FAIL tools/design-stage/test/render.test.ts\n" }) };
   /** ghRoutes for spec-7 whose check-runs answer per sha: `byRef(sha)` returns the runs or a status to fail with. */
   const routesFor = (sha: string, byRef: (ref: string) => unknown[] | number, rerequest = 201): Route[] => [
@@ -2488,7 +2488,7 @@ describe("driver: a check failing outside the PR's scope (spec 060)", () => {
       method: "GET", path: /^\/repos\/o\/r\/commits\/([0-9a-f]+)\/check-runs$/,
       reply: (m) => { const r = byRef(m[1]); return typeof r === "number" ? { status: r, body: { message: "boom" } } : { body: { total_count: r.length, check_runs: r } }; },
     },
-    { method: "POST", path: /^\/repos\/o\/r\/check-runs\/\d+\/rerequest$/, reply: () => ({ status: rerequest, body: {} }) },
+    { method: "POST", path: /^\/repos\/o\/r\/actions\/runs\/(\d+)\/rerun-failed-jobs$/, reply: () => ({ status: rerequest, body: rerequest === 201 ? {} : { message: "no" } }) },
     logRoute,
   ];
   const verifyingSpec = (claim: Claim, sha: string, over: Partial<ChainState> = {}): Claim => ({ ...claim, state: { ...claim.state, stage: "verify", track: "spec", pr: { number: 9, head_sha: sha }, ...over } });
@@ -2519,10 +2519,54 @@ describe("driver: a check failing outside the PR's scope (spec 060)", () => {
     const head = git(claim.worktree, "rev-parse", "HEAD").trim();
     const r = await step(deps, verifyingSpec(claim, head));
     expect(logs.find((l) => l.kind === "main-checks-unknown")).toMatchObject({ issue: 7, error: expect.any(String) });
-    expect(logs.find((l) => l.kind === "rerun-check-refused")).toMatchObject({ issue: 7, id: 41 });
+    expect(logs.find((l) => l.kind === "rerun-check-refused")).toMatchObject({ issue: 7, id: 41, run_id: 500, reason: "not re-runnable" });
     expect(r.status).toBe("waiting");
     expect(r.claim.state).toMatchObject({ stage: "verify", checkRerun: head, fixes: 0 });
-    expect(gh.calls.filter((c) => c.method === "POST" && c.url.endsWith("/rerequest"))).toHaveLength(1);
+    expect(gh.calls.filter((c) => c.method === "POST" && c.url.endsWith("/rerun-failed-jobs"))).toHaveLength(1);
+  }, 60_000);
+
+  const rerunWorld = async (runs: unknown[], status = 201) => {
+    const { deps, claim, gh, pair } = await setup(() => ({}), (sha) => routesFor(sha, (ref) => (ref === mainSha(pair) ? 422 : runs), status), onSpec7);
+    const logs: Record<string, unknown>[] = [];
+    deps.log = (rec) => { logs.push(rec); };
+    deps.gh = new GitHubClient(new Octokit({ auth: "x", request: { fetch: gh.fetch } }), "o/r", { settleDelaysMs: [0, 0, 0] });
+    const head = git(claim.worktree, "rev-parse", "HEAD").trim();
+    const r = await step(deps, verifyingSpec(claim, head));
+    return { logs, r, gh, head };
+  };
+
+  it("AC-2 (spec 101): the re-run posts rerun-failed-jobs for the run id in details_url and never the check-run rerequest", async () => {
+    const { logs, r, gh, head } = await rerunWorld([failedRun]);
+    expect(logs.find((l) => l.kind === "rerun-check")).toMatchObject({ issue: 7, sha: head, id: 41, run_id: 500 });
+    expect(gh.calls.filter((c) => c.method === "POST" && c.url === "/repos/o/r/actions/runs/500/rerun-failed-jobs")).toHaveLength(1);
+    expect(gh.calls.some((c) => c.url.endsWith("/rerequest"))).toBe(false);
+    expect(r.status).toBe("waiting");
+  }, 60_000);
+
+  it("AC-2 (spec 101): a check run without a workflow run in details_url is refused with its reason and the step still waits", async () => {
+    const { logs, r, gh } = await rerunWorld([{ ...failedRun, details_url: null }]);
+    expect(logs.find((l) => l.kind === "rerun-check-refused")).toMatchObject({ issue: 7, id: 41, reason: "no workflow run in details_url" });
+    expect(gh.calls.some((c) => c.url.endsWith("/rerun-failed-jobs"))).toBe(false);
+    expect(r.status).toBe("waiting");
+  }, 60_000);
+
+  it("AC-2 (spec 101): any other error is logged rerun-check-error and is not thrown", async () => {
+    const { logs, r } = await rerunWorld([failedRun], 500);
+    expect(logs.find((l) => l.kind === "rerun-check-error")).toMatchObject({ issue: 7, id: 41, error: expect.any(String) });
+    expect(r.status).toBe("waiting");
+  }, 60_000);
+
+  it("AC-4 (spec 101): a fix after an unchanged head without a verdict starts with the paragraph", async () => {
+    const { deps, claim, paths } = await setup((sha) => ({ fix: [{ head_sha: sha, addressed: [] }] }), (sha) => routesFor(sha, () => [failedRun]), onSpec7);
+    const head = git(claim.worktree, "rev-parse", "HEAD").trim();
+    const base = verifyingSpec(claim, head);
+    const atFix: Claim = { ...base, state: { ...base.state, stage: "fix", pendingFixInput: `A required check failed:\ntest\nFAIL x`, checkRerun: head, unchangedWithoutVerdict: true } };
+    await step({ ...deps, gh: deps.gh }, atFix).catch(() => {});
+    const fixRun = readdirSync(paths.runs).find((d) => d.startsWith("7-fix-"))!;
+    const input = JSON.parse(readFileSync(join(paths.runs, fixRun, "input.json"), "utf8"));
+    expect(input.fix_input.startsWith(`${UNCHANGED_WITHOUT_VERDICT_PARAGRAPH}\n\nA required check failed:\ntest\nFAIL x`)).toBe(true);
+    expect(input.fix_input.endsWith(OUT_OF_SCOPE_PARAGRAPH)).toBe(true);
+    expect(UNCHANGED_WITHOUT_VERDICT_PARAGRAPH.startsWith("The previous fix run returned the head unchanged and no `out_of_scope` verdict.")).toBe(true);
   }, 60_000);
 
   it("the fix input of a failed check on a spec PR ends with the out-of-scope paragraph (AC-5)", async () => {

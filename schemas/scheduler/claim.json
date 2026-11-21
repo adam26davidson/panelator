@@ -299,6 +299,9 @@
         "checkRerun": {
           "type": ["string", "null"]
         },
+        "unchangedWithoutVerdict": {
+          "type": "boolean"
+        },
         "blocked": {
           "oneOf": [
             { "type": "null" },

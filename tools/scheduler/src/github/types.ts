@@ -17,6 +17,8 @@ export interface CheckRun {
   id: number;
   status: string;
   conclusion: string | null;
+  /** The URL of the workflow run's job (spec 101 AC-2); null when the API omits it. */
+  details_url: string | null;
 }
 
 export interface CheckSummary {
