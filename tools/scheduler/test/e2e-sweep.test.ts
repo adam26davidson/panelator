@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { standingWorld } from "./helpers/e2e-routes.ts";
@@ -141,6 +141,19 @@ describe("end to end: infra health runs (spec 064 AC-7, spec 030 section 6)", ()
     await writeAgentState(w.paths, "infra-health", { ...s, pending_events: events.map((e) => ({ ...e, at: T0.toISOString() })) });
     await w.scheduler.tick(); await w.idle();
   };
+
+  it("runs over a service log with a NUL-only line and a NUL-prefixed record (spec 103 AC-3)", async () => {
+    let prompt = "";
+    const w = await sweepWorld(() => ROOMY, { "infra-health": [(run: { prompt: string }) => { prompt = run.prompt; return { summary: "nothing wrong" }; }] });
+    const rec = (m: number, kind: string) => JSON.stringify({ at: at(m).toISOString(), kind }) + "\n";
+    appendFileSync(w.paths.serviceLog, rec(-60, "tick") + "\u0000".repeat(300) + "\n" + "\u0000".repeat(200) + rec(-30, "tick"));
+    await wake(w, [{ event: "infra_alarm", payload: { kind: "unknown_kind" } }]);
+    expect(w.adapter.ran).toEqual(["infra-health"]);
+    const log = await w.service();
+    expect(log.filter((r) => r.kind === "standing-error")).toEqual([]);
+    expect(prompt).toContain("skipped_lines");
+    expect(prompt).toContain(w.paths.serviceLog);
+  }, 60_000);
 
   it("re-runs a failed main workflow once", async () => {
     const w = await sweepWorld(() => ROOMY, { "infra-health": [{ summary: "re-ran main", actions: [{ kind: "rerun_workflow", args: { run_id: 9 }, why }] }] });
