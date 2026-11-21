@@ -124,7 +124,7 @@ AC-11 says.
   loading fails as spec 008 AC-1 does, naming the profile or agent and the
   name. The four profile files are in the implementation's file scope (the
   plan lists them; findings ref 855 on #39 was a plan that did not).
-- AC-2. **The shim directory, and only the wrapped child sees the secret.**
+- AC-2. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-1: for a `provider: aws` entry, `cred-exec.ts` runs the call through `src/aws/cli.ts` with the stored profile and prints its JSON, and `runCheck` runs that entry's check and reads its expiry. **The shim directory, and only the wrapped child sees the secret.**
   Given a stage or standing run whose profile or definition lists
   credentials, then `writeShims(runDir, entries)` in
   `src/credentials/shims.ts` writes one executable shim per listed entry
@@ -260,7 +260,7 @@ AC-11 says.
 
 **Credential check agent** (spec 030 AC-13, AC-14, as amended by spec 072)
 
-- AC-12. **The credential check is a standing agent.**
+- AC-12. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-2: the notification carries the entry's `renew_steps` when it has them and the credential is set, else its `setup` steps. **The credential check is a standing agent.**
   `agents/standing/credential-check.md`: standard tier, Claude, `worktree:
   none`, schedule `1d`, events `credential_expiry`, credentials none, actions
   `renew_credential`, output `credential-check-result`
