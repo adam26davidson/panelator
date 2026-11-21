@@ -2458,6 +2458,8 @@ describe("end to end: a host outage pauses the scheduler (spec 100 AC-10)", () =
     const a = agents(() => w);
     w = await chainWorld({ files: repoFiles(), host: (tick) => (tick <= 10 ? "EAI_AGAIN" : null), results: { plan: [PLAN], implement: [NETWORK_DOWN, a.implement(9)], review: [APPROVE] } });
     const c = clock(w);
+    // The credential check (spec 099) comes due daily and would take the slot on the resuming tick of a 30 h fake clock.
+    await writeAgentState(w.paths, "credential-check", { ...(await readAgentState(w.paths, "credential-check"))!, paused: true, paused_by: "maintainer" });
     await w.tick();
     expect(w.adapter.ran).toEqual(["plan", "implement"]);
     const before = (await listClaims(w.paths))[0];
