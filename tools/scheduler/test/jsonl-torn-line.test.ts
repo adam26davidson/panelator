@@ -6,10 +6,10 @@ import { join } from "node:path";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import { buildInfraHealthInput } from "../src/standing/infra-health-input.ts";
 import { buildAuditInput } from "../src/standing/audit-input.ts";
-import { buildFilerInput, type FilerDeps } from "../src/filer/input.ts";
+// readJsonLines comes from filer/input.ts, which exports it on main too, so this file loads there and fails in the builds (AC-7).
+import { buildFilerInput, readJsonLines, type FilerDeps } from "../src/filer/input.ts";
 import { applyFilerResult } from "../src/filer/apply.ts";
 import { ActionLog } from "../src/actions/log.ts";
-import { readJsonLines } from "../src/state/jsonl.ts";
 import { validate } from "../src/schema/validate.ts";
 import type { GitHubClient } from "../src/github/client.ts";
 

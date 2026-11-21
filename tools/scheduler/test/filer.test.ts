@@ -126,6 +126,28 @@ it('lists a failed advisory still inside the cursor window once (#33 regression,
  await applyFilerResult(d,'run',input,{summary:'x',decisions:refs.map(ref=>({ref,outcome:'discard' as const,reason:'not an issue'}))});
  expect(JSON.parse(await readFile(paths.findingsCursor,'utf8')).line).toBe(22);
 });
+it('reads a torn queue and triage log: a hole keeps the refs and stops the cursor (spec 103 AC-5)',async()=>{
+ const {d,paths}=await setup(),logged:Record<string,unknown>[]=[],NUL='\u0000',q=(what:string)=>JSON.stringify({finding:{...finding,what}});
+ d.log=r=>{logged.push(r);};
+ // Five lines: line 2 is NUL-only, line 4 a NUL-prefixed record. Refs 1 and 3 are settled; the triage log has a NUL-only line of its own.
+ await appendFile(paths.findingsQueue,[q('one'),NUL.repeat(16),q('three'),NUL.repeat(4)+q('four'),q('five')].join('\n')+'\n');
+ await appendFile(paths.findingsTriage,row('1')+NUL.repeat(8)+'\n'+row('3'));
+ const input=await buildFilerInput(d);
+ expect(input.records.map(r=>[r.ref,r.finding.what])).toEqual([['4','four'],['5','five']]);
+ expect(input.records.flatMap(r=>[r.ref,...(r.duplicate_refs??[])])).not.toContain('2');
+ // The cursor stops before the hole at line 2: a hole has no triage row, so it is never settled (spec 103 section 2).
+ expect(input.cursor).toBe(1);
+ const reports=(file:string)=>logged.filter(r=>r.kind==='jsonl-skipped-lines'&&r.file===file);
+ expect(reports(paths.findingsQueue)).toEqual([{kind:'jsonl-skipped-lines',file:paths.findingsQueue,skipped:1,recovered:1,offsets:[expect.any(Number),expect.any(Number)],lines:[2,4]}]);
+ expect(reports(paths.findingsTriage)).toEqual([expect.objectContaining({skipped:1,recovered:0,lines:[2]})]);
+ logged.length=0;
+ await applyFilerResult(d,'run',input,{summary:'x',decisions:[{ref:'4',outcome:'discard',reason:'not an issue'},{ref:'5',outcome:'discard',reason:'not an issue'}]});
+ expect(reports(paths.findingsTriage).length).toBeGreaterThan(0);
+ expect((await readJsonLines<TriageEntry>(paths.findingsTriage)).map(t=>[t.ref,t.run_id])).toEqual([['1','old'],['3','old'],['4','run'],['5','run']]);
+ // Still before the hole after the apply, and nothing is offered again: ref 2 is never a record.
+ expect(JSON.parse(await readFile(paths.findingsCursor,'utf8')).line).toBe(1);
+ const next=await buildFilerInput(d);expect(next.records).toEqual([]);expect(next.cursor).toBe(1);
+});
 it('accepts one decision per distinct ref and refuses a repeated decision (AC-3)',async()=>{
  const {d,input}=await setup();input.records=[{ref:'1',finding},{ref:'1',finding,advisory_failed:true}];
  await expect(applyFilerResult(d,'run',input,{summary:'x',decisions:[{ref:'1',outcome:'discard',reason:'a'},{ref:'1',outcome:'discard',reason:'b'}]})).rejects.toThrow(/each input/);
