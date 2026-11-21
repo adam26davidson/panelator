@@ -5,12 +5,15 @@ import { readLedger, readNotices, reservedUsd, round, writeLedger, writeNotices,
 import { currentCost, judge, refresh } from "./cost.ts";
 import { daysInMonth, monthOf, readCap, type AwsContext } from "./context.ts";
 import { ensureOn } from "./identity.ts";
+import { applyScale, scaleProblem, type ScaleDescriptor } from "./scale.ts";
 
 export interface ReserveRequest {
   what: string;
   expected_monthly_usd: number;
   why: string;
   by: string;
+  /** Spec 068 AC-6: how the launcher can make this reservation smaller. */
+  scale?: ScaleDescriptor;
 }
 export type ReserveResult = { ok: true; id: string } | { ok: false; reason: string; shortfall_usd: number };
 
@@ -42,7 +45,8 @@ export async function reserveSpend(ctx: AwsContext, req: ReserveRequest): Promis
     if (current > cap) return refuse(`the forecast ${current} USD is over the cap of ${cap} USD`, withIt - cap);
     if (withIt > cap) return refuse(`the forecast with this reservation, ${withIt} USD, is over the cap of ${cap} USD`, withIt - cap);
     const id = randomUUID();
-    const r: Reservation = { id, ...req, at: now.toISOString(), released_at: null };
+    const { scale, ...plain } = req;
+    const r: Reservation = { id, ...plain, ...(scale ? { scale: { ...scale, state: "up" as const } } : {}), at: now.toISOString(), released_at: null };
     await writeLedger(ctx.paths, { reservations: [...ledger.reservations, r] });
     return { ok: true, id, forecast: withIt, reserved: reserved + req.expected_monthly_usd };
   });
@@ -74,7 +78,7 @@ export async function releaseSpend(ctx: AwsContext, id: string): Promise<boolean
 }
 
 /** The forecast follows the ledger at once (AC-5, AC-9). */
-async function afterChange(ctx: AwsContext, cap: number): Promise<void> {
+export async function afterChange(ctx: AwsContext, cap: number): Promise<void> {
   const cost = await currentCost(ctx);
   if (!cost || cap === 0) return;
   const next = await refresh(ctx, cost, cap);
@@ -86,6 +90,7 @@ function invalid(req: ReserveRequest): string | null {
   if (typeof req.what !== "string" || req.what.length < 10) return "what must be at least 10 characters";
   if (typeof req.why !== "string" || req.why.length < 10) return "why must be at least 10 characters";
   if (typeof req.by !== "string" || !req.by) return "by is required";
+  if (req.scale !== undefined) return scaleProblem(req.scale, req.expected_monthly_usd);
   return null;
 }
 
@@ -118,3 +123,54 @@ async function fundsRequest(ctx: AwsContext, req: ReserveRequest, refusal: { rea
   await writeNotices(ctx.paths, { ...notices, funds });
 }
 
+
+/** The forecast of the ledger as it stands, with one reservation's expected cost replaced (spec 022 AC-5). */
+async function forecastWith(ctx: AwsContext, ledger: { reservations: Reservation[] }, id: string, expected: number): Promise<number> {
+  const cost = await currentCost(ctx);
+  const now = ctx.now();
+  const reserved = reservedUsd({ reservations: ledger.reservations.map((r) => (r.id === id ? { ...r, expected_monthly_usd: expected } : r)) });
+  return forecastUsd(cost?.actual_usd ?? 0, reserved, cost?.days_elapsed ?? now.getUTCDate(), cost?.days_in_month ?? daysInMonth(now));
+}
+
+/** Spec 068 AC-7: why `aws_scale` may not move this reservation this way now, or null. */
+export async function scaleRefusal(ctx: AwsContext, id: string, direction: unknown): Promise<string | null> {
+  const ledger = await readLedger(ctx.paths);
+  const r = ledger.reservations.find((x) => x.id === id);
+  if (!r) return `reservation ${id} is not in the ledger`;
+  if (r.released_at !== null) return `reservation ${id} is released`;
+  if (!r.scale) return `reservation ${id} has no scale descriptor`;
+  if (direction !== "up" && direction !== "down") return "direction must be up or down";
+  if (direction === r.scale.state) return `already ${direction}`;
+  if (!(await ensureOn(ctx))) return `aws: off: ${ctx.state.reason}`;
+  if (direction === "up") {
+    const cap = await readCap(ctx);
+    if (cap > 0 && (await forecastWith(ctx, ledger, id, r.scale.up.expected_monthly_usd)) > cap) return "scaling up would put the forecast over the cap";
+  }
+  return null;
+}
+
+/**
+ * Spec 068 AC-7: moves a reservation to the other of its two states. The kind's call runs first; the ledger is
+ * rewritten only when it succeeded, then the forecast and the alarm state follow the ledger (spec 022 AC-5, AC-9).
+ */
+export async function scaleSpend(ctx: AwsContext, id: string, direction: "up" | "down"): Promise<void> {
+  const before = (await readLedger(ctx.paths)).reservations.find((x) => x.id === id && x.released_at === null);
+  if (!before?.scale || !ctx.cli) throw new Error(`reservation ${id} cannot be scaled`);
+  try {
+    await applyScale(ctx.cli, before.scale, direction);
+  } catch (e) {
+    throw new Error((e as Error).message.split("\n")[0]);
+  }
+  const done = await withStateLock(ctx.paths.awsLedger, async () => {
+    const ledger = await readLedger(ctx.paths);
+    const r = ledger.reservations.find((x) => x.id === id && x.released_at === null);
+    if (!r?.scale) return null;
+    r.scale = { ...r.scale, state: direction };
+    r.expected_monthly_usd = r.scale[direction].expected_monthly_usd;
+    await writeLedger(ctx.paths, ledger);
+    return r;
+  });
+  if (!done) throw new Error(`reservation ${id} was released while it was scaled`);
+  await record(ctx.paths, "aws.reserve", ctx.now(), { id, what: done.what, expected_monthly_usd: done.expected_monthly_usd, why: done.why, by: done.by, outcome: "scaled", direction });
+  await afterChange(ctx, await readCap(ctx));
+}

@@ -32,8 +32,9 @@ import {openIndex} from '../events/index.ts';
 import {buildReflectionInput,periodStart} from '../reflection/input.ts';
 import {applyReflectionResult,type ReflectionResult} from '../reflection/apply.ts';
 import type {MetricDefinition} from '../metrics/definitions.ts';
+import type {AwsContext} from '../aws/context.ts';
 const exec=promisify(execFile);
-export interface StandingDeps extends DriverDeps {parameters:ParameterStore;botLogin:string;metrics?:Record<string,MetricDefinition>;registry?:Record<string,StandingDefinition>}
+export interface StandingDeps extends DriverDeps {aws?:AwsContext;parameters:ParameterStore;botLogin:string;metrics?:Record<string,MetricDefinition>;registry?:Record<string,StandingDefinition>}
 /** The end of the agent's latest successful run: its state record, else its latest `ok` agent.run event (a failed pair of attempts leaves `last_run` failed). */
 function lastSuccess(d:StandingDeps,def:StandingDefinition,state:AgentState):string|null {
  if(state.last_run?.outcome==='ok')return state.last_run.at;
@@ -154,7 +155,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
    await d.notifier.notify({issue:0,gate:'credential-expiry',label:name,text:`${name}: ${why}${expires_at?` (expires ${expires_at})`:''}\n${steps.map((x,i)=>`${i+1}. ${x}`).join('\n')}`});
    await writeJsonAtomic(d.paths.credentialsExpiryState,{...raw,notified:{...notified,[name]:d.now().toISOString()}});
   };
-  const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog,d.paths),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now,repoDir:d.repoDir,serviceLog:d.log,
+  const ctx={paths:d.paths,parameters:d.parameters,aws:d.aws,log:new ActionLog(d.paths.actionsLog,d.paths),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now,repoDir:d.repoDir,serviceLog:d.log,
    ...(d.catalogue&&d.checkContext?{credentials:{store:d.checkContext.store,catalogue:d.catalogue,probe:d.checkContext,configPaths:{'github-app-key':d.cfg.app.private_key_path,'telegram-bot':d.cfg.telegram?.credentials_path??''},
     shim:{configPath:d.configPath??'',binDir:d.binDir,cataloguePath:d.cataloguePath,runDir:join(d.paths.runs,result.runId,'renew')},
     onRenewFailure:(name:string,reason:string)=>{renewFailures.push({name,reason});}}}:{})};

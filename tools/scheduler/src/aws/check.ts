@@ -50,7 +50,7 @@ export async function awsStatus(ctx: AwsContext, json: boolean): Promise<Command
   const lines = [view.on ? "aws: on" : `aws: off: ${view.off_reason}`, `cap: ${cap} USD`, `last pull: ${view.last_pull ?? "never"}`];
   if (view.pull_skipped) lines.push("scheduled pulls skipped: aws_cap_usd is 0");
   if (cost) lines.push(`month ${cost.month}: actual ${cost.actual_usd} USD, forecast ${cost.forecast_usd} USD, reserved ${cost.reserved_usd} USD (${cost.days_elapsed}/${cost.days_in_month} days)`);
-  lines.push(`open reservations (${open.length}):`, ...open.map((r) => `  ${r.id}  ${r.expected_monthly_usd} USD/month  ${r.what}  (by ${r.by}, ${r.at})`));
+  lines.push(`open reservations (${open.length}):`, ...open.map((r) => `  ${r.id}  ${r.expected_monthly_usd} USD/month  ${r.what}  (by ${r.by}, ${r.at})${r.scale ? `  [scale ${r.scale.kind}: ${r.scale.state}]` : ""}`));
   lines.push(`released this month (${released.length}):`, ...released.map((r) => `  ${r.id}  ${r.expected_monthly_usd} USD/month  ${r.what}  (released ${r.released_at})`));
   return { lines, exitCode: 0 };
 }

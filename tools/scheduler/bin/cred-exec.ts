@@ -34,7 +34,7 @@ try {
     // Spec 068 AC-1: the call goes through src/aws/cli.ts with the stored profile; this file spawns nothing for it.
     if (command !== wrapper.command) die(`${name} wraps ${wrapper.command} only`);
     if (rest.some((a) => /^--(profile|region|output)(=|$)/.test(a))) die("--profile, --region and --output are set by the scheduler");
-    if (!cfg.aws) die("aws: off");
+    const awsCfg = cfg.aws ?? die("aws: off");
     const profile = (await storeFromConfig(cfg).readSecret(name)).trim();
     const aws = path.map((p) => join(p || ".", "aws")).find((f) => { try { accessSync(f, constants.X_OK); return true; } catch { return false; } });
     if (!aws) die("aws not found on PATH");
@@ -42,7 +42,7 @@ try {
     delete env.PANELATOR_SHIM_DIR;
     delete env.AWS_PROFILE;
     try {
-      console.log(JSON.stringify(await awsCli({ profile, region: cfg.aws.region }, { command: aws as string, env }).run(rest), null, 2));
+      console.log(JSON.stringify(await awsCli({ profile, region: awsCfg.region }, { command: aws as string, env }).run(rest), null, 2));
       process.exit(0);
     } catch (e) {
       die((e as Error).message);

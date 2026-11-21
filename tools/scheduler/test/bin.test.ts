@@ -82,7 +82,7 @@ describe("panelator-scheduler aws sso-expiry (spec 068 AC-2)", () => {
       app: { id: 1, installation_id: 1, private_key_path: join(root, "key.pem"), bot_login: "bot[bot]" },
       credentials: { dir: join(root, "credentials") }, telegram: { credentials_path: join(root, "telegram.json") },
     }));
-    const clean = { ...process.env, HOME: fixtureHome, ...env };
+    const clean: Record<string, string | undefined> = { ...process.env, HOME: fixtureHome, ...env };
     delete clean.AWS_PROFILE;
     return spawnSync(process.execPath, [bin, "aws", "sso-expiry", ...extra, "--config", config], { encoding: "utf8", timeout: 25_000, env: { ...clean, ...env } });
   }

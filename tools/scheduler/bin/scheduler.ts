@@ -148,7 +148,7 @@ if(args[0]==='aws-check'||args[0]==='aws') {
 if(['param','agent','action','cred','contacts'].includes(args[0])) {
   let client:GitHubClient|undefined;
   const remote=async()=>client??=new GitHubClient(createAppClient(cfg.app,await appPrivateKey(cfg,credStore)).octokit,cfg.repo);
-  const ctx={paths,parameters,log:actionLog,levels,now:()=>new Date(),gh:{rerunWorkflowRun:async(id:number)=>(await remote()).rerunWorkflowRun(id),cancelWorkflowRun:async(id:number)=>(await remote()).cancelWorkflowRun(id)},
+  const ctx={paths,parameters,log:actionLog,levels,now:()=>new Date(),aws:awsContext,gh:{rerunWorkflowRun:async(id:number)=>(await remote()).rerunWorkflowRun(id),cancelWorkflowRun:async(id:number)=>(await remote()).cancelWorkflowRun(id)},
    credentials:{store:credStore,catalogue,probe:{store:credStore,app:cfg.app,now:()=>new Date(),aws:awsForCheck},configPaths:{'github-app-key':cfg.app.private_key_path,'telegram-bot':cfg.telegram!.credentials_path}}};
   try {
     const [command,verb,name,value]=args;
