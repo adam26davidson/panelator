@@ -50,7 +50,7 @@ const PLACEMENTS: Row[] = [
     <Mono>x 0, y 0, 64 × 32</Mono>,
     <>
       <Mono>opacity 200, config {"{}"}, seed 1</Mono>
-      <Note>Its transparent pixels leave the image as it is; its drawn pixels are 200 parts of 255 their own colour, the rest the image's.</Note>
+      <Note>Its transparent pixels leave the image as it is; its drawn pixels, the black ones included, are 200 parts of 255 their own colour, the rest the image's.</Note>
     </>,
   ],
   [
@@ -65,14 +65,24 @@ const PLACEMENTS: Row[] = [
 
 const BLEND: Row[] = [
   [
-    <Name name="White on the image">time, date, quarter marks</Name>,
-    <Mono>0xFFFFFFFF at opacity 200</Mono>,
-    <Note>Each channel is 200 + 55 × image / 255: from 200 over black to 255 over a full channel.</Note>,
+    <Name name="Black">halos, plate, disc</Name>,
+    <Mono>0x000000FF at opacity 200</Mono>,
+    <Note>Each channel is 55 × image / 255: at most 55, whatever the image holds. This is the ground every other clock colour sits on or beside.</Note>,
   ],
   [
-    <Name name="Cyan, amber, green on the image">separator, bar, circle</Name>,
+    <Name name="White">time, date, quarter marks</Name>,
+    <Mono>0xFFFFFFFF at opacity 200</Mono>,
+    <Note>Each channel is 200 + 55 × image / 255. Against the black beside it: at least 10.5 to 1 at every image offset.</Note>,
+  ],
+  [
+    <Name name="Cyan, amber, green">separator, bar, circle</Name>,
     <Mono>0x4FD8FFFF, 0xFFB000FF, 0x5CFF8AFF at opacity 200</Mono>,
-    <Note>Shapes, not text: told from the image by hue and by their straight edges.</Note>,
+    <Note>Against the black beside them: at least 7.4, 7.1 and 8.9 to 1 at every image offset.</Note>,
+  ],
+  [
+    <Name name="Transparent">the rest of the clock's layer</Name>,
+    <Mono>0x00000000</Mono>,
+    <Note>The image, unchanged: between and inside the glyphs' halos, right of the date, around the disc.</Note>,
   ],
 ];
 

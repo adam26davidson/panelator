@@ -42,6 +42,7 @@ design itself: the values the three spike widgets pass to the host, which the im
 <table>
 <tr><th></th><th>Name</th><th>ABI value</th><th>Used by</th><th>Contrast on black</th></tr>
 <tr><td><div class="sw" style="background:#000"></div></td><td>transparent</td><td><code>0x00000000</code></td><td>spike-clock: the cleared layer</td><td></td></tr>
+<tr><td><div class="sw" style="background:#000"></div></td><td>black</td><td><code>0x000000FF</code></td><td>spike-clock: the text halos, the plate and the disc (the opaque ground that keeps the clock readable over an image)</td><td>(a background)</td></tr>
 <tr><td><div class="sw" style="background:var(--led-white)"></div></td><td>white</td><td><code>0xFFFFFFFF</code></td><td>spike-clock: time, date, quarter marks. spike-scroll: colour 1</td><td>21.0</td></tr>
 <tr><td><div class="sw" style="background:var(--led-amber)"></div></td><td>amber</td><td><code>0xFFB000FF</code></td><td>spike-clock: seconds bar fill. spike-scroll: colour 0</td><td>11.5</td></tr>
 <tr><td><div class="sw" style="background:var(--led-green)"></div></td><td>green</td><td><code>0x5CFF8AFF</code></td><td>spike-clock: seconds circle. spike-scroll: colour 2</td><td>16.1</td></tr>
@@ -62,7 +63,7 @@ design itself: the values the three spike widgets pass to the host, which the im
 <h2>LED spacing</h2>
 <p>The unit is one LED. spike-clock keeps one LED of margin left and right of the seconds bar, two blank rows
 between the time's ink, the separator, the bar and the date's ink, and one blank row at the bottom. spike-scroll
-and spike-image draw edge to edge. There are no radii on a panel: the only curve is the seconds circle, radius 3.</p>
+and spike-image draw edge to edge. There are no radii on a panel: the only curves are the seconds circle, radius 3, and the black disc under it, radius 4.</p>
 
 <h2>Page colours</h2>
 <table>

@@ -30,13 +30,17 @@ Every update draws these, in this order. `second` is the local second, 0 to 59.
 | # | Element | Call | Position | Colour |
 |---|---|---|---|---|
 | 1 | Clear | `draw_fill` | the whole layer | `0x00000000` transparent |
-| 2 | Time `HH:MM:SS` | `draw_text`, font 2 | first cell at (0, 0); 8 cells of 8 × 16 = 64 × 16 | `0xFFFFFFFF` white |
-| 3 | Separator | `draw_line` | (0, 14) to (63, 14) | `0x4FD8FFFF` cyan |
-| 4 | Seconds bar, outline | `draw_rect`, not filled | x 1, y 17, 62 × 5 | `0x4FD8FFFF` cyan |
-| 5 | Seconds bar, fill | `draw_rect`, filled | x 2, y 18, `second` × 3 | `0xFFB000FF` amber |
-| 6 | Quarter marks | `draw_pixel` × 4 | (2, 22), (17, 22), (32, 22), (47, 22) | `0xFFFFFFFF` white |
-| 7 | Date `YYYY-MM-DD` | `draw_text`, font 1 | first cell at (1, 24); 10 cells of 5 × 8 = 50 × 8 | `0xFFFFFFFF` white |
-| 8 | Seconds circle | `draw_circle`, filled when `second` is even, else outlined | centre (59, 27), radius 3 (x 56 to 62, y 24 to 30) | `0x5CFF8AFF` green |
+| 2 | Time halo | `draw_text` × 4, font 2 | the time's string with its first cell at (-1, 0), (1, 0), (0, -1), (0, 1) | `0x000000FF` black |
+| 3 | Time `HH:MM:SS` | `draw_text`, font 2 | first cell at (0, 0); 8 cells of 8 × 16 = 64 × 16 | `0xFFFFFFFF` white |
+| 4 | Plate | `draw_rect`, filled | x 0, y 13, 64 × 11 (rows 13 to 23) | `0x000000FF` black |
+| 5 | Separator | `draw_line` | (0, 14) to (63, 14) | `0x4FD8FFFF` cyan |
+| 6 | Seconds bar, outline | `draw_rect`, not filled | x 1, y 17, 62 × 5 | `0x4FD8FFFF` cyan |
+| 7 | Seconds bar, fill | `draw_rect`, filled | x 2, y 18, `second` × 3 | `0xFFB000FF` amber |
+| 8 | Quarter marks | `draw_pixel` × 4 | (2, 22), (17, 22), (32, 22), (47, 22) | `0xFFFFFFFF` white |
+| 9 | Date halo | `draw_text` × 4, font 1 | the date's string with its first cell at (0, 24), (2, 24), (1, 23), (1, 25) | `0x000000FF` black |
+| 10 | Date `YYYY-MM-DD` | `draw_text`, font 1 | first cell at (1, 24); 10 cells of 5 × 8 = 50 × 8 | `0xFFFFFFFF` white |
+| 11 | Disc | `draw_circle`, filled | centre (59, 27), radius 4 (x 55 to 63, y 23 to 31) | `0x000000FF` black |
+| 12 | Seconds circle | `draw_circle`, filled when `second` is even, else outlined | centre (59, 27), radius 3 (x 56 to 62, y 24 to 30) | `0x5CFF8AFF` green |
 
 Decisions behind the numbers:
 
@@ -52,7 +56,24 @@ Decisions behind the numbers:
 - **Fixed positions.** The clock does not read its layer's size: on a layer of another size the
   same pixels are drawn and the host clips them.
 - **Colour roles.** White is text and marks; cyan is the frame (separator, outline); amber and
-  green are the two things that change every second.
+  green are the two things that change every second; black is the ground.
+- **The black ground (elements 2, 4, 9, 11).** The layer is cleared to transparent, so on a black
+  panel these four draw nothing a viewer can see: the `spike-clock` screen looks the same with or
+  without them. They are there for a clock placed over something else (scene `spike`). A draw call
+  sets pixels and nothing blends inside a layer, so a colour drawn straight onto a transparent
+  layer has whatever is under the layer as its background. The halo is the text drawn four times
+  in opaque black, moved one pixel left, right, up and down, before it is drawn in white: every
+  glyph pixel on a glyph's edge then has a black pixel across that edge. The plate is the ground of
+  the separator, the bar and the marks; the disc is the ground of the circle and keeps the outlined
+  circle's inside black. None of them touches another element's pixels: the time's halo ends at row
+  12, the plate is rows 13 to 23, the date's halo is rows 24 to 31 and columns 0 to 50, the disc
+  starts at column 55 (its top pixels, on row 23, lie on the plate). Left of column 0 the time's
+  halo is clipped by the layer.
+- **What stays transparent.** Everything not listed: the pixels of the time's and the date's
+  cells that no glyph and no halo covers (row 0, the counters of the digits, the gaps around the
+  colons and the hyphens), the columns between the date and the disc, the corners around the
+  disc. At 23:59:59
+  that is 472 of the layer's 2048 pixels; 855 are black.
 
 ## spike-scroll (128 by 16, 60 Hz)
 
@@ -113,16 +134,29 @@ fills and does not call the second.
 
 The frame is tick 60: `23:59:59`, image offset 30, scroll text at x = 68 in amber.
 
-**Readability over the image.** The clock's layer is transparent and composed at opacity 200 over
-an image that moves under it, so no single colour holds a fixed contrast: the image under the
-clock runs from black to (255, 125, 255) as it scrolls. White keeps the largest minimum, which is
-why all the clock's text is white. Measured over every image offset, against the image pixel
-under each glyph pixel: the time's contrast averages 5.4 to 1 (lowest 2.2), the date's 3.2 to 1
-(lowest 1.9); the lows are where a bright pink or blue square passes under a glyph. The shapes
-(cyan, amber, green) are told from the image by hue and by their straight edges. This is the
-compositing load the spec asks for, not a product screen: a built-in widget that needs text over
-an image gets its own design in `first-builtin-widget`. On black, the clock's own scene, every
-clock colour is at least 11.5 to 1.
+**Readability over the image.** The clock's layer is composed at opacity 200 over an image that
+moves under it, running from black to (255, 125, 255) under the clock as it scrolls. No colour
+keeps a fixed contrast against that by itself: drawn straight onto the image, white text falls to
+1.9 to 1 where a bright square passes under a glyph, and the cyan, amber and green shapes to 1.3
+to 1. That is why every clock element sits on or beside opaque black (the halos, the plate and the
+disc of the clock's table). Black at opacity 200 leaves at most 55 of 255 of the image in each
+channel, so the ground is near black whatever the image holds. Measured on the composed panel over
+all 128 image offsets, each coloured pixel against the black pixels next to it:
+
+| Element | Lowest contrast against its black ground | Average |
+|---|---|---|
+| Time (white) | 10.5 to 1 | 12.8 |
+| Date (white) | 11.0 to 1 | 13.2 |
+| Quarter marks (white) | 11.9 to 1 | 13.2 |
+| Separator and bar outline (cyan) | 7.4 to 1 | 8.2 |
+| Bar fill (amber) | 7.1 to 1 | 7.7 |
+| Seconds circle (green) | 8.9 to 1 | 10.3 |
+
+The image still shows through every pixel the clock leaves transparent (inside and between the
+glyphs' halos, right of the date, around the disc), which is the load the scene is for: a
+transparent layer over an image at a layer opacity below 255. On black, the clock's own scene,
+every clock colour is at least 11.5 to 1. The scroll's six colours are on its own opaque navy
+background in every scene (table above).
 
 ## How the stories make their pixels
 
@@ -137,8 +171,10 @@ reviewer.
   should be that release, so the golden frames match these renders glyph for glyph.
 - **Circle.** The model uses the usual integer midpoint circle (start at (r, 0) with d = 1 - r).
   For radius 3 the outline is 16 pixels: (±3, 0), (±3, ±1), (±2, ±2), (±1, ±3), (0, ±3) from the
-  centre. If the pseudo-code in `docs/widget-abi.md` gives other pixels, the document wins and the
-  circle's centre and radius stay as designed.
+  centre. For radius 4, filled (the disc), the rows from the centre's are 9, 9, 7, 7 and 3 pixels
+  wide, above and below alike, so the disc holds every pixel next to the outline. If the
+  pseudo-code in `docs/widget-abi.md` gives other pixels, the document wins and the centres and
+  radii stay as designed.
 - **Page.** A frame is 320 CSS pixels wide on mobile, 768 on tablet and 1024 on desktop, always a
   whole number of device pixels per LED. The grey one-pixel outline around a frame marks its edge
   and is not part of it.

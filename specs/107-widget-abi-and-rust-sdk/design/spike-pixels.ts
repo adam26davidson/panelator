@@ -280,6 +280,7 @@ export function onBlack(l: Layer): Frame {
 /** Every colour the three widgets use, as 0xRRGGBBAA. */
 export const COLOR = {
   transparent: 0x00000000,
+  black: 0x000000ff,
   white: 0xffffffff,
   amber: 0xffb000ff,
   green: 0x5cff8aff,
@@ -307,6 +308,23 @@ export const CLOCK = {
   marks: { xs: [2, 17, 32, 47], y: 22, color: COLOR.white },
   date: { font: FONT1, x: 1, y: 24, color: COLOR.white },
   circle: { cx: 59, cy: 27, r: 3, color: COLOR.green },
+  /** The plate: an opaque black rectangle under the separator, the seconds bar and the quarter marks. */
+  plate: { x: 0, y: 13, w: 64, h: 11, color: COLOR.black },
+  /** The disc: an opaque black filled circle, one pixel larger than the seconds circle, under it. */
+  disc: { cx: 59, cy: 27, r: 4, color: COLOR.black },
+  /**
+   * The halo: before each text is drawn in white it is drawn four times in opaque black, moved by one
+   * pixel left, right, up and down, so every edge of a glyph has a black pixel beside it on any background.
+   */
+  halo: {
+    color: COLOR.black,
+    offsets: [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+    ],
+  },
 } as const;
 
 const two = (n: number) => String(n).padStart(2, "0");
@@ -326,12 +344,16 @@ export function updateClock(l: Layer, unixMs: number, utcOffsetS: number): void 
   const { time, date, second } = clockText(unixMs, utcOffsetS);
   const g = CLOCK;
   drawFill(l, COLOR.transparent);
+  for (const [dx, dy] of g.halo.offsets) drawText(l, g.time.font, g.time.x + dx, g.time.y + dy, time, g.halo.color);
   drawText(l, g.time.font, g.time.x, g.time.y, time, g.time.color);
+  drawRect(l, g.plate.x, g.plate.y, g.plate.w, g.plate.h, g.plate.color, true);
   drawLine(l, g.separator.x0, g.separator.y0, g.separator.x1, g.separator.y1, g.separator.color);
   drawRect(l, g.barOutline.x, g.barOutline.y, g.barOutline.w, g.barOutline.h, g.barOutline.color, false);
   drawRect(l, g.barFill.x, g.barFill.y, second, g.barFill.h, g.barFill.color, true);
   for (const x of g.marks.xs) drawPixel(l, x, g.marks.y, g.marks.color);
+  for (const [dx, dy] of g.halo.offsets) drawText(l, g.date.font, g.date.x + dx, g.date.y + dy, date, g.halo.color);
   drawText(l, g.date.font, g.date.x, g.date.y, date, g.date.color);
+  drawCircle(l, g.disc.cx, g.disc.cy, g.disc.r, g.disc.color, true);
   drawCircle(l, g.circle.cx, g.circle.cy, g.circle.r, g.circle.color, second % 2 === 0);
 }
 
