@@ -1,4 +1,3 @@
-import { consoleNotify } from "../console/notify.ts";
 import { readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { normalizeChainState } from "../chain/machine.ts";
@@ -70,7 +69,6 @@ export async function writeClaim(p: StatePaths, claim: Claim): Promise<void> {
   const tmp = file(p, claim.issue) + ".tmp";
   await writeFile(tmp, JSON.stringify(claim, null, 2));
   await rename(tmp, file(p, claim.issue));
-  consoleNotify();
 }
 
 export async function readClaim(p: StatePaths, issue: number): Promise<Claim | null> {
@@ -93,7 +91,6 @@ export async function removeClaim(p: StatePaths, issue: number): Promise<void> {
   await unlink(file(p, issue)).catch((e: NodeJS.ErrnoException) => {
     if (e.code !== "ENOENT") throw e;
   });
-  consoleNotify();
 }
 
 export async function touchClaim(p: StatePaths, issue: number, patch: Partial<Claim>): Promise<Claim> {

@@ -6,7 +6,6 @@ import {validate} from '../schema/validate.ts';
 import {readJsonLines} from '../state/jsonl.ts';
 import {ServiceLog} from '../service/log.ts';
 import {record} from '../events/store.ts';
-import {consoleNotify} from '../console/notify.ts';
 export interface Inverse {kind:string; args:Record<string,unknown>}
 export interface ActionRequest extends Inverse {agent:string; run_id:string; why:string}
 export interface LogEntry extends ActionRequest {id:string; at:string; status:'pending'|'applied'|'refused'|'failed'|'undone'; reason?:string; undo:Inverse|null; undoes?:string}
@@ -24,14 +23,14 @@ export class ActionLog {
  async writePending(entry:ActionRequest & {undo:Inverse|null; undoes?:string},at=new Date().toISOString()):Promise<LogEntry> {
   const row:LogEntry={...entry,id:randomUUID(),at,status:'pending'};
   check(row);
-  await withStateLock(this.path,()=>appendFile(this.path,JSON.stringify(row)+'\n')); await this.event(row); consoleNotify(); return row;
+  await withStateLock(this.path,()=>appendFile(this.path,JSON.stringify(row)+'\n')); await this.event(row); return row;
  }
  async settle(id:string,status:LogEntry['status'],reason?:string,undo?:Inverse|null):Promise<LogEntry> {
   return withStateLock(this.path,async()=>{
   const rows=await this.list(); const row=rows.find(r=>r.id===id); if(!row)throw new Error('action not found');
   row.status=status; if(reason!==undefined)row.reason=reason; if(undo!==undefined)row.undo=undo;
   check(row);
-  await writeFile(this.path+'.tmp',rows.map(r=>JSON.stringify(r)+'\n').join('')); await rename(this.path+'.tmp',this.path); await this.event(row); consoleNotify(); return row;
+  await writeFile(this.path+'.tmp',rows.map(r=>JSON.stringify(r)+'\n').join('')); await rename(this.path+'.tmp',this.path); await this.event(row); return row;
   });
  }
  async markUndone(id:string):Promise<void> {await this.settle(id,'undone');}

@@ -1,4 +1,3 @@
-import {consoleNotify} from '../console/notify.ts';
 import {appendFile, readFile, rename, writeFile, open, unlink, stat} from 'node:fs/promises';
 import type {StatePaths} from '../state/paths.ts';
 import {validate} from '../schema/validate.ts';
@@ -72,7 +71,6 @@ export class ParameterStore {
   const entry={name,old:old[field],new:next[field],field,actor,at:next.at};
   await appendFile(this.paths.parametersHistory,JSON.stringify(entry)+'\n');
   await record(this.paths,'parameter.changed',next.at,entry);
-  consoleNotify();
  }
  async initialize():Promise<void> {
   await withStateLock(this.paths.parameters,async()=>{

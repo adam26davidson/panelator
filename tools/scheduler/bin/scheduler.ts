@@ -245,6 +245,7 @@ let restartRequested = false;
 // Spec 051 AC-1, AC-3, AC-4: the console is off without a `console` block.
 const consoleView={issues:new Map<number,{title:string;class:string}>(),next:[] as number[]};
 let consolePoller:import('../src/console/poll.ts').ConsolePoller|null=null;
+let consoleWatch:{close():void}|null=null;
 let consoleDep:{pusher:import('../src/console/push.ts').ConsolePusher;view:typeof consoleView}|undefined;
 let telegramPollerRef:TelegramPoller|null=null;
 if(cfg.console){
@@ -252,8 +253,9 @@ if(cfg.console){
   const {buildConsoleState}=await import('../src/console/state.ts');
   const pusher=new ConsolePusher({cfg:cfg.console,fetch:globalThis.fetch,now:()=>new Date(),log:rec=>serviceLog.write(rec),
     build:()=>buildConsoleState({cfg,paths,parameters,log:actionLog,registry,metrics,now:()=>new Date(),issues:()=>consoleView.issues,upNext:()=>consoleView.next,telegramUsername:()=>telegramPollerRef?.username??null})});
-  const {setConsoleNotifier}=await import('../src/console/notify.ts');
-  setConsoleNotifier(()=>pusher.notify());
+  // AC-3: a question, claim, action or parameter write is seen on its state file and pushed, debounced by the pusher.
+  const {watchConsoleSources}=await import('../src/console/watch.ts');
+  consoleWatch=watchConsoleSources(paths,()=>pusher.notify(),rec=>serviceLog.write(rec));
   consoleDep={pusher,view:consoleView};
 }else serviceLog.write({kind:'console',status:'off'});
 const scheduler: Scheduler = new Scheduler({
@@ -278,7 +280,7 @@ const scheduler: Scheduler = new Scheduler({
     exitCode = 75;
     stopRefresh();
     scheduler.stop("restart");
-    void telegramPoller?.stop();void consolePoller?.stop();
+    void telegramPoller?.stop();void consolePoller?.stop();consoleWatch?.close();
   },
 });
 
@@ -291,7 +293,7 @@ if(cfg.console&&consoleDep){
   consolePoller=new ConsolePoller({cfg:cfg.console,fetch:globalThis.fetch,action,pusher:consoleDep.pusher,log:rec=>serviceLog.write(rec)});
   consolePoller.start();
 }
-for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => {scheduler.stop(sig);void telegramPoller?.stop();void consolePoller?.stop();});
+for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => {scheduler.stop(sig);void telegramPoller?.stop();void consolePoller?.stop();consoleWatch?.close();});
 
 if (has("--once")) {
   const info = await scheduler.tick();
@@ -301,6 +303,6 @@ if (has("--once")) {
 }
 await scheduler.run();
 await telegramPoller?.stop();
-await consolePoller?.stop();
+await consolePoller?.stop();consoleWatch?.close();
 stopRefresh();
 process.exit(exitCode);

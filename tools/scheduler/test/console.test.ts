@@ -197,23 +197,33 @@ describe("push (spec 051 AC-3)", () => {
 });
 
 describe("event pushes (spec 051 AC-3)", () => {
-  it("a question, claim, action or parameter write notifies the pusher", async () => {
-    const { setConsoleNotifier, consoleNotify } = await import("../src/console/notify.ts");
+  it("a question, claim, action or parameter write is seen on its state file and notifies the pusher", async () => {
+    const { watchConsoleSources } = await import("../src/console/watch.ts");
     const { appendQuestionLog } = await import("../src/state/questions.ts");
-    const { removeClaim } = await import("../src/state/claims.ts");
+    const { writeFile } = await import("node:fs/promises");
     const { ctx, paths } = await applyCtx();
     let n = 0;
-    setConsoleNotifier(() => { n += 1; });
+    const w = watchConsoleSources(paths, () => { n += 1; });
+    const seen = async (what: string, act: () => Promise<unknown>) => {
+      const before = n;
+      await act();
+      for (let i = 0; i < 200 && n === before; i += 1) await new Promise((r) => setTimeout(r, 10));
+      expect(n, what).toBeGreaterThan(before);
+    };
     try {
-      await ctx.parameters.setParameter("system_work_share", 0.4, "maintainer");
-      expect(n).toBe(1);
-      await ctx.log.writePending({ kind: "pause_agent", args: { name: "x" }, agent: "maintainer", run_id: "r", why: "a reason of enough length", undo: null });
-      expect(n).toBe(2);
-      await removeClaim(paths, 999);
-      expect(n).toBe(3);
-      await appendQuestionLog(paths, { issue: 1, at: "2026-11-22T10:00:00Z", event: "asked", asking_stage: "plan" as never, question: { question: "q?", options: [] } as never }).catch(() => {});
-      expect(n).toBeGreaterThanOrEqual(3);
-    } finally { setConsoleNotifier(null); }
+      await seen("parameter", () => ctx.parameters.setParameter("system_work_share", 0.4, "maintainer"));
+      await seen("action", () => ctx.log.writePending({ kind: "pause_agent", args: { name: "x" }, agent: "maintainer", run_id: "r", why: "a reason of enough length", undo: null }));
+      await seen("claim", () => writeFile(join(paths.claims, "999.json"), "{}"));
+      await seen("question", () => appendQuestionLog(paths, { issue: 1, at: "2026-11-22T10:00:00Z", event: "asked", asking_stage: "plan" as never, question: { question: "q?", options: [] } as never }).catch(() => writeFile(paths.questionsLog, "\n", { flag: "a" })));
+      const quiet = n;
+      await writeFile(join(paths.claims, "999.json.tmp"), "{}");
+      await new Promise((r) => setTimeout(r, 100));
+      expect(n).toBe(quiet);
+    } finally { w.close(); }
+    const closed = n;
+    await writeFile(join(paths.claims, "1000.json"), "{}");
+    await new Promise((r) => setTimeout(r, 100));
+    expect(n).toBe(closed);
   });
 });
 
