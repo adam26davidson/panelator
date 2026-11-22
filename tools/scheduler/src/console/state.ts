@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { readCost } from "../aws/book.ts";
 import type { ActionLog } from "../actions/log.ts";
 import type { ParameterStore } from "../parameters/store.ts";
@@ -10,7 +12,7 @@ import { listAgentStates } from "../standing/state.ts";
 import { readJsonLines } from "../state/jsonl.ts";
 import { listClaims } from "../state/claims.ts";
 import type { StatePaths } from "../state/paths.ts";
-import { readUsageRecord } from "../state/runs.ts";
+import { readUsageRecord, type UsageRecord } from "../state/runs.ts";
 import type { QuestionLogEntry } from "../state/questions.ts";
 import type { StandingDefinition } from "../types.ts";
 
@@ -69,7 +71,7 @@ async function questions(ctx: ConsoleStateContext) {
   }));
 }
 
-async function current(ctx: ConsoleStateContext, now: Date) {
+async function current(ctx: ConsoleStateContext, now: Date, usage: UsageRecord[]) {
   const claims = (await listClaims(ctx.paths)).sort((a, b) => a.started_at.localeCompare(b.started_at));
   const titles = ctx.issues?.() ?? new Map();
   const out = [];
@@ -81,11 +83,9 @@ async function current(ctx: ConsoleStateContext, now: Date) {
     const at = track ? 0 : STAGES.indexOf(s.stage);
     const failed = false;
     const stages = names.map((name, i) => ({ name, status: (failed ? "failed" : at < 0 ? "pending" : i < at ? "done" : i === at ? "running" : "pending") as "done" | "running" | "pending" | "failed" }));
-    let model = "", cost = 0;
-    for (const id of c.run_id ? [c.run_id] : []) {
-      const u = await readUsageRecord(ctx.paths, id).catch(() => null);
-      if (u) { model = u.model; cost += u.cost_usd ?? 0; }
-    }
+    const mine = usage.filter((u) => u.issue === c.issue && u.started_at >= c.started_at).sort((a, b) => a.started_at.localeCompare(b.started_at));
+    const model = mine.at(-1)?.model ?? "";
+    const cost = mine.reduce((n, u) => n + (u.cost_usd ?? 0), 0);
     out.push({
       issue: c.issue, title: titles.get(c.issue)?.title ?? "", stage: track ?? s.stage, stages, model,
       started_at: c.started_at, elapsed_s: Math.max(0, Math.round((now.getTime() - Date.parse(c.started_at)) / 1000)), cost_usd: cost,
@@ -115,12 +115,14 @@ async function metricsReport(ctx: ConsoleStateContext, now: Date): Promise<Metri
 export async function buildConsoleState(ctx: ConsoleStateContext) {
   const now = ctx.now();
   const report = await metricsReport(ctx, now);
-  const cur = await current(ctx, now).catch(() => []);
+  const records = await usageSince(ctx, new Date(now.getTime() - 30 * DAY));
+  const cur = await current(ctx, now, records).catch(() => []);
   const cost = await readCost(ctx.paths).catch(() => null);
   const cap = await ctx.parameters.read("aws_cap_usd").then((v) => (typeof v.value === "number" ? v.value : null)).catch(() => null);
   const titles = ctx.issues?.() ?? new Map();
   const states = await listAgentStates(ctx.paths).catch(() => ({}));
-  const usage = await cost30(ctx, now);
+  const usage = new Map<string, number>();
+  for (const u of records) if (u.run_id.startsWith("standing-")) usage.set(u.stage, (usage.get(u.stage) ?? 0) + (u.cost_usd ?? 0));
   const stored = await ctx.parameters.all().catch(() => ({}));
   const changes = (await readChanges(ctx.paths)).slice(-50);
   const actions = await ctx.log.list().then((r) => r.slice(-200)).catch(() => []);
@@ -152,7 +154,17 @@ export async function buildConsoleState(ctx: ConsoleStateContext) {
   };
 }
 
-/** Cost per agent over the last 30 days, from the events index when it exists (agents' runs are recorded as events). */
-async function cost30(_ctx: ConsoleStateContext, _now: Date): Promise<Map<string, number>> {
-  return new Map();
+/** The usage records written since `since` (a record's file is written when its run ends). */
+async function usageSince(ctx: ConsoleStateContext, since: Date): Promise<UsageRecord[]> {
+  let names: string[];
+  try { names = (await readdir(ctx.paths.usage)).filter((n) => n.endsWith(".json")); } catch { return []; }
+  const out: UsageRecord[] = [];
+  for (const n of names) {
+    try {
+      if ((await stat(join(ctx.paths.usage, n))).mtimeMs < since.getTime()) continue;
+      const u = await readUsageRecord(ctx.paths, n.slice(0, -5));
+      if (u) out.push(u);
+    } catch { /* an unreadable record is skipped */ }
+  }
+  return out;
 }

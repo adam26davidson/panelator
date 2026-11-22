@@ -2332,3 +2332,28 @@ describe("Scheduler.tick credential_expiry producer (spec 099 AC-3)", () => {
     expect(await expiryEvents(ctx)).toEqual([]);
   });
 });
+
+describe("Scheduler.tick console step (spec 051 AC-1, AC-3)", () => {
+  it("fills the issue titles and classes for the snapshot, then pushes after the tick's work", async () => {
+    const h = await setup(routes([issue(1, ["validated", "class:tooling"])]), 1);
+    const { ConsolePusher } = await import("../src/console/push.ts");
+    const puts: string[] = [];
+    const pusher = new ConsolePusher({
+      cfg: { url: "https://c.example", credentials_path: "/none", github_client_id: "", push_min_s: 30, long_poll_s: 25 },
+      fetch: async (url, init) => { puts.push(`${init?.method} ${url}`); return new Response("{}"); }, readKey: async () => "k", now: () => new Date("2026-10-12T12:00:00Z"), log: () => {},
+      build: async () => ({ generated_at: "x" }),
+    });
+    const view = { issues: new Map<number, { title: string; class: string }>(), next: [] as number[] };
+    h.deps.console = { pusher, view };
+    await h.s.tick();
+    expect(view.issues.get(1)).toEqual({ title: "i1", class: "tooling" });
+    expect(puts).toEqual(["PUT https://c.example/state"]);
+    await h.s.tick();
+    expect(puts).toHaveLength(1);
+  });
+  it("with no console configured nothing is pushed and the tick is unchanged", async () => {
+    const h = await setup(routes([]));
+    expect(h.deps.console).toBeUndefined();
+    await h.s.tick();
+  });
+});

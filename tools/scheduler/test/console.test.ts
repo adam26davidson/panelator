@@ -290,3 +290,31 @@ describe("console/infra/stack.yaml", () => {
     expect(existsSync("console/infra/stack.yaml")).toBe(true);
   });
 });
+
+import { initialChainState } from "../src/chain/machine.ts";
+import { writeClaim } from "../src/state/claims.ts";
+import { writeUsageRecord } from "../src/state/runs.ts";
+
+describe("current claims and agent cost (spec 051 AC-2)", () => {
+  const usage = (run_id: string, issue: number, stage: string, started_at: string, cost: number) => ({
+    run_id, issue, stage, attempt: 1, outcome: "ok" as const, harness: "claude" as const, model: "claude-opus-5-5", cost_usd: cost, input_tokens: 1, output_tokens: 1,
+    cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 1, wall_seconds: 5, started_at, ended_at: started_at, events_path: "x",
+  });
+  it("sums the cost of a claim's runs, names its stages and its model, and counts a standing agent's 30 days", async () => {
+    const { base, paths } = await consoleCtx();
+    const started = "2026-11-22T09:00:00Z";
+    await writeClaim(paths, { issue: 7, state: { ...initialChainState(7), stage: "implement", track: "issue", pr: { number: 21, head_sha: "a".repeat(40) } }, worktree: "/w", started_at: started, last_activity_at: started, run_id: null });
+    await writeUsageRecord(paths, usage("7-plan-1-20261122T090100", 7, "plan", "2026-11-22T09:01:00Z", 1.25));
+    await writeUsageRecord(paths, usage("7-implement-1-20261122T091000", 7, "implement", "2026-11-22T09:10:00Z", 2));
+    await writeUsageRecord(paths, usage("8-plan-1-20261122T090100", 8, "plan", "2026-11-22T09:01:00Z", 9));
+    await writeUsageRecord(paths, usage("standing-audit-20261121T000000", 0, "audit", "2026-11-21T00:00:00Z", 0.5));
+    const s = await buildConsoleState({ ...base, registry: { audit: {} as never }, issues: () => new Map([[7, { title: "Seven", class: "tooling" }]]), upNext: () => [7] });
+    expect(validate("console-state", s)).toEqual({ ok: true });
+    expect(s.current).toHaveLength(1);
+    expect(s.current[0]).toMatchObject({ issue: 7, title: "Seven", stage: "implement", model: "claude-opus-5-5", cost_usd: 3.25, pr: 21, elapsed_s: 3600 });
+    expect(s.current[0].stages.map((x) => [x.name, x.status])).toEqual([["plan", "done"], ["implement", "running"], ["verify", "pending"], ["review", "pending"], ["fix", "pending"], ["merge", "pending"]]);
+    expect(s.next_tick_at).toBeNull();
+    expect(s.up_next).toEqual([{ issue: 7, title: "Seven", class: "tooling" }]);
+    expect(s.agents.find((a) => a.name === "audit")?.cost_30d_usd).toBe(0.5);
+  });
+});
