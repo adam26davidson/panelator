@@ -3,7 +3,9 @@
 Status: written 2026-11-22 for issue #430, the planned child
 `widget-abi-and-rust-sdk` of the v0 build design; a spec derived from its
 parent design needs no maintainer approval (delivery-system design section
-11). *(agent's call)*
+11). *(agent's call)* Revised 2026-11-22 after the plan stage kept failing
+with `profile not available: widget`: section 2 now says why that
+failure changes nothing in this spec; no criterion changed.
 Class: product. Domain: widget (sensitive path: `.github/workflows/ci.yml`,
 under `.github/`; process-spec section 5).
 Parent: docs/designs/product-v0-build.md
@@ -67,7 +69,20 @@ widget module is. After this spec:
   directory, so a plan whose domain is `widget` stops with
   `profile not available` (`agents/stages/plan.md`). Adding it is
   delivery-system work tracked by issue #459; this spec's implementation
-  starts once it exists and changes nothing under `agents/`.
+  starts once it exists and changes nothing under `agents/`. That failure
+  is not a gap in this spec, and no revision of it is the remedy. The work
+  lies in `sdk/` and `widgets/` because the issue and the parent design put
+  it there, so its domain is `widget`, and the plan prompt rules out
+  planning it under `backend` to get past the check: the implementation
+  and its review need the widget profile's tools and criteria (the pinned
+  toolchain with the WASM target, the golden frames). Nothing here is to be
+  moved to another directory, split off or reworded so that a plan passes
+  before the profile exists. A plan or spec run that meets
+  `profile not available: widget` has found issue #459 still open; the
+  remedy is that issue, and until it merges this issue waits or is taken
+  up again afterwards. *(agent's call, revision of 2026-11-22: the spec was
+  sent back to be changed so the plan stops failing; the only changes that
+  would do that are the ones this paragraph rules out.)*
 - Any change to the sensitive-path list, the security review criteria or
   what routes a diff to the security review.
 
