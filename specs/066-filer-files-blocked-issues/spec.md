@@ -251,7 +251,7 @@ marker; a comment by any other account never counts.
 
 **Lifting**
 
-- AC-7. Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-6: the pass judges every open blocked issue that is not a planned child, whoever its author, and a blocked-by marker comment by the maintainer counts as the bot's does (AC-7). **The children scan lifts a `blocked_by` block whose issues are
+- AC-7. Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-6: the pass judges every open blocked issue, whoever its author and planned child or not (a block for an `after:` has no blocked-by marker and is left to spec 031 AC-6), and a blocked-by marker comment by the maintainer counts as the bot's does (AC-7). **The children scan lifts a `blocked_by` block whose issues are
   done.** Given `fileDesignChildren` (spec 031 AC-3: the first tick after
   start and every move of `main`) and, in its listing, an open issue
   authored by the bot carrying `blocked` whose comments hold a bot comment

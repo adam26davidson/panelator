@@ -260,16 +260,31 @@ App bot login; "the maintainer" is `cfg.maintainer`. The marker is spec
 - AC-6. **The scan's pass lifts a wait on any issue.** Given
   `liftFilerBlocks` (spec 066 AC-7, run by `fileDesignChildren` on the
   first tick after start and every move of `main`), then it judges every
-  open issue carrying `blocked` that is not a planned child, whoever its
-  author is: the test `issue.author !== botLogin` goes, because the trust
-  is in the marker comment's author, not the issue's. Given open issue 255
+  open issue carrying `blocked`, whoever its author is and whether or not
+  its body carries the `panelator-child:` marker: the test
+  `issue.author !== botLogin` goes, because the trust is in the marker
+  comment's author, not the issue's, and the planned-child body test
+  (`blocked.ts:63`) goes too, because the issue's comments say whose block
+  it is. A block set for an `after:` carries the `panelator-child-blocked`
+  marker and never a blocked-by one, so `latestBlockedBy` returns null for
+  it and the pass leaves it to spec 031 AC-6; a wait carries the blocked-by
+  marker and is the pass's, even on an issue the scan filed from a planned
+  child (every issue of `docs/designs/product-v0-build.md`). Given open issue 255
   (authored by the maintainer or the bot) with `blocked` and the comment of
   AC-3 naming 37 and 94 as its latest blocked-by marker, when 37 and 94 are
   both done, then the pass removes `blocked`, posts
   `Unblocked: #37, #94 are done.` with the unblocked-by marker and logs
   `{ kind: "filer-unblocked", issue: 255, blocked_by: [37, 94] }`, exactly
   as for a filer block; given 94 is open or closed with `abandoned`, then
-  nothing changes. Everything else in spec 066 AC-7 holds: a number absent
+  nothing changes. Given such a child-marked issue whose spec has merged
+  (its design bullet is now a file bullet) or whose entry is still
+  `planned`, with a wait comment of AC-3, then the pass lifts it when its
+  predecessors are done; spec 031 AC-6's loop, which visits only entries
+  still `planned` and stops at the `panelator-child-unblocked` comment, does
+  not remove a wait, and spec 078 AC-1's repair (a bot-applied `blocked`
+  with no `panelator-child-blocked` comment) skips an issue whose latest
+  blocked-by marker is set, so it never posts a child-blocked comment over a
+  wait. Everything else in spec 066 AC-7 holds: a number absent
   from the listing counts as done and is logged, a later unblocked-by
   marker by the bot ends the pass's interest in the issue, a
   `blocked_until` block is never lifted, and a failure on one issue is
@@ -277,7 +292,9 @@ App bot login; "the maintainer" is `cfg.maintainer`. The marker is spec
   open issues with `blocked` only (one `listComments` each per scan). A
   `children.test.ts` test with a maintainer-authored issue blocked by the
   bot's marker comment, its predecessors closing between two scans, asserts
-  the lift. *(agent's call)* A predecessor that closes between the
+  the lift, and a second with a body carrying `<!-- panelator-child: -->`
+  (a waiting planned-child issue) asserts the lift and that no
+  `panelator-child-blocked` comment is posted. *(agent's call)* A predecessor that closes between the
   driver's listing in AC-3 and the label is lifted by the next scan (the
   next move of `main`, or the next start): a delay, never a strand.
 - AC-7. **A hand-set block lifts itself when the maintainer's comment
@@ -316,8 +333,8 @@ App bot login; "the maintainer" is `cfg.maintainer`. The marker is spec
 
 - Spec 006 AC-19 is marked `Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-3: a plan result of waiting that names an issue not yet done blocks the issue and releases the claim with no bound spent; one that names none, or a fourth, is handled as a spec_gap.`
 - Spec 077 AC-2 is marked `Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-3: a plan result of waiting names no domain and skips the check, as an escalating plan does.`
-- Spec 066 AC-7 is marked `Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-6: the pass judges every open blocked issue that is not a planned child, whoever its author, and a blocked-by marker comment by the maintainer counts as the bot's does (AC-7).`
-- Spec 031 AC-6 is marked `Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-7: a hand-set blocked whose comment by the maintainer carries a panelator-blocked-by marker is lifted once every issue it names is done; one without that marker is still never removed.`
+- Spec 066 AC-7 is marked `Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-6: the pass judges every open blocked issue, whoever its author and planned child or not (a block for an `after:` has no blocked-by marker and is left to spec 031 AC-6), and a blocked-by marker comment by the maintainer counts as the bot's does (AC-7).`
+- Spec 031 AC-6 is marked `Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-6 and AC-7: a wait on an issue carrying the child marker is lifted by the filer pass, not this loop, and a hand-set blocked whose comment by the maintainer carries a panelator-blocked-by marker is lifted once every issue it names is done; one without that marker is still never removed.`
 
 In each case the earlier text stays as the record. Spec 066 AC-3 and AC-6,
 spec 060 and spec 026 AC-2 are not amended: the comment, the re-point, the
@@ -345,6 +362,8 @@ This list is the implementation's file scope.
   action's event reason (AC-2, AC-3).
 - `tools/scheduler/src/filer/blocked.ts`: `liftFilerBlocks` without the
   author test, `latestBlockedBy` with the maintainer (AC-6, AC-7).
+- `tools/scheduler/src/children/scan.ts`: spec 078 AC-1's repair skips an
+  issue whose latest blocked-by marker is set (AC-6).
 - `tools/scheduler/src/children/scan.ts` and its caller in
   `tools/scheduler/src/service/loop.ts`: the maintainer login passed to the
   pass (AC-7).
