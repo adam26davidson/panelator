@@ -80,7 +80,7 @@ describe("end to end: infra health scales the ledger (spec 068 AC-10)", () => {
       (run: { prompt: string }) => { seen = run.prompt; return { summary: "scaled A down", actions: [scale("A", "down")], findings: [{ what: "reservation B cannot scale: no descriptor", where: "aws/ledger.json", evidence: "B is 8 USD a month with no scale descriptor; forecast was 11 USD against 10 USD", noticed_how: "infra health sweep" }] }; },
       { summary: "tried up under the cap", actions: [scale("A", "up")] },
       { summary: "cap raised", actions: [scale("A", "up"), scale("A", "up"), scale("R", "up")] },
-    ] }, { repeatHours: 0 }); // the limiter's lasting-gate window would hold the recovery back; see the run's findings
+    ] }); // the limiter runs with its default windows, as the service does
     await writeLedger(w.paths, fixtureLedger());
     // the pull: actual 4 USD on the 15th of a 30-day month, reserved 14 USD (the released R counts for nothing)
     await w.run();
