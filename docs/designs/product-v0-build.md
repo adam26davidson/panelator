@@ -112,19 +112,7 @@ spike's result can move all of it.
 
 ## Children
 
-- planned: firmware-project-and-hil
-  title: Firmware: an ESP-IDF project that builds in CI and boots, with the HIL workflow that tests it on the board
-  brief: Milestone 1, first firmware step (product spec 3, 13; spec 070 section 8; ADR 0013). Create the
-    ESP-IDF project in `firmware/` for the ESP32-S3-N16R8: a pinned ESP-IDF version built in the official
-    container, a CI job that builds it, clang-format and clang-tidy, and a host-side unit test target. The
-    image only boots and prints a boot banner with its commit. In the same PR, add the HIL workflow and
-    serial harness that spec 070 section 8 specifies (workflow file, triggers, one-at-a-time concurrency,
-    the check run and its `hil-result.json` output, the outcomes, the restore of the last-good image), on
-    the laptop's self-hosted runner, with a first suite of one test (flash, see the banner). The release
-    workflow of that section (build, sign, publish) is left to `rest-of-v0` with OTA. The panel driver is
-    `firmware-panel-driver`. Ask for anything the runner or the board needs from the maintainer (the board
-    attached to the runner, runner labels) as a capability question.
-  class: class:product
+- `specs/106-firmware-project-and-hil/spec.md` (issue #428)
 - planned: firmware-panel-driver
   title: Firmware: board definition, HUB75 panel driver and a full RGB framebuffer showing a test pattern
   brief: Milestone 1 (product spec 2, 3). On the project of `firmware-project-and-hil`, add the one board
@@ -137,7 +125,7 @@ spike's result can move all of it.
     predecessor firmware in `char-matrix-dashboard` (or from `hardware/` once the carrier is there); the
     App's token cannot read that repository, so ask for the files or the access as a capability question.
     WASM, layers and the compositor are `firmware-wasm-runtime`.
-  after: firmware-project-and-hil
+  after: specs/106-firmware-project-and-hil/spec.md
   class: class:product
 - `specs/107-widget-abi-and-rust-sdk/spec.md` (issue #430)
 - planned: firmware-wasm-runtime

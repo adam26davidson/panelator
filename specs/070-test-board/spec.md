@@ -493,6 +493,8 @@ None.
 
 ## 8. The HIL job contract (what the firmware's workflows implement)
 
+> Amended by [106-firmware-project-and-hil](../106-firmware-project-and-hil/spec.md) section 4: one run at a time on the board is kept by the single labelled runner and the harness's lock with a concurrency group per pull request or commit, and an image that gives no banner while no last-good image is cached is `fail` when download mode still answers.
+
 The scheduler reads one check run per HIL run, named `firmware.hil_check`
 (default `hil`), posted by the workflow `.github/workflows/<firmware.hil_workflow>`
 (default `hil.yml`) running on the laptop's self-hosted runner:
