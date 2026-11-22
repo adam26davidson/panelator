@@ -1,0 +1,9 @@
+{
+  "workspaces": {
+    "console": {
+      "entry": ["test/**/*.test.{ts,tsx}", "api/lambda.ts", "src/main.tsx"],
+      "project": ["src/**/*.{ts,tsx}", "api/**/*.ts", "test/**/*.{ts,tsx}"],
+      "ignoreDependencies": ["tailwindcss", "jsdom"]
+    }
+  }
+}

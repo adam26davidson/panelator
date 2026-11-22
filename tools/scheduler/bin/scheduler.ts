@@ -222,6 +222,18 @@ if(appKeySource==='store')fromStore.add('github-app-key');
 if(telegram?.source==='store')fromStore.add('telegram-bot');
 let exitCode = 0;
 let restartRequested = false;
+// Spec 051 AC-1, AC-3, AC-4: the console is off without a `console` block.
+const consoleView={issues:new Map<number,{title:string;class:string}>(),next:[] as number[]};
+let consolePoller:import('../src/console/poll.ts').ConsolePoller|null=null;
+let consoleDep:{pusher:import('../src/console/push.ts').ConsolePusher;view:typeof consoleView}|undefined;
+let telegramPollerRef:TelegramPoller|null=null;
+if(cfg.console){
+  const {ConsolePusher}=await import('../src/console/push.ts');
+  const {buildConsoleState}=await import('../src/console/state.ts');
+  const pusher=new ConsolePusher({cfg:cfg.console,fetch:globalThis.fetch,now:()=>new Date(),log:rec=>serviceLog.write(rec),
+    build:()=>buildConsoleState({cfg,paths,parameters,log:actionLog,registry,metrics,now:()=>new Date(),issues:()=>consoleView.issues,upNext:()=>consoleView.next,telegramUsername:()=>telegramPollerRef?.username??null})});
+  consoleDep={pusher,view:consoleView};
+}else serviceLog.write({kind:'console',status:'off'});
 const scheduler: Scheduler = new Scheduler({
   cfg, paths, gh, telegram: null,registry,metrics,credentials:{store:credStore,catalogue,warnDays:cfg.credentials.warn_days},plainFiles:{store:credStore,paths:{'github-app-key':cfg.app.private_key_path,...(cfg.telegram?{'telegram-bot':cfg.telegram.credentials_path}:{})},fromStore}, parameters, notifier,
   stages: loadStageDefinitions(join(agentsRoot, "stages")), agentsDir: agentsRoot, repoDir: repoRoot, binDir, configPath: flag("--config") ?? defaultConfigPath, catalogue, scope: () => checkInstallationScope({ app, installationId: cfg.app.installation_id, repo: cfg.repo }), checkContext: { store: credStore, app: cfg.app, now: () => new Date() },
@@ -230,7 +242,7 @@ const scheduler: Scheduler = new Scheduler({
   stopUnit: (unit) => systemdStopUnit(unit, { enabled: cfg.systemd.scope }),
   refreshToken: () => app.refreshTokenFile(paths).then(() => {}),
   log: (rec) => serviceLog.write(rec), fetchOrigin: () => fetchOrigin(repoRoot),
-  aws: awsContext, botLogin, serviceLog, inhibitor,
+  aws: awsContext, botLogin, serviceLog, inhibitor, console: consoleDep,
   // Spec 100: the real host probe (GitHub's hosts over the global fetch, statfs); the scheduler builds its host monitor around it.
   probeHost: () => probeHost({ paths, fetch: globalThis.fetch, freeSpace: statfsFreeSpace, log: (rec) => serviceLog.write(rec) }),
   fastForward: () => fastForwardMain(repoRoot), sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -244,13 +256,20 @@ const scheduler: Scheduler = new Scheduler({
     exitCode = 75;
     stopRefresh();
     scheduler.stop("restart");
-    void telegramPoller?.stop();
+    void telegramPoller?.stop();void consolePoller?.stop();
   },
 });
 
 const telegramPoller=telegram?new TelegramPoller(telegram.client,paths.telegramOffset,cfg.telegram!.long_poll_timeout_s,u=>scheduler.handleTelegramUpdate(u),rec=>serviceLog.write(rec),undefined,u=>scheduler.confirmTelegramUpdate(u),()=>{attachedTelegram=telegram;scheduler.setTelegram(telegram);}):null;
 telegramPoller?.start();
-for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => {scheduler.stop(sig);void telegramPoller?.stop();});
+telegramPollerRef=telegramPoller;
+if(cfg.console&&consoleDep){
+  const {ConsolePoller}=await import('../src/console/poll.ts');
+  const action=():import('../src/actions/index.ts').ActionContext=>({paths,parameters,log:actionLog,levels,now:()=>new Date(),gh:{rerunWorkflowRun:async()=>{throw new Error('not offered by the console');},cancelWorkflowRun:async()=>{throw new Error('not offered by the console');}}});
+  consolePoller=new ConsolePoller({cfg:cfg.console,fetch:globalThis.fetch,action,pusher:consoleDep.pusher,log:rec=>serviceLog.write(rec)});
+  consolePoller.start();
+}
+for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => {scheduler.stop(sig);void telegramPoller?.stop();void consolePoller?.stop();});
 
 if (has("--once")) {
   const info = await scheduler.tick();
@@ -260,5 +279,6 @@ if (has("--once")) {
 }
 await scheduler.run();
 await telegramPoller?.stop();
+await consolePoller?.stop();
 stopRefresh();
 process.exit(exitCode);

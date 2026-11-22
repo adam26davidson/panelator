@@ -135,3 +135,86 @@ describe("applyChange (spec 051 AC-4)", () => {
     expect((await log.list()).every((r) => r.status !== "applied")).toBe(true);
   });
 });
+
+import { ConsolePusher } from "../src/console/push.ts";
+import { ConsolePoller } from "../src/console/poll.ts";
+
+const ccfg = { url: "https://c.example", credentials_path: "/none", github_client_id: "id", push_min_s: 30, long_poll_s: 25 };
+const SECRET = "sekrit-key-123";
+
+function fakeNet() {
+  const calls: { url: string; method: string; body?: string; auth?: string }[] = [];
+  let failPut = false;
+  const queue: unknown[][] = [];
+  const fetch = async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    calls.push({ url, method, body: init?.body as string | undefined, auth: (init?.headers as Record<string, string> | undefined)?.authorization });
+    if (method === "PUT" && failPut) return new Response("no", { status: 500 });
+    if (url.includes("/changes?")) return new Response(JSON.stringify({ changes: queue.shift() ?? [] }));
+    return new Response("{}");
+  };
+  return { calls, fetch, queue, fail: (v: boolean) => { failPut = v; } };
+}
+
+describe("push (spec 051 AC-3)", () => {
+  it("pushes on the first tick, not again inside push_min_s without change, again on change or after push_min_s", async () => {
+    const net = fakeNet();
+    let t = 1_000_000, n = 0;
+    const logs: Record<string, unknown>[] = [];
+    const p = new ConsolePusher({ cfg: ccfg, fetch: net.fetch, readKey: async () => SECRET, now: () => new Date(t), log: (r) => logs.push(r), build: async () => ({ generated_at: String(t), v: 1 + (n > 0 ? 1 : 0) }) });
+    const puts = () => net.calls.filter((c) => c.method === "PUT").length;
+    await p.tick(); expect(puts()).toBe(1);
+    t += 10_000; await p.tick(); expect(puts()).toBe(1);
+    n = 1; t += 1000; await p.tick(); expect(puts()).toBe(2);
+    t += 31_000; await p.tick(); expect(puts()).toBe(3);
+    expect(net.calls[0].auth).toBe(`Bearer ${SECRET}`);
+    expect(JSON.stringify(logs)).not.toContain(SECRET);
+  });
+  it("logs a failed push once per change of outcome and retries at the next tick", async () => {
+    const net = fakeNet();
+    let t = 0;
+    const logs: Record<string, unknown>[] = [];
+    const p = new ConsolePusher({ cfg: ccfg, fetch: net.fetch, readKey: async () => SECRET, now: () => new Date(t), log: (r) => logs.push(r), build: async () => ({ generated_at: "x" }) });
+    net.fail(true);
+    await p.tick(); t += 1000; await p.tick(); await p.tick();
+    expect(logs.filter((l) => l.status === "push-failed")).toHaveLength(1);
+    expect(net.calls.filter((c) => c.method === "PUT")).toHaveLength(3);
+    net.fail(false); t += 1000; await p.tick();
+    expect(logs.at(-1)).toMatchObject({ status: "push-recovered" });
+  });
+  it("debounces event pushes to one per push_min_s", async () => {
+    const net = fakeNet();
+    let t = 100_000;
+    const timers: (() => void)[] = [];
+    const p = new ConsolePusher({ cfg: ccfg, fetch: net.fetch, readKey: async () => SECRET, now: () => new Date(t), log: () => {}, build: async () => ({ generated_at: "x" }), setTimer: (f) => { timers.push(f); return 1; } });
+    await p.tick();
+    p.notify(); p.notify(); p.notify();
+    expect(timers).toHaveLength(1);
+    expect(net.calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+    t += 30_000; timers[0](); await new Promise((r) => setTimeout(r, 5));
+    expect(net.calls.filter((c) => c.method === "PUT")).toHaveLength(2);
+  });
+});
+
+describe("poll (spec 051 AC-4)", () => {
+  it("applies a pulled set_parameter, posts its outcome and pushes after it", async () => {
+    const { ctx, change } = await applyCtx();
+    const net = fakeNet();
+    const pusher = new ConsolePusher({ cfg: ccfg, fetch: net.fetch, readKey: async () => SECRET, now: () => new Date(), log: () => {}, build: async () => ({ generated_at: "x" }) });
+    const logs: Record<string, unknown>[] = [];
+    const poller = new ConsolePoller({ cfg: ccfg, fetch: net.fetch, readKey: async () => SECRET, action: () => ctx, pusher, log: (r) => logs.push(r) });
+    net.queue.push([change(1, "set_parameter", { name: "system_work_share", value: 0.5 }), change(2, "bogus", {})]);
+    expect(await poller.once()).toBe(2);
+    expect(net.calls[0].url).toBe("https://c.example/changes?after=0&wait=25");
+    const posts = net.calls.filter((c) => c.method === "POST");
+    expect(posts.map((c) => c.url)).toEqual(["https://c.example/changes/1/result", "https://c.example/changes/2/result"]);
+    expect(JSON.parse(posts[0].body!)).toMatchObject({ status: "applied" });
+    expect(JSON.parse(posts[1].body!)).toMatchObject({ status: "refused" });
+    expect(net.calls.filter((c) => c.method === "PUT")).toHaveLength(2);
+    expect((await ctx.parameters.read("system_work_share")).value).toBe(0.5);
+    net.queue.push([]);
+    await poller.once();
+    expect(net.calls.at(-1)!.url).toContain("after=2");
+    expect(JSON.stringify(logs)).not.toContain(SECRET);
+  });
+});
