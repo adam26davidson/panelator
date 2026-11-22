@@ -147,10 +147,6 @@ export async function judge(ctx: AwsContext, cost: AwsCost, notices: AwsNotices,
       n = { ...n, forecast_over: true, forecast_notified_at: ctx.now().toISOString() };
     }
   } else if (n.forecast_over) {
-    if (cap > 0) {
-      // the over-cap notice holds the lasting gate's window; the recovery is a new condition (spec 102 AC-6)
-      await ctx.notifier.clear?.({ issue: 0, gate: "aws", label: "aws-forecast" });
-    }
     if (cap > 0) await notify("aws-forecast", `The delivery-system AWS forecast for ${cost.month} is back under the cap: ${cost.forecast_usd} USD against ${cap} USD. Launches are allowed again.`);
     n = { ...n, forecast_over: false, forecast_notified_at: null };
   }

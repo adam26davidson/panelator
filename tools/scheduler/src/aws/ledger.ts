@@ -82,7 +82,12 @@ export async function afterChange(ctx: AwsContext, cap: number): Promise<void> {
   const cost = await currentCost(ctx);
   if (!cost || cap === 0) return;
   const next = await refresh(ctx, cost, cap);
-  await judge(ctx, next, await readNotices(ctx.paths, monthOf(ctx.now())), { pulled: false });
+  const notices = await readNotices(ctx.paths, monthOf(ctx.now()));
+  if (notices.forecast_over && next.forecast_usd <= cap) {
+    // the over-cap notice holds the lasting gate's window; the recovery is a new condition (spec 102 AC-6)
+    await ctx.notifier.clear?.({ issue: 0, gate: "aws", label: "aws-forecast" });
+  }
+  await judge(ctx, next, notices, { pulled: false });
 }
 
 function invalid(req: ReserveRequest): string | null {
