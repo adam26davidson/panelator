@@ -14,6 +14,8 @@ import type { ConsoleConfig } from "../config.ts";
  * zone at 0.50 USD when a domain is used, plus the rest of the lines rounded up. The reservation holds the ledger to it.
  */
 export const CONSOLE_MONTHLY_USD = 2;
+/** The Route 53 hosted zone a domain adds, in USD a month (added to the reservation). */
+export const DOMAIN_MONTHLY_USD = 0.5;
 export const CONSOLE_WHAT = "maintainer console (CloudFront, Lambda, DynamoDB)";
 export const STACK_NAME = "panelator-console";
 
@@ -67,7 +69,7 @@ export async function deployConsole(o: DeployOptions): Promise<{ url: string }> 
   if (o.domain && ctx.config?.region !== "us-east-1") throw new Error(`a domain needs the aws region us-east-1 (CloudFront takes certificates only from there); the configured region is ${ctx.config?.region ?? "unset"}`);
   let reservation = await held(ctx);
   if (!reservation) {
-    const r = await reserveSpend(ctx, { what: CONSOLE_WHAT, expected_monthly_usd: CONSOLE_MONTHLY_USD, why: "The charter requires a secure, hosted, mobile-friendly interface for the maintainer; the console is that interface.", by: "console deploy" });
+    const r = await reserveSpend(ctx, { what: CONSOLE_WHAT, expected_monthly_usd: CONSOLE_MONTHLY_USD + (o.domain ? DOMAIN_MONTHLY_USD : 0), why: "The charter requires a secure, hosted, mobile-friendly interface for the maintainer; the console is that interface.", by: "console deploy" });
     if (!r.ok) throw new Error(`reservation refused: ${r.reason}`);
     reservation = r.id;
   }

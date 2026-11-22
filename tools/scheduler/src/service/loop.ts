@@ -940,7 +940,7 @@ export class Scheduler {
       await d.host!.markSeen().catch((e) => d.log({ kind: "error", error: `host seen: ${(e as Error).message}` }));
       const hostSummary = d.host!.summary();
       // Spec 051 AC-3: the console's snapshot, after the tick's work; a failure is logged by the pusher and never waits on anything.
-      if (d.console) await d.console.pusher.tick().catch(() => {});
+      if (d.console) void d.console.pusher.tick().catch(() => {});
       d.serviceLog.tick({ ...info, active: [...this.#active.keys()], ...(quota ? { quota } : {}), ...(hostSummary ? { host: hostSummary } : {}) });
       if (this.#restartPending && this.active === 0) d.requestRestart();
     }

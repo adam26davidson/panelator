@@ -16,6 +16,8 @@ export interface PusherDeps {
   now: () => Date; log: Log;
   /** Test seam for the debounce timer. */
   setTimer?: (fn: () => void, ms: number) => unknown;
+  /** The PUT's abort timeout (default 10 s), so a console that accepts and never answers cannot hold the queue. */
+  timeout_ms?: number;
 }
 
 /** Spec 051 AC-3: push the snapshot when it changed or `push_min_s` has passed; event pushes are debounced; outcomes push at once. */
@@ -24,18 +26,20 @@ export class ConsolePusher {
   #last: string | null = null;
   #lastAt = -Infinity;
   #failed: string | null = null;
+  #lastTry = -Infinity;
   #timer: unknown = null;
   #inflight: Promise<boolean> = Promise.resolve(true);
   constructor(d: PusherDeps) { this.#d = d; }
 
   async #push(): Promise<boolean> {
     const d = this.#d;
+    this.#lastTry = d.now().getTime();
     try {
       const snap = await d.build();
       const { generated_at: _g, ...rest } = snap;
       const key = JSON.stringify(rest);
       const apiKey = await (d.readKey ?? (() => readApiKey(d.cfg.credentials_path)))();
-      const res = await d.fetch(`${d.cfg.url}/state`, { method: "PUT", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" }, body: JSON.stringify(snap) });
+      const res = await d.fetch(`${d.cfg.url}/state`, { method: "PUT", signal: AbortSignal.timeout(d.timeout_ms ?? 10_000), headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" }, body: JSON.stringify(snap) });
       if (!res.ok) throw new Error(`PUT /state answered ${res.status}`);
       this.#last = key;
       this.#lastAt = d.now().getTime();
@@ -69,14 +73,17 @@ export class ConsolePusher {
   /** A change's own outcome: pushed at once. */
   async now(): Promise<void> { await this.#run(); }
 
-  /** An event outside the tick: one push per `push_min_s`. */
+  /** An event outside the tick: one push per `push_min_s` counted from the last attempt, failed or not; a burst of events shares one timer. */
   notify(): void {
     const d = this.#d;
     if (this.#timer) return;
-    const wait = Math.max(0, this.#lastAt + d.cfg.push_min_s * 1000 - d.now().getTime());
+    const wait = Math.max(0, this.#lastTry + d.cfg.push_min_s * 1000 - d.now().getTime());
     const fire = () => { this.#timer = null; void this.#run(); };
-    this.#timer = wait === 0 ? (void fire(), null) : (d.setTimer ?? setTimeout)(fire, wait);
+    this.#timer = (d.setTimer ?? setTimeout)(fire, wait);
   }
+
+  /** Resolves when every push queued so far has finished (tests, shutdown). */
+  async idle(): Promise<void> { await this.#inflight; }
 
   stop(): void { if (this.#timer) clearTimeout(this.#timer as NodeJS.Timeout); this.#timer = null; }
 }

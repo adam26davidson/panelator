@@ -20,10 +20,11 @@ Parameters:
   HostedZoneId:
     Type: String
     Default: ""
-    Description: The Route 53 hosted zone of the domain.
+    Description: An existing Route 53 hosted zone of the domain; empty, the stack creates one (point the registrar's name servers at it).
 
 Conditions:
   HasDomain: !Not [!Equals [!Ref DomainName, ""]]
+  CreateZone: !And [!Not [!Equals [!Ref DomainName, ""]], !Equals [!Ref HostedZoneId, ""]]
 
 Resources:
   SiteBucket:
@@ -75,11 +76,14 @@ Resources:
       RoleName: panelator-console-api
       AssumeRolePolicyDocument:
         Statement: [{ Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: sts:AssumeRole }]
-      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]
       Policies:
         - PolicyName: panelator-console-data
           PolicyDocument:
             Statement:
+              # Log permissions are inline: a managed policy would need iam:AttachRolePolicy, which spec 051 section 9 step 2 does not grant.
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/panelator-console*"
               - Effect: Allow
                 Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:UpdateItem, dynamodb:Query]
                 Resource: !GetAtt Table.Arn
@@ -166,13 +170,20 @@ Resources:
           return r;
         }
 
+  HostedZone:
+    Type: AWS::Route53::HostedZone
+    Condition: CreateZone
+    Properties:
+      Name: !Ref DomainName
+
   Certificate:
     Type: AWS::CertificateManager::Certificate
     Condition: HasDomain
     Properties:
       DomainName: !Ref DomainName
       ValidationMethod: DNS
-      DomainValidationOptions: [{ DomainName: !Ref DomainName, HostedZoneId: !Ref HostedZoneId }]
+      DomainValidationOptions:
+        [{ DomainName: !Ref DomainName, HostedZoneId: !If [CreateZone, !Ref HostedZone, !Ref HostedZoneId] }]
 
   Distribution:
     Type: AWS::CloudFront::Distribution
@@ -237,7 +248,7 @@ Resources:
     Type: AWS::Route53::RecordSet
     Condition: HasDomain
     Properties:
-      HostedZoneId: !Ref HostedZoneId
+      HostedZoneId: !If [CreateZone, !Ref HostedZone, !Ref HostedZoneId]
       Name: !Ref DomainName
       Type: A
       AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }

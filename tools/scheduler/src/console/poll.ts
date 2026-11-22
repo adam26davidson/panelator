@@ -75,7 +75,7 @@ export class ConsolePoller {
       d.log({ kind: "console", status: "change", id: change.id, change_kind: change.kind, outcome: change.status });
       this.#unposted.set(change.id, change);
       await this.#report(auth, change);
-      await d.pusher.now();
+      void d.pusher.now();
     }
     return list.length;
   }

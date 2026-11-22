@@ -199,6 +199,26 @@ describe("push (spec 051 AC-3)", () => {
   });
 });
 
+describe("event push debounce and hung console (spec 051 AC-3)", () => {
+  it("a burst of events after a quiet minute shares one timer and one push; a failing API is not hit per event", async () => {
+    const net = fakeNet();
+    const t = 1_000_000;
+    const timers: (() => void)[] = [];
+    const p = new ConsolePusher({ cfg: ccfg, fetch: net.fetch, readKey: async () => SECRET, now: () => new Date(t), log: () => {}, build: async () => ({ generated_at: "x" }), setTimer: (f) => { timers.push(f); return 1; } });
+    p.notify(); p.notify(); p.notify();
+    expect(timers).toHaveLength(1);
+    net.fail(true);
+    timers[0](); await p.idle();
+    expect(net.calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+    p.notify(); p.notify();
+    expect(timers).toHaveLength(2); // counted from the failed attempt: it waits push_min_s, not zero
+  });
+  it("a PUT that never answers is aborted by its timeout", async () => {
+    const p = new ConsolePusher({ cfg: ccfg, fetch: (_u, init) => new Promise((_r, rej) => init?.signal?.addEventListener("abort", () => rej(new Error("aborted")))), readKey: async () => SECRET, now: () => new Date(0), log: () => {}, build: async () => ({ generated_at: "x" }), timeout_ms: 20 });
+    await p.now();
+  });
+});
+
 describe("event pushes (spec 051 AC-3)", () => {
   it("a question, claim, action or parameter write is seen on its state file and notifies the pusher", async () => {
     const { watchConsoleSources } = await import("../src/console/watch.ts");
@@ -243,6 +263,7 @@ describe("poll result POST failure (spec 051 AC-4)", () => {
     const poller = new ConsolePoller({ cfg: ccfg, fetch: f, readKey: async () => SECRET, action: () => ctx, pusher, log: () => {} });
     net.queue.push([change(1, "set_parameter", { name: "system_work_share", value: 0.5 })]);
     expect(await poller.once()).toBe(1);
+    await pusher.idle();
     expect(net.calls.filter((c) => c.method === "PUT")).toHaveLength(1); // the push after the change still happened
     failPost = false;
     await poller.once();
@@ -325,6 +346,7 @@ describe("poll (spec 051 AC-4)", () => {
     expect(posts.map((c) => c.url)).toEqual(["https://c.example/changes/1/result", "https://c.example/changes/2/result"]);
     expect(JSON.parse(posts[0].body!)).toMatchObject({ status: "applied" });
     expect(JSON.parse(posts[1].body!)).toMatchObject({ status: "refused" });
+    await pusher.idle();
     expect(net.calls.filter((c) => c.method === "PUT")).toHaveLength(2);
     expect((await ctx.parameters.read("system_work_share")).value).toBe(0.5);
     net.queue.push([]);
@@ -430,6 +452,12 @@ describe("console/infra/stack.yaml routing", () => {
     expect(yaml).not.toContain("CustomErrorResponses");
     for (const p of ["/auth/*", "/state", "/changes*"]) expect(yaml).toContain(`PathPattern: ${p}`);
     expect(yaml).toContain("sign-in-refused");
+  });
+  it("stays inside the IAM actions of spec 051 section 9 step 2 and creates the domain's hosted zone", () => {
+    const yaml = readFileSync("console/infra/stack.yaml", "utf8");
+    expect(yaml).not.toContain("ManagedPolicyArns"); // would need iam:AttachRolePolicy
+    expect(yaml).toContain("logs:PutLogEvents");
+    expect(yaml).toContain("AWS::Route53::HostedZone");
   });
 });
 

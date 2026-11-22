@@ -188,13 +188,14 @@ function MetricTile({ t, value, metric }: { t: (typeof TILES)[number]; value: nu
 function AwsTile({ aws }: { aws: ConsoleState["tiles"]["aws"] }) {
   const capZero = aws.cap_usd === 0;
   const cap = aws.cap_usd ?? 0;
+  const actual = aws.actual_usd ?? (capZero ? 0 : null);
   return (
     <Link className="c-tile" to="/parameters" search={{ focus: "aws_cap_usd" }}>
       <span className="label">
         AWS spend
         {Icon.chevron(16)}
       </span>
-      {aws.actual_usd === null ? (
+      {actual === null ? (
         <>
           <span className="value none">No data</span>
           <span className="c-sm c-muted">No cost pulled yet</span>
@@ -202,7 +203,7 @@ function AwsTile({ aws }: { aws: ConsoleState["tiles"]["aws"] }) {
       ) : (
         <>
           <span className="value">
-            {usd(aws.actual_usd)}
+            {usd(actual)}
             {capZero || aws.cap_usd === null ? null : <small>of ${aws.cap_usd} cap</small>}
           </span>
           <span className="c-sm c-muted">
@@ -222,7 +223,7 @@ function AwsTile({ aws }: { aws: ConsoleState["tiles"]["aws"] }) {
               role="img"
               aria-label={`Actual ${aws.actual_usd}, forecast ${aws.forecast_usd}, cap ${cap} USD`}
             >
-              <div className="fill" style={{ width: `${Math.min(100, (aws.actual_usd / cap) * 100)}%` }} />
+              <div className="fill" style={{ width: `${Math.min(100, (actual / cap) * 100)}%` }} />
               {aws.forecast_usd === null ? null : (
                 <div className="mark" style={{ left: `${Math.min(100, (aws.forecast_usd / cap) * 100)}%` }} />
               )}

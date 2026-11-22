@@ -18,7 +18,8 @@ interface Ctx {
   /** Forget changes whose outcome has arrived (leaving a screen clears a shown refusal). */
   clearResolved: () => void;
   refetch: () => void;
-  logout: () => Promise<void>;
+  /** Ends the session; `afterLogout` runs before the state is read again, so the sign-in card is the one for Home. */
+  logout: (afterLogout?: () => void) => Promise<void>;
 }
 
 const C = createContext<Ctx | null>(null);
@@ -73,10 +74,14 @@ export function ConsoleProvider({
     () => setSent((s) => s.filter((c) => !snapChanges?.some((x) => x.id === c.id && x.status !== "pending"))),
     [snapChanges],
   );
-  const logout = useCallback(async () => {
-    await api.logout();
-    await q.refetch();
-  }, [api, q]);
+  const logout = useCallback(
+    async (afterLogout?: () => void) => {
+      await api.logout();
+      afterLogout?.();
+      await q.refetch();
+    },
+    [api, q],
+  );
 
   const login = q.data?.login ?? "";
   const value = useMemo(

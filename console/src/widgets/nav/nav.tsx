@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { useConsole } from "../../app/ConsoleProvider.tsx";
 import { Icon } from "../../shared/ui/Icon.tsx";
@@ -31,6 +31,7 @@ function useOpenQuestions(): number {
 /** The side rail from 720px: the six screens, the open-question count, and at its foot the login and Sign out. */
 export function Rail({ login }: { login: string }) {
   const { logout } = useConsole();
+  const navigate = useNavigate();
   const open = useOpenQuestions();
   return (
     <nav className="c-rail" aria-label="Console">
@@ -53,7 +54,12 @@ export function Rail({ login }: { login: string }) {
         <div className="c-rail-foot">
           <span className="c-muted">Signed in as</span>
           <span className="c-strong">@{login}</span>
-          <button type="button" className="c-btn" style={{ alignSelf: "flex-start" }} onClick={() => void logout()}>
+          <button
+            type="button"
+            className="c-btn"
+            style={{ alignSelf: "flex-start" }}
+            onClick={() => void logout(() => void navigate({ to: "/" }))}
+          >
             Sign out
           </button>
         </div>

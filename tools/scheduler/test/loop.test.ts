@@ -2346,6 +2346,7 @@ describe("Scheduler.tick console step (spec 051 AC-1, AC-3)", () => {
     const view = { issues: new Map<number, { title: string; class: string }>(), next: [] as number[] };
     h.deps.console = { pusher, view };
     await h.s.tick();
+    await pusher.idle();
     expect(view.issues.get(1)).toEqual({ title: "i1", class: "tooling" });
     expect(puts).toEqual(["PUT https://c.example/state"]);
     await h.s.tick();
@@ -2371,6 +2372,7 @@ describe("Scheduler.tick console step (spec 051 AC-1, AC-3)", () => {
     expect(await readApiKey(credentials_path)).toBe(KEY);
     h.deps.console = { pusher, view: { issues: new Map(), next: [] } };
     await h.s.tick();
+    await pusher.idle();
     expect(sent.join()).toContain(KEY); // it is used for the request...
     const walk = async (d: string): Promise<string[]> => (await Promise.all((await readdir(d, { withFileTypes: true })).map(async (e) => e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]))).flat();
     for (const f of await walk(h.paths.root)) {

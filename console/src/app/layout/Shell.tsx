@@ -1,4 +1,4 @@
-import { useRouterState } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useState } from "react";
 import { FreshnessBanner, FreshnessChip } from "../../features/freshness/Freshness.tsx";
 import { SignIn } from "../../pages/sign-in/SignIn.tsx";
@@ -11,6 +11,7 @@ function Shell({ screen, narrow, children }: { screen: ScreenName; narrow?: bool
   const { login, clearResolved } = useConsole();
   const [sheet, setSheet] = useState(false);
   const { logout } = useConsole();
+  const navigate = useNavigate();
   const label = SCREENS.find((s) => s.id === screen)?.label ?? screen;
   const path = useRouterState({ select: (s) => s.location.pathname });
   // Leaving a screen clears the refusals it showed.
@@ -39,7 +40,7 @@ function Shell({ screen, narrow, children }: { screen: ScreenName; narrow?: bool
             <div className="c-card c-account" role="dialog" aria-label="Account">
               <span className="c-muted">Signed in as</span>
               <span className="c-strong">@{login}</span>
-              <button type="button" className="c-btn" onClick={() => void logout()}>
+              <button type="button" className="c-btn" onClick={() => void logout(() => void navigate({ to: "/" }))}>
                 Sign out
               </button>
             </div>

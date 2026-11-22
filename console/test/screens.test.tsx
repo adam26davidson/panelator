@@ -7,7 +7,13 @@ import { makeNet, mount } from "./harness.tsx";
 
 afterEach(cleanup);
 
-const heading = (name: string) => screen.findByRole("heading", { level: 1, name });
+const heading = async (name: string, loading = false) => {
+  const h = await screen.findByRole("heading", { level: 1, name });
+  if (loading) return h;
+  // The skeleton of each screen is aria-busy until the first answer from the handlers arrives.
+  await waitFor(() => expect(document.querySelector('[aria-busy="true"]')).toBeNull());
+  return h;
+};
 
 const SCREENS = [
   { path: "/", title: "Home", empty: /Nothing is running/, data: /Event store retention and compaction/ },
@@ -27,7 +33,7 @@ describe.each(SCREENS)("$title: every state", ({ path, title, empty, data }) => 
   });
   it("loading shows the shell with skeleton blocks", async () => {
     const { container } = mount(path, makeNet({ hang: true }));
-    await heading(title);
+    await heading(title, true);
     expect(container.querySelector('[aria-busy="true"]')).toBeTruthy();
     expect(screen.getByText("Loading")).toBeTruthy();
   });
@@ -110,6 +116,13 @@ describe("shell and navigation", () => {
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Sign out" }));
     await screen.findByText("Sign in to see Home");
     expect(net.loggedOut).toBe(true);
+  });
+  it("signing out on another screen leads to the sign-in card for Home", async () => {
+    mount("/parameters", makeNet());
+    await heading("Parameters");
+    fireEvent.click(screen.getByRole("button", { name: "Account: @maintainer" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Sign out" }));
+    await screen.findByText("Sign in to see Home");
   });
 });
 
