@@ -92,7 +92,7 @@ exist").
   Nothing else in the file changes. `infra` is no longer offered: no area of
   the repository maps to it, and its profile's spec will give it one.
 
-- AC-2. **The I4 check accepts only an implementation profile.** Given a plan
+- AC-2. Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-3: a plan result of waiting names no domain and skips the check, as an escalating plan does. **The I4 check accepts only an implementation profile.** Given a plan
   result without `escalation` whose `domain` is not among the implementation
   profiles, when the chain driver handles the plan stage's result, then it
   returns `stage_failed` for `plan`, as today. The implementation profiles are

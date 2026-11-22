@@ -473,7 +473,7 @@ AC-10 second sentence, AC-13)
 
 **Spec stage** (replaces AC-7, AC-8 routing and AC-9)
 
-- AC-19. **Missing specs and spec gaps go to the spec stage.** Given a
+- AC-19. Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-3: a plan result of waiting that names an issue not yet done blocks the issue and releases the claim with no bound spent; one that names none, or a fourth, is handled as a spec_gap. **Missing specs and spec gaps go to the spec stage.** Given a
   bot-authored, validated issue whose spec is missing or incomplete (any
   spec-present failure, including the parent checks of AC-23), when
   shortlisted, then it is eligible and its chain starts at the spec stage in
