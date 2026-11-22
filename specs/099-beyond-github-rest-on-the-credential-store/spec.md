@@ -153,7 +153,7 @@ AC-11 says.
 
 **The expiry producer** (spec 030 AC-5)
 
-- AC-3. **`credential_expiry` has a producer.** Given a tick at least an hour
+- AC-3. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-2: no `credential_expiry` event is produced for a renewable credential whose `heads_up_for` equals its `expires_at` and whose last check passed. **`credential_expiry` has a producer.** Given a tick at least an hour
   after the last run of the step, then for each catalogue entry whose index
   `expires_at` is within `warn_days` or whose `last_check` is `failed: ...`,
   the scheduler emits `credential_expiry` with `{ name, expires_at,
@@ -260,7 +260,7 @@ AC-11 says.
 
 **Credential check agent** (spec 030 AC-13, AC-14, as amended by spec 072)
 
-- AC-12. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-2: the notification carries the entry's `renew_steps` when it has them and the credential is set, else its `setup` steps. **The credential check is a standing agent.**
+- AC-12. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-2: the notification carries the entry's `renew_steps` when it has them and the credential is set, else its `setup` steps, and for a renewable credential it is sent once per distinct `expires_at`, not once a day. **The credential check is a standing agent.**
   `agents/standing/credential-check.md`: standard tier, Claude, `worktree:
   none`, schedule `1d`, events `credential_expiry`, credentials none, actions
   `renew_credential`, output `credential-check-result`

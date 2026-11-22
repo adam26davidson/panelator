@@ -32,6 +32,10 @@ the six actions; when to ask again), AC-10 (the service's own notifier
 windows, `queued`), and sections 1, 5 and 6. It adds two marks:
 [022-delivery-aws-account](../022-delivery-aws-account/spec.md) AC-3 (the
 expiry line) and AC-9 (the notice's re-arm).
+Revised 2026-11-22 again after the second review: AC-2's heads-up paragraph
+says where `renewable` and `heads_up_for` are kept and that the skip is the
+scheduler's, and section 5 lists the files; it adds marks on spec 030 AC-1 and
+AC-5 and spec 099 AC-3, and widens the spec 099 AC-12 mark.
 Class: tooling. Domain: backend.
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
@@ -143,7 +147,11 @@ the build starts from `main`'s head and keeps its edits to them small.
   gate, the `TelegramNotifier`, the two standing agents' GitHub-side halves)
   and everything spec 022 builds (the account, the pull, the forecast, the
   ledger's `reserveSpend` and `releaseSpend`, the thresholds, the alarm, the
-  commands). This spec adds to them and changes none of their rules.
+  commands). This spec adds to them and changes none of their rules, except
+  the ones section 4 marks: spec 030 AC-1 (`heads_up_for` and `renewable` in
+  the index record), spec 030 AC-5 and spec 099 AC-3 (the producer skips a
+  renewable credential already warned for) and spec 099 AC-12 (once per
+  distinct `expires_at` for a renewable session).
 - Launching anything in AWS. The `scale` descriptor is written by a launcher;
   the only launcher specified is spec 051's console deploy (its AC-7), and
   whether it passes descriptors for its Lambda functions, distribution and
@@ -381,31 +389,51 @@ section 2, first bullet)
   `registrationExpiresAt` does not move it: logging in early changes nothing,
   and only a login in the last 15 minutes, or after it has passed, makes a
   new registration. The notice must therefore not ask for a login and then
-  repeat. For a renewable session (`renewable: true`) inside `warn_days`:
-  the credential check lists `aws-sso` in `warnings`, and the scheduler sends
-  one `credential-expiry` notification, once for each distinct `expires_at`,
-  not once a day. The index records the time it has warned for
-  (`heads_up_for`, an optional ISO string in the credential's index record,
-  written when the notification is sent); the `credential_expiry` producer
-  (spec 030 AC-5) and the check's warning list skip a renewable credential
-  whose `heads_up_for` equals its `expires_at` and whose last check passed.
-  The text states the date ("the CLI's login registration ends <expires_at>;
-  no action is needed before then, the CLI renews the access token by
-  itself; log in again on or after that date, or when a check fails"), and
-  carries the `renew_steps` as the steps for that day. A failed check (the
-  portal session ended first, or the profile is wrong) is not renewable-
-  specific: it warns daily with the `renew_steps` as spec 030 AC-13 says,
-  whatever `heads_up_for` holds. A non-renewable session (legacy, or no
-  refresh token) is unchanged: it warns daily inside `warn_days`, and a login
-  there does move `expiresAt`. Tests: with the renewable fixture three days
-  ahead, day one gives one `credential_expiry` event, one warning and one
-  notification; the fixture is then rewritten as a login would leave it (a
-  new access token and `expiresAt`, the same `registrationExpiresAt`), `cred
-  check aws-sso` prints `check ok`, and the next day's hourly step and
-  credential check give no event, no warning and no notification; a fixture
-  whose registration has changed to a later time gives none either while it
-  is outside `warn_days`; a failing identity check on that second day warns
-  once with the `renew_steps`.
+  repeat. For a renewable session (`renewable: true`) inside `warn_days`,
+  the scheduler sends one `credential-expiry` notification, once for each
+  distinct `expires_at`, not once a day. *Where the flag is kept.* `runCheck`
+  writes `renewable` (boolean, from `ssoExpiry`) to the credential's index
+  record beside `expires_at`, and the index records the time warned for as
+  `heads_up_for` (an optional ISO string, written when the notification is
+  sent); both are optional fields of `IndexEntry`
+  (`src/credentials/store.ts`) and of `schemas/scheduler/credential-index.json`,
+  and a `{ none }` or `{ error }` result leaves `renewable` as it is or, for
+  `none`, removes it. *Who skips.* The skip is the scheduler's, made in two
+  places and nowhere in the agent: the `credential_expiry` producer
+  (`expiryEvents` in `src/credentials/check.ts`, spec 030 AC-5, which reads the
+  index alone) emits no event for an entry that is `renewable`, whose
+  `heads_up_for` equals its `expires_at` and whose last check passed; and
+  `notifyCredential` in `src/standing/run.ts`, where a result's warnings become
+  notifications, sends nothing for such an entry. The credential check's own
+  input, schema and prompt (`credential-check-input.ts`,
+  `credential-check-input.json`, `agents/standing/credential-check.md`) are
+  unchanged, so on day two the agent may still list `aws-sso` in `warnings`;
+  the scheduler discards it for that entry and the notification, not the
+  agent's list, is what the maintainer sees. For any other warning (a
+  non-renewable credential, a renewable one not yet warned for this
+  `expires_at`, a failed last check) `notifyCredential` sends as today, daily,
+  and for a renewable entry first writes `heads_up_for` through
+  `store.writeHeadsUp(name, expires_at)`. The heads-up text states the date
+  ("the CLI's login registration ends <expires_at>; no action is needed before
+  then, the CLI renews the access token by itself; log in again on or after
+  that date, or when a check fails") and carries the `renew_steps` as the
+  steps for that day. A failed check (the portal session ended first, or the
+  profile is wrong) is not renewable-specific: it warns daily with the
+  `renew_steps` as spec 030 AC-13 says, whatever `heads_up_for` holds. A
+  non-renewable session (legacy, or no refresh token) is unchanged: it warns
+  daily inside `warn_days`, and a login there does move `expiresAt`. Tests
+  (`credentials.test.ts` for the index and the producer, `standing.test.ts` for
+  the notification): with the renewable fixture three days ahead, day one
+  gives one `credential_expiry` event, one warning in the scripted result and
+  one notification, and `heads_up_for` equal to `expires_at`; the fixture is
+  then rewritten as a login would leave it (a new access token and `expiresAt`,
+  the same `registrationExpiresAt`), `cred check aws-sso` prints `check ok`,
+  and the next day's hourly step gives no event and a scripted result that
+  still carries the `aws-sso` warning gives no notification; a fixture whose
+  registration has changed to a later time gives none either while it is
+  outside `warn_days`, and one inside it warns once more for the new
+  `expires_at`; a failing identity check on the second day warns once with the
+  `renew_steps`.
 
   *(agent's call)* **The login step comes from the catalogue.** A catalogue
   entry may carry an optional `renew_steps`, a list of at least one string:
@@ -420,7 +448,8 @@ section 2, first bullet)
   credential is set in the index, else its `setup` as today. The order is
   therefore the scheduler's, read from the catalogue, and a recorded run
   asserts it whatever steps the scripted result carries.
-  `agents/standing/credential-check.md` and the check's input are unchanged.
+  `agents/standing/credential-check.md` and the check's input are unchanged
+  (the heads-up's skip above is the scheduler's, not the agent's).
 
 **Events for every contact** (design section 7; spec 026 AC-2; spec 030
 section 2, second bullet)
@@ -843,7 +872,13 @@ stays:
   expiry.`
 - Spec 099 AC-12: `Amended by ... AC-2: the notification carries the entry's
   renew_steps when it has them and the credential is set, else its setup
-  steps.`
+  steps, and for a renewable credential it is sent once per distinct
+  expires_at, not once a day.`
+- Spec 030 AC-1: `Amended by ... AC-2: a credential's index record may carry
+  renewable and heads_up_for.`
+- Spec 030 AC-5 and spec 099 AC-3: `Amended by ... AC-2: no credential_expiry
+  event is produced for a renewable credential whose heads_up_for equals its
+  expires_at and whose last check passed.`
 - Spec 028 AC-5: `Amended by ... AC-3: open_questions also takes a
   question's text from the maintainer.contact event of a sent request (kind
   credential, funds or first_contact, label request).`
@@ -855,8 +890,9 @@ stays:
   sent, so the recovery is not rate-limited away.`
 
 (The `...` above stands for the same link in every mark.) Spec 030 AC-13 is
-not marked: the credential check's rule is unchanged and `aws-sso` is one
-more entry it walks. Spec 050 AC-3 is not marked: no kind is added.
+not marked: the credential check agent's rule is unchanged and `aws-sso` is
+one more entry it walks; the heads-up's skip is the scheduler's, in the
+producer and the notifier, as AC-2 says. Spec 050 AC-3 is not marked: no kind is added.
 
 ## 5. Interfaces and files
 
@@ -873,7 +909,11 @@ more entry it walks. Spec 050 AC-3 is not marked: no kind is added.
   `src/aws/cost.ts`: `judge`'s clear of the `aws-forecast` identity on a
   change of state (AC-7), and nothing else in that file.
 - `src/credentials/check.ts`: `CheckContext.aws` and `runCheck`'s `provider:
-  aws` branch (AC-1). `src/credentials/store.ts`: `writeExpiry` accepts null.
+  aws` branch (AC-1), and `expiryEvents`' skip of a renewable credential
+  already warned for (AC-2). `src/credentials/store.ts`: `writeExpiry` accepts
+  null and writes `renewable`; `IndexEntry` gains `renewable` and
+  `heads_up_for`, and `writeHeadsUp(name, expires_at)` (AC-2).
+  `schemas/scheduler/credential-index.json`: the two optional fields.
   `bin/cred-exec.ts`: the `provider: aws` branch (AC-1).
   `src/credentials/commands.ts`: unchanged.
 - `src/aws/scale.ts` (new): the three kinds' calls and the descriptor's
@@ -896,8 +936,9 @@ more entry it walks. Spec 050 AC-3 is not marked: no kind is added.
 - `src/reflection/input.ts`: `openQuestions`' selection (AC-3).
 - `src/standing/infra-health-input.ts` and
   `schemas/scheduler/infra-health-input.json`: `aws` (AC-8).
-  `src/standing/run.ts`: `aws` passed to the input builder, and the
-  `credential-expiry` steps taken from `renew_steps` (AC-2, AC-8).
+  `src/standing/run.ts`: `aws` passed to the input builder, the
+  `credential-expiry` steps taken from `renew_steps`, and `notifyCredential`'s
+  heads-up text, skip and `heads_up_for` write (AC-2, AC-8).
   `src/service/loop.ts`: its `aws` passed on to the standing run's deps where
   it is not already. `agents/standing/infra-health.md`: `credentials`,
   `actions`, the prompt (AC-8).
@@ -911,12 +952,13 @@ more entry it walks. Spec 050 AC-3 is not marked: no kind is added.
   line, the re-armed forecast notice through `rateLimited` with the default
   windows);
   `credentials.test.ts` (`renew_steps`, `runCheck`'s `provider: aws` branch:
-  skipped, not set, wrong account, ok with the expiry written, `none` clearing
-  it); `bin.test.ts` (`cred-exec.ts`'s `provider: aws` branch and its
+  skipped, not set, wrong account, ok with the expiry and `renewable` written,
+  `none` clearing it, the producer's skip, the index validating against its
+  schema with the new fields); `bin.test.ts` (`cred-exec.ts`'s `provider: aws` branch and its
   refusals, `aws sso-expiry`); `events.test.ts` (the schema's new properties,
   the request's send and answer events); `reflection.test.ts` (AC-3);
   `infra-health-input.test.ts` (AC-8); `standing.test.ts` (the notification's
-  steps); `actions.test.ts` (`aws_scale` in `KINDS`); `stages.test.ts` (the
+  steps, the heads-up once per `expires_at` and the day-two login case of AC-2); `actions.test.ts` (`aws_scale` in `KINDS`); `stages.test.ts` (the
   prompt pins); `e2e.test.ts` and `helpers/e2e-routes.ts` (AC-10).
   `notify.test.ts` is on `main` and is checked, not rewritten (AC-4).
   `test/helpers/fake-aws` gains the AC-7 calls; a fixture home under
