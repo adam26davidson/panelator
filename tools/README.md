@@ -112,6 +112,35 @@ aws:
   both pass; at cap 0 no cost call is made). `panelator-scheduler aws [--json]` prints the cost record and the
   reservations. `panelator-scheduler aws pull` forces a pull, even at cap 0.
 
+## The maintainer console (spec 051)
+
+A static site, a small API and a CloudFormation stack in the delivery account (`console/`), fed by a snapshot the scheduler
+pushes and steering the scheduler through changes it pulls. Nothing connects in to the laptop. Without a `console` block the
+console is off (logged once at start) and nothing else changes.
+
+```yaml
+console:
+  url: https://dxxxx.cloudfront.net   # the API base: the console's own URL
+  credentials_path: ~/.config/panelator/console.json   # {"api_key": "..."}, mode 0600, written by `console deploy`
+  github_client_id: Iv1.abc           # not a secret; the OAuth app of spec 051 section 9
+  push_min_s: 30                      # at least 5: the debounce of event pushes and the longest gap between pushes
+  long_poll_s: 25                     # 1 to 28: how long one change poll is held before it reconnects
+```
+
+An unknown key is a config error. The maintainer login is the top-level `maintainer`.
+
+- `panelator-scheduler console state` prints the snapshot (`console-state`) as the console would receive it.
+- `panelator-scheduler console deploy [--client-id <id>] [--domain <name> --hosted-zone <id>]` reserves 2 USD a month with
+  `reserveSpend` (refused at cap 0, over the cap or with AWS off: nothing is deployed and the command exits non-zero), deploys
+  `console/infra/stack.yaml`, uploads the function and the app, invalidates CloudFront and writes the API key to
+  `credentials_path`. A second deploy keeps the reservation and the key. The GitHub client secret is read by the sign-in
+  function from the SSM parameter `/panelator/console/github_client_secret`; it never appears on a command line.
+- `panelator-scheduler console destroy` deletes the stack, then releases the reservation.
+
+Changes made on the console are applied as the `maintainer` actor through the same paths as `param set`, `param mode` and
+`agent pause|resume`; an action row's `run_id` is `console:<change id>` and every change with its outcome is recorded in
+`console/changes.jsonl` in the state directory.
+
 ## Events (spec 026)
 
 The scheduler appends every run, stage transition, merge, CI result, review, finding, action, question, pause,

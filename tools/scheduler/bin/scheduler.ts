@@ -138,14 +138,14 @@ if(args[0]==='console'&&(args[1]==='deploy'||args[1]==='destroy')) {
   try {
     if(args[1]==='destroy')await destroyConsole(awsContext);
     else {
-      const {execFileSync}=await import('node:child_process');
+      const {execSync}=await import('node:child_process');
       const consoleDir=join(repoRoot,'console');
       const credentialsPath=cfg.console?.credentials_path??expandHome('~/.config/panelator/console.json');
       await deployConsole({ctx:awsContext,maintainer:cfg.maintainer,clientId:cfg.console?.github_client_id??flag('--client-id')??'',credentialsPath,domain:flag('--domain'),hostedZoneId:flag('--hosted-zone'),
         templatePath:join(consoleDir,'infra','stack.yaml'),print:l=>console.log(l),
         build:async()=>{
-          execFileSync('pnpm',['-F','@panelator/console','build'],{cwd:repoRoot,stdio:'inherit'});
-          execFileSync('pnpm',['-F','@panelator/console','build:api'],{cwd:repoRoot,stdio:'inherit'});
+          execSync('pnpm -F @panelator/console build',{cwd:repoRoot,stdio:'inherit'});
+          execSync('pnpm -F @panelator/console build:api',{cwd:repoRoot,stdio:'inherit'});
           return {appDir:join(consoleDir,'dist'),lambdaZip:join(consoleDir,'dist-api','lambda.zip')};
         }});
     }
