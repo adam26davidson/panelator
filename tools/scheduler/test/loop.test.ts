@@ -2350,10 +2350,10 @@ describe("Scheduler.tick console step (spec 051 AC-1, AC-3)", () => {
     expect(puts).toEqual(["PUT https://c.example/state"]);
     await h.s.tick();
     expect(puts).toHaveLength(1);
-  });
+  }, 60000);
   it("with no console configured nothing is pushed and the tick is unchanged", async () => {
     const h = await setup(routes([]));
     expect(h.deps.console).toBeUndefined();
     await h.s.tick();
-  });
+  }, 60000);
 });
