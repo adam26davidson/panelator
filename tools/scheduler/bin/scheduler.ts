@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { adapterFor } from "../src/adapters/index.ts";
-import { agentsDir, defaultConfigPath, loadConfig, repoRoot } from "../src/config.ts";
+import { agentsDir, defaultConfigPath, expandHome, loadConfig, repoRoot } from "../src/config.ts";
 import { createAppClient } from "../src/github/auth.ts";
 import { GitHubClient } from "../src/github/client.ts";
 import { LogNotifier } from "../src/notify/log.ts";
@@ -131,6 +131,26 @@ if(args[0]==='console'&&args[1]==='state') {
   const {buildConsoleState}=await import('../src/console/state.ts');
   console.log(JSON.stringify(await buildConsoleState({cfg,paths,parameters,log:actionLog,registry,metrics,now:()=>new Date()}),null,2));
   process.exit(0);
+}
+if(args[0]==='console'&&(args[1]==='deploy'||args[1]==='destroy')) {
+  // Spec 051 AC-7: the hosting goes through spec 022's reservation and `aws` wrapper.
+  const {deployConsole,destroyConsole}=await import('../src/console/deploy.ts');
+  try {
+    if(args[1]==='destroy')await destroyConsole(awsContext);
+    else {
+      const {execFileSync}=await import('node:child_process');
+      const consoleDir=join(repoRoot,'console');
+      const credentialsPath=cfg.console?.credentials_path??expandHome('~/.config/panelator/console.json');
+      await deployConsole({ctx:awsContext,maintainer:cfg.maintainer,clientId:cfg.console?.github_client_id??flag('--client-id')??'',credentialsPath,domain:flag('--domain'),hostedZoneId:flag('--hosted-zone'),
+        templatePath:join(consoleDir,'infra','stack.yaml'),print:l=>console.log(l),
+        build:async()=>{
+          execFileSync('pnpm',['-F','@panelator/console','build'],{cwd:repoRoot,stdio:'inherit'});
+          execFileSync('pnpm',['-F','@panelator/console','build:api'],{cwd:repoRoot,stdio:'inherit'});
+          return {appDir:join(consoleDir,'dist'),lambdaZip:join(consoleDir,'dist-api','lambda.zip')};
+        }});
+    }
+    process.exit(0);
+  } catch(e) {console.error(`panelator-scheduler: ${(e as Error).message}`);process.exit(1);}
 }
 if(args[0]==='aws-check'||args[0]==='aws') {
   // Spec 022 AC-3, AC-10: the setup check, the book, and a forced pull; no GitHub and no service auth.

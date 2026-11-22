@@ -218,3 +218,75 @@ describe("poll (spec 051 AC-4)", () => {
     expect(JSON.stringify(logs)).not.toContain(SECRET);
   });
 });
+
+import { existsSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { parse as parseYaml } from "yaml";
+import { CONSOLE_MONTHLY_USD, CONSOLE_WHAT, deployConsole, destroyConsole } from "../src/console/deploy.ts";
+import { awsWorld } from "./helpers/aws.ts";
+
+const stackJson = { Stacks: [{ Outputs: [{ OutputKey: "BucketName", OutputValue: "bkt" }, { OutputKey: "DistributionId", OutputValue: "DIST1" }, { OutputKey: "FunctionName", OutputValue: "fn" }, { OutputKey: "ConsoleUrl", OutputValue: "https://d.example" }] }] };
+
+describe("console deploy (spec 051 AC-7)", () => {
+  const opts = (w: Awaited<ReturnType<typeof awsWorld>>, printed: string[] = []) => ({
+    ctx: w.ctx, maintainer: "me", clientId: "cid", credentialsPath: join(w.dir, "cred", "console.json"), templatePath: "console/infra/stack.yaml",
+    build: async () => ({ appDir: "/tmp/app", lambdaZip: "/tmp/lambda.zip" }), print: (l: string) => printed.push(l),
+  });
+  const stack = (w: Awaited<ReturnType<typeof awsWorld>>) => writeFileSync(join(w.dir, "fixtures", "stack.json"), JSON.stringify(stackJson));
+  const ledger = (w: Awaited<ReturnType<typeof awsWorld>>) => JSON.parse(readFileSync(w.ctx.paths.awsLedger, "utf8")).reservations as { what: string; released_at: string | null }[];
+
+  it("is refused at cap 0 and with AWS off, deploying and calling nothing but the identity check", async () => {
+    const w = await awsWorld({ cap: 0 });
+    await expect(deployConsole(opts(w))).rejects.toThrow(/cap is 0|aws_cap_usd is 0/);
+    expect(w.calls().every((c) => c[0] === "sts")).toBe(true);
+    const off = await awsWorld({ config: null });
+    await expect(deployConsole(opts(off))).rejects.toThrow(/aws is off/);
+    expect(off.calls()).toEqual([]);
+  });
+
+  it("reserves, deploys with the hash and never the key, writes the key 0600, and a second deploy keeps both", async () => {
+    const w = await awsWorld({ cap: 100 });
+    stack(w);
+    const printed: string[] = [];
+    const o = opts(w, printed);
+    const r = await deployConsole(o);
+    expect(r.url).toBe("https://d.example");
+    expect(printed).toEqual(["https://d.example"]);
+    const key = (JSON.parse(readFileSync(o.credentialsPath, "utf8")) as { api_key: string }).api_key;
+    expect(statSync(o.credentialsPath).mode & 0o777).toBe(0o600);
+    const hash = createHash("sha256").update(key).digest("hex");
+    const calls = w.calls();
+    const dep = calls.find((c) => c[0] === "cloudformation" && c[1] === "deploy")!;
+    expect(dep).toContain(`ApiKeyHash=${hash}`);
+    expect(dep).toContain("MaintainerLogin=me");
+    expect(JSON.stringify(calls)).not.toContain(key);
+    expect(JSON.stringify(w.logs)).not.toContain(key);
+    expect(calls.map((c) => c.slice(0, 2).join(" "))).toEqual(expect.arrayContaining(["lambda update-function-code", "s3 sync", "cloudfront create-invalidation"]));
+    const rs = ledger(w);
+    expect(rs).toHaveLength(1);
+    expect(rs[0]).toMatchObject({ what: CONSOLE_WHAT, expected_monthly_usd: CONSOLE_MONTHLY_USD });
+    await deployConsole(o);
+    expect(ledger(w)).toHaveLength(1);
+    expect((JSON.parse(readFileSync(o.credentialsPath, "utf8")) as { api_key: string }).api_key).toBe(key);
+  });
+
+  it("destroy deletes the stack and releases the reservation", async () => {
+    const w = await awsWorld({ cap: 100 });
+    stack(w);
+    await deployConsole(opts(w));
+    await destroyConsole(w.ctx);
+    expect(w.calls().map((c) => c.slice(0, 2).join(" "))).toEqual(expect.arrayContaining(["cloudformation delete-stack", "cloudformation wait"]));
+    expect(ledger(w)[0].released_at).not.toBeNull();
+  });
+});
+
+describe("console/infra/stack.yaml", () => {
+  it("parses and declares the resources and the NoEcho key hash", () => {
+    const yaml = readFileSync("console/infra/stack.yaml", "utf8");
+    const t = parseYaml(yaml, { customTags: ["!Ref", "!Sub", "!GetAtt", "!If", "!Not", "!Equals"].map((tag) => ({ tag, resolve: (v: unknown) => v })) as never }) as { Parameters: Record<string, Record<string, unknown>>; Resources: Record<string, { Type: string }> };
+    const types = Object.values(t.Resources).map((r) => r.Type);
+    for (const need of ["AWS::S3::Bucket", "AWS::CloudFront::Distribution", "AWS::ApiGatewayV2::Api", "AWS::Lambda::Function", "AWS::DynamoDB::Table", "AWS::IAM::Role", "AWS::Route53::RecordSet", "AWS::CertificateManager::Certificate"]) expect(types).toContain(need);
+    expect(t.Parameters.ApiKeyHash.NoEcho).toBe(true);
+    expect(existsSync("console/infra/stack.yaml")).toBe(true);
+  });
+});

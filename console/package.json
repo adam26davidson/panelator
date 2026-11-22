@@ -9,7 +9,8 @@
     "build": "vite build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "biome check . && knip --directory .. --config console/knip.json --workspace console"
+    "lint": "biome check . && knip --directory .. --config console/knip.json --workspace console",
+    "build:api": "vite build --ssr api/lambda.ts --outDir dist-api && cp dist-api/lambda.js dist-api/index.mjs && cd dist-api && zip -q -j lambda.zip index.mjs"
   },
   "engines": {
     "node": ">=26"

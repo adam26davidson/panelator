@@ -8,6 +8,15 @@ const dir = process.env.FAKE_AWS_DIR;
 const args = process.argv.slice(2);
 appendFileSync(join(dir, "calls.log"), JSON.stringify(args) + "\n");
 const service = args[0] + " " + args[1];
+// Spec 051: the console's deploy commands. describe-stacks answers from stack.json (absent: the stack does not exist); the rest print nothing.
+if (["cloudformation", "s3", "lambda", "cloudfront"].includes(args[0])) {
+  if (service === "cloudformation describe-stacks") {
+    if (!existsSync(join(dir, "stack.json"))) { console.error("An error occurred (ValidationError): Stack does not exist"); process.exit(255); }
+    process.stdout.write(readFileSync(join(dir, "stack.json"), "utf8"));
+  } else if (args[0] === "s3" || service === "cloudformation deploy" || service === "cloudformation wait") process.stdout.write("done\n");
+  else process.stdout.write("{}");
+  process.exit(0);
+}
 const key = service === "sts get-caller-identity" ? "sts" : service === "ce get-cost-and-usage" ? "ce" : null;
 if (!key) {
   console.error("fake aws: unknown command " + service);
