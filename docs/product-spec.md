@@ -354,15 +354,4 @@ The predecessor repo `char-matrix-dashboard` is frozen with a pointer here.
 ## Children
 
 - `docs/designs/product-v0-build.md` (issue #422; sections 3 to 13 as ordered work: milestones 1 to 3 as spec-sized children, and one child that breaks down the rest of v0 after the runtime spike)
-- planned: hardware-carrier-pcb
-  title: Move the carrier PCB into hardware/ under CERN-OHL-S and point the frozen predecessor repository here
-  brief: Product spec sections 2 and 14. Bring the custom carrier PCB (schematic, layout, fabrication
-    outputs and its notes on level shifters, protection and the keyed HUB75 header) from the predecessor
-    repository `char-matrix-dashboard` into `hardware/` with the CERN-OHL-S licence text and a README
-    naming the board, the panel and the pin mapping the firmware's board definition uses, and state the
-    licences (hardware CERN-OHL-S, software Apache-2.0) in the root README. Then freeze the predecessor
-    with a pointer to this repository. The App's token reaches neither a read nor a write there: ask for
-    the files or read access, and for the freeze, as capability questions with their requests; the
-    maintainer may do the freeze by hand. It changes no firmware, and depends on no milestone; everything
-    else in the product spec is covered by `docs/designs/product-v0-build.md`.
-  class: class:product
+- `specs/106-hardware-carrier-pcb/spec.md` (issue #427; product spec sections 2 and 14: the carrier PCB moves into `hardware/` under CERN-OHL-S v2 with its README and pin mapping, the root README states both licences, and the predecessor repository is frozen with a pointer here)
