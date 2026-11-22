@@ -65,6 +65,8 @@ export interface StatePaths {
   awsLedger: string;
   /** Spec 022 AC-8, AC-9, AC-4: which notices went out this month, and the pull failures of the day. */
   awsNotices: string;
+  /** Spec 051 AC-4: every console change received and its outcome; the last id is the poll cursor. */
+  consoleChanges: string;
 }
 
 export function statePaths(root: string): StatePaths {
@@ -114,9 +116,10 @@ export function statePaths(root: string): StatePaths {
     awsCost: join(root, "aws", "cost.json"),
     awsLedger: join(root, "aws", "ledger.json"),
     awsNotices: join(root, "aws", "notices.json"),
+    consoleChanges: join(root, "console", "changes.jsonl"),
   };
 }
 
 export async function ensureStateDirs(p: StatePaths): Promise<void> {
-  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.blocked, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), p.agents, p.events, p.reflections, dirname(p.eligibleMarks), dirname(p.awsCost), dirname(p.notifySent)]) await mkdir(d, { recursive: true });
+  for (const d of [dirname(p.telegramOffset), p.claims, p.runs, p.usage, p.patches, p.findingsRejected, p.log, p.worktrees, p.paused, p.blocked, p.escalations, dirname(p.questionsLog), dirname(p.parametersHistory), dirname(p.actionsLog), dirname(p.designRelabelled), dirname(p.childrenFailures), p.agents, p.events, p.reflections, dirname(p.eligibleMarks), dirname(p.awsCost), dirname(p.notifySent), dirname(p.consoleChanges)]) await mkdir(d, { recursive: true });
 }

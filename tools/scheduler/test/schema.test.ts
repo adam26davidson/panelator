@@ -453,3 +453,12 @@ describe("host schema (spec 100)", () => {
     expect(validate("host", { ...good, downtime: [{ ...good.downtime[0], reason: "nap" }] }).ok).toBe(false);
   });
 });
+
+describe("console schemas (spec 051)", () => {
+  it("accepts a change and an empty snapshot, rejects a stray field", () => {
+    expect(validate("console-change", { id: 1, at: "2026-11-22T00:00:00Z", by: "me", kind: "pause_agent", args: { name: "x" } }).ok).toBe(true);
+    expect(validate("console-change", { id: 1, at: "t", by: "me", kind: "k", args: {}, extra: 1 }).ok).toBe(false);
+    const snap = { generated_at: "t", repo: "a/b", tick_s: 45, questions: [], current: [], next_tick_at: null, up_next: [], tiles: { merged_per_week: null, issue_to_merge_days: null, rework_per_merge: null, aws: { actual_usd: null, forecast_usd: null, cap_usd: null } }, metrics: null, actions: [], agents: [], parameters: [], changes: [] };
+    expect(validate("console-state", snap).ok).toBe(true);
+  });
+});
