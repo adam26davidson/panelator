@@ -69,7 +69,7 @@ The dependency order is the right one and AC-4 is brought in line with it.
 
 ## 3. Acceptance criteria
 
-- AC-1. **The scan posts a blocked comment it failed to post.** On every
+- AC-1. Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-6: the repair skips an issue whose latest blocked-by marker is set, so it never posts a child-blocked comment over a wait. **The scan posts a blocked comment it failed to post.** On every
   scan, in the pass that judges unblocking (spec 031 AC-6), for every planned
   child whose issue (resolved as AC-4 and AC-7 say) is open, carries
   `blocked`, was not filed by this same scan, and is the scan's own issue

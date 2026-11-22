@@ -9,8 +9,9 @@ AC-2 (a `waiting` plan names no domain and skips the profile check),
 [066-filer-files-blocked-issues](../066-filer-files-blocked-issues/spec.md)
 AC-7 (whose blocks the scan's pass lifts, and whose marker comments count) and
 [031-design-files-children](../031-design-files-children/spec.md) AC-6 (a
-hand-set `blocked` with the maintainer's marker comment is lifted), marked as
-section 4 records.
+hand-set `blocked` with the maintainer's marker comment is lifted) and
+[078-children-scan-repairs-blocked-comment](../078-children-scan-repairs-blocked-comment/spec.md)
+AC-1 (its repair skips an issue that waits), marked as section 4 records.
 Class: tooling. Domain: backend.
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
@@ -84,7 +85,8 @@ the same way when the maintainer's comment carries the same marker.
    domain and no tasks. To name the numbers without a shell, the plan's
    prompt gains the list of open issues with their `Spec:` lines.
 2. **The scheduler checks the numbers and blocks the issue.** A number whose
-   issue is done, does not exist or is the issue itself is dropped. With at
+   issue is done, does not exist, is closed with `abandoned` or is the issue
+   itself is dropped. With at
    least one left, the issue gets the blocked-by comment and `blocked`,
    loses the claim label, and the claim is released. No bound is spent; the
    ledger counts the wait.
@@ -127,8 +129,8 @@ stage's part is to say in the spec what it needs. Cheap to reverse; no ADR
   free text, and it is lifted by hand as today.
 - Re-pointing a waiting issue that the bot did not author when the filer
   rewrites its predecessor: spec 066 AC-6 reads the bot's open issues only
-  (spec 037). Such an issue keeps a visible block naming a closed,
-  abandoned issue.
+  (spec 037). Such an issue is handed back by the pass of AC-6 once the
+  predecessor is closed with `abandoned`, and its next plan decides again.
 - Spec 060's block on `main` (`blocked.json`, `block.started`), unchanged.
 - The profile check for `ready` and `spec_gap` plans (issue #145), and the
   `web-ui` profile itself (issue #206, merged).
@@ -198,10 +200,14 @@ App bot login; "the maintainer" is `cfg.maintainer`. The marker is spec
   (`listIssues({ state: "all", labelEvents: false })`) and sorts the
   numbers: a number equal to the issue's own, a number absent from the
   listing and a number whose issue is done are dropped, each with its cause;
-  a number whose issue is open, or closed with `abandoned` (its re-triage
-  re-points it, spec 066 AC-6), is kept. The `stage_ok` event for `plan`
+  a number whose issue is closed with `abandoned` is dropped too (an
+  abandoned issue stays open until the filer's re-triage closes it, by
+  `rewrite` or `close`, and a rewrite re-points only the blocks that exist
+  at that moment, spec 066 AC-6, so a block named on a closed abandoned issue
+  would never be re-pointed); only a number whose issue is open (one open
+  with `abandoned` still has its re-triage ahead) is kept. The `stage_ok` event for `plan`
   carries `waits: { kept: number[]; dropped: { issue: number; why: "self" |
-  "unknown" | "done" }[] }`. Given `kept` is `[37, 94]` and the chain has
+  "unknown" | "done" | "abandoned" }[] }`. Given `kept` is `[37, 94]` and the chain has
   waited fewer than `MAX_WAITS` (3) times, then the machine, after settling
   the plan as it does for `ready` (the rescue, decide input and answer are
   spent), adds the history entry
@@ -237,7 +243,7 @@ App bot login; "the maintainer" is `cfg.maintainer`. The marker is spec
   problem text is
   `the plan would wait (<reason>) but no named issue is open: ` followed by
   each dropped number with its cause (`#93 is done`, `#999 does not exist`,
-  `#255 is this issue`). Given the ledger's `waits` is already `MAX_WAITS`,
+  `#255 is this issue`, `#94 was abandoned and closed`). Given the ledger's `waits` is already `MAX_WAITS`,
   then the result is handled the same way with the problem text
   `the plan would wait a fourth time (<reason>, for #<a>, #<b>); the issue has waited 3 times: say in the spec what it needs or absorb it`.
   In both cases nothing is labelled and the claim stays. `MAX_WAITS` is
@@ -275,8 +281,17 @@ App bot login; "the maintainer" is `cfg.maintainer`. The marker is spec
   both done, then the pass removes `blocked`, posts
   `Unblocked: #37, #94 are done.` with the unblocked-by marker and logs
   `{ kind: "filer-unblocked", issue: 255, blocked_by: [37, 94] }`, exactly
-  as for a filer block; given 94 is open or closed with `abandoned`, then
-  nothing changes. Given such a child-marked issue whose spec has merged
+  as for a filer block; given 94 is open, then nothing changes. Given 94 is closed with `abandoned`
+  (the filer's re-triage decided `close`, or rewrote it after the block was
+  set and the rewrite did not re-point this issue, as for an issue the bot
+  did not author), then 94 will never be done: the pass removes `blocked`,
+  posts `Unblocked: #94 was abandoned and closed; the plan will decide
+  again.` with the unblocked-by marker for the numbers named, and logs
+  `{ kind: "filer-unblocked", issue: 255, blocked_by: [37, 94] }`; the issue
+  is claimed again, its chain starts at plan, and that plan names what it
+  needs afresh (AC-3 drops 94 as `abandoned`; at most `MAX_WAITS` waits
+  follow). A rewrite's re-point (spec 066 AC-6) that has replaced 94 in the
+  marker before the scan makes the issue wait on the replacement instead. Given such a child-marked issue whose spec has merged
   (its design bullet is now a file bullet) or whose entry is still
   `planned`, with a wait comment of AC-3, then the pass lifts it when its
   predecessors are done; spec 031 AC-6's loop, which visits only entries
@@ -294,7 +309,11 @@ App bot login; "the maintainer" is `cfg.maintainer`. The marker is spec
   bot's marker comment, its predecessors closing between two scans, asserts
   the lift, and a second with a body carrying `<!-- panelator-child: -->`
   (a waiting planned-child issue) asserts the lift and that no
-  `panelator-child-blocked` comment is posted. *(agent's call)* A predecessor that closes between the
+  `panelator-child-blocked` comment is posted; a third, whose named
+  predecessor is closed with `abandoned` (the others open), asserts the
+  hand-back comment and the removed label, and a `driver.test.ts` test
+  asserts that a plan naming a closed abandoned issue gets it in `dropped`
+  with `why: "abandoned"` (and `kept` empty is a spec gap, AC-4). *(agent's call)* A predecessor that closes between the
   driver's listing in AC-3 and the label is lifted by the next scan (the
   next move of `main`, or the next start): a delay, never a strand.
 - AC-7. **A hand-set block lifts itself when the maintainer's comment
@@ -326,15 +345,16 @@ App bot login; "the maintainer" is `cfg.maintainer`. The marker is spec
   no change to `apply.ts`, because the marker is the same. The existing
   chain, driver, children, filer and shortlist tests stay green.
 - AC-9. **The earlier text is marked.** Spec 006 AC-19, spec 077 AC-2, spec
-  066 AC-7 and spec 031 AC-6 carry the marks of section 4, and their earlier
+  066 AC-7, spec 031 AC-6 and spec 078 AC-1 carry the marks of section 4, and their earlier
   text follows unchanged.
 
 ## 4. Amendments to earlier specs
 
 - Spec 006 AC-19 is marked `Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-3: a plan result of waiting that names an issue not yet done blocks the issue and releases the claim with no bound spent; one that names none, or a fourth, is handled as a spec_gap.`
 - Spec 077 AC-2 is marked `Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-3: a plan result of waiting names no domain and skips the check, as an escalating plan does.`
-- Spec 066 AC-7 is marked `Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-6: the pass judges every open blocked issue, whoever its author and planned child or not (a block for an `after:` has no blocked-by marker and is left to spec 031 AC-6), and a blocked-by marker comment by the maintainer counts as the bot's does (AC-7).`
+- Spec 066 AC-7 is marked `Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-6: the pass judges every open blocked issue, whoever its author and planned child or not (a block for an `after:` has no blocked-by marker and is left to spec 031 AC-6), and a blocked-by marker comment by the maintainer counts as the bot's does (AC-7); a block naming an issue closed with `abandoned` is handed back, not kept for ever.`
 - Spec 031 AC-6 is marked `Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-6 and AC-7: a wait on an issue carrying the child marker is lifted by the filer pass, not this loop, and a hand-set blocked whose comment by the maintainer carries a panelator-blocked-by marker is lifted once every issue it names is done; one without that marker is still never removed.`
+- Spec 078 AC-1 is marked `Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-6: the repair skips an issue whose latest blocked-by marker is set, so it never posts a child-blocked comment over a wait.`
 
 In each case the earlier text stays as the record. Spec 066 AC-3 and AC-6,
 spec 060 and spec 026 AC-2 are not amended: the comment, the re-point, the
@@ -364,12 +384,14 @@ This list is the implementation's file scope.
   author test, `latestBlockedBy` with the maintainer (AC-6, AC-7).
 - `tools/scheduler/src/children/scan.ts`: spec 078 AC-1's repair skips an
   issue whose latest blocked-by marker is set (AC-6).
+- `tools/scheduler/src/filer/blocked.ts` also: the hand-back of a block that
+  names an issue closed with `abandoned` (AC-6).
 - `tools/scheduler/src/children/scan.ts` and its caller in
   `tools/scheduler/src/service/loop.ts`: the maintainer login passed to the
   pass (AC-7).
 - `tools/scheduler/src/filer/apply.ts`: only the call of `latestBlockedBy`,
   if its signature changes there (AC-7); no behaviour change.
-- Specs 006, 031, 066 and 077: the marks of section 4 (AC-9).
+- Specs 006, 031, 066, 077 and 078: the marks of section 4 (AC-9).
 - Tests: `tools/scheduler/test/schema.test.ts` (AC-1), the plan-prompt test
   of spec 077 AC-4 and a prompt or driver test of the list (AC-2),
   `chain.test.ts` (AC-3 to AC-5), `driver.test.ts` (AC-3),
