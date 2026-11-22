@@ -354,4 +354,4 @@ The predecessor repo `char-matrix-dashboard` is frozen with a pointer here.
 ## Children
 
 - `docs/designs/product-v0-build.md` (issue #422; sections 3 to 13 as ordered work: milestones 1 to 3 as spec-sized children, and one child that breaks down the rest of v0 after the runtime spike)
-- `specs/106-hardware-carrier-pcb/spec.md` (issue #427; product spec sections 2 and 14: the carrier PCB moves into `hardware/` under CERN-OHL-S v2 with its README and pin mapping, the root README states both licences, and the predecessor repository is frozen with a pointer here)
+- `specs/106-hardware-carrier-pcb/spec.md` (issue #427; product spec sections 2 and 14: the carrier design moves into `hardware/` under CERN-OHL-S v2 with its README and pin mapping, the root README states both licences, and the maintainer is asked to freeze the predecessor repository with a pointer here once it has merged)
