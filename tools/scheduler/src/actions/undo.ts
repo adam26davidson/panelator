@@ -9,4 +9,4 @@ export const undoKind:ActionKind={changesMode:false,
  async check(a,c){exact(a,['action_id']);await target(c,a.action_id);return null;},
  async apply(a,c){const row=await target(c,a.action_id);const result=await KINDS[row.undo!.kind].apply(row.undo!.args,{...c,reversing:true});return {...result,undoes:row.id};}
 };
-export async function undoAction(ctx:ActionContext,id:string,actor:string){return applyAction(ctx,{agent:actor,run_id:'command',kind:'undo',args:{action_id:id},why:`Undo recorded action ${id}`},actor==='maintainer'?'maintainer':['undo']);}
+export async function undoAction(ctx:ActionContext,id:string,actor:string,runId='command'){return applyAction(ctx,{agent:actor,run_id:runId,kind:'undo',args:{action_id:id},why:`Undo recorded action ${id}`},actor==='maintainer'?'maintainer':['undo']);}
