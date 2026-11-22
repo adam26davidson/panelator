@@ -436,7 +436,7 @@ describe("driver: quota (spec 013)", () => {
 });
 describe("driver: questions (spec 006 AC-12, AC-13, AC-17)", () => {
   it("sends a plan escalation to the question check even when its domain has no profile (review focus 9)", async () => {
-    const { deps, claim, paths } = await setup(() => ({ plan: [{ ...plan, domain: "firmware", escalation: Q }] }));
+    const { deps, claim, paths } = await setup(() => ({ plan: [{ ...plan, domain: "infra", escalation: Q }] }));
     const c = await steps(deps, claim, 2);
     expect(c.state).toMatchObject({ stage: "question-check", askingStage: "plan", question: Q });
     expect(logEvents(paths)).toEqual(["asked"]);
