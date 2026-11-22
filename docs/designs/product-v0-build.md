@@ -233,10 +233,12 @@ spike's result can move all of it.
   brief: Milestone 2's one built-in widget (product spec 10, 11, 9.2). Turn the spike's clock into the
     built-in clock in `widgets/` on the Rust SDK: configurable format and timezone, a manifest with the
     fields of product spec 10 (the custom config UI field reserved), a JSON Schema for its config, size
-    constraints and update rate, and golden frames. Add to the SDK and the ABI document what the manifest
+    constraints and update rate, and golden frames. The manifest validates against the JSON Schema that
+    `screen-config-and-type-sharing` emits from its Rust types, which own the manifest's format; this
+    child writes the clock's manifest to that format and does not define it. Add to the SDK and the ABI document what the manifest
     and config reading need. Its UI design covers the widget at its default and minimum sizes. The other
     four built-in widgets wait for feeds and assets in `rest-of-v0`.
-  after: runtime-spike-measurement
+  after: runtime-spike-measurement, screen-config-and-type-sharing
   class: class:product
 - planned: backend-screen-store-and-relay
   title: Backend: Postgres, the screen store and the relay that pushes a screen config to a board
@@ -286,7 +288,8 @@ spike's result can move all of it.
   brief: Milestone 3 (product spec 4, 5.1). The relay authenticates a board by the public key it presents
     and a signature, with no secret in firmware; an unclaimed board is given a short claim code; an
     account that enters the code owns the board; an account owns several boards and screens stay with
-    their board; a factory reset started from the web releases the claim. The message types are added in
+    their board; a factory reset started from the web releases the claim. Delete-account of `backend-accounts-and-login` also removes the account's claims
+    and what its boards hold, per product spec 5.6. The message types are added in
     the crate of `screen-config-and-type-sharing` with their schemas and fixtures. The one-local-user
     rule of milestone 2 ends here. The board's side is `firmware-provisioning`, the screens are
     `web-login-and-boards`.
