@@ -6,7 +6,8 @@ parent design needs no maintainer approval (delivery-system design section
 11). Amends [070-test-board](../070-test-board/spec.md) section 8 (the
 concurrency group, and the outcome of a non-booting image when no last-good
 image is cached), marked there as section 4 of this spec records.
-*(agent's call)*
+*(agent's call)* Section 6 records the maintainer's answer to question
+#7079534758: the runner, the board and its port, the approval setting.
 Class: product. Domain: firmware (sensitive paths: `.github/workflows/ci.yml`
 and `.github/workflows/hil.yml`, under `.github/`; process-spec section 5).
 Parent: docs/designs/product-v0-build.md
@@ -403,23 +404,55 @@ the always-completed check of AC-11 tighten the contract and need no mark.
 ## 6. What the runner and the board need (the maintainer's)
 
 The harness and the workflow assume the following, which only the maintainer
-can provide (delivery-system design section 3 item 3) and which is asked as
+can provide (delivery-system design section 3 item 3) and which was asked as
 a capability question from this spec's issue:
 
 - a GitHub Actions self-hosted runner on the laptop registered for the
-  `panelator` repository (the laptop's existing runner, `adam-t480` in
-  `~/actions-runner`, is registered for `char-matrix-dashboard` and cannot
-  take this repository's jobs), carrying the label `panelator-hil`, running
-  as a user that can run `docker` (the laptop's user is in the `docker`
-  group);
+  `panelator` repository, carrying the label `panelator-hil`, running as a
+  user that can run `docker`;
 - the test board, an ESP32-S3-N16R8 devkit, attached to the laptop by one of
-  its USB ports and left attached (on 2026-11-22 `/dev/serial/by-id/` on the
-  laptop held only the LTE modem);
+  its USB ports and left attached;
 - on a public repository, the Actions setting that holds workflows from
   outside contributors for approval, beside AC-8's fork rule.
 
-The answer is recorded here when it arrives, with the labels and the port
-the maintainer names.
+The maintainer did all three on 2026-11-22 (maintainer answer, question
+#7079534758):
+
+- **The runner** is `adam-t480-hil`, registered for
+  `adam26davidson/panelator` in its own directory
+  `~/actions-runner-panelator`, beside `~/actions-runner`, which stays on
+  `char-matrix-dashboard`. Its labels are `self-hosted`, `panelator-hil`,
+  `Linux` and `X64`. It runs as the user systemd service
+  `panelator-hil-runner.service` as `adamd`, who is in the `docker` group
+  and in the `uucp` group, which owns the serial device, and it is online.
+- **The board** is an ESP32-S3-N16R8 devkit attached on its UART bridge
+  port (labelled TTL on the board, a CH34x bridge), not on native USB. Its
+  port is `/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0` (`/dev/ttyUSB0`),
+  the only `usb-1a86_` entry; the LTE modem (`usb-FIBOCOM_…`) is the only
+  other serial device. A reset over the port shows the ROM banner
+  `ESP-ROM:esp32s3-20210327`. The board runs older firmware that is not
+  panelator's, which the HIL flash may overwrite.
+- **The approval setting.** The repository is public, and its fork pull
+  request approval policy is `all_external_contributors`: every workflow
+  run from an outside contributor waits for approval.
+
+What follows from the answer for the criteria above *(agent's call)*:
+
+- AC-8's `runs-on: [self-hosted, panelator-hil]` names two of that runner's
+  labels and no other runner carries the second, so AC-9 holds as written.
+- AC-14 finds the board with its default prefixes (`usb-1a86_` matches one
+  entry) and `PANELATOR_HIL_PORT` stays unset on the runner. The harness
+  reaches the board through the bridge only: reset and download mode are
+  the bridge's DTR and RTS lines, driven by `esptool`, and the banner and
+  status lines arrive on UART0, the primary console of AC-3. Nothing in the
+  harness or the suite may need the native USB port.
+- AC-15's soak read must leave DTR and RTS unasserted when it opens the
+  port, since on this bridge asserting them resets the board.
+- Until the first flashing run, the board holds the older firmware and
+  prints no status line, so a soak run before then is `fail` (AC-15), never
+  `bricked`. The first run of the implementation PR overwrites that
+  firmware; no last-good image exists until the first `main` run passes,
+  which is the case AC-12 step 4 and section 4 cover.
 
 ## 7. Interfaces and files
 
