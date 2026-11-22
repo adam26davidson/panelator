@@ -113,6 +113,8 @@ Cheap to reverse; no ADR (design section 3, item 2).
 
 ## 2. Out of scope
 
+> Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-6: the block of an issue whose predecessor is closed with `abandoned` (the third bullet) is handed back by the scan's pass, which removes `blocked` and says so in a comment, and the issue's plan decides.
+
 - Changing what the shortlist skips (`blocked`, `abandoned`, `in-progress`,
   `needs-*`: spec 001 section 7, `select.ts`) or how it ranks (spec 008
   AC-14, spec 063 AC-4).
@@ -184,7 +186,7 @@ marker; a comment by any other account never counts.
 
 **Filing**
 
-- AC-3. **A `blocked_by` issue is filed blocked and says why.** Given
+- AC-3. Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-6: a number whose issue is closed with `abandoned` still stays in the block at filing, and the next scan's pass hands that block back unless a re-point has replaced the number. **A `blocked_by` issue is filed blocked and says why.** Given
   `applyFilerResult` with a `file` decision whose `issue.blocked_by` is
   `[94, 132]` and both are open, then `applyDecisions` lists all issues once
   (`gh.listIssues({ state: "all", labelEvents: false })`; made at most once
@@ -251,7 +253,7 @@ marker; a comment by any other account never counts.
 
 **Lifting**
 
-- AC-7. Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-6: the pass judges every open blocked issue, whoever its author and planned child or not (a block for an `after:` has no blocked-by marker and is left to spec 031 AC-6), and a blocked-by marker comment by the maintainer counts as the bot's does (AC-7). **The children scan lifts a `blocked_by` block whose issues are
+- AC-7. Amended by [106-plan-waits-for-predecessor-issues](../106-plan-waits-for-predecessor-issues/spec.md) AC-6: the pass judges every open blocked issue, whoever its author and planned child or not (a block for an `after:` has no blocked-by marker and is left to spec 031 AC-6), and a blocked-by marker comment by the maintainer counts as the bot's does (AC-7); a block naming an issue closed with `abandoned` is handed back, not kept for ever. **The children scan lifts a `blocked_by` block whose issues are
   done.** Given `fileDesignChildren` (spec 031 AC-3: the first tick after
   start and every move of `main`) and, in its listing, an open issue
   authored by the bot carrying `blocked` whose comments hold a bot comment
