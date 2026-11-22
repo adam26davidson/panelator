@@ -74,7 +74,7 @@ describe("sign-in (AC-5)", () => {
     expect(s.table.attempts).toMatchObject([{ login: "someone-else", ok: false }]);
     // The browser is sent on to the app's refusal card, which names the login.
     expect(cb.headers["content-type"]).toContain("text/html");
-    expect(cb.body).toContain("url=/?refused=someone-else");
+    expect(cb.body).toContain("url=/sign-in-refused?login=someone-else");
   });
   it("returns to the screen whose link was opened, and only to a path of this site", async () => {
     const s = setup();
@@ -91,8 +91,44 @@ describe("sign-in (AC-5)", () => {
       );
     };
     expect((await go("/questions")).headers.location).toBe("/questions");
+    expect((await go("/history?weeks=12")).headers.location).toBe("/history?weeks=12");
+    expect((await go("/auth/logout")).headers.location).toBe("/");
     expect((await go("//evil.example")).headers.location).toBe("/");
     expect((await go("https://evil.example")).headers.location).toBe("/");
+  });
+  it("answers 503 saying sign-in is not configured when there is no OAuth client id", async () => {
+    const s = setup();
+    const r = await handle({ ...s.d, clientId: "" }, s.req("GET", "/auth/login"));
+    expect(r.status).toBe(503);
+    expect(r.body).toContain("not configured");
+  });
+  it("GET /state returns the session's login with the snapshot and its age", async () => {
+    const s = setup();
+    const { cookie } = await s.signIn();
+    await handle(s.d, s.req("PUT", "/state", { headers: auth(), body: '{"a":1}' }));
+    const r = await handle(
+      s.d,
+      s.req("GET", "/state", { headers: { host: "c.example", cookie: `session=${cookie}` } }),
+    );
+    expect(Object.keys(JSON.parse(r.body)).sort()).toEqual(["age_s", "login", "received_at", "snapshot"]);
+    expect(JSON.parse(r.body)).toMatchObject({ login: "maintainer", snapshot: { a: 1 }, age_s: 0 });
+  });
+  it("change ids never fall below the clock, so a new table is above an old cursor", async () => {
+    const s = setup();
+    const old = await s.table.addChange({ at: "t", by: "m", kind: "pause_agent", args: {} }, 1_000);
+    const fresh = new MemoryTable();
+    expect(
+      (await fresh.addChange({ at: "t", by: "m", kind: "pause_agent", args: {} }, 1_800_000_000_000)).id,
+    ).toBeGreaterThan(old.id + 1_000_000);
+  });
+  it("a result posted twice answers 200 both times", async () => {
+    const s = setup();
+    const c = await s.table.addChange({ at: "t", by: "m", kind: "pause_agent", args: {} }, 5);
+    for (let i = 0; i < 2; i++)
+      expect(
+        (await handle(s.d, s.req("POST", `/changes/${c.id}/result`, { headers: auth(), body: '{"status":"applied"}' })))
+          .status,
+      ).toBe(200);
   });
   it("returns 403 for a state mismatch", async () => {
     const s = setup();
@@ -171,23 +207,24 @@ describe("routes (AC-5, AC-6)", () => {
     expect((await post({ kind: "run_agent", args: {} })).status).toBe(400);
     const a = JSON.parse((await post({ kind: "pause_agent", args: { name: "a" } })).body);
     const b = JSON.parse((await post({ kind: "undo", args: { action_id: "x" } })).body);
-    expect(a).toMatchObject({ id: 1, by: "maintainer", kind: "pause_agent" });
-    expect(b.id).toBe(2);
+    expect(a.id).toBeGreaterThanOrEqual(1_000_000);
+    expect(a).toMatchObject({ by: "maintainer", kind: "pause_agent" });
+    expect(b.id).toBe(a.id + 1);
   });
   it("long-poll returns at once on a new change and empty after wait", async () => {
     const s = setup();
-    await s.table.addChange({ at: "t", by: "maintainer", kind: "pause_agent", args: { name: "a" } });
+    await s.table.addChange({ at: "t", by: "maintainer", kind: "pause_agent", args: { name: "a" } }, 5);
     const now = await handle(s.d, s.req("GET", "/changes", { headers: auth(), query: { after: "0", wait: "25" } }));
     expect(JSON.parse(now.body).changes).toHaveLength(1);
     expect(s.slept).toEqual([]);
-    const none = await handle(s.d, s.req("GET", "/changes", { headers: auth(), query: { after: "1", wait: "40" } }));
+    const none = await handle(s.d, s.req("GET", "/changes", { headers: auth(), query: { after: "5", wait: "40" } }));
     expect(JSON.parse(none.body).changes).toEqual([]);
     expect(s.slept.every((m) => m <= 2000)).toBe(true);
     expect(s.slept.reduce((a, b) => a + b, 0)).toBe(28_000);
   });
   it("stores a change's result", async () => {
     const s = setup();
-    const c = await s.table.addChange({ at: "t", by: "maintainer", kind: "pause_agent", args: {} });
+    const c = await s.table.addChange({ at: "t", by: "maintainer", kind: "pause_agent", args: {} }, 5);
     const r = await handle(
       s.d,
       s.req("POST", `/changes/${c.id}/result`, { headers: auth(), body: '{"status":"refused","reason":"nope"}' }),

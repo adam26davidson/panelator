@@ -49,7 +49,8 @@ describe("buildConsoleState (spec 051 AC-2)", () => {
     const s = await buildConsoleState({ ...base, telegramUsername: () => "panel_bot" });
     expect(validate("console-state", s)).toEqual({ ok: true });
     expect(s.questions.map((x) => [x.question_comment_id, x.status])).toEqual([[11, "reminded"], [12, "answered"]]);
-    expect(s.questions[1]).toMatchObject({ decision_url: "https://github.com/a/b/issues/6#issuecomment-99", question_url: "https://github.com/a/b/issues/6#issuecomment-12", telegram_url: "https://t.me/panel_bot", text: "Which?", options: ["A"] });
+    expect(s.questions[1]).toMatchObject({ decision_url: "https://github.com/a/b/issues/6#issuecomment-99", question_url: "https://github.com/a/b/issues/6#issuecomment-12", telegram_url: "https://t.me/panel_bot", text: "Which?", options: [{ label: "A", cost: "c", recommended: true }] });
+    expect(s.questions[0]).toMatchObject({ reminded_at: "2026-11-21T00:00:00Z" });
   });
   it("carries the last 50 changes and the cost record", async () => {
     const { base, paths } = await consoleCtx();
@@ -138,6 +139,8 @@ describe("applyChange (spec 051 AC-4)", () => {
 
 import { ConsolePusher } from "../src/console/push.ts";
 import { ConsolePoller } from "../src/console/poll.ts";
+import { handle } from "../../../console/api/handlers.ts";
+import { MemoryTable } from "../../../console/api/table.ts";
 
 const ccfg = { url: "https://c.example", credentials_path: "/none", github_client_id: "id", push_min_s: 30, long_poll_s: 25 };
 const SECRET = "sekrit-key-123";
@@ -239,7 +242,7 @@ describe("poll result POST failure (spec 051 AC-4)", () => {
     const pusher = new ConsolePusher({ cfg: ccfg, fetch: net.fetch, readKey: async () => SECRET, now: () => new Date(), log: () => {}, build: async () => ({ generated_at: "x" }) });
     const poller = new ConsolePoller({ cfg: ccfg, fetch: f, readKey: async () => SECRET, action: () => ctx, pusher, log: () => {} });
     net.queue.push([change(1, "set_parameter", { name: "system_work_share", value: 0.5 })]);
-    await expect(poller.once()).rejects.toThrow(/POST result answered 503/);
+    expect(await poller.once()).toBe(1);
     expect(net.calls.filter((c) => c.method === "PUT")).toHaveLength(1); // the push after the change still happened
     failPost = false;
     await poller.once();
@@ -247,6 +250,64 @@ describe("poll result POST failure (spec 051 AC-4)", () => {
     expect(posts).toHaveLength(2);
     expect(JSON.parse(posts[1].body!)).toMatchObject({ status: "applied" });
     expect((await ctx.parameters.read("system_work_share")).value).toBe(0.5);
+  });
+});
+
+describe("poll result POST outcomes (spec 051 AC-4)", () => {
+  const mk = async (post: (url: string) => Response | Promise<Response>) => {
+    const { ctx, change } = await applyCtx();
+    const net = fakeNet();
+    const f = async (url: string, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "POST") { net.calls.push({ url, method: "POST", body: init?.body as string }); return post(url); }
+      return net.fetch(url, init);
+    };
+    const logs: Record<string, unknown>[] = [];
+    const pusher = new ConsolePusher({ cfg: ccfg, fetch: net.fetch, readKey: async () => SECRET, now: () => new Date(), log: () => {}, build: async () => ({ generated_at: "x" }) });
+    const poller = new ConsolePoller({ cfg: ccfg, fetch: f, readKey: async () => SECRET, action: () => ctx, pusher, log: (r) => logs.push(r) });
+    return { net, poller, logs, change };
+  };
+  it("a failing result retry does not stop the poll from asking for changes", async () => {
+    const t = await mk(() => new Response("no", { status: 503 }));
+    t.net.queue.push([t.change(1, "pause_agent", { name: "audit" })]);
+    await t.poller.once();
+    t.net.calls.length = 0;
+    await t.poller.once();
+    expect(t.net.calls.some((c) => c.method === "GET" && c.url.includes("after=1"))).toBe(true);
+    expect(t.logs.filter((l) => l.status === "result-failed")).toHaveLength(1);
+  });
+  it("a 404 on a result POST is permanent: logged once, dropped, never retried", async () => {
+    const t = await mk(() => new Response("no such change", { status: 404 }));
+    t.net.queue.push([t.change(1, "pause_agent", { name: "audit" })]);
+    await t.poller.once();
+    await t.poller.once();
+    await t.poller.once();
+    expect(t.net.calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    expect(t.logs.filter((l) => l.status === "result-dropped")).toHaveLength(1);
+  });
+  it("a 429 is retried", async () => {
+    let n = 0;
+    const t = await mk(() => (n++ === 0 ? new Response("slow", { status: 429 }) : new Response("{}")));
+    t.net.queue.push([t.change(1, "pause_agent", { name: "audit" })]);
+    await t.poller.once();
+    await t.poller.once();
+    expect(t.net.calls.filter((c) => c.method === "POST")).toHaveLength(2);
+  });
+  it("an old cursor from an earlier table is below every id of a fresh one: its first change is applied", async () => {
+    const { ctx, change } = await applyCtx();
+    await applyChange(ctx, change(7, "pause_agent", { name: "audit" })); // the laptop's old cursor is 7
+    const table = new MemoryTable();
+    const hash = createHash("sha256").update(SECRET).digest("hex");
+    const d = { table, keyHash: hash, maintainer: "me", clientId: "c", clientSecret: async () => "s", fetch: async () => new Response("{}"), now: () => 1_800_000_000_000, sleep: async () => {} };
+    await table.addChange({ at: "2026-11-22T09:59:00Z", by: "me", kind: "resume_agent", args: { name: "audit" } }, d.now());
+    const f = async (url: string, init?: RequestInit) => {
+      const u = new URL(url);
+      const r = await handle(d, { method: init?.method ?? "GET", path: u.pathname, query: Object.fromEntries(u.searchParams), headers: init?.headers as Record<string, string>, body: (init?.body as string) ?? "" });
+      return new Response(r.body, { status: r.status });
+    };
+    const pusher = new ConsolePusher({ cfg: ccfg, fetch: f, readKey: async () => SECRET, now: () => new Date(), log: () => {}, build: async () => ({ generated_at: "x" }) });
+    const poller = new ConsolePoller({ cfg: ccfg, fetch: f, readKey: async () => SECRET, action: () => ctx, pusher, log: () => {} });
+    expect(await poller.once()).toBe(1);
+    expect((await readAgentState(ctx.paths, "audit"))?.paused).toBe(false);
   });
 });
 
@@ -273,7 +334,7 @@ describe("poll (spec 051 AC-4)", () => {
   });
 });
 
-import { existsSync, statSync } from "node:fs";
+import { existsSync, rmSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { parse as parseYaml } from "yaml";
 import { CONSOLE_MONTHLY_USD, CONSOLE_WHAT, deployConsole, destroyConsole } from "../src/console/deploy.ts";
@@ -334,6 +395,44 @@ describe("console deploy (spec 051 AC-7)", () => {
   });
 });
 
+describe("console destroy and domain (spec 051 AC-7)", () => {
+  const w0 = async () => {
+    const w = await awsWorld({ cap: 100 });
+    writeFileSync(join(w.dir, "fixtures", "stack.json"), JSON.stringify(stackJson));
+    await deployConsole({ ctx: w.ctx, maintainer: "me", clientId: "c", credentialsPath: join(w.dir, "cred", "console.json"), templatePath: "t.yaml", build: async () => ({ appDir: "/tmp/app", lambdaZip: "/tmp/l.zip" }), print: () => {} });
+    return w;
+  };
+  const open = (w: Awaited<ReturnType<typeof awsWorld>>) => (JSON.parse(readFileSync(w.ctx.paths.awsLedger, "utf8")).reservations as { released_at: string | null }[]).filter((r) => r.released_at === null).length;
+  it("fails with the reservation kept when describe-stacks fails for any reason but a missing stack", async () => {
+    const w = await w0();
+    writeFileSync(join(w.dir, "fixtures", "fail-cf"), "");
+    await expect(destroyConsole(w.ctx)).rejects.toThrow(/describe-stacks failed/);
+    expect(w.calls().some((c) => c[1] === "delete-stack")).toBe(false);
+    expect(open(w)).toBe(1);
+  });
+  it("releases the reservation when the stack is already absent, deleting nothing", async () => {
+    const w = await w0();
+    rmSync(join(w.dir, "fixtures", "stack.json"));
+    await destroyConsole(w.ctx);
+    expect(w.calls().some((c) => c[1] === "delete-stack")).toBe(false);
+    expect(open(w)).toBe(0);
+  });
+  it("refuses a domain outside us-east-1 before reserving anything", async () => {
+    const w = await awsWorld({ cap: 100 });
+    await expect(deployConsole({ ctx: w.ctx, maintainer: "me", clientId: "c", domain: "x.example", credentialsPath: join(w.dir, "c.json"), templatePath: "t", build: async () => ({ appDir: "a", lambdaZip: "z" }), print: () => {} })).rejects.toThrow(/us-east-1/);
+    expect(w.calls()).toEqual([]);
+  });
+});
+
+describe("console/infra/stack.yaml routing", () => {
+  it("has no distribution-wide error response, and the API paths have behaviours of their own", () => {
+    const yaml = readFileSync("console/infra/stack.yaml", "utf8");
+    expect(yaml).not.toContain("CustomErrorResponses");
+    for (const p of ["/auth/*", "/state", "/changes*"]) expect(yaml).toContain(`PathPattern: ${p}`);
+    expect(yaml).toContain("sign-in-refused");
+  });
+});
+
 describe("console/infra/stack.yaml", () => {
   it("parses and declares the resources and the NoEcho key hash", () => {
     const yaml = readFileSync("console/infra/stack.yaml", "utf8");
@@ -370,5 +469,60 @@ describe("current claims and agent cost (spec 051 AC-2)", () => {
     expect(s.next_tick_at).toBeNull();
     expect(s.up_next).toEqual([{ issue: 7, title: "Seven", class: "tooling" }]);
     expect(s.agents.find((a) => a.name === "audit")?.cost_30d_usd).toBe(0.5);
+  });
+
+  const claim = (paths: Parameters<typeof writeClaim>[0], issue: number, over: Record<string, unknown>, started = "2026-11-22T09:00:00Z") =>
+    writeClaim(paths, { issue, state: { ...initialChainState(issue), track: "issue", ...over } as never, worktree: "/w", started_at: started, last_activity_at: started, run_id: null });
+  const names = (c: { stages: { name: string; status: string }[] }) => c.stages.map((x) => `${x.name}:${x.status}`).join(" ");
+  it("leaves out a waiting claim, so with nothing else running current is empty and the next tick is set", async () => {
+    const { base, paths } = await consoleCtx();
+    await claim(paths, 50, { stage: "waiting", resumeStage: "review" }, "2026-11-20T09:00:00Z");
+    for (const [n, st] of [[51, "paused"], [52, "blocked"], [53, "done"], [54, "released"], [55, "abandoned"]] as const) await claim(paths, n, { stage: st });
+    const s = await buildConsoleState(base);
+    expect(s.current).toEqual([]);
+    expect(s.next_tick_at).toBe("2026-11-22T10:00:45.000Z");
+    expect(validate("console-state", s)).toEqual({ ok: true });
+  });
+  it("puts a running claim first although a waiting one is older", async () => {
+    const { base, paths } = await consoleCtx();
+    await claim(paths, 50, { stage: "waiting" }, "2026-11-20T09:00:00Z");
+    await claim(paths, 60, { stage: "verify" });
+    const s = await buildConsoleState(base);
+    expect(s.current.map((c) => c.issue)).toEqual([60]);
+    expect(names(s.current[0])).toBe("plan:done implement:done verify:running review:pending fix:pending merge:pending");
+  });
+  it("marks plan running for a claimed chain", async () => {
+    const { base, paths } = await consoleCtx();
+    await claim(paths, 61, { stage: "claimed" });
+    expect(names((await buildConsoleState(base)).current[0])).toBe("plan:running implement:pending verify:pending review:pending fix:pending merge:pending");
+  });
+  it("marks the stage that asked as running during a question check", async () => {
+    const { base, paths } = await consoleCtx();
+    await claim(paths, 62, { stage: "question-check", askingStage: "review", resumeStage: "review" });
+    expect(names((await buildConsoleState(base)).current[0])).toBe("plan:done implement:done verify:done review:running fix:pending merge:pending");
+  });
+  it("marks an earlier stage whose newest run did not succeed as failed, and shows a spec track as one stage", async () => {
+    const { base, paths } = await consoleCtx();
+    await claim(paths, 63, { stage: "fix" });
+    await writeUsageRecord(paths, { ...usage("63-review-1-20261122T090100", 63, "review", "2026-11-22T09:01:00Z", 1), outcome: "failed" });
+    await claim(paths, 64, { stage: "spec", track: "spec" }, "2026-11-22T09:30:00Z");
+    const s = await buildConsoleState(base);
+    expect(names(s.current[0])).toBe("plan:done implement:done verify:done review:failed fix:running merge:pending");
+    expect(names(s.current[1])).toBe("spec:running");
+    expect(validate("console-state", s)).toEqual({ ok: true });
+  });
+  it("reports the agent's summary and its last run with the outcome", async () => {
+    const { base, paths } = await consoleCtx();
+    await writeAgentState(paths, "audit", { last_run: { at: "2026-11-22T06:00:00Z", run_id: "r", outcome: "failed" }, next_run: null, pending_events: [], paused: false, paused_by: null, failures: 1, summary: "Reviews actions" });
+    const s = await buildConsoleState({ ...base, registry: { audit: {} as never, fresh: {} as never } });
+    expect(s.agents.find((a) => a.name === "audit")).toMatchObject({ summary: "Reviews actions", last_run: { at: "2026-11-22T06:00:00Z", outcome: "failed" } });
+    expect(s.agents.find((a) => a.name === "fresh")).toMatchObject({ summary: "", last_run: null });
+    expect(validate("console-state", s)).toEqual({ ok: true });
+  });
+  it("marks the option a recommendation names", async () => {
+    const { base, paths } = await consoleCtx();
+    const q = { kind: "product", question: "Which?", options: [{ label: "Wait", cost: "a day" }, { label: "Ship now", cost: "risk" }], recommendation: "Ship now, because it is cheap" };
+    writeFileSync(paths.questionsLog, JSON.stringify({ issue: 5, at: "2026-11-20T00:00:00Z", event: "asked", asking_stage: "plan", question_comment_id: 11, question: q }) + "\n");
+    expect((await buildConsoleState(base)).questions[0].options).toEqual([{ label: "Wait", cost: "a day", recommended: false }, { label: "Ship now", cost: "risk", recommended: true }]);
   });
 });

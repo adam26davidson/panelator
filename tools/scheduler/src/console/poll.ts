@@ -26,21 +26,34 @@ export class ConsolePoller {
   #unposted = new Map<number, ChangeRecord>();
   #resumed = false;
 
-  /** POSTs a change's outcome; returns the error instead of throwing so the caller finishes its work first. */
-  async #report(auth: Record<string, string>, change: ChangeRecord): Promise<Error | null> {
+  #noted = new Set<string>();
+
+  /**
+   * POSTs a change's outcome. A network error, a 5xx, 408 or 429 keeps it for a later poll; any other 4xx (for example 404
+   * after the stack was destroyed and deployed again) is permanent and is dropped. Either is logged once, never thrown:
+   * a result that cannot be delivered must not stop the poll from asking for changes.
+   */
+  async #report(auth: Record<string, string>, change: ChangeRecord): Promise<void> {
     const d = this.#d;
     const out = change.status === "applied" ? { status: "applied", ...(change.action_id ? { action_id: change.action_id } : {}) } : { status: "refused", reason: change.reason ?? "refused" };
+    let why: string;
     try {
       const post = await d.fetch(`${d.cfg.url}/changes/${change.id}/result`, { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify(out), signal: this.#ctl.signal });
-      if (!post.ok) return new Error(`POST result answered ${post.status}`);
-      this.#unposted.delete(change.id);
-      return null;
+      if (post.ok) { this.#unposted.delete(change.id); this.#noted.delete(`${change.id}`); return; }
+      why = `POST result answered ${post.status}`;
+      if (post.status >= 400 && post.status < 500 && post.status !== 408 && post.status !== 429) {
+        this.#unposted.delete(change.id);
+        d.log({ kind: "console", status: "result-dropped", id: change.id, reason: why });
+        return;
+      }
     } catch (e) {
-      return e as Error;
+      if (this.#ctl.signal.aborted) return;
+      why = (e as Error).message;
     }
+    if (!this.#noted.has(`${change.id}`)) { this.#noted.add(`${change.id}`); d.log({ kind: "console", status: "result-failed", id: change.id, reason: why }); }
   }
 
-  /** One poll: fetch the changes after the cursor, apply and report each. Returns how many arrived. */
+  /** One poll: re-post any outcome still owed, fetch the changes after the cursor, apply and report each. Returns how many arrived. */
   async once(): Promise<number> {
     const d = this.#d;
     const key = await (d.readKey ?? (() => readApiKey(d.cfg.credentials_path)))();
@@ -51,23 +64,19 @@ export class ConsolePoller {
       this.#resumed = true;
       for (const r of (await readChanges(ctx.paths)).slice(-50)) if (r.status !== "pending") this.#unposted.set(r.id, r);
     }
-    let retryFailure: Error | null = null;
-    for (const c of [...this.#unposted.values()]) retryFailure = (await this.#report(auth, c)) ?? retryFailure;
-    if (retryFailure) throw retryFailure;
+    for (const c of [...this.#unposted.values()]) await this.#report(auth, c);
     const after = await cursor(ctx);
     const res = await d.fetch(`${d.cfg.url}/changes?after=${after}&wait=${d.cfg.long_poll_s}`, { headers: auth, signal: this.#ctl.signal });
     if (!res.ok) throw new Error(`GET /changes answered ${res.status}`);
     const body = (await res.json()) as { changes?: unknown[] };
     const list = Array.isArray(body.changes) ? body.changes : [];
-    let failure: Error | null = null;
     for (const raw of list) {
       const { change } = await applyChange(ctx, raw);
       d.log({ kind: "console", status: "change", id: change.id, change_kind: change.kind, outcome: change.status });
       this.#unposted.set(change.id, change);
-      failure = (await this.#report(auth, change)) ?? failure;
+      await this.#report(auth, change);
       await d.pusher.now();
     }
-    if (failure) throw failure;
     return list.length;
   }
 

@@ -4,10 +4,11 @@ export interface Question {
   issue: number;
   kind: string;
   text: string;
-  options: string[];
+  options: { label: string; cost: string; recommended: boolean }[];
   asked_at: string;
   status: "open" | "reminded" | "answered";
   answered_at?: string;
+  reminded_at?: string;
   question_url: string;
   decision_url?: string;
   telegram_url?: string;
@@ -59,7 +60,8 @@ export interface ActionEntry {
 }
 export interface Agent {
   name: string;
-  last_run: string | null;
+  summary: string;
+  last_run: { at: string; outcome: string } | null;
   next_run: string | null;
   cost_30d_usd: number;
   paused: boolean;

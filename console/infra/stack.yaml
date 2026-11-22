@@ -161,7 +161,8 @@ Resources:
       FunctionCode: |
         function handler(event) {
           var r = event.request;
-          if (r.uri.indexOf('.') === -1) r.uri = '/index.html';
+          var screens = ['/', '/questions', '/history', '/actions', '/agents', '/parameters', '/sign-in-refused'];
+          if (screens.indexOf(r.uri) !== -1) r.uri = '/index.html';
           return r;
         }
 

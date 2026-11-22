@@ -45,12 +45,17 @@ async function held(ctx: AwsContext): Promise<string | null> {
   return l.reservations.find((r) => r.what === CONSOLE_WHAT && r.released_at === null)?.id ?? null;
 }
 
+/**
+ * The stack's outputs, or null when the stack does not exist. Any other failure (an expired SSO session, the network,
+ * throttling) is thrown: it says nothing about whether the stack exists.
+ */
 async function outputs(ctx: AwsContext): Promise<Record<string, string> | null> {
   try {
     const r = (await ctx.cli!.run(["cloudformation", "describe-stacks", "--stack-name", STACK_NAME])) as { Stacks?: { Outputs?: { OutputKey: string; OutputValue: string }[] }[] };
     return Object.fromEntries((r.Stacks?.[0]?.Outputs ?? []).map((o) => [o.OutputKey, o.OutputValue]));
-  } catch {
-    return null;
+  } catch (e) {
+    if (/does not exist/i.test((e as Error).message)) return null;
+    throw e;
   }
 }
 
@@ -58,6 +63,8 @@ async function outputs(ctx: AwsContext): Promise<Record<string, string> | null> 
 export async function deployConsole(o: DeployOptions): Promise<{ url: string }> {
   const { ctx } = o;
   if (!ctx.cli) throw new Error("aws is off: no aws block in agents/scheduler.yaml");
+  // CloudFront takes certificates only from us-east-1 and the console is one stack, so a domain needs that region.
+  if (o.domain && ctx.config?.region !== "us-east-1") throw new Error(`a domain needs the aws region us-east-1 (CloudFront takes certificates only from there); the configured region is ${ctx.config?.region ?? "unset"}`);
   let reservation = await held(ctx);
   if (!reservation) {
     const r = await reserveSpend(ctx, { what: CONSOLE_WHAT, expected_monthly_usd: CONSOLE_MONTHLY_USD, why: "The charter requires a secure, hosted, mobile-friendly interface for the maintainer; the console is that interface.", by: "console deploy" });
@@ -83,7 +90,7 @@ export async function deployConsole(o: DeployOptions): Promise<{ url: string }> 
 /** `console destroy`: delete the stack (emptying the bucket first), then release the reservation. */
 export async function destroyConsole(ctx: AwsContext): Promise<void> {
   if (!ctx.cli) throw new Error("aws is off: no aws block in agents/scheduler.yaml");
-  const out = await outputs(ctx);
+  const out = await outputs(ctx); // throws unless the answer is the stack's outputs or "no such stack": the reservation stays then
   if (out?.BucketName) await ctx.cli.runText(["s3", "rm", `s3://${out.BucketName}`, "--recursive"], { timeoutMs: 10 * 60_000 });
   if (out) {
     await ctx.cli.run(["cloudformation", "delete-stack", "--stack-name", STACK_NAME]);

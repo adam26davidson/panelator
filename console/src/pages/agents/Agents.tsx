@@ -39,6 +39,13 @@ function Row({ a }: { a: Agent }) {
       {Icon.pause(16)} Pause
     </button>
   );
+  const last = a.last_run ? (
+    <span style={{ color: a.last_run.outcome === "ok" ? undefined : "var(--color-danger)" }}>
+      {when(a.last_run.at)} · {a.last_run.outcome === "ok" ? "ok" : "failed"}
+    </span>
+  ) : (
+    when(null)
+  );
   const next = a.paused ? <span className="c-muted">— (paused)</span> : when(a.next_run);
   return (
     <li className="c-trow c-agents-grid">
@@ -54,10 +61,11 @@ function Row({ a }: { a: Agent }) {
             {control}
           </span>
         </div>
+        {a.summary ? <span className="c-sm c-muted">{a.summary}</span> : null}
         <dl className="c-meta c-only-narrow" style={{ marginTop: 8 }}>
           <div className="c-kv">
             <dt>Last run</dt>
-            <dd>{when(a.last_run)}</dd>
+            <dd>{last}</dd>
           </div>
           <div className="c-kv">
             <dt>Next run</dt>
@@ -80,7 +88,7 @@ function Row({ a }: { a: Agent }) {
           </Refused>
         ) : null}
       </div>
-      <span className="c-only-wide">{when(a.last_run)}</span>
+      <span className="c-only-wide">{last}</span>
       <span className="c-only-wide">{next}</span>
       <span className="c-only-wide" style={{ fontVariantNumeric: "tabular-nums" }}>
         {usd(a.cost_30d_usd)}

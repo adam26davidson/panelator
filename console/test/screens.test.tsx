@@ -70,8 +70,8 @@ describe("sign-in refused", () => {
 });
 
 describe("sign-in transitions", () => {
-  it("a signed-out visitor sees the refusal card when the callback sent them with ?refused", async () => {
-    mount("/?refused=someone-else", makeNet({ unauthorized: true }));
+  it("a signed-out visitor sees the refusal card at /sign-in-refused", async () => {
+    mount("/sign-in-refused?login=someone-else", makeNet({ unauthorized: true }));
     expect(await screen.findByText("@someone-else")).toBeTruthy();
   });
   it("the sign-in link carries the screen that was opened", async () => {

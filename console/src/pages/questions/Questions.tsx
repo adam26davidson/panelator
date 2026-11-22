@@ -25,17 +25,29 @@ function OpenQuestion({ q, now, repo }: { q: Question; now: number; repo: string
         ) : (
           <span className="c-badge accent">Open</span>
         )}
-        <span className="c-sm c-muted">asked {ago(q.asked_at, now)}</span>
+        <span className="c-sm c-muted">
+          asked {ago(q.asked_at, now)}
+          {q.reminded_at ? ` · reminded ${ago(q.reminded_at, now)}` : ""}
+        </span>
       </div>
       <p style={{ fontSize: "var(--text-base)", fontWeight: 600 }}>{q.text}</p>
       {q.options.length ? (
         <ol className="c-list" style={{ gap: 8 }}>
           {q.options.map((o, i) => (
-            <li key={o} className="c-row" style={{ alignItems: "flex-start", gap: 10 }}>
+            <li key={o.label} className="c-row" style={{ alignItems: "flex-start", gap: 10 }}>
               <span className="c-badge" style={{ minWidth: 30, justifyContent: "center" }}>
                 {i + 1}
               </span>
-              <span className="c-strong">{o}</span>
+              <span className="c-strong">
+                {o.label}
+                {o.cost ? <span className="c-sm c-muted"> · {o.cost}</span> : null}
+                {o.recommended ? (
+                  <span className="c-sm" style={{ color: "var(--color-ok)", fontWeight: 600 }}>
+                    {" "}
+                    · recommended
+                  </span>
+                ) : null}
+              </span>
             </li>
           ))}
         </ol>

@@ -17,7 +17,8 @@ export interface Table {
   putState(snapshot: unknown, at: number): Promise<void>;
   getState(): Promise<{ snapshot: unknown; at: number } | null>;
   /** Appends with the next increasing id. */
-  addChange(c: Omit<ChangeRow, "id">): Promise<ChangeRow>;
+  /** The id is `max(last id + 1, now in ms)`, so a table made later never reuses the range of an earlier one. */
+  addChange(c: Omit<ChangeRow, "id">, now: number): Promise<ChangeRow>;
   changesAfter(after: number): Promise<ChangeRow[]>;
   setResult(id: number, result: NonNullable<ChangeRow["result"]>): Promise<boolean>;
   putSession(s: Session): Promise<void>;
@@ -37,8 +38,8 @@ export class MemoryTable implements Table {
   async getState() {
     return this.state;
   }
-  async addChange(c: Omit<ChangeRow, "id">) {
-    const row = { ...c, id: (this.changes.at(-1)?.id ?? 0) + 1 };
+  async addChange(c: Omit<ChangeRow, "id">, now: number) {
+    const row = { ...c, id: Math.max((this.changes.at(-1)?.id ?? 0) + 1, now) };
     this.changes.push(row);
     return row;
   }
@@ -105,19 +106,30 @@ export class DynamoTable implements Table {
     )) as { Item?: Item };
     return r.Item ? { snapshot: JSON.parse(r.Item.body.S as string), at: Number(r.Item.at.N) } : null;
   }
-  async addChange(c: Omit<ChangeRow, "id">) {
-    const r = (await this.db.send(
-      new this.cmd.Update({
-        TableName: this.name,
-        Key: { pk: s("counter"), sk: s("0") },
-        UpdateExpression: "ADD v :one",
-        ExpressionAttributeValues: { ":one": n(1) },
-        ReturnValues: "UPDATED_NEW",
-      }),
-    )) as { Attributes?: Item };
-    const id = Number(r.Attributes?.v.N);
-    await this.put({ pk: s("change"), sk: s(String(id).padStart(12, "0")), body: s(JSON.stringify({ ...c, id })) });
-    return { ...c, id };
+  async addChange(c: Omit<ChangeRow, "id">, now: number) {
+    for (;;) {
+      const cur = (await this.db.send(
+        new this.cmd.Get({ TableName: this.name, Key: { pk: s("counter"), sk: s("0") }, ConsistentRead: true }),
+      )) as { Item?: Item };
+      const last = cur.Item ? Number(cur.Item.v.N) : 0;
+      const id = Math.max(last + 1, now);
+      try {
+        await this.db.send(
+          new this.cmd.Update({
+            TableName: this.name,
+            Key: { pk: s("counter"), sk: s("0") },
+            UpdateExpression: "SET v = :new",
+            ConditionExpression: cur.Item ? "v = :old" : "attribute_not_exists(v)",
+            ExpressionAttributeValues: { ":new": n(id), ...(cur.Item ? { ":old": n(last) } : {}) },
+          }),
+        );
+      } catch (e) {
+        if ((e as { name?: string }).name === "ConditionalCheckFailedException") continue;
+        throw e;
+      }
+      await this.put({ pk: s("change"), sk: s(String(id).padStart(12, "0")), body: s(JSON.stringify({ ...c, id })) });
+      return { ...c, id };
+    }
   }
   async changesAfter(after: number) {
     const r = (await this.db.send(

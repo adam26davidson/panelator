@@ -65,10 +65,12 @@ async function session(d: Deps, r: Req) {
 }
 const cookieAttrs = "HttpOnly; Secure; SameSite=Lax; Path=/";
 
-/** Only a same-site path may be returned to: one slash, no scheme, no backslash. */
-const safeReturn = (p: string | undefined): string => (p && /^\/(?!\/)[^\\\s]*$/.test(p) ? p : "/");
+/** Only one of the six screens (with its query) may be returned to. */
+const SCREEN = /^\/(?:questions|history|actions|agents|parameters)?(?:\?[A-Za-z0-9_=&.%-]*)?$/;
+const safeReturn = (p: string | undefined): string => (p && SCREEN.test(p) ? p : "/");
 
 async function login(d: Deps, r: Req): Promise<Res> {
+  if (!d.clientId) return text(503, "sign-in is not configured: the GitHub OAuth app has not been registered yet");
   const state = randomBytes(16).toString("hex");
   const u = new URL("https://github.com/login/oauth/authorize");
   u.searchParams.set("client_id", d.clientId);
@@ -90,11 +92,11 @@ async function callback(d: Deps, r: Req): Promise<Res> {
   const deny = async (reason: string, who: string | null = null) => {
     await d.table.recordAttempt({ login: who, ok: false, reason, at: now });
     // A browser at the callback gets the 403 with a page that sends it to the app's refusal card.
-    const to = `/?refused=${encodeURIComponent(who ?? "")}`;
+    const to = `/sign-in-refused${who ? `?login=${encodeURIComponent(who)}` : ""}`;
     return {
       status: 403,
       headers: { "content-type": "text/html; charset=utf-8" },
-      body: `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${to}"><title>forbidden</title><p>forbidden. <a href="${to}">Continue</a></p>`,
+      body: `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${to.replace(/&/g, "&amp;")}"><title>forbidden</title><p>forbidden. <a href="${to.replace(/&/g, "&amp;")}">Continue</a></p>`,
     };
   };
   const [want, back] = (cookies(r.headers.cookie)[STATE_COOKIE] ?? "").split(".");
@@ -153,12 +155,15 @@ async function postChange(d: Deps, r: Req): Promise<Res> {
   if (typeof b.args !== "object" || b.args === null || Array.isArray(b.args)) return text(400, "bad args");
   return json(
     200,
-    await d.table.addChange({
-      at: new Date(d.now()).toISOString(),
-      by: s.login,
-      kind: b.kind,
-      args: b.args as Record<string, unknown>,
-    }),
+    await d.table.addChange(
+      {
+        at: new Date(d.now()).toISOString(),
+        by: s.login,
+        kind: b.kind,
+        args: b.args as Record<string, unknown>,
+      },
+      d.now(),
+    ),
   );
 }
 

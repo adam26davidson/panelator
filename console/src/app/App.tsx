@@ -6,6 +6,7 @@ import {
   Outlet,
   type RouterHistory,
   RouterProvider,
+  useRouterState,
 } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { Actions } from "../pages/actions/Actions.tsx";
@@ -14,8 +15,16 @@ import { History } from "../pages/history/History.tsx";
 import { Home } from "../pages/home/Home.tsx";
 import { Parameters } from "../pages/parameters/Parameters.tsx";
 import { Questions } from "../pages/questions/Questions.tsx";
+import { SignInRefused } from "../pages/sign-in/SignIn.tsx";
 import { type Api, makeApi } from "../shared/api/client.ts";
 import { ConsoleProvider } from "./ConsoleProvider.tsx";
+
+/** Public: the callback sends a refused login here, with the login in the query (design flow.md, `home--sign-in-refused-login`). */
+function SignInRefusedRoute() {
+  const search = useRouterState({ select: (r) => r.location.searchStr });
+  const login = new URLSearchParams(search).get("login");
+  return <SignInRefused login={login || undefined} />;
+}
 
 const root = createRootRoute({ component: Outlet });
 const path = (
@@ -33,6 +42,7 @@ const routeTree = root.addChildren([
   })),
   path("/actions", Actions),
   path("/agents", Agents),
+  path("/sign-in-refused", SignInRefusedRoute),
   path("/parameters", Parameters, (s) => (typeof s.focus === "string" ? { focus: s.focus } : {})),
 ]);
 

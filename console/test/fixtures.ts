@@ -89,7 +89,10 @@ export const snapshot: ConsoleState = {
       issue: 112,
       kind: "product",
       text: "Should a widget fetch from any HTTPS host?",
-      options: ["Any HTTPS host", "Only manifest hosts"],
+      options: [
+        { label: "Any HTTPS host", cost: "small", recommended: true },
+        { label: "Only manifest hosts", cost: "small", recommended: false },
+      ],
       asked_at: new Date(NOW - 2 * 3600_000).toISOString(),
       status: "open",
       question_url: "https://github.com/adam26davidson/panelator/issues/112#issuecomment-3012",
@@ -100,7 +103,7 @@ export const snapshot: ConsoleState = {
       issue: 101,
       kind: "capability",
       text: "Create the OAuth app and reply with the client id.",
-      options: ["Reply with the client id"],
+      options: [{ label: "Reply with the client id", cost: "small", recommended: true }],
       asked_at: new Date(NOW - 2 * 86_400_000).toISOString(),
       status: "reminded",
       question_url: "https://github.com/adam26davidson/panelator/issues/101#issuecomment-2987",
@@ -215,7 +218,8 @@ export const snapshot: ConsoleState = {
   agents: [
     {
       name: "findings-filer",
-      last_run: "2026-11-22T10:02:00Z",
+      summary: "Standing agent",
+      last_run: { at: "2026-11-22T10:02:00Z", outcome: "ok" },
       next_run: "2026-11-22T16:02:00Z",
       cost_30d_usd: 4.12,
       paused: false,
@@ -223,7 +227,8 @@ export const snapshot: ConsoleState = {
     },
     {
       name: "reflection",
-      last_run: "2026-11-03T08:00:00Z",
+      summary: "Standing agent",
+      last_run: { at: "2026-11-03T08:00:00Z", outcome: "failed" },
       next_run: null,
       cost_30d_usd: 0.96,
       paused: true,
@@ -231,7 +236,8 @@ export const snapshot: ConsoleState = {
     },
     {
       name: "dependency-watch",
-      last_run: "2026-11-01T09:00:00Z",
+      summary: "Standing agent",
+      last_run: { at: "2026-11-01T09:00:00Z", outcome: "ok" },
       next_run: null,
       cost_30d_usd: 0.22,
       paused: true,

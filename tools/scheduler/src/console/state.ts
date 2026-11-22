@@ -39,6 +39,15 @@ export async function readChanges(paths: StatePaths): Promise<ChangeRecord[]> {
   try { return await readJsonLines<ChangeRecord>(paths.consoleChanges); } catch { return []; }
 }
 
+/** The options with their cost, the one the question's recommendation names marked (the recommendation is free text, so a label it contains or equals, or "option N"/"N", names it). */
+function fromQuestion(q: NonNullable<QuestionLogEntry["question"]>) {
+  const rec = (q.recommendation ?? "").toLowerCase();
+  const pick = q.options.findIndex((o) => o.label !== "" && rec.includes(o.label.toLowerCase()));
+  const num = /^\s*(?:option\s*)?(\d+)\b/i.exec(q.recommendation ?? "");
+  const at = pick >= 0 ? pick : num ? Number(num[1]) - 1 : -1;
+  return { text: q.question, kind: q.kind, options: q.options.map((o, i) => ({ label: o.label, cost: o.cost, recommended: i === at })) };
+}
+
 async function questions(ctx: ConsoleStateContext) {
   let rows: QuestionLogEntry[] = [];
   try { rows = await readJsonLines<QuestionLogEntry>(ctx.paths.questionsLog); } catch { return []; }
@@ -49,12 +58,12 @@ async function questions(ctx: ConsoleStateContext) {
     if (id === undefined) continue;
     const cur = by.get(id) ?? {};
     if (e.event === "asked" || e.event === "sent" || cur.question_comment_id === undefined) {
-      if (e.question) Object.assign(cur, { text: e.question.question, kind: e.question.kind, options: e.question.options.map((o) => o.label) });
+      if (e.question) Object.assign(cur, fromQuestion(e.question));
       if (cur.asked_at === undefined || e.event === "asked") cur.asked_at = e.at;
     }
-    if (e.question && cur.text === undefined) Object.assign(cur, { text: e.question.question, kind: e.question.kind, options: e.question.options.map((o) => o.label) });
+    if (e.question && cur.text === undefined) Object.assign(cur, fromQuestion(e.question));
     cur.question_comment_id = id; cur.issue = e.issue;
-    if (e.event === "reminded" && cur.status !== "answered") cur.status = "reminded";
+    if (e.event === "reminded" && cur.status !== "answered") { cur.status = "reminded"; cur.reminded_at = e.at; }
     else if (e.event === "answered") {
       cur.status = "answered"; cur.answered_at = e.at;
       if (e.reply_comment_id !== undefined) cur.decision_url = `https://github.com/${ctx.cfg.repo}/issues/${e.issue}#issuecomment-${e.reply_comment_id}`;
@@ -63,13 +72,17 @@ async function questions(ctx: ConsoleStateContext) {
   }
   return [...by.values()].map((q) => ({
     question_comment_id: q.question_comment_id as number, issue: q.issue as number, kind: (q.kind as string) ?? "other", text: (q.text as string) ?? "",
-    options: (q.options as string[]) ?? [], asked_at: (q.asked_at as string) ?? "", status: q.status as "open" | "reminded" | "answered",
+    options: (q.options as { label: string; cost: string; recommended: boolean }[]) ?? [], asked_at: (q.asked_at as string) ?? "", status: q.status as "open" | "reminded" | "answered",
     ...(q.answered_at ? { answered_at: q.answered_at as string } : {}),
+    ...(q.reminded_at ? { reminded_at: q.reminded_at as string } : {}),
     question_url: `https://github.com/${ctx.cfg.repo}/issues/${q.issue}#issuecomment-${q.question_comment_id}`,
     ...(q.decision_url ? { decision_url: q.decision_url as string } : {}),
     ...(user ? { telegram_url: `https://t.me/${user}` } : {}),
   }));
 }
+
+/** The chain stages at work; a claim at any other stage (waiting, paused, blocked, done, released, abandoned) is not running. */
+const WORKING = new Set(["claimed", "plan", "implement", "verify", "review", "fix", "merge", "spec", "design", "question-check"]);
 
 async function current(ctx: ConsoleStateContext, now: Date, usage: UsageRecord[]) {
   const claims = (await listClaims(ctx.paths)).sort((a, b) => a.started_at.localeCompare(b.started_at));
@@ -77,18 +90,25 @@ async function current(ctx: ConsoleStateContext, now: Date, usage: UsageRecord[]
   const out = [];
   for (const c of claims) {
     const s = c.state;
-    if (["done", "released", "abandoned", "paused", "blocked"].includes(s.stage)) continue;
-    const track = s.track === "issue" ? null : s.track;
-    const names = track ? [track] : STAGES;
-    const at = track ? 0 : STAGES.indexOf(s.stage);
-    const failed = false;
-    const stages = names.map((name, i) => ({ name, status: (failed ? "failed" : at < 0 ? "pending" : i < at ? "done" : i === at ? "running" : "pending") as "done" | "running" | "pending" | "failed" }));
+    if (!WORKING.has(s.stage)) continue;
     const mine = usage.filter((u) => u.issue === c.issue && u.started_at >= c.started_at).sort((a, b) => a.started_at.localeCompare(b.started_at));
-    const model = mine.at(-1)?.model ?? "";
-    const cost = mine.reduce((n, u) => n + (u.cost_usd ?? 0), 0);
+    const track = s.track === "issue" ? null : s.track;
+    let stages: { name: string; status: "done" | "running" | "pending" | "failed" }[];
+    if (track) stages = [{ name: track, status: "running" }];
+    else {
+      const asking = s.stage === "question-check" ? (s.askingStage ?? s.conversation?.asking ?? s.resumeStage ?? null) : null;
+      const at = s.stage === "claimed" ? 0 : STAGES.indexOf(asking ?? s.stage);
+      stages = STAGES.map((name, i) => {
+        if (i === at) return { name, status: "running" as const };
+        if (i > at) return { name, status: "pending" as const };
+        const last = mine.filter((u) => u.stage === name).at(-1);
+        return { name, status: last && last.outcome !== "ok" ? ("failed" as const) : ("done" as const) };
+      });
+    }
     out.push({
-      issue: c.issue, title: titles.get(c.issue)?.title ?? "", stage: track ?? s.stage, stages, model,
-      started_at: c.started_at, elapsed_s: Math.max(0, Math.round((now.getTime() - Date.parse(c.started_at)) / 1000)), cost_usd: cost,
+      issue: c.issue, title: titles.get(c.issue)?.title ?? "", stage: track ?? s.stage, stages, model: mine.at(-1)?.model ?? "",
+      started_at: c.started_at, elapsed_s: Math.max(0, Math.round((now.getTime() - Date.parse(c.started_at)) / 1000)),
+      cost_usd: mine.reduce((n, u) => n + (u.cost_usd ?? 0), 0),
       ...(s.pr ? { pr: s.pr.number } : {}),
     });
   }
@@ -139,8 +159,8 @@ export async function buildConsoleState(ctx: ConsoleStateContext) {
     metrics: report as unknown as Record<string, unknown> | null,
     actions: actions as unknown as Record<string, unknown>[],
     agents: Object.keys(ctx.registry).sort().map((name) => {
-      const s = (states as Record<string, { last_run: { at: string } | null; next_run: string | null; paused: boolean; paused_by: string | null }>)[name];
-      return { name, last_run: s?.last_run?.at ?? null, next_run: s?.next_run ?? null, cost_30d_usd: usage.get(name) ?? 0, paused: s?.paused ?? false, paused_by: s?.paused_by ?? null };
+      const s = (states as Record<string, { last_run: { at: string; outcome: string } | null; next_run: string | null; paused: boolean; paused_by: string | null; summary?: string }>)[name];
+      return { name, summary: s?.summary ?? "", last_run: s?.last_run ? { at: s.last_run.at, outcome: s.last_run.outcome } : null, next_run: s?.next_run ?? null, cost_30d_usd: usage.get(name) ?? 0, paused: s?.paused ?? false, paused_by: s?.paused_by ?? null };
     }),
     parameters: Object.values(ctx.parameters.definitions).map((d) => {
       const v = (stored as Record<string, { value: unknown; mode: "auto" | "locked"; set_by: string; at: string }>)[d.name];
