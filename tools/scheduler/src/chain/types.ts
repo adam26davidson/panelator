@@ -17,6 +17,8 @@ export interface ChainState {
   resumeSession?:import('../state/paused.ts').AskingSession|null;
   conversation?: {asking:Exclude<AskingStage,'verify'>;retried:boolean;next:ChainState;actions:Action[]}|null;
   decision?:string|null;
+  /** Issue #467: a quota fallback of an answered run returned a conversation turn; until a run on the primary meets no limit, no fallback runs. */
+  fallbackWrongKind?: boolean;
   issue: number;
   stage: ChainStage;
   attempt: number;

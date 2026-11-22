@@ -259,7 +259,11 @@ directory, written under the state lock.
   runner; replaces the test that counted a rate-limited standing run as a
   failure), `test/retry.test.ts` (AC-9 retry).
 - Not gated: a resumed session or a Telegram conversation turn keeps its
-  session's model and meets a limit as a 429, as today.
+  session's model and meets a limit as a 429, as today. Amended for issue
+  #467: when a quota fallback run of an answered run (the launch decision of
+  AC-9 or the 429 retry) returns a conversation turn instead of the stage's
+  result, the stage waits for the primary's reset, and until a run on the
+  primary meets no limit the claim takes no quota fallback (spec 007 AC-14).
 
 ## 5. Verification
 

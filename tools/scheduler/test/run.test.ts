@@ -59,6 +59,22 @@ describe("runStage", () => {
     req.resume={sessionId:'old-session',harness:'fake',model:'m'};req.input.answer='Question #10: done';req.input.question='Please enable it';
     const out=await runStage(ctx,req);expect(calls).toBe(2);expect(out.outcome).toBe('ok');expect(out.usage.attempt).toBe(1);expect(out.usage.resume_fallback).toContain('no init');expect(out.usage.resumed_session_id).toBe('old-session');expect(out.sessionId).toBe('sess-1');expect(readFileSync(join(paths.runs,out.runId,'prompt.md'),'utf8')).toContain('Plan #7');
   });
+  it("tells a fresh run that carries an answer that it is no conversation turn; a run without one, a resume and a turn are not told (issue #467)", async () => {
+    const promptOf = async (patch: (req: StageRequest) => void): Promise<string> => {
+      const { paths, ctx, req } = setup({ result: goodPlan });
+      await ensureStateDirs(paths);
+      patch(req);
+      const out = await runStage(ctx, req);
+      return readFileSync(join(paths.runs, out.runId, "prompt.md"), "utf8");
+    };
+    const note = "This run is not a conversation turn and resumes no earlier session";
+    const fresh = await promptOf((req) => { req.input.question = "Renew the login?"; req.input.answer = "Question #10: done"; });
+    expect(fresh).toContain("Plan #7");
+    expect(fresh).toContain(note);
+    expect(await promptOf(() => {})).not.toContain(note);
+    expect(await promptOf((req) => { req.input.answer = "Question #10: done"; req.resume = { sessionId: "s", harness: "fake", model: "m" }; })).not.toContain(note);
+    expect(await promptOf((req) => { req.input.answer = "Question #10: done"; req.conversation = true; })).not.toContain(note);
+  });
   it('a failure after an agent turn is not a resume fallback',async()=>{
     const {paths,ctx,req}=setup({result:goodPlan,exitCode:1});await ensureStateDirs(paths);req.resume={sessionId:'old-session',harness:'fake',model:'m'};
     const out=await runStage(ctx,req);expect(out.outcome).toBe('failed');expect(out.usage.resume_fallback).toBeUndefined();expect(out.usage.resumed_session_id).toBe('old-session');expect(out.sessionId).toBe('old-session');
