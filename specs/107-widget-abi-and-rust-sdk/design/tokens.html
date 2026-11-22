@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spike widget tokens (spec 107)</title>
+<style>
+  /* Base tokens of tools/design-stage/src/tokens.css, unchanged, plus this design's extensions below. */
+  :root {
+    --color-bg: #ffffff; --color-surface: #f6f7f9; --color-text: #14181f; --color-muted: #4a5360;
+    --color-accent: #0b5fd6; --color-danger: #b42318; --color-ok: #067647;
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --text-sm: 14px; --text-base: 16px; --text-lg: 20px; --text-xl: 28px;
+    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px; --space-8: 32px;
+    --radius-sm: 6px; --radius-md: 12px; --radius-lg: 20px;
+
+    /* page extensions (spike-kit.tsx) */
+    --color-border: #d5d9e0; --color-stage: #000000; --color-stage-text: #e6e9ee; --color-stage-edge: #5b6573;
+
+    /* LED colours: what the widgets draw. The ABI writes them 0xRRGGBBAA; all but transparent have alpha FF. */
+    --led-white: #ffffff; --led-amber: #ffb000; --led-green: #5cff8a; --led-cyan: #4fd8ff;
+    --led-pink: #ff7ab6; --led-violet: #b9a1ff; --led-navy: #0b1f3a; --led-magenta: #ff00ff;
+  }
+  body { margin: 0; padding: 32px; font-family: var(--font-sans); color: var(--color-text); background: var(--color-surface); }
+  h1 { font-size: var(--text-xl); } h2 { font-size: var(--text-lg); margin-top: 32px; }
+  p { max-width: 70ch; }
+  table { border-collapse: collapse; background: var(--color-bg); font-size: var(--text-sm); }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--color-border); vertical-align: middle; }
+  .sw { width: 40px; height: 24px; border-radius: 6px; border: 1px solid var(--color-border); }
+  code { font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+<h1>Spike widget tokens</h1>
+<p>One token set for the four screens in this directory. There are two kinds. The <em>LED colours</em> are the
+design itself: the values the three spike widgets pass to the host, which the implementation takes from
+<code>flow.md</code>. The <em>page tokens</em> only dress the design sheets around the pixels (the base tokens of
+<code>tools/design-stage/src/tokens.css</code> and four extensions); nothing on a panel uses them.</p>
+
+<h2>LED colours</h2>
+<table>
+<tr><th></th><th>Name</th><th>ABI value</th><th>Used by</th><th>Contrast on black</th></tr>
+<tr><td><div class="sw" style="background:#000"></div></td><td>transparent</td><td><code>0x00000000</code></td><td>spike-clock: the cleared layer</td><td></td></tr>
+<tr><td><div class="sw" style="background:var(--led-white)"></div></td><td>white</td><td><code>0xFFFFFFFF</code></td><td>spike-clock: time, date, quarter marks. spike-scroll: colour 1</td><td>21.0</td></tr>
+<tr><td><div class="sw" style="background:var(--led-amber)"></div></td><td>amber</td><td><code>0xFFB000FF</code></td><td>spike-clock: seconds bar fill. spike-scroll: colour 0</td><td>11.5</td></tr>
+<tr><td><div class="sw" style="background:var(--led-green)"></div></td><td>green</td><td><code>0x5CFF8AFF</code></td><td>spike-clock: seconds circle. spike-scroll: colour 2</td><td>16.1</td></tr>
+<tr><td><div class="sw" style="background:var(--led-cyan)"></div></td><td>cyan</td><td><code>0x4FD8FFFF</code></td><td>spike-clock: separator, seconds bar outline. spike-scroll: colour 3</td><td>12.6</td></tr>
+<tr><td><div class="sw" style="background:var(--led-pink)"></div></td><td>pink</td><td><code>0xFF7AB6FF</code></td><td>spike-scroll: colour 4</td><td>8.7</td></tr>
+<tr><td><div class="sw" style="background:var(--led-violet)"></div></td><td>violet</td><td><code>0xB9A1FFFF</code></td><td>spike-scroll: colour 5</td><td>9.6</td></tr>
+<tr><td><div class="sw" style="background:var(--led-navy)"></div></td><td>navy</td><td><code>0x0B1F3AFF</code></td><td>spike-scroll: background</td><td>(a background)</td></tr>
+<tr><td><div class="sw" style="background:var(--led-magenta)"></div></td><td>magenta</td><td><code>0xFF00FFFF</code></td><td>spike-image: the failed-blit fill</td><td>6.7</td></tr>
+</table>
+
+<h2>LED type</h2>
+<table>
+<tr><th>ABI font</th><th>Face</th><th>Cell</th><th>Digit ink within the cell</th><th>Used by</th></tr>
+<tr><td>1</td><td>Spleen 5x8</td><td>5 wide, 8 high</td><td>columns 0 to 3, rows 1 to 6</td><td>spike-clock: date</td></tr>
+<tr><td>2</td><td>Spleen 8x16</td><td>8 wide, 16 high</td><td>columns 0 to 6, rows 2 to 11 (descenders to row 14)</td><td>spike-clock: time. spike-scroll: text</td></tr>
+</table>
+
+<h2>LED spacing</h2>
+<p>The unit is one LED. spike-clock keeps one LED of margin left and right of the seconds bar, two blank rows
+between the time's ink, the separator, the bar and the date's ink, and one blank row at the bottom. spike-scroll
+and spike-image draw edge to edge. There are no radii on a panel: the only curve is the seconds circle, radius 3.</p>
+
+<h2>Page colours</h2>
+<table>
+<tr><th></th><th>Token</th><th>Value</th><th>Use</th></tr>
+<tr><td><div class="sw" style="background:var(--color-surface)"></div></td><td><code>--color-surface</code></td><td>#f6f7f9</td><td>page background</td></tr>
+<tr><td><div class="sw" style="background:var(--color-bg)"></div></td><td><code>--color-bg</code></td><td>#ffffff</td><td>tables, the state chip</td></tr>
+<tr><td><div class="sw" style="background:var(--color-text)"></div></td><td><code>--color-text</code></td><td>#14181f</td><td>text (16.6 to 1 on surface)</td></tr>
+<tr><td><div class="sw" style="background:var(--color-muted)"></div></td><td><code>--color-muted</code></td><td>#4a5360</td><td>notes (7.3 to 1 on surface)</td></tr>
+<tr><td><div class="sw" style="background:var(--color-border)"></div></td><td><code>--color-border</code></td><td>#d5d9e0</td><td>table and swatch borders</td></tr>
+<tr><td><div class="sw" style="background:var(--color-stage)"></div></td><td><code>--color-stage</code></td><td>#000000</td><td>the black the pixels sit on</td></tr>
+<tr><td><div class="sw" style="background:var(--color-stage-text)"></div></td><td><code>--color-stage-text</code></td><td>#e6e9ee</td><td>captions on the stage (17.2 to 1)</td></tr>
+<tr><td><div class="sw" style="background:var(--color-stage-edge)"></div></td><td><code>--color-stage-edge</code></td><td>#5b6573</td><td>the one-pixel outline marking a frame's edge</td></tr>
+</table>
+
+<h2>Page type, spacing, radii</h2>
+<table>
+<tr><th>Token</th><th>Value</th><th>Use</th></tr>
+<tr><td><code>--text-sm</code></td><td>14px</td><td>notes, captions, mono values (the smallest text)</td></tr>
+<tr><td><code>--text-base</code></td><td>16px</td><td>body, element names</td></tr>
+<tr><td><code>--text-lg</code></td><td>20px</td><td>section headings</td></tr>
+<tr><td><code>--text-xl</code></td><td>28px</td><td>the screen's name</td></tr>
+<tr><td><code>--font-sans</code>, <code>--font-mono</code></td><td>system stacks</td><td>prose; names, coordinates and colour values</td></tr>
+<tr><td><code>--space-1</code> to <code>--space-8</code></td><td>4, 8, 12, 16, 24, 32px</td><td>gaps and padding</td></tr>
+<tr><td><code>--radius-sm</code>, <code>-md</code>, <code>-lg</code></td><td>6, 12, 20px</td><td>swatches; stage and tables; the state chip</td></tr>
+</table>
+
+<h2>Breakpoints and pixel scale</h2>
+<table>
+<tr><th>Viewport</th><th>Width</th><th>Frame width on the page</th><th>One LED of a 128-wide frame</th><th>One LED of the 64-wide clock</th></tr>
+<tr><td>mobile</td><td>under 720px</td><td>320px</td><td>2.5px (5 device pixels)</td><td>5px</td></tr>
+<tr><td>tablet</td><td>720px and up</td><td>768px</td><td>6px</td><td>12px</td></tr>
+<tr><td>desktop</td><td>1200px and up</td><td>1024px</td><td>8px</td><td>16px</td></tr>
+</table>
+<p>Every scale is a whole number of device pixels at device scale 2, so each LED is one flat square.</p>
+</body>
+</html>
