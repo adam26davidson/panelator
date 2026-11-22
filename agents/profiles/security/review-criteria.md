@@ -33,4 +33,5 @@
    rule or the protected decisions are enforced, unless the PR cites a verified maintainer answer that asks for it.
 10. A change to the repository's test wiring (`AGENTS.md`, the root `package.json`, `pnpm-workspace.yaml`, any
     `vitest.config.*`) does not drop, skip or narrow the tests `pnpm test` runs, in particular the recorded end-to-end
-    chain tests of `tools/scheduler/test/e2e.test.ts`; otherwise it is a finding.
+    chain tests of `tools/scheduler/test/e2e-*.test.ts` and the event-kind check that runs after them
+    (`e2e-event-kinds.test.ts`, in `vitest.config.ts`'s second group); otherwise it is a finding.

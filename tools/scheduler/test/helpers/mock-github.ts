@@ -2,7 +2,13 @@ import { createVerify } from "node:crypto";
 export interface Call { method: string; url: string; body: unknown }
 export type Route = { method: string; path: RegExp; reply: (m: RegExpExecArray, body: unknown, url: URL, headers?: Headers) => { status?: number; body: unknown; headers?: Record<string, string> } };
 
-/** A fetch that answers from a route table and records every call. Unmatched routes return 404 with the url and are listed in `unmatched`. */
+/**
+ * A fetch that answers from a route table and records every call. Unmatched routes return 404 with the url and are listed in `unmatched`.
+ *
+ * The harnesses that drive whole chains build their Octokit with `throttle: { enabled: false }`: Octokit's throttling plugin
+ * spaces writes about a second apart, which against this mock is only wall time (about a second per label, comment or merge
+ * call; issue #360). No route here answers with a rate limit, so nothing else changes.
+ */
 export function mockGitHub(routes: Route[]): { fetch: typeof fetch; calls: Call[]; routes: Route[]; unmatched: string[] } {
   const calls: Call[] = [];
   const unmatched: string[] = [];
