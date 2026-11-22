@@ -135,7 +135,8 @@ An unknown key is a config error. The maintainer login is the top-level `maintai
   `console/infra/stack.yaml`, uploads the function and the app, invalidates CloudFront and writes the API key to
   `credentials_path`. A second deploy keeps the reservation and the key. The GitHub client secret is read by the sign-in
   function from the SSM parameter `/panelator/console/github_client_secret`; it never appears on a command line.
-- `panelator-scheduler console destroy` deletes the stack, then releases the reservation.
+- `panelator-scheduler console destroy` deletes the stack, then releases the reservation. It fails with the reservation kept unless `describe-stacks` answers or says the stack does not exist.
+- A domain needs the configured aws region `us-east-1` (CloudFront takes certificates only from there, and the console is one stack); `console deploy --domain` refuses before reserving otherwise.
 
 Changes made on the console are applied as the `maintainer` actor through the same paths as `param set`, `param mode` and
 `agent pause|resume`; an action row's `run_id` is `console:<change id>` and every change with its outcome is recorded in
