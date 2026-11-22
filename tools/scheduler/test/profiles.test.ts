@@ -10,10 +10,10 @@ import { implementationProfiles, listProfiles, readSensitiveGlobs, resolveProfil
 
 describe("profiles", () => {
   it("lists the committed v0 profiles", () => {
-    expect(listProfiles(agentsDir)).toEqual(["backend", "design", "security", "spec", "web-ui"]);
+    expect(listProfiles(agentsDir)).toEqual(["backend", "design", "firmware", "security", "spec", "web-ui", "widget"]);
   });
-  it("lists backend and web-ui as implementation profiles (spec 077 AC-4)", () => {
-    expect(implementationProfiles(agentsDir)).toEqual(["backend", "web-ui"]);
+  it("lists backend, firmware, web-ui and widget as implementation profiles (spec 077 AC-4, spec 109 AC-4)", () => {
+    expect(implementationProfiles(agentsDir)).toEqual(["backend", "firmware", "web-ui", "widget"]);
   });
   it("resolves backend with its skills dir, instructions and tools", () => {
     const p = resolveProfile(agentsDir, "backend");
@@ -29,6 +29,28 @@ describe("profiles", () => {
       expect(p.reviewCriteria).toContain(s);
     }
     for (const s of ["design/", "flow.md", "catalog:", "pnpm test"]) {
+      expect(p.instructions).toContain(s);
+    }
+  });
+  it("resolves firmware with the firmware review criteria (spec 109 AC-3)", () => {
+    const p = resolveProfile(agentsDir, "firmware");
+    expect(p.tools).toEqual(resolveProfile(agentsDir, "backend").tools);
+    expect(p.credentials).toEqual([]);
+    for (const s of ["firmware/scripts/build.sh", "firmware/idf-image.txt", "firmware/test/host/", "esp_err_t", "eFuse", "USB-safe brightness", "hil.yml", "declined_to_judge"]) {
+      expect(p.reviewCriteria).toContain(s);
+    }
+    for (const s of ["firmware/scripts/build.sh", "firmware/scripts/check-host.sh", "hil", "eFuse", "pnpm test"]) {
+      expect(p.instructions).toContain(s);
+    }
+  });
+  it("resolves widget with the widget review criteria (spec 109 AC-3)", () => {
+    const p = resolveProfile(agentsDir, "widget");
+    expect(p.tools).toEqual(resolveProfile(agentsDir, "backend").tools);
+    expect(p.credentials).toEqual([]);
+    for (const s of ["docs/widget-abi.md", "sdk/conformance/golden/", "frames.json", "PANELATOR_BLESS", "no_std", "SAFETY:", "deny.toml", "OSI-approved", "declined_to_judge"]) {
+      expect(p.reviewCriteria).toContain(s);
+    }
+    for (const s of ["docs/widget-abi.md", "rust-toolchain.toml", "sdk/rust/check.sh", "PANELATOR_BLESS=1", "pnpm test"]) {
       expect(p.instructions).toContain(s);
     }
   });

@@ -1,0 +1,4 @@
+name: widget
+tools: [Read, Edit, Write, Bash, Glob, Grep]
+credentials: []
+review_criteria: review-criteria.md

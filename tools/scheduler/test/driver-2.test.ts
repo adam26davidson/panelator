@@ -365,12 +365,12 @@ describe("driveChain", () => {
   }, 60_000);
 
   it("fails a plan whose domain names a profile that does not exist, retrying once then escalating (I4; spec 006 AC-1)", async () => {
-    const firmware = { ...plan, domain: "firmware" };
-    const { deps, claim, adapter, notifications } = await setup(() => ({ plan: [firmware, { ...firmware }] }));
+    const infra = { ...plan, domain: "infra" };
+    const { deps, claim, adapter, notifications } = await setup(() => ({ plan: [infra, { ...infra }] }));
     const c = await steps(deps, claim, 3);
     expect(adapter.ran).toEqual(["plan:claude-fable-5-2", "plan:claude-fable-5-2"]);
     expect(c.state).toMatchObject({ stage: "plan", rescues: 1, rescueRun: true });
-    expect(c.state.history.at(-1)).toContain("profile not available: firmware (implementation profiles: backend, web-ui)");
+    expect(c.state.history.at(-1)).toContain("profile not available: infra (implementation profiles: backend, firmware, web-ui, widget)");
     expect(notifications).toEqual([]);
   }, 60_000);
 
