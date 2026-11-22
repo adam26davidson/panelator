@@ -151,6 +151,20 @@ Resources:
           return r;
         }
 
+  # The app's routes are client-side. Only the site behaviour rewrites them, so the API's own 403 and 404 reach the caller as they are.
+  SpaRewrite:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub "panelator-console-spa-rewrite-${AWS::Region}"
+      AutoPublish: true
+      FunctionConfig: { Comment: serve index.html for app routes, Runtime: cloudfront-js-2.0 }
+      FunctionCode: |
+        function handler(event) {
+          var r = event.request;
+          if (r.uri.indexOf('.') === -1) r.uri = '/index.html';
+          return r;
+        }
+
   Certificate:
     Type: AWS::CertificateManager::Certificate
     Condition: HasDomain
@@ -184,6 +198,8 @@ Resources:
           TargetOriginId: site
           ViewerProtocolPolicy: redirect-to-https
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          FunctionAssociations:
+            [{ EventType: viewer-request, FunctionARN: !GetAtt SpaRewrite.FunctionMetadata.FunctionARN }]
         CacheBehaviors:
           - {
               PathPattern: /state,
@@ -215,9 +231,6 @@ Resources:
               FunctionAssociations:
                 [{ EventType: viewer-request, FunctionARN: !GetAtt ForwardHost.FunctionMetadata.FunctionARN }],
             }
-        CustomErrorResponses:
-          - { ErrorCode: 403, ResponseCode: 200, ResponsePagePath: /index.html }
-          - { ErrorCode: 404, ResponseCode: 200, ResponsePagePath: /index.html }
 
   DnsRecord:
     Type: AWS::Route53::RecordSet

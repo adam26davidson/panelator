@@ -252,6 +252,8 @@ if(cfg.console){
   const {buildConsoleState}=await import('../src/console/state.ts');
   const pusher=new ConsolePusher({cfg:cfg.console,fetch:globalThis.fetch,now:()=>new Date(),log:rec=>serviceLog.write(rec),
     build:()=>buildConsoleState({cfg,paths,parameters,log:actionLog,registry,metrics,now:()=>new Date(),issues:()=>consoleView.issues,upNext:()=>consoleView.next,telegramUsername:()=>telegramPollerRef?.username??null})});
+  const {setConsoleNotifier}=await import('../src/console/notify.ts');
+  setConsoleNotifier(()=>pusher.notify());
   consoleDep={pusher,view:consoleView};
 }else serviceLog.write({kind:'console',status:'off'});
 const scheduler: Scheduler = new Scheduler({

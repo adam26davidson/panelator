@@ -1,4 +1,5 @@
 import { appendFile, readFile } from "node:fs/promises";
+import { consoleNotify } from "../console/notify.ts";
 import { validate } from "../schema/validate.ts";
 import { record } from "../events/store.ts";
 import type { AskingStage, Question } from "../types.ts";
@@ -26,6 +27,7 @@ export async function appendQuestionLog(p: StatePaths, entry: QuestionLogEntry, 
   const v = validate("question-log-entry", entry);
   if (!v.ok) throw new Error(`invalid question-log entry: ${v.errors.join("; ")}`);
   await appendFile(p.questionsLog, JSON.stringify(entry) + "\n");
+  consoleNotify();
   await record(p, "question", entry.at, entry as unknown as Record<string, unknown>, { issue: entry.issue });
   if (entry.event === "sent" || entry.event === "reminded") {
     await record(p, "maintainer.contact", entry.at, {

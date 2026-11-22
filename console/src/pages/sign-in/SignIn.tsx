@@ -2,7 +2,7 @@ import { Icon } from "../../shared/ui/Icon.tsx";
 import { SCREENS, type ScreenName } from "../../widgets/nav/nav.tsx";
 
 /** Sign-in card: after GitHub accepts the maintainer's login the app returns to the screen named here. */
-export function SignIn({ screen }: { screen: ScreenName }) {
+export function SignIn({ screen, returnTo = "/" }: { screen: ScreenName; returnTo?: string }) {
   const label = SCREENS.find((s) => s.id === screen)?.label ?? screen;
   return (
     <div className="c-root">
@@ -14,7 +14,7 @@ export function SignIn({ screen }: { screen: ScreenName }) {
             Your session has ended or you have not signed in on this device. Only the maintainer's GitHub login can sign
             in.
           </p>
-          <a className="c-btn c-gh" href="/auth/login">
+          <a className="c-btn c-gh" href={`/auth/login?return=${encodeURIComponent(returnTo)}`}>
             {Icon.github()} Sign in with GitHub
           </a>
           <p className="c-sm c-muted">After sign-in you return to {label}.</p>

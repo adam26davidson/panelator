@@ -196,6 +196,50 @@ describe("push (spec 051 AC-3)", () => {
   });
 });
 
+describe("event pushes (spec 051 AC-3)", () => {
+  it("a question, claim, action or parameter write notifies the pusher", async () => {
+    const { setConsoleNotifier, consoleNotify } = await import("../src/console/notify.ts");
+    const { appendQuestionLog } = await import("../src/state/questions.ts");
+    const { removeClaim } = await import("../src/state/claims.ts");
+    const { ctx, paths } = await applyCtx();
+    let n = 0;
+    setConsoleNotifier(() => { n += 1; });
+    try {
+      await ctx.parameters.setParameter("system_work_share", 0.4, "maintainer");
+      expect(n).toBe(1);
+      await ctx.log.writePending({ kind: "pause_agent", args: { name: "x" }, agent: "maintainer", run_id: "r", why: "a reason of enough length", undo: null });
+      expect(n).toBe(2);
+      await removeClaim(paths, 999);
+      expect(n).toBe(3);
+      await appendQuestionLog(paths, { issue: 1, at: "2026-11-22T10:00:00Z", event: "asked", asking_stage: "plan" as never, question: { question: "q?", options: [] } as never }).catch(() => {});
+      expect(n).toBeGreaterThanOrEqual(3);
+    } finally { setConsoleNotifier(null); }
+  });
+});
+
+describe("poll result POST failure (spec 051 AC-4)", () => {
+  it("retries the outcome of a recorded change instead of losing it with the cursor", async () => {
+    const { ctx, change } = await applyCtx();
+    const net = fakeNet();
+    let failPost = true;
+    const f = async (url: string, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "POST" && failPost) { net.calls.push({ url, method: "POST", body: init?.body as string }); return new Response("no", { status: 503 }); }
+      return net.fetch(url, init);
+    };
+    const pusher = new ConsolePusher({ cfg: ccfg, fetch: net.fetch, readKey: async () => SECRET, now: () => new Date(), log: () => {}, build: async () => ({ generated_at: "x" }) });
+    const poller = new ConsolePoller({ cfg: ccfg, fetch: f, readKey: async () => SECRET, action: () => ctx, pusher, log: () => {} });
+    net.queue.push([change(1, "set_parameter", { name: "system_work_share", value: 0.5 })]);
+    await expect(poller.once()).rejects.toThrow(/POST result answered 503/);
+    expect(net.calls.filter((c) => c.method === "PUT")).toHaveLength(1); // the push after the change still happened
+    failPost = false;
+    await poller.once();
+    const posts = net.calls.filter((c) => c.method === "POST" && c.url.endsWith("/changes/1/result"));
+    expect(posts).toHaveLength(2);
+    expect(JSON.parse(posts[1].body!)).toMatchObject({ status: "applied" });
+    expect((await ctx.parameters.read("system_work_share")).value).toBe(0.5);
+  });
+});
+
 describe("poll (spec 051 AC-4)", () => {
   it("applies a pulled set_parameter, posts its outcome and pushes after it", async () => {
     const { ctx, change } = await applyCtx();

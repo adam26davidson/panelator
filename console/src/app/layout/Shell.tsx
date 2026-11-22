@@ -1,7 +1,7 @@
 import { useRouterState } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useState } from "react";
 import { FreshnessBanner, FreshnessChip } from "../../features/freshness/Freshness.tsx";
-import { SignIn } from "../../pages/sign-in/SignIn.tsx";
+import { SignIn, SignInRefused } from "../../pages/sign-in/SignIn.tsx";
 import type { ConsoleState } from "../../shared/api/types.ts";
 import { Rail, SCREENS, type ScreenName, TabBar } from "../../widgets/nav/nav.tsx";
 import { useConsole } from "../ConsoleProvider.tsx";
@@ -69,7 +69,12 @@ export function Screen({
   children: (s: ConsoleState, now: number) => ReactNode;
 }) {
   const { view } = useConsole();
-  if (view.status === "signed-out") return <SignIn screen={screen} />;
+  const loc = useRouterState({ select: (s) => s.location });
+  if (view.status === "signed-out") {
+    const refused = new URLSearchParams(loc.searchStr).get("refused");
+    if (refused !== null) return <SignInRefused login={refused || undefined} />;
+    return <SignIn screen={screen} returnTo={loc.pathname} />;
+  }
   return (
     <Shell screen={screen} narrow={narrow}>
       {view.status === "ready" ? children(view.snapshot, view.now) : skeleton}

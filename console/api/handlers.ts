@@ -65,7 +65,10 @@ async function session(d: Deps, r: Req) {
 }
 const cookieAttrs = "HttpOnly; Secure; SameSite=Lax; Path=/";
 
-async function login(d: Deps): Promise<Res> {
+/** Only a same-site path may be returned to: one slash, no scheme, no backslash. */
+const safeReturn = (p: string | undefined): string => (p && /^\/(?!\/)[^\\\s]*$/.test(p) ? p : "/");
+
+async function login(d: Deps, r: Req): Promise<Res> {
   const state = randomBytes(16).toString("hex");
   const u = new URL("https://github.com/login/oauth/authorize");
   u.searchParams.set("client_id", d.clientId);
@@ -73,7 +76,11 @@ async function login(d: Deps): Promise<Res> {
   u.searchParams.set("scope", "read:user");
   return {
     status: 302,
-    headers: { location: u.toString(), "set-cookie": `${STATE_COOKIE}=${state}; ${cookieAttrs}; Max-Age=600` },
+    // The cookie holds the state and, after a dot, the screen to return to; GitHub only sees the state.
+    headers: {
+      location: u.toString(),
+      "set-cookie": `${STATE_COOKIE}=${state}.${Buffer.from(safeReturn(r.query.return)).toString("base64url")}; ${cookieAttrs}; Max-Age=600`,
+    },
     body: "",
   };
 }
@@ -82,9 +89,15 @@ async function callback(d: Deps, r: Req): Promise<Res> {
   const now = d.now();
   const deny = async (reason: string, who: string | null = null) => {
     await d.table.recordAttempt({ login: who, ok: false, reason, at: now });
-    return text(403, "forbidden");
+    // A browser at the callback gets the 403 with a page that sends it to the app's refusal card.
+    const to = `/?refused=${encodeURIComponent(who ?? "")}`;
+    return {
+      status: 403,
+      headers: { "content-type": "text/html; charset=utf-8" },
+      body: `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${to}"><title>forbidden</title><p>forbidden. <a href="${to}">Continue</a></p>`,
+    };
   };
-  const want = cookies(r.headers.cookie)[STATE_COOKIE];
+  const [want, back] = (cookies(r.headers.cookie)[STATE_COOKIE] ?? "").split(".");
   if (!want || !r.query.state || r.query.state !== want || !r.query.code) return deny("state mismatch");
   let who: string;
   try {
@@ -108,11 +121,12 @@ async function callback(d: Deps, r: Req): Promise<Res> {
   }
   if (!who || who.toLowerCase() !== d.maintainer.toLowerCase()) return deny("not the maintainer", who || null);
   const id = randomBytes(32).toString("hex");
+  const returnTo = safeReturn(back ? Buffer.from(back, "base64url").toString() : undefined);
   await d.table.putSession({ id, login: who, expires_at: now + SESSION_DAYS * 86_400_000 });
   await d.table.recordAttempt({ login: who, ok: true, at: now });
   return {
     status: 302,
-    headers: { location: "/", "set-cookie": `${COOKIE}=${id}; ${cookieAttrs}; Max-Age=${SESSION_DAYS * 86400}` },
+    headers: { location: returnTo, "set-cookie": `${COOKIE}=${id}; ${cookieAttrs}; Max-Age=${SESSION_DAYS * 86400}` },
     body: "",
   };
 }
@@ -180,7 +194,7 @@ async function postResult(d: Deps, r: Req, id: number): Promise<Res> {
 /** Routes one request (spec 051 AC-5, AC-6). The key never opens a browser route and the cookie never a scheduler route. */
 export async function handle(d: Deps, r: Req): Promise<Res> {
   const route = `${r.method} ${r.path}`;
-  if (route === "GET /auth/login") return login(d);
+  if (route === "GET /auth/login") return login(d, r);
   if (route === "GET /auth/callback") return callback(d, r);
   if (route === "POST /auth/logout") return logout(d, r);
   const result = /^POST \/changes\/(\d+)\/result$/.exec(route);
@@ -204,6 +218,7 @@ export async function handle(d: Deps, r: Req): Promise<Res> {
     if (!who) return text(401, "sign in");
     const st = await d.table.getState();
     return json(200, {
+      login: who.login,
       snapshot: st?.snapshot ?? null,
       received_at: st ? new Date(st.at).toISOString() : null,
       age_s: st ? Math.max(0, Math.round((d.now() - st.at) / 1000)) : null,

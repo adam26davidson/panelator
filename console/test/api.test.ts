@@ -72,6 +72,27 @@ describe("sign-in (AC-5)", () => {
     expect(cb.headers["set-cookie"]).toBeUndefined();
     expect(s.table.sessions.size).toBe(0);
     expect(s.table.attempts).toMatchObject([{ login: "someone-else", ok: false }]);
+    // The browser is sent on to the app's refusal card, which names the login.
+    expect(cb.headers["content-type"]).toContain("text/html");
+    expect(cb.body).toContain("url=/?refused=someone-else");
+  });
+  it("returns to the screen whose link was opened, and only to a path of this site", async () => {
+    const s = setup();
+    const go = async (ret: string) => {
+      const lg = await handle(s.d, s.req("GET", "/auth/login", { query: { return: ret } }));
+      const ck = /oauth_state=([^;]+)/.exec(lg.headers["set-cookie"])?.[1] ?? "";
+      const state = ck.split(".")[0];
+      return handle(
+        s.d,
+        s.req("GET", "/auth/callback", {
+          query: { code: "c", state },
+          headers: { host: "c.example", cookie: `oauth_state=${ck}` },
+        }),
+      );
+    };
+    expect((await go("/questions")).headers.location).toBe("/questions");
+    expect((await go("//evil.example")).headers.location).toBe("/");
+    expect((await go("https://evil.example")).headers.location).toBe("/");
   });
   it("returns 403 for a state mismatch", async () => {
     const s = setup();
@@ -132,7 +153,7 @@ describe("routes (AC-5, AC-6)", () => {
       s.d,
       s.req("GET", "/state", { headers: { host: "c.example", cookie: `session=${cookie}` } }),
     );
-    expect(JSON.parse(r.body)).toMatchObject({ snapshot: { tick_s: 45 }, age_s: 7 });
+    expect(JSON.parse(r.body)).toMatchObject({ snapshot: { tick_s: 45 }, age_s: 7, login: "maintainer" });
   });
   it("POST /changes enforces a same-origin Origin and the five kinds, with increasing ids", async () => {
     const s = setup();

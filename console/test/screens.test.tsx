@@ -49,7 +49,9 @@ describe.each(SCREENS)("$title: every state", ({ path, title, empty, data }) => 
   it("signed out leads to sign-in naming the screen", async () => {
     mount(path, makeNet({ unauthorized: true }));
     expect(await screen.findByText(`Sign in to see ${title}`)).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Sign in with GitHub/ }).getAttribute("href")).toBe("/auth/login");
+    expect(screen.getByRole("link", { name: /Sign in with GitHub/ }).getAttribute("href")).toMatch(
+      /^\/auth\/login\?return=/,
+    );
     expect(screen.getByText(`After sign-in you return to ${title}.`)).toBeTruthy();
   });
   it("empty explains itself", async () => {
@@ -64,6 +66,18 @@ describe("sign-in refused", () => {
     expect(screen.getByText("This login can't use the console")).toBeTruthy();
     expect(screen.getByText("@someone-else")).toBeTruthy();
     expect(screen.getByRole("link", { name: /different GitHub account/ })).toBeTruthy();
+  });
+});
+
+describe("sign-in transitions", () => {
+  it("a signed-out visitor sees the refusal card when the callback sent them with ?refused", async () => {
+    mount("/?refused=someone-else", makeNet({ unauthorized: true }));
+    expect(await screen.findByText("@someone-else")).toBeTruthy();
+  });
+  it("the sign-in link carries the screen that was opened", async () => {
+    mount("/questions", makeNet({ unauthorized: true }));
+    const a = await screen.findByRole("link", { name: /Sign in with GitHub/ });
+    expect(a.getAttribute("href")).toBe("/auth/login?return=%2Fquestions");
   });
 });
 
