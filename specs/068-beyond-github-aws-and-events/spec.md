@@ -367,18 +367,53 @@ section 2, first bullet)
   a renewable fixture whose `expiresAt` is an hour past and whose
   `registrationExpiresAt` is sixty days ahead gives that later time and no
   `credential_expiry` event or warning; the same with the registration three
-  days ahead gives the warning; a legacy fixture gives its `expiresAt`; the
+  days ahead gives the warning once (the paragraph after next); a legacy fixture gives its `expiresAt`; the
   never-read assertion plants marker strings as `accessToken`, `refreshToken`
   and `clientSecret` and finds none of them in the service log, the
   command's output, `aws-check`'s output or the index.
+
+  *(agent's call, 2026-11-22)* **A renewable session's notice is one heads-up,
+  not a daily ask.** Read from the AWS CLI's own source
+  (`awscli/botocore/utils.py`, `SSOTokenFetcher._registration`): `aws sso
+  login` reuses the cached client registration until it is within 15 minutes
+  of its own `expiresAt`, and copies that registration's `expiresAt` into the
+  new token file as `registrationExpiresAt`. So a login inside `warn_days` of
+  `registrationExpiresAt` does not move it: logging in early changes nothing,
+  and only a login in the last 15 minutes, or after it has passed, makes a
+  new registration. The notice must therefore not ask for a login and then
+  repeat. For a renewable session (`renewable: true`) inside `warn_days`:
+  the credential check lists `aws-sso` in `warnings`, and the scheduler sends
+  one `credential-expiry` notification, once for each distinct `expires_at`,
+  not once a day. The index records the time it has warned for
+  (`heads_up_for`, an optional ISO string in the credential's index record,
+  written when the notification is sent); the `credential_expiry` producer
+  (spec 030 AC-5) and the check's warning list skip a renewable credential
+  whose `heads_up_for` equals its `expires_at` and whose last check passed.
+  The text states the date ("the CLI's login registration ends <expires_at>;
+  no action is needed before then, the CLI renews the access token by
+  itself; log in again on or after that date, or when a check fails"), and
+  carries the `renew_steps` as the steps for that day. A failed check (the
+  portal session ended first, or the profile is wrong) is not renewable-
+  specific: it warns daily with the `renew_steps` as spec 030 AC-13 says,
+  whatever `heads_up_for` holds. A non-renewable session (legacy, or no
+  refresh token) is unchanged: it warns daily inside `warn_days`, and a login
+  there does move `expiresAt`. Tests: with the renewable fixture three days
+  ahead, day one gives one `credential_expiry` event, one warning and one
+  notification; the fixture is then rewritten as a login would leave it (a
+  new access token and `expiresAt`, the same `registrationExpiresAt`), `cred
+  check aws-sso` prints `check ok`, and the next day's hourly step and
+  credential check give no event, no warning and no notification; a fixture
+  whose registration has changed to a later time gives none either while it
+  is outside `warn_days`; a failing identity check on that second day warns
+  once with the `renew_steps`.
 
   *(agent's call)* **The login step comes from the catalogue.** A catalogue
   entry may carry an optional `renew_steps`, a list of at least one string:
   what the maintainer does to renew a credential that is already set up
   (`schemas/scheduler/credential-catalogue.json`, `CredentialEntry`).
   `aws-sso`'s is, in order: run `aws sso login --sso-session default`; run
-  `panelator-scheduler cred check aws-sso`, which prints `check ok` and
-  records the new expiry; if the check still fails, `panelator-scheduler
+  `panelator-scheduler cred check aws-sso`, which prints `check ok`
+  when the identity call passes and records the cached time; if the check still fails, `panelator-scheduler
   aws-check` says why, and the full setup is in `agents/credentials.yaml`.
   Where `src/standing/run.ts` builds a `credential-expiry` notification for a
   warning, the steps are the entry's `renew_steps` when it has them and the
@@ -600,8 +635,9 @@ and AC-9; spec 030 section 2, fourth bullet; spec 064 AC-5)
   throws is written to the service log and the notice is still sent. Nothing
   else in `judge` changes: the alarm, the texts, `notices.json` and the other
   labels are as spec 022 AC-9 left them. `aws.test.ts` asserts it through a
-  `rateLimited` notifier with the default windows (1 and 24 hours): over the
-  cap, then a scale down inside the hour, gives two delivered `aws-forecast`
+  `rateLimited` notifier with the configuration's default windows (`notify_rate_limit_hours` 4 and
+  `notify_repeat_hours` 24, as `config.ts` and `agents/scheduler.yaml` have
+  them): over the cap, then a scale down inside the window, gives two delivered `aws-forecast`
   notices, the over-cap one and the recovery, and a further `judge` with no
   change of state sends nothing.
 - AC-8. **Infra health gets the ledger and the alarm.**
@@ -712,7 +748,7 @@ and AC-9; spec 030 section 2, fourth bullet; spec 064 AC-5)
     credential check returns one `aws-sso` warning, one `credential-expiry`
     message reaches the fake Telegram with the login step first (from
     `renew_steps`, whatever steps the scripted result carries), logged with
-    `channel: telegram`, and nothing twice that day (AC-1, AC-2);
+    `channel: telegram`, and nothing twice: after a login that leaves the same registration, the next day gives no event, warning or notification (AC-1, AC-2);
   - the same with the fake identity returning another account: the check
     fails, `aws-access` is sent once (spec 022 AC-2), and the credential check warns once with the `renew_steps`, the credential
     being set (AC-1, AC-2);
