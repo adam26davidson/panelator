@@ -23,7 +23,7 @@ import { implementationProfiles, readSensitiveGlobs, resolveProfile } from "../p
 import { afterFallback, harnessForModel, retryDecision } from "../runner/retry.ts";
 import type { ParameterStore } from "../parameters/store.ts";
 import { modelLimitFallback, planLaunch, quotaParams, readBook, waitAfterLimit } from "../quota/book.ts";
-import { runStage, type StageOutcome } from "../runner/run.ts";
+import { OUTSIDE_CONVERSATION, runStage, type StageOutcome } from "../runner/run.ts";
 import { checkHostSpace, type FreeSpace } from "../runner/host-space.ts";
 import { DISK_FULL } from "./transient.ts";
 import {
@@ -969,6 +969,8 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
     await rejectTransient(out);
     return out.outcome==='ok'?{type:'stage_ok',stage,result:out.result} as ChainEvent:{type:'stage_failed',stage,reason:out.reason??out.outcome};
   }
+  // Issue #467: whether the run judged below ran on a quota fallback (the book's launch decision or the 429 retry).
+  let onFallback = firstRun !== null;
   if (out.outcome !== "ok") {
     // A rescue is a strong-tier stage: on a rate limit it takes spec 013 AC-9's model-limit fallback (ADR 0003
     // amendment 2026-11-17) or is postponed (AC-27), never the stage's own fallback.
@@ -983,6 +985,7 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
       if (retry.kind === "fallback") {
         if (retry.model === toModel) deps.log({ kind: "quota-fallback", issue: claim.issue, stage, from: primaryModel, to: toModel, key: out.limit?.key });
         out = await exec(retry.model, retry.harness, state.rescueRun ? "rescue-fallback" : "fallback");
+        onFallback = true;
         deps.log({ kind: "stage", issue: claim.issue, stage, attempt, outcome: out.outcome, reason: out.reason, run_id: out.runId, rescue: state.rescueRun || undefined, fallback: retry.model });
         await rejectHostRefused(out);
         await rejectTransient(out);
@@ -991,6 +994,15 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
         if (out.outcome !== "ok" && afterFallback(retryDef, out.judgement).kind === "postpone") return postponed(out.reason ?? out.outcome);
       }
     }
+  }
+  if (out.outcome !== "ok" && onFallback && (resumeBefore || state.answer) && out.resultErrors.length === 1 && out.resultErrors[0] === OUTSIDE_CONVERSATION) {
+    // Issue #467: a quota fallback of an answered run (the asking session's resume, or the fresh run after it) that
+    // returned the conversation shape did not do the work, and nothing about the issue failed: the primary's limit did.
+    // A limit pauses (spec 013): the stage waits for the primary's reset, no attempt is spent, and the asking session is
+    // kept so the run after the reset resumes it with the answer.
+    state.resumeSession = resumeBefore;
+    deps.log({ kind: "fallback-wrong-kind", issue: claim.issue, stage, attempt, run_id: out.runId, resume_session: resumeBefore?.session_id ?? null });
+    return postponed(out.reason ?? out.outcome);
   }
   if (out.outcome !== "ok") {
     await undoRebase();

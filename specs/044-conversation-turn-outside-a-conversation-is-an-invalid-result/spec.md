@@ -132,7 +132,11 @@ including a resumed session that continues its work with an answer.
   chain error"` is queued, and the PR is neither approved nor merged. Given
   the second attempt returns a valid verdict, then the chain continues as
   spec 006 says for that verdict.
-- AC-3. **Every other stage fails the same way.** Given a plain run of
+- AC-3. Amended for issue #467: the one exception is a quota fallback run of an
+  answered run, which spec 007 AC-14 (as amended) sends to wait for the
+  primary model's reset instead of failing; a fallback run with no answer, and
+  every run on the stage's own model, still fail as below.
+  **Every other stage fails the same way.** Given a plain run of
   plan, implement, fix, spec or design that returns the conversation shape,
   then the claim's history entry is `<stage> attempt <n> failed: result:
   invalid: conversation turn outside a conversation` and the chain takes the
@@ -164,6 +168,9 @@ including a resumed session that continues its work with an answer.
   as for any result that parsed (spec 001 AC-28). Nothing else in the runner
   changes: the final-text fallback, the usage record and `outcome.json` are
   written as today.
+- Amended for issue #467: `tools/scheduler/src/chain/driver.ts` now reads the
+  runner's exported `OUTSIDE_CONVERSATION` for the quota-fallback exception of
+  AC-3 (spec 007 AC-14); the string itself stays in `runner/run.ts` only.
 - `tools/scheduler/src/chain/driver.ts`, `tools/scheduler/src/chain/machine.ts`,
   `tools/scheduler/src/service/loop.ts`, `schemas/scheduler/*.json`:
   unchanged. The review case of `stageOk` keeps reading `findings_on_pr`
