@@ -33,6 +33,13 @@ export function renderReplyPrompt(input:{answer:string;mode:string;result_path:s
 }
 const NONE = "(none)";
 
+/**
+ * Issue #467: the stage templates open with the note on a later resume and its conversation shape. A fresh run that carries
+ * the maintainer's answer in its input (a quota fallback of an answered resume, a resume that fell back to a fresh session,
+ * a chain resumed with Telegram off) is told plainly that it is not that turn, so it returns the stage's own result.
+ */
+export const FRESH_WITH_ANSWER_NOTE = "This run is not a conversation turn and resumes no earlier session: the maintainer's answer is in your input above. Do this stage's work with it and return this stage's result; a result with a `conversation` property is refused and fails the run.";
+
 export function renderPrompt(template: string, input: StageInput): string {
   const values: Record<string, string> = {
     issue: `#${input.issue.number} ${input.issue.title}\n\n${input.issue.body}`,

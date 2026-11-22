@@ -7,7 +7,7 @@ export function harnessForModel(model: string): Harness {
   return model.includes("/") ? "pi" : "claude";
 }
 
-function rateLimited(judgement: Judgement): boolean {
+export function rateLimited(judgement: Judgement): boolean {
   return judgement.outcome === "failed" && judgement.apiErrorStatus === 429;
 }
 

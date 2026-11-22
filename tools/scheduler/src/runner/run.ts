@@ -6,7 +6,7 @@ import { finished } from "node:stream/promises";
 import { JsonlSplitter } from "../adapters/jsonl.ts";
 import { normalizeFilerResult } from "../filer/normalize.ts";
 import type { Adapter, Judgement, RunOutcome, StageRun } from "../adapters/types.ts";
-import { renderReplyPrompt, renderPrompt, type StageInput } from "../stages/prompt.ts";
+import { FRESH_WITH_ANSWER_NOTE, renderReplyPrompt, renderPrompt, type StageInput } from "../stages/prompt.ts";
 import { appendFindings } from "../state/findings.ts";
 import type { StatePaths } from "../state/paths.ts";
 import { newRunId, runDir, writeUsageRecord, type UsageRecord } from "../state/runs.ts";
@@ -20,7 +20,7 @@ import { spawnBounded, type SpawnResult } from "./process.ts";
 import { linkProfileSkills } from "./skills.ts";
 import { observeRun, type Limit } from "../quota/book.ts";
 
-const OUTSIDE_CONVERSATION = "conversation turn outside a conversation";
+export const OUTSIDE_CONVERSATION = "conversation turn outside a conversation";
 
 export interface RunnerContext {
   paths: StatePaths;
@@ -114,7 +114,7 @@ export async function runStage(ctx: RunnerContext, req: StageRequest): Promise<S
     })
     : req.def.kind === 'standing'
       ? renderStandingPrompt(req.def.prompt, {...req.standingInput,result_path:resultPath,profile_instructions:profileInstructions}) + '\nIf no write tool is available, return the result JSON as your final response. Never post to GitHub or modify repository content.'
-      : renderPrompt(req.def.prompt, input));
+      : renderPrompt(req.def.prompt, input) + (input.answer && req.def.name !== 'question-check' ? `\n\n${FRESH_WITH_ANSWER_NOTE}\n` : ''));
   await writeFile(join(dir, "prompt.md"), prompt);
   await writeFile(join(dir, "input.json"), JSON.stringify(req.standingInput ?? input, null, 2));
 
