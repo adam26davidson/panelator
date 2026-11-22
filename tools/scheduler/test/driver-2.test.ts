@@ -164,7 +164,8 @@ describe("driveChain", () => {
     expect(adapter.ran).toEqual(["fix:claude-sonnet-5-5"]);
     expect(r.claim.state.stage).toBe("verify");
     expect(r.claim.state.conflictPending).toBe(false);
-    expect(r.claim.state.fixes).toBe(1);
+    expect(r.claim.state.fixes).toBe(0);
+    expect(r.claim.state.conflictRounds).toBe(1);
     const fixed = head(claim.worktree);
     expect(r.claim.state.pr?.head_sha).toBe(fixed);
     expect((await steps(deps, r.claim, 2)).state.stage).toBe("merge");
@@ -432,7 +433,7 @@ describe("driver: escalation (spec 006 AC-1 to AC-5, AC-7)", () => {
     });
     const c = at(claim, {
       stage: "fix", track: "spec", plan: plan as never, pr: { number: 12, head_sha: sha }, parkedPr: { number: 9, head_sha: issueSha },
-      rescues: 1, replans: 1, specRevisions: 1, specRescues: 1, pendingFixInput: "Fix the spec PR.", history: ["review: @someone asked for x"],
+      rescues: 1, replans: 1, specRevisions: 1, specRescues: 2, pendingFixInput: "Fix the spec PR.", history: ["review: @someone asked for x"],
     });
     await writeClaim(paths, c);
     const r = await step(deps, c);

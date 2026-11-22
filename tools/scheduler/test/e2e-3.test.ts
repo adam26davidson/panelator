@@ -106,15 +106,15 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
   it("abandonment (spec 006 AC-28)", async () => {
     const w = await chainWorld({
       files: repoFiles(),
-      results: { plan: [PLAN, PLAN], implement: [FAIL, FAIL, FAIL, FAIL, FAIL], spec: [FAIL, FAIL, FAIL] },
+      results: { plan: [PLAN, PLAN], implement: [FAIL, FAIL, FAIL, FAIL, FAIL], spec: [FAIL, FAIL, FAIL, FAIL] },
     });
     await w.tick();
     await expectSettled(w);
 
-    // Rescue, re-plan, spec revision, the spec-track rescue: every bound used up (AC-1 to AC-5).
-    expect(w.adapter.ran).toEqual(["plan", "implement", "implement", "implement", "plan", "implement", "implement", "spec", "spec", "spec"]);
+    // Rescue, re-plan, spec revision, the two spec-track rescues (2026-11-22): every bound used up (AC-1 to AC-5).
+    expect(w.adapter.ran).toEqual(["plan", "implement", "implement", "implement", "plan", "implement", "implement", "spec", "spec", "spec", "spec"]);
     expect(runsOf(w, "spec")[0].input.mode).toBe("revise");
-    expect(runsOf(w, "spec").at(-1)!.model).toBe(w.cfg.rescue_model);
+    expect(runsOf(w, "spec").slice(-2).map((r) => r.model)).toEqual([w.cfg.rescue_model, w.cfg.rescue_model]);
     // AC-5: the label before the claim goes; one informational comment with no mention; the issue stays open.
     expect(w.labelLog).toEqual(["+in-progress", "+abandoned", "-in-progress"]);
     expect(w.comments).toHaveLength(1);
@@ -173,20 +173,21 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
       files: repoFiles({ spec: null }),
       results: {
         spec: [a.spec(12, { "specs/010-thing/spec.md": specOf(), "docs/charter.md": `${CHARTER}\nAmended.\n` })],
-        fix: [keepsCharter(1), keepsCharter(2)],
+        fix: [keepsCharter(1), keepsCharter(2), keepsCharter(3)],
       },
     });
     await w.tick();
     await expectSettled(w);
 
-    expect(w.adapter.ran).toEqual(["spec", "fix", "fix"]);
+    expect(w.adapter.ran).toEqual(["spec", "fix", "fix", "fix"]);
     expect(runsOf(w, "spec")[0].input.mode).toBe("write");
-    // One fix with the violation as input, the charter revert line first; then the spec-track rescue fix.
-    const [fix1, rescue] = runsOf(w, "fix");
+    // One fix with the violation as input, the charter revert line first; then the two spec-track rescue fixes (2026-11-22).
+    const [fix1, rescue, rescue2] = runsOf(w, "fix");
     expect(fix1.input.fix_input?.split("\n")[0]).toBe(CHARTER_REVERT_LINE);
     expect(fix1.input.fix_input).toContain("docs/charter.md: the charter is never changed by a spec PR");
     expect([fix1.branch, fix1.profile]).toEqual(["spec-7", "spec"]);
     expect(rescue.model).toBe(w.cfg.rescue_model);
+    expect(rescue2.model).toBe(w.cfg.rescue_model);
     // Abandoned: PR 12 closed and spec-7 deleted, never a merge request, the charter on main unchanged.
     expect(w.labelLog).toEqual(["+in-progress", "+abandoned", "-in-progress"]);
     expect(w.writes()).toContain("PATCH /repos/o/r/pulls/12");

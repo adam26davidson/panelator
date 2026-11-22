@@ -72,7 +72,7 @@ below say what each path must do.
 **Escalation path** (replaces the `needs-human` rows of spec 001 section 5,
 AC-10 second sentence, AC-13)
 
-- AC-1. **First bound triggers a rescue.** Given any of these:
+- AC-1. Amended 2026-11-22 by the maintainer's direction ("Things should never be escalated to me; can we allow for more rounds of review at later escalation stages? 2 seems a little tight."): the rescue stays in effect for the PR. The stuck stage runs once more on the rescue model as below; the PR's fix count starts again at 0 and it gets `RESCUE_FIXES` (3) fix rounds, each a rescue run on the rescue model, until the PR merges or the chain escalates further. When the stuck stage is not fix, the PR the rescued stage opens gets those rounds. Reviews between the rounds run on their own model. The rescue is bound to a branch (`rescueOn`, the branch of the track the rescue runs on): it is in effect only while the chain works on that branch's PR, so a spec PR opened after a rescued plan's spec gap, or a record PR opened while an issue PR is parked (AC-18), runs its fixes on the spec agent's model under its own bound; a parked issue PR comes back with its rescue, and a rescued plan's issue branch keeps it after the spec PR merges. It ends when its PR merges (a merged spec or design PR ends a rescue on its branch), at a re-plan, a spec revision or abandonment, and when spec 101 AC-5 hands it back; only the rescue's own first run (`rescueFirstRun`, the rerun of the stuck stage) hands it back, and a block on a later round hands back that round's fixes only. A rescue in effect is kept in the escalation ledger (`rescueOn`, written only while one is), so a release and re-claim keeps it. **First bound triggers a rescue.** Given any of these:
   - plan has failed twice;
   - implement has failed twice;
   - review has failed twice;
@@ -142,11 +142,11 @@ AC-10 second sentence, AC-13)
   tick finishes it from the first step not yet done; no step is repeated other
   than the one in flight when it stopped.
 
-  **Spec track.** Amended by [060-out-of-scope-check-failure-blocks-on-main](../060-out-of-scope-check-failure-blocks-on-main/spec.md) AC-6: a fix verdict that the failure's cause is outside the PR's scope is not a bound hit while the block bound holds; the chain blocks and waits for main. A bound hit by the spec stage itself, or on a spec PR (its
+  **Spec track.** Amended 2026-11-22 by the maintainer's direction ("Things should never be escalated to me; can we allow for more rounds of review at later escalation stages? 2 seems a little tight."): the spec track has two rescues (`MAX_SPEC_RESCUES`), each a rescue as AC-1 amended; the bound hit after the second abandons. Amended by [060-out-of-scope-check-failure-blocks-on-main](../060-out-of-scope-check-failure-blocks-on-main/spec.md) AC-6: a fix verdict that the failure's cause is outside the PR's scope is not a bound hit while the block bound holds; the chain blocks and waits for main. A bound hit by the spec stage itself, or on a spec PR (its
   fix loop, its scope, its review), runs one rescue of the stuck stage if the
   issue's spec-track rescue is unused; otherwise the issue is abandoned as
   above. Re-plan and spec revision do not apply on the spec track.
-- AC-6. Amended by [060-out-of-scope-check-failure-blocks-on-main](../060-out-of-scope-check-failure-blocks-on-main/spec.md) AC-6: MAX_BLOCKS (3) is a bound of the same kind. **The escalation bounds are fixed in code.** The bounds are named
+- AC-6. Amended 2026-11-22 by the maintainer's direction ("Things should never be escalated to me; can we allow for more rounds of review at later escalation stages? 2 seems a little tight."): the fix bound grows with the ladder and is computed from the chain state by one function, `fixBound` in the fix-loop gate: `MAX_FIXES` (2) on a first attempt, `RESCUE_FIXES` (3) while a rescue is in effect, `REPLAN_FIXES` (3) after a re-plan, `SPEC_REVISION_FIXES` (4) after a spec revision, the largest that applies (a later step never lowers it); the spec track has two rescues (`MAX_SPEC_RESCUES`). Conflict fixes are bounded apart, by `MAX_CONFLICT_ROUNDS` (20) per PR ([spec 024](../024-rebase-respects-merged-main/spec.md) AC-3, AC-4 as amended). Amended by [060-out-of-scope-check-failure-blocks-on-main](../060-out-of-scope-check-failure-blocks-on-main/spec.md) AC-6: MAX_BLOCKS (3) is a bound of the same kind. **The escalation bounds are fixed in code.** The bounds are named
   constants of the chain module (`MAX_FIXES` stays in the fix-loop gate):
   - one rescue on the issue track and one on the spec track;
   - one re-plan;
@@ -633,7 +633,7 @@ first wins.
 | claimed | start, spec ok | plan |
 | claimed | start, spec missing or incomplete | spec (`write`) |
 | any agent stage | failed, postponed for quota | waiting, then the same stage (spec keeps its mode; a rescue stays a rescue and is not spent) |
-| any agent stage | failed, in a rescue run | escalate at once, no retry |
+| any agent stage | failed, in a rescue run | escalate at once, no retry (amended 2026-11-22: not a conflict fix, which spends a conflict round and runs again below the cap, spec 024 AC-3) |
 | plan, implement, review | failed, retry used | escalate |
 | spec | failed, retry unused | spec, same mode, attempt 2 |
 | spec | failed, retry used | escalate (stuck: spec) |
@@ -647,7 +647,8 @@ first wins.
 | plan, implement, fix | result with an `escalation` | question check |
 | implement, fix | scope violation, second time | escalate |
 | fix | failed | escalate |
-| any route to fix | fixes = 2 | escalate (stuck: fix) |
+| any route to fix but a conflict | fixes = `fixBound` (2; 3 under a rescue or after a re-plan; 4 after a spec revision; amended 2026-11-22) | escalate (stuck: fix) |
+| `rebase_conflict` (spec 024, amended 2026-11-22) | conflict rounds = `MAX_CONFLICT_ROUNDS` (20) | escalate (stuck: fix); below it the conflict fix runs whatever `fixes` is |
 | verify | checks pending 6 hours, not yet re-run | re-run the pending checks; fix (workflow investigation); a new 6-hour window |
 | verify | checks pending 6 hours after the re-run | question check (kind `capability`, asking: verify) |
 | verify | checks green or failed after a reply | review or fix, the reply no longer an input |
@@ -664,7 +665,8 @@ first wins.
 | spec | `question`, in decide mode | failed run |
 | spec | `question`, kind `other` | as `decide_yourself` from the check (counted) |
 | spec | `question`, other kinds | question check |
-| merge, spec track | merged, spec-present and UI design pass on `origin/main`, a parked issue PR | delete `spec-<issue>`; the parked PR restored; fix applying the answer, fresh stage counters |
+| merge | not mergeable (amended 2026-11-22; spec 024 AC-3) | one conflict round; `rebase_push`, then verify (a real conflict returns as `rebase_conflict`); at `MAX_CONFLICT_ROUNDS`, escalate (stuck: fix) |
+| merge, spec track | merged, spec-present and UI design pass on `origin/main`, a parked issue PR | delete `spec-<issue>`; the parked PR restored with its rescue (amended 2026-11-22); fix applying the answer, fresh stage counters |
 | merge, spec track | merged, both pass, no parked PR | delete `spec-<issue>`; plan, fresh stage counters |
 | merge, spec track | merged, spec-present fails on `origin/main` | delete `spec-<issue>`; escalate (stuck: spec, `write` mode with the reason) |
 | merge, spec track | merged, UI design missing on `origin/main` | delete `spec-<issue>`; `needs-design-stage`; released, ledger kept |
@@ -682,8 +684,8 @@ first wins.
 | any stage but the ended ones | liveness expired | released; on the spec track the spec PR closed and `spec-<issue>` deleted; an unrecorded answer kept in the ledger |
 | any stage but the ended ones | chain error, no chain-error release used (AC-7) | released as on liveness, with the error, a finding and a history entry |
 | any stage but the ended ones | chain error, chain-error release used | abandoned |
-| escalate | stuck spec or spec track, spec-track rescue unused | rescue of the stuck stage |
-| escalate | stuck spec or spec track, spec-track rescue used | abandoned |
+| escalate | stuck spec or spec track, fewer than two spec-track rescues used (amended 2026-11-22) | rescue of the stuck stage |
+| escalate | stuck spec or spec track, both spec-track rescues used | abandoned |
 | escalate | issue track, no rescue used | rescue of the stuck stage |
 | escalate | issue track, rescue used, no re-plan used, an answer not yet recorded | re-plan: spec (`record`) with the answer, then plan |
 | escalate | issue track, rescue used, no re-plan used | re-plan |

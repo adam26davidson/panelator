@@ -37,6 +37,11 @@ export interface ChainState {
    * `conflict_gone`; while it is set the driver only checks that the conflict is still real before the fix runs.
    */
   conflictPending: boolean;
+  /**
+   * Conflict rounds on the current PR (spec 024 as amended 2026-11-22): a conflict fix, a conflict found gone and a
+   * conflict fix that returned its head unchanged each count here, never in `fixes`; at MAX_CONFLICT_ROUNDS the chain escalates.
+   */
+  conflictRounds: number;
   /** Which PR the chain works on: the issue PR (`issue-<issue>`), a spec PR (`spec-<issue>`) or a design PR (`design-<issue>`). Every entry into the spec or design stage sets its track. */
   track: "issue" | "spec" | "design";
   /** The escalation ledger (AC-7): kept per issue across releases. */
@@ -53,6 +58,20 @@ export interface ChainState {
   history: string[];
   /** The current run is a rescue (AC-1): a failure escalates at once; any stage_ok clears it. */
   rescueRun: boolean;
+  /**
+   * The branch a rescue is in effect on (maintainer direction 2026-11-22), or null. While the chain works on that branch,
+   * its PR gets the rescue's fix bound and every fix round runs as a rescue run, on the rescue model, until the PR merges or
+   * the chain escalates further. A PR on another branch (a spec PR after a spec gap, a record PR) is not rescued by it, and a
+   * parked PR keeps it. Kept in the ledger, so a release and re-claim keeps it too.
+   */
+  rescueOn: string | null;
+  /** The current run is the rescue's own first run (the rerun of the stuck stage); spec 101 AC-5 hands back only that run's rescue. */
+  rescueFirstRun: boolean;
+  /**
+   * The current fix run belongs to a conflict round (spec 024 as amended 2026-11-22): a conflict fix, its retry, or the
+   * owed work run after a conflict was found gone. Its success spends no fix and its failure only a conflict round.
+   */
+  conflictRound: boolean;
   specMode: SpecMode | null;
   specProblem: string | null;
   /** Spec 029 AC-1: why the design stage runs (the gate's reason); null when it does not. */

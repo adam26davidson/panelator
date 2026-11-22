@@ -7,6 +7,6 @@ export { readyGate } from "./ready.ts";
 export { scopeGate, type ScopeResult } from "./scope.ts";
 export { specScopeGate, designScopeGate } from "./spec-scope.ts";
 export { isSensitive } from "./sensitive.ts";
-export { fixLoopGate, MAX_FIXES } from "./fix-loop.ts";
+export { fixBound, fixLoopGate, MAX_CONFLICT_ROUNDS, MAX_FIXES, REPLAN_FIXES, RESCUE_FIXES, SPEC_REVISION_FIXES, type FixBoundState } from "./fix-loop.ts";
 export { livenessGate } from "./liveness.ts";
 export { checkDesignTree, designTreeReport, loadDesignTree, childClass, topAncestor, type ReportEntry } from "./design-tree.ts";

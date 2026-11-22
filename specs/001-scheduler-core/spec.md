@@ -260,7 +260,7 @@ table is the specification.
 | Superseded by spec 006: review | `escalate`, or security finding | `needs-human` |
 | fix | result valid | verify |
 | merge | merged | done: claim released, issue closed by the PR, worktree removed |
-| merge | not mergeable | fix (rebase/conflict as input) |
+| merge | not mergeable | Superseded 2026-11-22 by [024-rebase-respects-merged-main](../024-rebase-respects-merged-main/spec.md) AC-3: rebase and push, then verify; a conflict goes to the conflict fix. Was: fix (rebase/conflict as input) |
 | Superseded by spec 006: any | bounds hit, liveness expired | released or `needs-human` per the row above |
 
 Stage order and the fix bound are configuration of the chain module, not of

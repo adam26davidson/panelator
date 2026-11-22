@@ -141,6 +141,13 @@
         "conflictPending": {
           "type": "boolean"
         },
+        "conflictRounds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "conflictRound": {
+          "type": "boolean"
+        },
         "track": {
           "enum": [
             "issue",
@@ -185,6 +192,15 @@
           }
         },
         "rescueRun": {
+          "type": "boolean"
+        },
+        "rescueOn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rescueFirstRun": {
           "type": "boolean"
         },
         "specMode": {

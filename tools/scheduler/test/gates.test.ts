@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  authorityGate, fixLoopGate, isSensitive, latestLabelActor, livenessGate,
+  authorityGate, fixBound, fixLoopGate, MAX_CONFLICT_ROUNDS, MAX_FIXES, REPLAN_FIXES, RESCUE_FIXES, SPEC_REVISION_FIXES, isSensitive, latestLabelActor, livenessGate,
   readyGate, scopeGate, specPresentGate, specScopeGate, designScopeGate, uiDesignGate, validatedGate,
 } from "../src/gates/index.ts";
 import { parseSpec } from "../src/spec/parse.ts";
@@ -271,10 +271,23 @@ describe("specScopeGate (AC-21, AC-22)", () => {
 });
 
 describe("fixLoopGate (AC-13)", () => {
-  it("passes 0 and 1, ignores at 2 without a label (spec 006 AC-1)", () => {
-    expect(fixLoopGate(0).ok).toBe(true);
-    expect(fixLoopGate(1).ok).toBe(true);
-    expect(fixLoopGate(2)).toEqual({ ok: false, action: "ignore", reason: "fix loop limit reached (2 fixes)" });
+  const first = { rescueActive: false, replans: 0, specRevisions: 0 };
+  it("passes 0 and 1, ignores at 2 without a label on a first attempt (spec 006 AC-1)", () => {
+    expect(fixLoopGate({ ...first, fixes: 0 }).ok).toBe(true);
+    expect(fixLoopGate({ ...first, fixes: 1 }).ok).toBe(true);
+    expect(fixLoopGate({ ...first, fixes: 2 })).toEqual({ ok: false, action: "ignore", reason: "fix loop limit reached (2 fixes)" });
+  });
+  it("grows with the escalation ladder: 3 under a rescue or after a re-plan, 4 after a spec revision (maintainer direction 2026-11-22)", () => {
+    expect(fixBound(first)).toBe(2);
+    expect(fixBound({ ...first, rescueActive: true })).toBe(3);
+    expect(fixBound({ ...first, replans: 1 })).toBe(3);
+    expect(fixBound({ ...first, replans: 1, specRevisions: 1 })).toBe(4);
+    expect(fixBound({ ...first, rescueActive: true, replans: 1, specRevisions: 1 })).toBe(4);
+    expect(fixLoopGate({ ...first, rescueActive: true, fixes: 2 }).ok).toBe(true);
+    expect(fixLoopGate({ ...first, rescueActive: true, fixes: 3 }).ok).toBe(false);
+    expect(fixLoopGate({ ...first, specRevisions: 1, fixes: 3 }).ok).toBe(true);
+    expect(fixLoopGate({ ...first, specRevisions: 1, fixes: 4 }).ok).toBe(false);
+    expect([MAX_FIXES, RESCUE_FIXES, REPLAN_FIXES, SPEC_REVISION_FIXES, MAX_CONFLICT_ROUNDS]).toEqual([2, 3, 3, 4, 20]);
   });
 });
 

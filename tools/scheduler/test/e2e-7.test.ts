@@ -329,23 +329,24 @@ describe("end to end: a check failing outside the PR's scope waits for main (spe
     expect(JSON.parse(readFileSync(join(w.paths.escalations, "7.json"), "utf8"))).toMatchObject({ specRescues: 0, blocks: 1 });
   }, 180_000);
 
-  it("with the block bound spent in the ledger, the verdict is counted as a fix and the fix loop runs as today", async () => {
+  it("with the block bound spent in the ledger, the verdict is counted as a fix and the fix loop runs with its bounds (2, then 3 for each of the two spec-track rescues)", async () => {
     let w!: ChainWorld;
     const a = agents(() => w);
     let bad = "";
     const spec = a.spec(12, specFiles);
     w = await chainWorld({
       files: repoFiles({ spec: null }),
-      results: { spec: [(run: StageRun) => { const r = spec(run); bad = r.head_sha; return r; }], fix: [OUT_OF_SCOPE(), OUT_OF_SCOPE(), OUT_OF_SCOPE()] },
+      results: { spec: [(run: StageRun) => { const r = spec(run); bad = r.head_sha; return r; }], fix: Array.from({ length: 8 }, () => OUT_OF_SCOPE()) },
     });
     await writeLedger(w.paths, 7, { ...ledgerOf(initialChainState(7)), blocks: MAX_BLOCKS });
     w.setChecks((sha) => (sha === bad ? FAILED : GREEN));
     await w.tick();
     await w.tick();
     // Each failed read of an unchanged head now goes to the fix.
-    for (let i = 0; i < 8 && !w.labelLog.includes("+abandoned"); i++) await w.tick();
+    for (let i = 0; i < 24 && !w.labelLog.includes("+abandoned"); i++) await w.tick();
 
-    expect(w.adapter.ran).toEqual(["spec", "fix", "fix", "fix"]);
+    expect(w.adapter.ran).toEqual(["spec", ...Array(8).fill("fix")]);
+    expect(runsOf(w, "fix").map((r) => r.model === w.cfg.rescue_model)).toEqual([false, false, true, true, true, true, true, true]);
     expect(blockedRecord(w)).toBeNull();
     expect(w.labelLog).toContain("+abandoned");
     expect(w.comments.at(-1)!.body).toContain("block bound reached");

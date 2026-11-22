@@ -36,12 +36,15 @@ history had no entry saying a rebase was the cause.
 ## 2. Out of scope
 
 - The per-issue bounds of design section 4 and `MAX_FIXES`: their values, and
-  what a rescue, a re-plan and a spec revision are.
+  what a rescue, a re-plan and a spec revision are. (Amended 2026-11-22 by the
+  maintainer's direction: conflicts no longer spend `MAX_FIXES`; they have
+  their own bound, `MAX_CONFLICT_ROUNDS` (20) per PR. See AC-3 and AC-4.)
 - Restoring issue #15; the abandoned issue's re-triage is spec C's.
 - `commitsPatch` omitting merge commits (`git format-patch` skips them, so a
   saved patch loses a merge's conflict resolution).
 - A fix that returns a new head and still does not end the conflict: the next
-  stage's rebase raises it again and `MAX_FIXES` bounds it, as today.
+  stage's rebase raises it again and `MAX_CONFLICT_ROUNDS` bounds it (amended
+  2026-11-22; was `MAX_FIXES`).
 - Refreshing the conflict detail in a retry's input when main moved between
   runs; the agent runs the merge or rebase itself and sees the real conflict.
 
@@ -63,12 +66,32 @@ mocked GitHub API, as in the worktree and driver tests.
   judges mergeability at the merge stage). A conflict returns `{ ok: false,
   conflict }` and the chain goes to fix as AC-16 says. A merge only on main's
   side does not count: a linear branch rebases as before.
-- AC-3. **An unchanged head does not resolve a conflict.** Given
+- AC-3. Amended 2026-11-22 by the maintainer's direction ("The merge conflict resolution should really just guard against a very strange scenario where there is a ton of stuff merging before the work in question gets a chance to merge [...] we could have a cap just in case but it could be something like 20."): every conflict round (a conflict fix that returns a new head,
+  one that returns the head unchanged, and a conflict found gone, AC-4) adds one
+  to the PR's `conflictRounds` and never to `fixes`. The unchanged head is no
+  longer a failed fix: the conflict fix runs again with the retry input below,
+  with no escalation step, until `conflictRounds` reaches `MAX_CONFLICT_ROUNDS`
+  (20), which escalates as the fix loop's bound does. A `rebase_conflict` runs
+  the conflict fix whatever `fixes` is (a PR whose review-fix bound is spent
+  still gets its conflict resolved), and escalates instead only with
+  `conflictRounds` at the cap. `conflictRounds` starts at 0 wherever a new PR
+  starts, as `fixes` does. A conflict fix run that fails (a timeout, an invalid
+  result) is a conflict round too: the conflict fix runs again with the same
+  input and no escalation step, until the cap. A `merge_result` of
+  `not_mergeable` (GitHub will not merge the PR, mostly because main moved after
+  the approval) counts one conflict round and goes to verify through spec 097's
+  `rebase_push`, as an unblocked PR does: a real conflict comes back as
+  `rebase_conflict` and runs the conflict fix, and a PR that stays unmergeable
+  reaches the cap. It never runs a review fix and never spends `fixes`.
+  **An unchanged head does not resolve a conflict.** Given
   `conflictPending` and a fix result with no escalation whose `head_sha` equals
-  `pr.head_sha`, then the run is a failed fix: `fixes` is not counted,
+  `pr.head_sha`, then (superseded 2026-11-22 by the amendment above, which
+  makes it a conflict round: `fixes` is not counted, `conflictPending` stays
+  and the conflict fix runs again, escalating only at `MAX_CONFLICT_ROUNDS`;
+  the text it replaces read: "the run is a failed fix: `fixes` is not counted,
   `conflictPending` stays, and the failure takes the existing fix-failure path
   (a rescue, and for a failed rescue the PR closes and the issue is planned
-  again). The next run's input says the head came back unchanged and names it.
+  again)"). The next run's input says the head came back unchanged and names it.
   It does not say the scheduler checked the conflict: no check runs before a
   resumed session or held work (AC-4). Every conflict's fix input opens without
   naming a method, says that resolving it means a new head containing
@@ -84,15 +107,23 @@ mocked GitHub API, as in the worktree and driver tests.
   clears `conflictPending`, adds a history entry, and goes to verify with
   `fixes` one higher and `rescueRun` cleared (a rescue already counted stays
   counted). The round is spent so that a conflict that keeps coming and going
-  still reaches `MAX_FIXES`. Given the fix still owes work (`recordAnswer`,
+  still reaches `MAX_FIXES`. (Amended 2026-11-22 by the maintainer's
+  direction: the round is a conflict round, `conflictRounds` one higher and
+  `fixes` unchanged, and the bound a coming-and-going conflict reaches is
+  `MAX_CONFLICT_ROUNDS`; read "spent" and "counts" below that way.) Given the fix still owes work (`recordAnswer`,
   `recordIds`, `answer` or `decideInput`), it runs instead with an input saying
   the conflict is gone. The round is spent on this path too, because main can
-  move into a new conflict before that run starts; a success of that run then
-  counts as well.
+  move into a new conflict before that run starts. (Superseded 2026-11-22; the
+  text it replaces read "a success of that run then counts as well": that run belongs to the conflict round
+  already counted, so its success spends no fix and adds no further round, and
+  `fixes` never passes its bound through it; its failure is a conflict round as
+  AC-3 says).
 - AC-5. **The record explains itself.** Every `rebase_conflict` adds a history
   entry naming the stage, the head and the conflict's detail, so the rescue's
   history and the abandonment comment show it.
-- AC-6. **Termination.** A chain whose every review raises a conflict and whose
+- AC-6. Amended 2026-11-22: termination now runs through `MAX_CONFLICT_ROUNDS`
+  at each step of the ladder, and the spec track's two rescues.
+  **Termination.** A chain whose every review raises a conflict and whose
   every fix returns the unchanged head, and one whose every fix finds
   `conflict_gone`, both end `abandoned` with each bound of design section 4 at
   its existing value (the test drives both).
