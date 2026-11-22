@@ -102,7 +102,7 @@ describe("driver: final review cycle 2", () => {
   it("an abandonment carries an unrecorded answer into the fresh ledger (Tm4)", async () => {
     const pending = { ids: [555], kind: "product" as const, text: "Question #555: yes" };
     const { deps, claim, paths } = await setup(() => ({ fix: [] }));
-    const c = at(claim, { stage: "fix", track: "spec", pr: null, rescues: 1, replans: 1, specRevisions: 1, specRescues: 1, pendingFixInput: "x", pendingAnswer: pending });
+    const c = at(claim, { stage: "fix", track: "spec", pr: null, rescues: 1, replans: 1, specRevisions: 1, specRescues: 2, pendingFixInput: "x", pendingAnswer: pending });
     await writeClaim(paths, c);
     await step(deps, c);
     expect(readdirSync(paths.escalations).some((f) => f.startsWith("7.abandoned-"))).toBe(true);
@@ -1418,7 +1418,7 @@ describe("driver: a rebase respects merged main (spec 024)", () => {
     expect(head(claim.worktree)).toBe(sha);
   }, 60_000);
 
-  it("a fix that returns the unchanged head fails, a rescue is told the real state, and a second one closes the PR (AC-3, AC-5; PR #77)", async () => {
+  it("a fix that returns the unchanged head spends a conflict round, and the conflict fix runs again told the real state, with no escalation (AC-3, AC-5; PR #77; amended 2026-11-22)", async () => {
     const unchanged = (sha: string) => ({ head_sha: sha, addressed: [0, 1] });
     const { deps, claim, adapter, paths, sha } = await setup((sha) => ({ fix: [unchanged(sha), unchanged(sha)] }), undefined, conflicting);
     const atReview: Claim = { ...claim, state: { ...claim.state, stage: "review", plan: plan as never, pr: { number: 9, head_sha: sha } } };
@@ -1426,12 +1426,12 @@ describe("driver: a rebase respects merged main (spec 024)", () => {
     expect(r.claim.state).toMatchObject({ stage: "fix", conflictPending: true });
     expect(r.claim.state.history.at(-1)).toMatch(/origin\/main conflicted before review[\s\S]*CONFLICT/);
     r = await step(deps, r.claim);
-    expect(r.claim.state).toMatchObject({ stage: "fix", fixes: 0, conflictPending: true, rescues: 1, rescueRun: true });
+    expect(r.claim.state).toMatchObject({ stage: "fix", fixes: 0, conflictRounds: 1, conflictPending: true, rescues: 0, rescueRun: false });
     r = await step(deps, r.claim);
     expect(adapter.ran).toHaveLength(2);
     expect(fixInputs(paths)[1]).toMatch(/unchanged/);
     expect(fixInputs(paths)[1]).toContain(sha);
-    expect(r.claim.state).toMatchObject({ stage: "plan", replans: 1, pr: null, conflictPending: false });
+    expect(r.claim.state).toMatchObject({ stage: "fix", fixes: 0, conflictRounds: 2, conflictPending: true, rescues: 0, replans: 0, pr: { number: 9 } });
   }, 60_000);
 
   it("a branch holding a merge with a real conflict is told to merge, not rebase, and its merge survives (AC-2, AC-3)", async () => {
@@ -1454,7 +1454,7 @@ describe("driver: a rebase respects merged main (spec 024)", () => {
     expect(input).toMatch(/^Bring this branch up to date with origin\/main/);
     expect(input).not.toMatch(/rebase this branch|rebase onto/i);
     expect(input).toMatch(/merge origin\/main into it rather than rebasing/);
-    expect(r.claim.state).toMatchObject({ stage: "verify", fixes: 1, conflictPending: false });
+    expect(r.claim.state).toMatchObject({ stage: "verify", fixes: 0, conflictRounds: 1, conflictPending: false });
     expect((await steps(deps, r.claim, 2)).state.stage).toBe("merge");
     expect(adapter.ran).toEqual(["fix:claude-sonnet-5-5", "review:claude-fable-5-2"]);
     expect(git(claim.worktree, "rev-list", "--merges", "--count", "origin/main..HEAD").trim()).toBe("2");
@@ -1465,7 +1465,7 @@ describe("driver: a rebase respects merged main (spec 024)", () => {
     const atFix: Claim = { ...claim, state: { ...claim.state, stage: "fix", plan: plan as never, pr: { number: 9, head_sha: sha }, conflictPending: true, pendingFixInput: "Rebase onto main conflicted:\nCONFLICT a.txt" } };
     const r = await step(deps, atFix);
     expect(adapter.ran).toEqual([]);
-    expect(r.claim.state).toMatchObject({ stage: "verify", conflictPending: false, fixes: 1 });
+    expect(r.claim.state).toMatchObject({ stage: "verify", conflictPending: false, fixes: 0, conflictRounds: 1 });
     expect(head(claim.worktree)).toBe(sha);
   }, 60_000);
 

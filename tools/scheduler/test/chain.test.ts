@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   branchOf, checkFailureEntry, FAILURE_MARKER, HISTORY_ENTRY_MAX, HISTORY_MAX_ENTRIES, initialChainState, ledgerOf, MAX_CHAIN_ERRORS, MAX_DECIDE_RETURNS, MAX_REPLANS, MAX_RESCUES,
-  MAX_BLOCKS, MAX_SPEC_ANSWERS, MAX_SPEC_REVISIONS, normalizeChainState, transition, VERIFY_PENDING_MAX_H, type LedgerCounts,
+  MAX_BLOCKS, MAX_SPEC_ANSWERS, MAX_SPEC_RESCUES, MAX_SPEC_REVISIONS, normalizeChainState, transition, VERIFY_PENDING_MAX_H, type LedgerCounts,
 } from "../src/chain/machine.ts";
 import type { Action, ChainEvent, ChainStage, ChainState } from "../src/chain/types.ts";
-import { MAX_FIXES } from "../src/gates/index.ts";
+import { MAX_CONFLICT_ROUNDS, MAX_FIXES, REPLAN_FIXES, RESCUE_FIXES, SPEC_REVISION_FIXES } from "../src/gates/index.ts";
 import { realShapeLog } from "./fixtures/real-shape-log.ts";
 import { cleanJobLog } from "../src/github/job-log.ts";
 import { validate } from "../src/schema/validate.ts";
@@ -300,8 +300,11 @@ describe("chain: escalation path (AC-1 to AC-6)", () => {
     expect(r2.actions).toEqual([{ type: "run_stage", stage: "spec", attempt: 1 }]);
     expect(r2.state).toMatchObject({ specRescues: 1, rescueRun: true, specMode: "revise", track: "spec" });
     const r3 = transition(r2.state, { type: "stage_failed", stage: "spec", reason: "t3" });
-    expect(r3.state.stage).toBe("abandoned");
-    expect(types(r3.actions)).toEqual(["comment", "label", "finding", "notify", "done"]);
+    expect(r3.actions).toEqual([{ type: "run_stage", stage: "spec", attempt: 1 }]);
+    expect(r3.state).toMatchObject({ specRescues: 2, rescueRun: true, rescueActive: true, specMode: "revise", track: "spec" });
+    const r4 = transition(r3.state, { type: "stage_failed", stage: "spec", reason: "t4" });
+    expect(r4.state.stage).toBe("abandoned");
+    expect(types(r4.actions)).toEqual(["comment", "label", "finding", "notify", "done"]);
   });
   it("after a spec revision the next bound abandons, in order, issue left open, nobody mentioned (AC-5)", () => {
     const r = transition(at("fix", { rescues: 1, replans: 1, specRevisions: 1, pr: pr3 }), { type: "stage_failed", stage: "fix", reason: "x" });
@@ -358,7 +361,7 @@ describe("chain: escalation path (AC-1 to AC-6)", () => {
     expect(close.comment.length).toBe("Closed by the scheduler to re-plan: ".length + HISTORY_ENTRY_MAX);
   });
   it("abandonment closes a parked issue PR too (AC-5)", () => {
-    const s = at("fix", { track: "spec", specRescues: 1, pr: { number: 12, head_sha: "c".repeat(40) }, parkedPr: { number: 9, head_sha: "d".repeat(40) } });
+    const s = at("fix", { track: "spec", specRescues: 2, pr: { number: 12, head_sha: "c".repeat(40) }, parkedPr: { number: 9, head_sha: "d".repeat(40) } });
     const r = transition(s, { type: "stage_failed", stage: "fix", reason: "x" });
     const closes = r.actions.filter((a) => a.type === "close_pr");
     expect(closes).toEqual([
@@ -368,18 +371,38 @@ describe("chain: escalation path (AC-1 to AC-6)", () => {
     expect(types(r.actions)).toEqual(["close_pr", "close_pr", "comment", "label", "finding", "notify", "done"]);
     expect(r.state).toMatchObject({ stage: "abandoned", pr: null, parkedPr: null });
   });
-  it("on the spec track the first bound rescues and the second abandons (AC-5)", () => {
-    const s = at("review", { track: "spec", fixes: 2, pr: { number: 12, head_sha: "c".repeat(40) } });
-    const r1 = transition(s, { type: "stage_ok", stage: "review", result: changes, security: false });
+  it("on the spec track two bounds rescue, each with three fix rounds on the rescue model, and the third abandons (AC-5, 2026-11-22)", () => {
+    const pr12 = { number: 12, head_sha: "c".repeat(40) };
+    const review = (st: ChainState) => transition({ ...st, stage: "review" }, { type: "stage_ok", stage: "review", result: changes, security: false });
+    /** Runs fix rounds answered by review changes until the chain leaves the fix loop; returns the fixes it ran. */
+    const rounds = (st: ChainState): { state: ChainState; fixes: number } => {
+      let state = st;
+      let fixes = 0;
+      for (let i = 0; i < 10 && state.stage === "fix"; i++) {
+        expect(state.rescueRun, `fix round ${i + 1}`).toBe(true);
+        fixes++;
+        state = transition(state, fixOk(`${i}`.repeat(40))).state;
+        expect(state.rescueRun).toBe(false);
+        state = review(state).state;
+        if (state.specRescues !== st.specRescues || state.stage === "abandoned") break;
+      }
+      return { state, fixes };
+    };
+    const s = at("review", { track: "spec", fixes: 2, pr: pr12 });
+    const r1 = review(s);
     expect(r1.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining("Review requested changes") }]);
-    expect(r1.state).toMatchObject({ specRescues: 1, rescues: 0, rescueRun: true, track: "spec" });
-    const r2 = transition({ ...r1.state, stage: "review", rescueRun: false }, { type: "stage_ok", stage: "review", result: changes, security: false });
-    expect(r2.state.stage).toBe("abandoned");
-    expect(r2.actions[0]).toEqual({ type: "close_pr", pr: 12, branch: "spec-1", comment: expect.any(String) });
-    expect(r2.state).toMatchObject({ replans: 0, specRevisions: 0 });
+    expect(r1.state).toMatchObject({ specRescues: 1, rescues: 0, rescueRun: true, rescueActive: true, fixes: 0, track: "spec" });
+    const first = rounds(r1.state);
+    expect(first.fixes).toBe(RESCUE_FIXES);
+    expect(first.state).toMatchObject({ stage: "fix", specRescues: 2, rescueRun: true, rescueActive: true, fixes: 0 });
+    const second = rounds(first.state);
+    expect(second.fixes).toBe(RESCUE_FIXES);
+    expect(second.state.stage).toBe("abandoned");
+    expect(second.state).toMatchObject({ replans: 0, specRevisions: 0, specRescues: 2, rescueActive: false });
   });
   it("the escalation bounds (AC-6)", () => {
     expect([MAX_RESCUES, MAX_REPLANS, MAX_SPEC_REVISIONS, MAX_SPEC_ANSWERS, MAX_DECIDE_RETURNS, VERIFY_PENDING_MAX_H, MAX_FIXES, MAX_BLOCKS]).toEqual([1, 1, 1, 1, 1, 6, 2, 3]);
+    expect([MAX_SPEC_RESCUES, RESCUE_FIXES, REPLAN_FIXES, SPEC_REVISION_FIXES, MAX_CONFLICT_ROUNDS]).toEqual([2, 3, 3, 4, 20]);
     expect([HISTORY_ENTRY_MAX, HISTORY_MAX_ENTRIES]).toEqual([4000, 20]);
   });
 });
@@ -486,10 +509,12 @@ describe("chain: merge, rebase, liveness, postpone", () => {
     expect(r2.state.stage).toBe("verify");
     expect(r2.state.conflictPending).toBe(false);
   });
-  it("a rebase conflict at the fix bound runs a rescue fix that still resolves the conflict (AC-1)", () => {
-    const r = transition(at("review", { fixes: 2 }), { type: "rebase_conflict", detail: "CONFLICT a.ts" });
+  it("a rebase conflict at the fix bound is still resolved: the conflict fix runs with no escalation (2026-11-22)", () => {
+    const r = transition(at("review", { fixes: 2, pr: pr3 }), { type: "rebase_conflict", detail: "CONFLICT a.ts" });
     expect(r.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining("CONFLICT a.ts") }]);
-    expect(r.state).toMatchObject({ rescueRun: true, conflictPending: true });
+    expect(r.state).toMatchObject({ stage: "fix", rescueRun: false, rescues: 0, conflictPending: true, fixes: 2, conflictRounds: 0 });
+    const done = transition(r.state, fixOk("c".repeat(40)));
+    expect(done.state).toMatchObject({ stage: "verify", fixes: 2, conflictRounds: 1, conflictPending: false });
   });
   it("head_moved in merge goes back to verify with the new head (C2)", () => {
     const r = transition(at("merge", { pr: pr3 }), { type: "head_moved", head_sha: "e".repeat(40) });
@@ -631,8 +656,10 @@ describe("chain: spec stage and spec track (AC-4, AC-19, AC-21, AC-22)", () => {
     expect(r1.state).toMatchObject({ stage: "spec", specMode: "write", specProblem: "spec lacks a Parent: line", rescueRun: true, specRescues: 1, pr: null, track: "spec" });
     expect(r1.state.history.at(-1)).toBe("spec: spec-present failed after merge: spec lacks a Parent: line");
     const r2 = transition(at("merge", { track: "spec", pr: pr8, specRescues: 1 }), failed);
-    expect(r2.state.stage).toBe("abandoned");
-    expect(types(r2.actions)).toEqual(["delete_branch", "comment", "label", "finding", "notify", "done"]);
+    expect(r2.state).toMatchObject({ stage: "spec", specRescues: 2, rescueRun: true });
+    const r3 = transition(at("merge", { track: "spec", pr: pr8, specRescues: 2 }), failed);
+    expect(r3.state.stage).toBe("abandoned");
+    expect(types(r3.actions)).toEqual(["delete_branch", "comment", "label", "finding", "notify", "done"]);
 
     const ui = transition(at("merge", { track: "spec", pr: pr8 }), { type: "merge_result", status: "merged", specGate: { ok: false, gate: "ui-design", reason: "the design is incomplete: no design/" } });
     expect(ui.actions).toEqual([{ type: "delete_branch", branch: "spec-1" }, { type: "run_stage", stage: "design", attempt: 1 }]);
@@ -1248,7 +1275,7 @@ describe("chain: every event in every stage (AC-27)", () => {
   // Ledger and history variants: a fresh issue, and one with every bound but abandonment used.
   const VARIANTS: Partial<ChainState>[] = [
     {},
-    { rescues: 1, specRescues: 1, replans: 1, specRevisions: 1, specAnswers: 1, decideReturns: 1, fixes: 2, attempt: 2, planFailures: 1, implementFailures: 1, scopeViolations: 1, rescueRun: true },
+    { rescues: 1, specRescues: 2, replans: 1, specRevisions: 1, specAnswers: 1, decideReturns: 1, fixes: 4, attempt: 2, planFailures: 1, implementFailures: 1, scopeViolations: 1, rescueRun: true },
     { answer: "a", answerQuestionId: 5, answerQuestionIds: [5], answerKind: "technical", decideInput: "d", parkedPr: pr3, pendingSince: AT, checksRerun: true, specProblem: "spec missing" },
     { pendingAnswer: { ids: [5], kind: "product", text: "Question #5: yes" }, securityPass: true, sensitive: true, decidedQuestion: q, recordIds: [5], recordKind: "product", chainErrors: 1, chainFailures: { count: 3, last: "x" } },
   ];
@@ -1428,7 +1455,7 @@ describe("chain: every event in every stage (AC-27)", () => {
       const check = at("question-check", { track: "spec", specMode: "record", question: qCapability, askingStage: "spec", attempt: 2, heldWork: [held[0], specHeld] });
       const qc = transition(check, { type: "stage_failed", stage: "question-check", reason: "boom" });
       expect(qc.state).toMatchObject({ stage: "spec", specRescues: 1, heldWork: held });
-      const used = at("spec", { track: "spec", specMode: "record", specRescues: 1, rescueRun: true, attempt: 2, heldWork: [held[0], specHeld] });
+      const used = at("spec", { track: "spec", specMode: "record", specRescues: 2, rescueRun: true, attempt: 2, heldWork: [held[0], specHeld] });
       expect(transition(used, { type: "stage_failed", stage: "spec", reason: "t2" }).state).toMatchObject({ stage: "abandoned", heldWork: [] });
     });
     it("a spec question in record mode holds spec-1 beside issue-1; a second question replaces in place (spec 040 AC-1)", () => {
@@ -1525,7 +1552,7 @@ describe("chain: a fix must resolve a pending rebase conflict (spec 024)", () =>
     expect(pending().history.at(-1)).toMatch(/^origin\/main conflicted before review[^\n]*:\n.*Merge conflict in a\.ts/s);
   });
   it("the abandonment comment explains itself: it quotes the conflict (AC-5)", () => {
-    const s = at("review", { plan, pr: pr3, fixes: 2, rescues: 1, replans: 1, specRevisions: 1 });
+    const s = at("review", { plan, pr: pr3, fixes: 2, conflictRounds: MAX_CONFLICT_ROUNDS, rescues: 1, replans: 1, specRevisions: 1 });
     const end = transition(s, conflict);
     expect(end.state.stage).toBe("abandoned");
     expect(end.actions.find((a) => a.type === "comment")).toMatchObject({ text: expect.stringContaining("Merge conflict in a.ts") });
@@ -1534,21 +1561,35 @@ describe("chain: a fix must resolve a pending rebase conflict (spec 024)", () =>
     expect(pending().pendingFixInput).toMatch(/new head/);
     expect(pending().pendingFixInput).toMatch(/merge origin\/main/i);
   });
-  it("an unchanged head with a conflict pending is a failed fix: no fix is counted and a rescue runs, told the real state (AC-3)", () => {
+  it("an unchanged head with a conflict pending spends a conflict round, not a fix, and the conflict fix runs again, told the real state (AC-3, 2026-11-22)", () => {
     const r = transition(pending(), fixOk(pr3.head_sha));
-    expect(r.state).toMatchObject({ stage: "fix", fixes: 0, conflictPending: true, rescues: 1, rescueRun: true, pr: pr3 });
+    expect(r.state).toMatchObject({ stage: "fix", fixes: 0, conflictRounds: 1, conflictPending: true, rescues: 0, rescueRun: false, pr: pr3 });
     expect(r.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining(pr3.head_sha) }]);
     expect(r.state.pendingFixInput).toMatch(/unchanged/);
     expect(r.state.pendingFixInput).toMatch(/does not end/);
     expect(r.state.pendingFixInput).not.toMatch(/scheduler checks/);
     expect(r.state.pendingFixInput).toContain("Merge conflict in a.ts");
-    expect(r.state.history.join("\n")).toMatch(/fix attempt 1 failed: .*unchanged/);
+    expect(r.state.history.join("\n")).toMatch(/fix attempt 1: conflict still pending: .*unchanged/);
   });
-  it("a rescue that returns the unchanged head again fails on: the PR closes and the issue is planned again (AC-3)", () => {
-    const rescue = transition(pending(), fixOk(pr3.head_sha)).state;
-    const r = transition(rescue, fixOk(pr3.head_sha));
-    expect(r.state).toMatchObject({ stage: "plan", replans: 1, pr: null, conflictPending: false, rescueRun: false });
+  it("unchanged heads never touch the fix bound; at MAX_CONFLICT_ROUNDS the chain escalates as the fix loop does (AC-3, 2026-11-22)", () => {
+    let s = { ...pending(), fixes: 2 };
+    for (let i = 1; i < MAX_CONFLICT_ROUNDS; i++) {
+      s = transition(s, fixOk(pr3.head_sha)).state;
+      expect(s).toMatchObject({ stage: "fix", fixes: 2, conflictRounds: i, conflictPending: true, rescues: 0 });
+    }
+    const rescue = transition(s, fixOk(pr3.head_sha));
+    expect(rescue.state).toMatchObject({ stage: "fix", conflictRounds: MAX_CONFLICT_ROUNDS, rescues: 1, rescueRun: true, rescueActive: true, fixes: 0, conflictPending: true });
+    expect(rescue.state.history.join("\n")).toMatch(/conflict round limit reached \(20 conflict rounds\)/);
+    const r = transition(rescue.state, fixOk(pr3.head_sha));
+    expect(r.state).toMatchObject({ stage: "plan", replans: 1, pr: null, conflictPending: false, conflictRounds: 0, rescueRun: false, rescueActive: false });
     expect(types(r.actions)).toEqual(["close_pr", "run_stage"]);
+  });
+  it("a conflict at the cap escalates instead of running the conflict fix (2026-11-22)", () => {
+    const r = transition(at("review", { plan, pr: pr3, conflictRounds: MAX_CONFLICT_ROUNDS }), conflict);
+    expect(r.state).toMatchObject({ stage: "fix", rescues: 1, rescueRun: true, conflictPending: true });
+    expect(r.state.history.at(-1)).toMatch(/conflict round limit reached/);
+    const under = transition(at("review", { plan, pr: pr3, conflictRounds: MAX_CONFLICT_ROUNDS - 1 }), conflict);
+    expect(under.state).toMatchObject({ stage: "fix", rescues: 0, rescueRun: false, conflictPending: true });
   });
   it("an unchanged head with no conflict pending is an ordinary fix (a fix told to change nothing and say so)", () => {
     const r = transition(at("fix", { plan, pr: pr3, pendingFixInput: "look" }), fixOk(pr3.head_sha));
@@ -1556,27 +1597,27 @@ describe("chain: a fix must resolve a pending rebase conflict (spec 024)", () =>
   });
   it("a new head with a conflict pending is an ordinary fix", () => {
     const r = transition(pending(), fixOk("c".repeat(40)));
-    expect(r.state).toMatchObject({ stage: "verify", fixes: 1, conflictPending: false, pendingFixInput: null, pr: { head_sha: "c".repeat(40) } });
+    expect(r.state).toMatchObject({ stage: "verify", fixes: 0, conflictRounds: 1, conflictPending: false, pendingFixInput: null, pr: { head_sha: "c".repeat(40) } });
   });
   it("an escalation from a fix with a conflict pending is still a question, not an unchanged head", () => {
     const r = transition(pending(), { type: "stage_ok", stage: "fix", result: { escalation: q } as never, head: pr3.head_sha });
     expect(r.state.stage).toBe("question-check");
   });
-  it("conflict_gone ends the conflict with no agent run: the fix round is spent and verify runs (AC-4)", () => {
+  it("conflict_gone ends the conflict with no agent run: a conflict round, not a fix, is spent and verify runs (AC-4)", () => {
     const r = transition(pending(), { type: "conflict_gone" });
     expect(r.actions).toEqual([{ type: "verify" }]);
-    expect(r.state).toMatchObject({ stage: "verify", fixes: 1, conflictPending: false, pendingFixInput: null, rescueRun: false });
+    expect(r.state).toMatchObject({ stage: "verify", fixes: 0, conflictRounds: 1, conflictPending: false, pendingFixInput: null, rescueRun: false });
     expect(r.state.history.at(-1)).toMatch(/conflict is gone/);
   });
   it("conflict_gone clears a rescue flag without giving the rescue back (AC-4)", () => {
-    const s = transition(at("review", { plan, pr: pr3, fixes: 2 }), conflict).state;
+    const s = transition(at("review", { plan, pr: pr3, fixes: 2, rescues: 1, rescueActive: true }), conflict).state;
     expect(s.rescueRun).toBe(true);
-    expect(transition(s, { type: "conflict_gone" }).state).toMatchObject({ stage: "verify", rescueRun: false, rescues: 1 });
+    expect(transition(s, { type: "conflict_gone" }).state).toMatchObject({ stage: "verify", rescueRun: false, rescues: 1, rescueActive: true });
   });
   it("conflict_gone with an answer still to record runs the fix for it, without the conflict (AC-4)", () => {
     const s = { ...pending(), recordAnswer: true, recordIds: [5], recordKind: "technical" as const, answer: "Question #5: yes" };
     const r = transition(s, { type: "conflict_gone" });
-    expect(r.state).toMatchObject({ stage: "fix", conflictPending: false, fixes: 1, recordAnswer: true });
+    expect(r.state).toMatchObject({ stage: "fix", conflictPending: false, fixes: 0, conflictRounds: 1, recordAnswer: true });
     expect(r.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringMatching(/conflict is gone/) }]);
   });
   it("conflict_gone is invalid outside a fix with a conflict pending", () => {
@@ -1589,7 +1630,7 @@ describe("chain: a fix must resolve a pending rebase conflict (spec 024)", () =>
     let state = at("review", { plan, pr: pr3, ...over });
     let steps = 0;
     while (!["done", "released", "abandoned", "paused"].includes(state.stage)) {
-      if (++steps > 200) throw new Error(`no end: stage ${state.stage}, history ${state.history.join("|")}`);
+      if (++steps > 2000) throw new Error(`no end: stage ${state.stage}, history ${state.history.join("|")}`);
       const event: ChainEvent = state.stage === "review" ? conflict
         : state.stage === "fix" ? atFix(state)
           : state.stage === "verify" ? { type: "checks", status: "green", sensitive: false, at: AT }
@@ -1604,16 +1645,16 @@ describe("chain: a fix must resolve a pending rebase conflict (spec 024)", () =>
 
   it("terminates within the bounds when every fix returns the unchanged head", () => {
     const { state } = driveToEnd((s) => fixOk(s.pr!.head_sha));
-    expect(state).toMatchObject({ stage: "abandoned", rescues: 1, replans: 1, specRevisions: 1, specRescues: 1 });
-    expect(state.history.join("\n")).toContain("Merge conflict in a.ts");
+    expect(state).toMatchObject({ stage: "abandoned", rescues: 1, replans: 1, specRevisions: 1, specRescues: 2 });
+    expect(state.history.join("\n")).toMatch(/conflict round limit reached \(\d+ conflict rounds\): conflict still pending/);
   });
   it("terminates within the bounds when a fix owing work finds the conflict gone and main moves into a new one before it runs (AC-4)", () => {
     const { state } = driveToEnd((s) => (s.conflictPending ? { type: "conflict_gone" } : conflict), { recordAnswer: true, recordIds: [5], recordKind: "technical", answer: "Question #5: yes" });
-    expect(state).toMatchObject({ stage: "abandoned", rescues: 1, replans: 1, specRevisions: 1, specRescues: 1 });
+    expect(state).toMatchObject({ stage: "abandoned", rescues: 1, replans: 1, specRevisions: 1, specRescues: 2 });
   });
   it("terminates within the bounds when every fix finds the conflict gone and the next review finds it back", () => {
     const { state } = driveToEnd(() => ({ type: "conflict_gone" }));
-    expect(state).toMatchObject({ stage: "abandoned", rescues: 1, replans: 1, specRevisions: 1, specRescues: 1 });
+    expect(state).toMatchObject({ stage: "abandoned", rescues: 1, replans: 1, specRevisions: 1, specRescues: 2, fixes: 0 });
   });
 });
 
@@ -1975,5 +2016,157 @@ describe("an incomplete request is sent back for completion (spec 067)", () => {
     const ledger = ledgerOf({ ...initialChainState(1), incompleteRequests: 1 });
     expect(ledger.incompleteRequests).toBe(1);
     expect(initialChainState(1, null, ledger).incompleteRequests).toBe(1);
+  });
+});
+
+describe("chain: fix bounds grow with the escalation ladder, conflicts have their own budget (maintainer direction 2026-11-22)", () => {
+  const green: ChainEvent = { type: "checks", status: "green", sensitive: false, at: AT };
+  const reviewed = (result: ReviewResult): ChainEvent => ({ type: "stage_ok", stage: "review", result, security: false });
+  const ladder = (s: ChainState) => `${s.rescues}/${s.specRescues}/${s.replans}/${s.specRevisions}`;
+  /**
+   * From a fix run, answers every fix with a new head, every verify with green checks and every review with changes until
+   * the chain takes an escalation step; returns the fix runs it saw and whether each was a rescue run (the rescue model).
+   */
+  function exhaust(start: ChainState): { state: ChainState; fixes: number; rescueRuns: boolean[] } {
+    let state = start;
+    const rescueRuns: boolean[] = [];
+    while (state.stage === "fix" && ladder(state) === ladder(start)) {
+      if (rescueRuns.length > 10) throw new Error("the fix loop did not end");
+      rescueRuns.push(state.rescueRun);
+      state = transition(state, fixOk(`${rescueRuns.length}`.padStart(40, "e"))).state;
+      expect(state).toMatchObject({ stage: "verify", rescueRun: false });
+      state = transition(state, green).state;
+      // The review between rounds runs on its own model, never the rescue model.
+      expect(state).toMatchObject({ stage: "review", rescueRun: false });
+      state = transition(state, reviewed(changes)).state;
+    }
+    return { state, fixes: rescueRuns.length, rescueRuns };
+  }
+  /** plan, implement and a green verify, up to the review's changes on the new PR. */
+  function newIssuePr(s: ChainState): ChainState {
+    expect(s.stage).toBe("plan");
+    let state = transition(s, { type: "stage_ok", stage: "plan", result: plan }).state;
+    state = transition(state, { type: "stage_ok", stage: "implement", result: impl, scope: { ok: true } }).state;
+    state = transition(state, green).state;
+    return transition(state, reviewed(changes)).state;
+  }
+
+  it("issue track: 2 fix rounds, then a rescue with 3 on the rescue model, 3 after the re-plan, 4 after the spec revision, then abandonment", () => {
+    const first = exhaust(transition(at("review", { plan, pr: pr3 }), reviewed(changes)).state);
+    expect(first.fixes).toBe(MAX_FIXES);
+    expect(first.rescueRuns).toEqual([false, false]);
+    expect(first.state).toMatchObject({ stage: "fix", rescues: 1, rescueRun: true, rescueActive: true, fixes: 0 });
+
+    const rescue = exhaust(first.state);
+    expect(rescue.fixes).toBe(RESCUE_FIXES);
+    expect(rescue.rescueRuns).toEqual([true, true, true]);
+    expect(rescue.state).toMatchObject({ stage: "plan", replans: 1, fixes: 0, rescueActive: false, rescueRun: false, pr: null });
+
+    const replanned = exhaust(newIssuePr(rescue.state));
+    expect(replanned.fixes).toBe(REPLAN_FIXES);
+    expect(replanned.rescueRuns).toEqual([false, false, false]);
+    expect(replanned.state).toMatchObject({ stage: "spec", track: "spec", specMode: "revise", specRevisions: 1, rescueActive: false });
+
+    // The revised spec merges; the issue's next PR has 4 fix rounds, and the bound after them abandons.
+    let state = transition(replanned.state, { type: "stage_ok", stage: "spec", result: revised, scope: { ok: true } }).state;
+    state = transition(state, green).state;
+    state = transition(state, reviewed(approve)).state;
+    state = transition(state, { type: "merge_result", status: "merged", specGate: { ok: true } }).state;
+    const revisedRun = exhaust(newIssuePr(state));
+    expect(revisedRun.fixes).toBe(SPEC_REVISION_FIXES);
+    expect(revisedRun.state.stage).toBe("abandoned");
+    expect(revisedRun.state).toMatchObject({ rescues: 1, replans: 1, specRevisions: 1, fixes: 4 });
+  });
+  it("the abandonment comment names the fix bound and the conflict rounds", () => {
+    const r = transition(at("review", { plan, pr: pr3, fixes: 4, conflictRounds: 3, rescues: 1, replans: 1, specRevisions: 1 }), reviewed(changes));
+    expect(r.state.stage).toBe("abandoned");
+    const text = (r.actions.find((a) => a.type === "comment") as { text: string }).text;
+    expect(text).toContain("fix 4/4, conflict round 3/20,");
+    expect(text).toContain("spec-track rescue 0/2");
+  });
+  it("a rescue of a stage other than fix reruns that stage; the PR it opens gets the rescue's 3 fix rounds on the rescue model", () => {
+    const r = transition(at("implement", { plan, implementFailures: 1, attempt: 2 }), { type: "stage_failed", stage: "implement", reason: "x" });
+    expect(r.actions).toEqual([{ type: "run_stage", stage: "implement", attempt: 1 }]);
+    expect(r.state).toMatchObject({ rescues: 1, rescueRun: true, rescueActive: true, fixes: 0 });
+    let state = transition(r.state, { type: "stage_ok", stage: "implement", result: impl, scope: { ok: true } }).state;
+    expect(state).toMatchObject({ stage: "verify", rescueRun: false, rescueActive: true });
+    state = transition(transition(state, green).state, reviewed(changes)).state;
+    const rescue = exhaust(state);
+    expect(rescue.fixes).toBe(RESCUE_FIXES);
+    expect(rescue.rescueRuns).toEqual([true, true, true]);
+    expect(rescue.state).toMatchObject({ stage: "plan", replans: 1, rescueActive: false });
+  });
+  it("a rescue stays in effect across a question and its answer; the resumed fix is a rescue run", () => {
+    const s = at("fix", { plan, pr: pr3, rescues: 1, rescueActive: true, rescueRun: true, fixes: 1, pendingFixInput: "Review requested changes:\n0. x" });
+    const asked = transition(s, { type: "stage_ok", stage: "fix", result: { escalation: qCapability } as never, head: pr3.head_sha });
+    expect(asked.state).toMatchObject({ stage: "question-check", rescueRun: false, rescueActive: true });
+    const paused = transition(asked.state, { type: "stage_ok", stage: "question-check", result: { verdict: "send", reasoning: "r" } as never });
+    expect(paused.state.stage).toBe("paused");
+    const resumed = transition(paused.state, { type: "answered", answer: "the GPU is back", questionId: 9 });
+    expect(resumed.state).toMatchObject({ stage: "fix", rescueRun: true, rescueActive: true, fixes: 1 });
+  });
+  it("a merged PR ends the rescue: the next PR's fix rounds run on the stage's own model", () => {
+    const r = transition(at("merge", { track: "spec", pr: pr8, rescueActive: true, specRescues: 1 }), { type: "merge_result", status: "merged", specGate: { ok: true } });
+    expect(r.state).toMatchObject({ stage: "plan", rescueActive: false, rescueRun: false, fixes: 0, conflictRounds: 0, specRescues: 1 });
+  });
+  it("a block that returns a rescue ends it (spec 101 AC-5)", () => {
+    const s = at("fix", {
+      track: "spec", pr: pr8, specRescues: 1, rescueActive: true, rescueRun: true, fixes: 1, pendingFixInput: "A required check failed:\ntest\nFAIL x",
+    });
+    const r = transition(s, { type: "stage_ok", stage: "fix", result: { head_sha: pr8.head_sha, out_of_scope: { cause: "main", paths: ["x.ts"] } } as never, scope: { ok: true }, outOfScope: { ok: true }, mainSha: "a".repeat(40) });
+    expect(r.state).toMatchObject({ stage: "blocked", specRescues: 0, fixes: 0, rescueRun: false, rescueActive: false });
+  });
+  it("conflicts never spend fix rounds: a PR at its fix bound resolves conflict after conflict, and its next review fix still escalates", () => {
+    const conflict: ChainEvent = { type: "rebase_conflict", detail: "CONFLICT (content): Merge conflict in a.ts" };
+    let state = at("review", { plan, pr: pr3, fixes: MAX_FIXES });
+    for (let i = 1; i <= 5; i++) {
+      state = transition(state, conflict).state;
+      expect(state).toMatchObject({ stage: "fix", conflictPending: true, rescues: 0, fixes: MAX_FIXES });
+      state = i % 2 ? transition(state, fixOk(`${i}`.padStart(40, "c"))).state : transition(state, { type: "conflict_gone" }).state;
+      expect(state).toMatchObject({ stage: "verify", fixes: MAX_FIXES, conflictRounds: i, conflictPending: false });
+      state = transition(state, green).state;
+    }
+    const r = transition(state, reviewed(changes));
+    expect(r.state).toMatchObject({ stage: "fix", rescues: 1, rescueRun: true, fixes: 0, conflictRounds: 5 });
+  });
+  it("a new PR starts its conflict rounds from 0, like its fixes", () => {
+    const replan = transition(at("implement", { plan, pr: pr3, rescues: 1, implementFailures: 1, conflictRounds: 7 }), { type: "stage_failed", stage: "implement", reason: "x" });
+    expect(replan.state).toMatchObject({ stage: "plan", conflictRounds: 0, fixes: 0 });
+    const spec = transition(at("spec", { track: "spec", specMode: "revise", conflictRounds: 7 }), { type: "stage_ok", stage: "spec", result: revised, scope: { ok: true } });
+    expect(spec.state).toMatchObject({ stage: "verify", conflictRounds: 0, fixes: 0 });
+  });
+  it("issue #130's live claim (spec track, waiting to review spec PR #468, the first spec rescue spent) gets more fix rounds, not abandonment", () => {
+    // The claim's state as the scheduler wrote it before this change: no `rescueActive`, no `conflictRounds`.
+    const raw = {
+      issue: 130, stage: "waiting", attempt: 1, fixes: 2, scopeViolations: 0, planFailures: 0, implementFailures: 1, sensitive: false,
+      pr: { number: 468, head_sha: "bf08b3930f03992c8c842cc47ebce52c414ce4ad" }, plan, pendingFixInput: null, postponedUntil: "2026-11-22T22:27:05.866Z",
+      resumeStage: "review", conflictPending: false, track: "spec", rescues: 1, specRescues: 1, replans: 1, specRevisions: 1, designRevisions: 0,
+      specAnswers: 1, decideReturns: 0, incompleteRequests: 0, history: ["fix: fix loop limit reached (2 fixes)"], rescueRun: false, specMode: null,
+      specProblem: null, designProblem: null, question: null, askingStage: "implement", answer: null, answerQuestionId: null, answerQuestionIds: [],
+      answerKind: null, pendingAnswer: null, recordIds: [], recordKind: null, recordAnswer: false, decideInput: null, decidedQuestion: null, parkedPr: null,
+      pendingSince: null, checksRerun: false, securityPass: false, chainFailures: null, chainErrors: 0, heldWork: [], checkRerun: null,
+      unchangedWithoutVerdict: false, blocked: null, reserved: { spec: null, adr: null }, resumeSession: null,
+    };
+    const claim = { issue: 130, worktree: "/w/130", started_at: AT, last_activity_at: AT, run_id: null };
+    expect(validate("claim", { ...claim, state: raw })).toEqual({ ok: true });
+    const s = normalizeChainState(raw);
+    expect(s).toMatchObject({ rescueActive: false, conflictRounds: 0, fixes: 2, specRescues: 1 });
+    expect(validate("claim", { ...claim, state: s })).toEqual({ ok: true });
+
+    const resumed = transition(s, { type: "start" });
+    expect(resumed.actions).toEqual([{ type: "run_stage", stage: "review", attempt: 1 }]);
+    const next = transition(resumed.state, reviewed(changes));
+    expect(next.state.stage).not.toBe("abandoned");
+    expect(next.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining("Review requested changes") }]);
+    expect(next.state).toMatchObject({ stage: "fix", fixes: 2, specRescues: 1, track: "spec", pr: { number: 468 } });
+
+    // After its spec revision the spec PR has 4 rounds; the bound then runs the second spec rescue, which keeps that bound.
+    const revisionRounds = exhaust(next.state);
+    expect(revisionRounds.fixes).toBe(SPEC_REVISION_FIXES - 2);
+    expect(revisionRounds.state).toMatchObject({ stage: "fix", specRescues: 2, rescueRun: true, rescueActive: true, fixes: 0 });
+    const secondRescue = exhaust(revisionRounds.state);
+    expect(secondRescue.fixes).toBe(SPEC_REVISION_FIXES);
+    expect(secondRescue.rescueRuns.every(Boolean)).toBe(true);
+    expect(secondRescue.state.stage).toBe("abandoned");
   });
 });

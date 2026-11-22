@@ -1,4 +1,4 @@
-import { fixLoopGate, readyGate, type ScopeResult } from "../gates/index.ts";
+import { fixBound, fixLoopGate, MAX_CONFLICT_ROUNDS, readyGate, type ScopeResult } from "../gates/index.ts";
 import type { AgentStageName, AskingStage, ImplementResult, PendingAnswer, PlanResult, Question, SpecMode } from "../types.ts";
 import { checkRequest } from "./question.ts";
 import type { Action, BlockCondition, ChainEvent, ChainStage, ChainState } from "./types.ts";
@@ -9,8 +9,10 @@ export const NEEDS_DECISION_LABEL = "needs-decision";
 export const PENDING_WAIT_S = 60;
 export const POSTPONE_WAIT_S = 1800;
 
-/** Escalation bounds (AC-6): fixed in code, counted per issue. `MAX_RESCUES` applies on each track. */
+/** Escalation bounds (AC-6): fixed in code, counted per issue. `MAX_RESCUES` applies on the issue and design tracks. */
 export const MAX_RESCUES = 1;
+/** Spec 006 AC-5 as amended 2026-11-22: the spec track has two rescues, each with the rescue's fix bound. */
+export const MAX_SPEC_RESCUES = 2;
 export const MAX_REPLANS = 1;
 export const MAX_SPEC_REVISIONS = 1;
 export const MAX_SPEC_ANSWERS = 1;
@@ -70,9 +72,9 @@ const clip = (text: string): string => text.slice(0, HISTORY_ENTRY_MAX);
 export function initialChainState(issue: number, specProblem: string | null = null, ledger: LedgerSource | null = null, designProblem: string | null = null): ChainState {
   return {
     issue, stage: "claimed", attempt: 1, fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0,
-    sensitive: false, pr: null, plan: null, pendingFixInput: null, postponedUntil: null, resumeStage: null, conflictPending: false,
+    sensitive: false, pr: null, plan: null, pendingFixInput: null, postponedUntil: null, resumeStage: null, conflictPending: false, conflictRounds: 0,
     track: "issue", rescues: 0, specRescues: 0, replans: 0, specRevisions: 0, designRevisions: 0, specAnswers: 0, decideReturns: 0, incompleteRequests: 0, history: [],
-    rescueRun: false, specMode: null, specProblem, designProblem, question: null, askingStage: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
+    rescueRun: false, rescueActive: false, specMode: null, specProblem, designProblem, question: null, askingStage: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
     pendingAnswer: null, recordIds: [], recordKind: null, recordAnswer: false, decideInput: null, decidedQuestion: null, parkedPr: null, pendingSince: null, checksRerun: false, securityPass: false,
     chainFailures: null, chainErrors: 0, heldWork: [], checkRerun: null, unchangedWithoutVerdict: false, blocked: null, reserved: { spec: null, adr: null },
     ...(ledger ? seedFromLedger(ledger) : {}),
@@ -167,7 +169,10 @@ function note(state: ChainState, entry: string): ChainState {
 
 function run(state: ChainState, stage: AgentStageName, extra: Partial<Extract<Action, { type: "run_stage" }>> = {}, patch: Partial<ChainState> = {}): Step {
   const attempt = patch.attempt ?? 1;
-  return { state: { ...state, ...patch, stage, attempt, resumeStage: null }, actions: [{ type: "run_stage", stage, attempt, ...extra }] };
+  const next: ChainState = { ...state, ...patch, stage, attempt, resumeStage: null };
+  // Maintainer direction 2026-11-22: while a rescue is in effect, every fix round is a rescue run (the rescue model).
+  if (stage === "fix" && next.rescueActive) next.rescueRun = true;
+  return { state: next, actions: [{ type: "run_stage", stage, attempt, ...extra }] };
 }
 
 /** The answer fields an unrecorded answer (T4) restores when no other answer is in hand, so its spec PR must carry its mark. */
@@ -198,8 +203,9 @@ function reviewProfile(state: ChainState): { profile?: "security" } {
   return state.securityPass ? { profile: "security" } : {};
 }
 
+/** A fix round for review findings, a failed check, a scope violation or other work; the bound grows with the ladder (`fixBound`). */
 function toFix(state: ChainState, fixInput: string, patch: Partial<ChainState> = {}): Step {
-  const gate = fixLoopGate(state.fixes);
+  const gate = fixLoopGate({ ...state, ...patch });
   if (!gate.ok) return escalate({ ...state, ...patch }, "fix", gate.reason, fixInput);
   return run(state, "fix", { fixInput }, { ...patch, pendingFixInput: fixInput });
 }
@@ -221,6 +227,12 @@ function rerun(state: ChainState, stuck: Stuck, fixInput: string, patch: Partial
 }
 
 /**
+ * A rescue (maintainer direction 2026-11-22): the stuck stage runs again on the rescue model, and the rescue stays in effect
+ * for the PR: its fix rounds start again from 0 under the rescue's bound, each on the rescue model.
+ */
+const RESCUE: Partial<ChainState> = { rescueRun: true, rescueActive: true, fixes: 0 };
+
+/**
  * The escalation rule of spec section 4 (AC-1 to AC-5), applied at once when a bound is hit. `fixInput` is the
  * input of a rescue fix (the work the fix loop could not finish); it defaults to `reason`.
  */
@@ -228,22 +240,24 @@ function escalate(state: ChainState, stuck: Stuck, reason: string, fixInput: str
   const s = note({ ...state, heldWork: [] }, `${stuck}: ${reason}`);
   if (s.track === "spec" || stuck === "spec") {
     // Spec 085 AC-1: the rescue starts the recording on spec-<n> again, so only that branch's hold goes; other branches' holds are kept.
-    if (s.specRescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { specRescues: s.specRescues + 1, rescueRun: true, track: "spec", heldWork: state.heldWork.filter((h) => h.branch !== `spec-${state.issue}`) });
+    if (s.specRescues < MAX_SPEC_RESCUES) {
+      return rerun(s, stuck, fixInput, { ...RESCUE, specRescues: s.specRescues + 1, track: "spec", heldWork: state.heldWork.filter((h) => h.branch !== `spec-${state.issue}`) });
+    }
     return abandon(s, stuck);
   }
   // Spec 029 AC-4: the design track gets one rescue, then the spec agent revises the UI design section, then the issue is abandoned.
   if (s.track === "design" || stuck === "design") {
-    if (s.rescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { rescues: s.rescues + 1, rescueRun: true, track: "design" });
+    if (s.rescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { ...RESCUE, rescues: s.rescues + 1, track: "design" });
     const next = designToSpecRevise(s, reason);
     return next ?? abandon(s, stuck);
   }
   // Spec 053 AC-2: the rescue of an implement run continues from the work the stopped run carried.
   const carried = stuck === "implement" ? state.heldWork.filter((h) => h.branch === `issue-${state.issue}` && h.carried !== undefined) : [];
-  if (s.rescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { rescues: s.rescues + 1, rescueRun: true, heldWork: carried });
+  if (s.rescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { ...RESCUE, rescues: s.rescues + 1, heldWork: carried });
   // The PR is closed: its fix input, conflict and rescue flag go with it, and so do a decide-mode input, an ADR requirement on its
   // run and the answer it was applying (T-minor 3); an answer not yet recorded on main stays in `pendingAnswer` (T4).
   const dropPr: Partial<ChainState> = {
-    pr: null, pendingFixInput: null, conflictPending: false, rescueRun: false, decideInput: null, decidedQuestion: null, recordAnswer: false, securityPass: false,
+    pr: null, pendingFixInput: null, conflictPending: false, conflictRounds: 0, rescueRun: false, rescueActive: false, decideInput: null, decidedQuestion: null, recordAnswer: false, securityPass: false,
     answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null, recordIds: [], recordKind: null,
   };
   const close = (why: string): Action[] => (s.pr ? [{ type: "close_pr", pr: s.pr.number, branch: branchOf(s), comment: `${why}${clip(reason)}` }] : []);
@@ -264,14 +278,14 @@ function designToSpecRevise(s: ChainState, reason: string): Step | null {
   const problem = `the design stage could not satisfy the UI design section: ${reason}\n\nDesign attempts:\n${s.history.filter((h) => h.startsWith("design") || h.startsWith("fix") || h.startsWith("review")).join("\n")}`;
   const closes: Action[] = s.pr ? [{ type: "close_pr", pr: s.pr.number, branch: branchOf(s), comment: `Closed by the scheduler to revise the spec: ${clip(reason)}` }] : [];
   const next = toSpec(s, "revise", {
-    pr: null, pendingFixInput: null, conflictPending: false, rescueRun: false, decideInput: null, decidedQuestion: null, recordAnswer: false, securityPass: false,
+    pr: null, pendingFixInput: null, conflictPending: false, conflictRounds: 0, rescueRun: false, rescueActive: false, decideInput: null, decidedQuestion: null, recordAnswer: false, securityPass: false,
     designProblem: null, designRevisions: 0, fixes: 0, scopeViolations: 0, specProblem: problem, specRevisions: s.specRevisions + 1,
   });
   return { state: next.state, actions: [...closes, ...next.actions] };
 }
 
 function boundsText(s: ChainState): string {
-  return `design revision ${s.designRevisions}, rescue ${s.rescues}/${MAX_RESCUES}, spec-track rescue ${s.specRescues}/${MAX_RESCUES}, re-plan ${s.replans}/${MAX_REPLANS}, spec revision ${s.specRevisions}/${MAX_SPEC_REVISIONS}, chain-error release ${s.chainErrors}/${MAX_CHAIN_ERRORS}, block ${s.blocked?.blocks ?? 0}/${MAX_BLOCKS}, incomplete request ${s.incompleteRequests}/${MAX_INCOMPLETE_REQUESTS}`;
+  return `fix ${s.fixes}/${fixBound(s)}, conflict round ${s.conflictRounds}/${MAX_CONFLICT_ROUNDS}, design revision ${s.designRevisions}, rescue ${s.rescues}/${MAX_RESCUES}, spec-track rescue ${s.specRescues}/${MAX_SPEC_RESCUES}, re-plan ${s.replans}/${MAX_REPLANS}, spec revision ${s.specRevisions}/${MAX_SPEC_REVISIONS}, chain-error release ${s.chainErrors}/${MAX_CHAIN_ERRORS}, block ${s.blocked?.blocks ?? 0}/${MAX_BLOCKS}, incomplete request ${s.incompleteRequests}/${MAX_INCOMPLETE_REQUESTS}`;
 }
 
 /** Informational only: no @ anywhere (AC-5, C11), the newest history entries that fit. The driver appends the run-record paths. */
@@ -313,7 +327,7 @@ function abandon(s: ChainState, stuck: Stuck): Step {
   if (s.pr) closes.push({ type: "close_pr", pr: s.pr.number, branch: branchOf(s), comment: why });
   if (s.parkedPr) closes.push({ type: "close_pr", pr: s.parkedPr.number, branch: `issue-${s.issue}`, comment: why });
   return {
-    state: { ...s, stage: "abandoned", pr: null, parkedPr: null, rescueRun: false, heldWork: [] },
+    state: { ...s, stage: "abandoned", pr: null, parkedPr: null, rescueRun: false, rescueActive: false, heldWork: [] },
     actions: [
       ...closes,
       { type: "comment", text: abandonmentComment(s) },
@@ -470,25 +484,38 @@ function scopeOf(state: ChainState, event: { stage: string; scope?: ScopeResult 
 const violationList = (violations: string[]) => violations.map((v) => `- ${v}`).join("\n");
 
 /** Spec 024 AC-3: told what ending a conflict takes, since a rebase over a merge of main raises the conflicts it resolved. */
-const CONFLICT_GUIDANCE = "Resolving this means pushing a new head that contains origin/main. If this branch already holds a merge of main, merge origin/main into it rather than rebasing: a rebase would linearise past that merge and raise the conflicts it resolved again. Returning the head you started from counts as a failed fix.";
+const CONFLICT_GUIDANCE = "Resolving this means pushing a new head that contains origin/main. If this branch already holds a merge of main, merge origin/main into it rather than rebasing: a rebase would linearise past that merge and raise the conflicts it resolved again. Returning the head you started from does not end the conflict: the conflict fix runs again.";
 
 /**
- * Spec 024 AC-3: a fix that returns the head it started from did not resolve the conflict. It is a failed fix, down the
- * existing path (rescue, then the PR closes): no fix is counted, and the next run is told so. The text claims no check:
- * the driver makes none for a resumed session or held work, though it does before a fresh run, so a gone conflict never reaches this retry.
+ * Spec 024 AC-3 as amended 2026-11-22: a fix that returns the head it started from did not resolve the conflict. It spends
+ * a conflict round, not a fix, and the conflict fix runs again, told so; only at MAX_CONFLICT_ROUNDS does the chain escalate.
+ * The text claims no check: the driver makes none for a resumed session or held work, though it does before a fresh run,
+ * so a gone conflict never reaches this retry.
  */
 function conflictUnresolved(state: ChainState, head: string): Step {
   const retry = `The previous fix run returned head ${head} unchanged, which does not end a pending conflict with origin/main. Resolve it and push a new head; do not return this head again.\n\n${state.pendingFixInput ?? ""}`;
-  return baseTransition({ ...state, pendingFixInput: retry }, { type: "stage_failed", stage: "fix", reason: `conflict still pending: the fix returned head ${head} unchanged` }, DEFAULT_BOUNDS);
+  const reason = `conflict still pending: the fix returned head ${head} unchanged`;
+  const s = note({ ...state, conflictRounds: state.conflictRounds + 1 }, `fix attempt ${state.attempt}: ${reason}`);
+  if (s.conflictRounds >= MAX_CONFLICT_ROUNDS) return escalate(s, "fix", `conflict round limit reached (${s.conflictRounds} conflict rounds): ${reason}`, retry);
+  return run(s, "fix", { fixInput: retry }, { pendingFixInput: retry });
+}
+
+/** Spec 024 as amended 2026-11-22: a conflict fix spends a conflict round, never a fix, so it runs even when the fix bound is spent. */
+function toConflictFix(state: ChainState, fixInput: string, patch: Partial<ChainState>): Step {
+  if (state.conflictRounds >= MAX_CONFLICT_ROUNDS) {
+    return escalate({ ...state, ...patch }, "fix", `conflict round limit reached (${state.conflictRounds} conflict rounds)`, fixInput);
+  }
+  return run(state, "fix", { fixInput }, { ...patch, pendingFixInput: fixInput });
 }
 
 /**
- * Spec 024 AC-4: no agent is told about a conflict that is gone. The round is spent as a fix, which is what bounds a
- * conflict that keeps coming and going, on either path. Work the fix still owes (an answer to record, a decision to apply) runs without it.
+ * Spec 024 AC-4 as amended 2026-11-22: no agent is told about a conflict that is gone. The round is spent as a conflict
+ * round (not a fix), which is what bounds a conflict that keeps coming and going, on either path. Work the fix still owes
+ * (an answer to record, a decision to apply) runs without it.
  */
 function conflictGone(state: ChainState): Step {
   const text = `The rebase conflict is gone: origin/main no longer conflicts with head ${state.pr?.head_sha ?? "(no PR)"}.`;
-  const s = note({ ...state, conflictPending: false, fixes: state.fixes + 1 }, `${text} No fix ran for it.`);
+  const s = note({ ...state, conflictPending: false, conflictRounds: state.conflictRounds + 1 }, `${text} No fix ran for it.`);
   if (s.recordAnswer || s.recordIds.length > 0 || s.answer !== null || s.decideInput !== null) {
     const input = `${text} Do the work below; there is no conflict to resolve.`;
     return run(s, "fix", { fixInput: input }, { pendingFixInput: input });
@@ -516,7 +543,7 @@ function outOfScopeVerdict(
   let noted = note({ ...state, rescueRun: false }, `fix: cause outside the PR's scope: ${verdict.cause} (paths: ${verdict.paths.join(", ")})`);
   noted = {
     ...noted, fixes: 0, unchangedWithoutVerdict: false,
-    ...(returnRescue ? (state.track === "spec" ? { specRescues: state.specRescues - 1 } : { rescues: state.rescues - 1 }) : {}),
+    ...(returnRescue ? { rescueActive: false, ...(state.track === "spec" ? { specRescues: state.specRescues - 1 } : { rescues: state.rescues - 1 }) } : {}),
   };
   noted = note(noted, returnRescue ? `block: returned ${returnedFixes} fixes and the rescue spent on main's failure` : `block: returned ${returnedFixes} fixes`);
   return block(noted, { kind: "paths", paths: verdict.paths, main_sha: event.mainSha ?? "" }, verdict.cause);
@@ -548,14 +575,17 @@ function stageOk(state: ChainState, event: StageOk): Step {
       const pr = event.stage === "implement"
         ? { number: (result as ImplementResult).pr_number, head_sha: result.head_sha }
         : state.pr ? { ...state.pr, head_sha: result.head_sha } : null;
-      const fixes = event.stage === "fix" ? state.fixes + 1 : state.fixes;
+      // Spec 024 as amended 2026-11-22: a conflict fix spends a conflict round, not a fix.
+      const conflictFix = event.stage === "fix" && state.conflictPending;
+      const fixes = event.stage === "fix" && !conflictFix ? state.fixes + 1 : state.fixes;
+      const conflictRounds = conflictFix ? state.conflictRounds + 1 : state.conflictRounds;
       // Spec 101 AC-3: one re-run per head; only a new head clears it.
       const headUnchanged = event.stage === "fix" && result.head_sha === state.pr?.head_sha;
       const unverdicted = headUnchanged && state.track !== "issue" && (state.pendingFixInput?.startsWith("A required check failed:") ?? false)
         && !("out_of_scope" in result && result.out_of_scope !== undefined);
       if (unverdicted) state = note(state, "fix returned the head unchanged without a verdict");
       const done = {
-        ...unholdIfBound(settle(state, event.stage)), pr, fixes, conflictPending: false,
+        ...unholdIfBound(settle(state, event.stage)), pr, fixes, conflictRounds, conflictPending: false,
         checkRerun: headUnchanged ? state.checkRerun : null, unchangedWithoutVerdict: unverdicted,
       };
       if (!scope.ok) {
@@ -598,7 +628,7 @@ function stageOk(state: ChainState, event: StageOk): Step {
       if (r.pr_number === undefined || r.head_sha === undefined) throw new Error(`spec revised without a PR (issue ${state.issue})`);
       const scope = scopeOf(state, event);
       const done: ChainState = {
-        ...unholdIfBound(settle(state, "spec")), pr: { number: r.pr_number, head_sha: r.head_sha }, fixes: 0, scopeViolations: 0, specMode: null,
+        ...unholdIfBound(settle(state, "spec")), pr: { number: r.pr_number, head_sha: r.head_sha }, fixes: 0, conflictRounds: 0, scopeViolations: 0, specMode: null,
         pendingFixInput: null, conflictPending: false, checkRerun: null, unchangedWithoutVerdict: false,
       };
       if (scope.ok) return { state: { ...done, stage: "verify" }, actions: [{ type: "verify" }] };
@@ -617,7 +647,7 @@ function stageOk(state: ChainState, event: StageOk): Step {
       if (r.pr_number === undefined || r.head_sha === undefined) throw new Error(`design designed without a PR (issue ${state.issue})`);
       const scope = scopeOf(state, event);
       const done: ChainState = {
-        ...unholdIfBound(settle(state, "design")), pr: { number: r.pr_number, head_sha: r.head_sha }, fixes: 0, scopeViolations: 0,
+        ...unholdIfBound(settle(state, "design")), pr: { number: r.pr_number, head_sha: r.head_sha }, fixes: 0, conflictRounds: 0, scopeViolations: 0,
         pendingFixInput: null, conflictPending: false, checkRerun: null, unchangedWithoutVerdict: false,
       };
       if (scope.ok) return { state: { ...done, stage: "verify" }, actions: [{ type: "verify" }] };
@@ -744,8 +774,8 @@ type PostMergeGate = NonNullable<Extract<ChainEvent, { type: "merge_result" }>["
 
 /** The counters a merged spec or design PR starts the next stage with. */
 const FRESH: Partial<ChainState> = {
-  fixes: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, conflictPending: false, pendingFixInput: null, pendingSince: null, checksRerun: false, checkRerun: null, unchangedWithoutVerdict: false,
-  rescueRun: false, specProblem: null, specMode: null, decideInput: null, decidedQuestion: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
+  fixes: 0, conflictRounds: 0, scopeViolations: 0, planFailures: 0, implementFailures: 0, conflictPending: false, pendingFixInput: null, pendingSince: null, checksRerun: false, checkRerun: null, unchangedWithoutVerdict: false,
+  rescueRun: false, rescueActive: false, specProblem: null, specMode: null, decideInput: null, decidedQuestion: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
   recordIds: [], recordKind: null,
   recordAnswer: false, securityPass: false,
 };
@@ -945,7 +975,7 @@ function baseTransition(state: ChainState, event: ChainEvent, bounds: Bounds): S
     // Spec 024 AC-5: the entry the escalation record explains itself with; the fix input alone is overwritten by the next.
     const noted = note(state, `origin/main conflicted before ${state.stage}, on head ${state.pr?.head_sha ?? "(no PR)"}:\n${event.detail}`);
     // Spec 097 AC-2: raised from verify, the pending window ends; the fix's head gets a new one.
-    return toFix(noted, `origin/main conflicts with this branch:\n${event.detail}\n\n${CONFLICT_GUIDANCE}`, { conflictPending: true, pendingSince: null });
+    return toConflictFix(noted, `origin/main conflicts with this branch:\n${event.detail}\n\n${CONFLICT_GUIDANCE}`, { conflictPending: true, pendingSince: null });
   }
   if (event.type === "conflict_gone") {
     if (state.stage !== "fix" || !state.conflictPending) invalid(state, event);

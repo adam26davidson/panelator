@@ -37,6 +37,11 @@ export interface ChainState {
    * `conflict_gone`; while it is set the driver only checks that the conflict is still real before the fix runs.
    */
   conflictPending: boolean;
+  /**
+   * Conflict rounds on the current PR (spec 024 as amended 2026-11-22): a conflict fix, a conflict found gone and a
+   * conflict fix that returned its head unchanged each count here, never in `fixes`; at MAX_CONFLICT_ROUNDS the chain escalates.
+   */
+  conflictRounds: number;
   /** Which PR the chain works on: the issue PR (`issue-<issue>`), a spec PR (`spec-<issue>`) or a design PR (`design-<issue>`). Every entry into the spec or design stage sets its track. */
   track: "issue" | "spec" | "design";
   /** The escalation ledger (AC-7): kept per issue across releases. */
@@ -53,6 +58,11 @@ export interface ChainState {
   history: string[];
   /** The current run is a rescue (AC-1): a failure escalates at once; any stage_ok clears it. */
   rescueRun: boolean;
+  /**
+   * A rescue is in effect (maintainer direction 2026-11-22): the PR gets the rescue's fix bound and every fix round runs as
+   * a rescue run, on the rescue model, until the PR merges or the chain escalates further.
+   */
+  rescueActive: boolean;
   specMode: SpecMode | null;
   specProblem: string | null;
   /** Spec 029 AC-1: why the design stage runs (the gate's reason); null when it does not. */
