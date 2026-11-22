@@ -124,7 +124,7 @@ the open reservations in the ledger (AC-6).
   and the service keeps running. A different account id is never used: a
   test with a fake identity in another account asserts that no call other
   than the identity check is made.
-- AC-3. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-7: at cap 0 the check makes no cost call and exits 0 on a matching identity. **Setup can be checked.** `panelator-scheduler aws-check` runs the
+- AC-3. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-2: the expiry line is read by ssoExpiry in src/aws/sso.ts and, for a session the CLI renews itself, shows the time a login is needed by, the cached registrationExpiresAt. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-7: at cap 0 the check makes no cost call and exits 0 on a matching identity. **Setup can be checked.** `panelator-scheduler aws-check` runs the
   identity check, then `aws ce get-cost-and-usage` for the current month, and
   prints: the caller ARN and account, whether it matches the configuration,
   the month-to-date cost, the cap, and the SSO session expiry read from the
@@ -201,7 +201,7 @@ the open reservations in the ledger (AC-6).
   reflection treat it as the design says. A second pull in the same month
   above the same threshold sends nothing more. The maintainer's own alerts
   from AWS Budgets (section 8) arrive by email independently of this.
-- AC-9. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-3: the alarm is the third `infra_alarm` producer, after the outage alarms of specs 015 and 045, and subscribers branch on `kind`. **An over-cap forecast stops launches and wakes the shrinkers.**
+- AC-9. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-7: a change of the forecast's state, to over the cap or back under it, re-arms the aws-forecast notice before it is sent, so the recovery is not rate-limited away. Amended by [050-infra-alarm-kind-and-aws-cap-zero](../050-infra-alarm-kind-and-aws-cap-zero/spec.md) AC-3: the alarm is the third `infra_alarm` producer, after the outage alarms of specs 015 and 045, and subscribers branch on `kind`. **An over-cap forecast stops launches and wakes the shrinkers.**
   Given `forecast_usd` above a non-zero cap after a pull or a ledger change,
   then: `reserveSpend` refuses every new reservation while it stays above
   (AC-6); the event `infra_alarm` is emitted (spec 008 AC-4, until now with

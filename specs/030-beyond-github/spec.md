@@ -171,7 +171,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
 
 **The store and the catalogue** (design section 8, "Credentials")
 
-- AC-1. **Secrets are encrypted at rest, outside the repository.**
+- AC-1. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-2: a credential's index record may carry `renewable` and `heads_up_for`. **Secrets are encrypted at rest, outside the repository.**
   `agents/scheduler.yaml` gains a `credentials` block: `dir` (default
   `~/.config/panelator/credentials`), `warn_days` (default 7, min 1). The
   store directory holds one `<name>.cred` per credential, produced by
@@ -262,7 +262,7 @@ this spec. "Telegram on" is spec 007's. *Store directory*: the
   entry. Every command runs as the user the service runs as and is logged
   in the action log with `agent: maintainer` (spec 008 AC-9), with
   `args.name` only.
-- AC-5. **The expiry event has a producer.** Given a tick, at most once an
+- AC-5. Amended by [068-beyond-github-aws-and-events](../068-beyond-github-aws-and-events/spec.md) AC-2: no `credential_expiry` event is produced for a renewable credential whose `heads_up_for` equals its `expires_at` and whose last check passed. **The expiry event has a producer.** Given a tick, at most once an
   hour, then for each credential whose `expires_at` (from the index, or the
   last probe) is within `warn_days`, or whose last check failed, the
   scheduler emits `credential_expiry` (spec 008 AC-4, until now with no

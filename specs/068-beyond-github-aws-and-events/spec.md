@@ -24,6 +24,18 @@ AC-12 (an entry's optional `renew_steps`), spec 099 AC-2 (`cred-exec.ts` and
 `runCheck` for a `provider: aws` entry), and
 [028-reflection-agents](../028-reflection-agents/spec.md) AC-5
 (`open_questions` reads a request's send).
+Revised 2026-11-22 after the first build's reviews and the maintainer's two
+replies on issue #130 (questions #7071686442 and #7076977958): AC-2 (which
+cached time says a login is needed), AC-7 (a change of the forecast's state
+re-arms its notice, in `src/aws/cost.ts`), AC-9 (the permission set carries
+the six actions; when to ask again), AC-10 (the service's own notifier
+windows, `queued`), and sections 1, 5 and 6. It adds two marks:
+[022-delivery-aws-account](../022-delivery-aws-account/spec.md) AC-3 (the
+expiry line) and AC-9 (the notice's re-arm).
+Revised 2026-11-22 again after the second review: AC-2's heads-up paragraph
+says where `renewable` and `heads_up_for` are kept and that the skip is the
+scheduler's, and section 5 lists the files; it adds marks on spec 030 AC-1 and
+AC-5 and spec 099 AC-3, and widens the spec 099 AC-12 mark.
 Class: tooling. Domain: backend.
 Parent: docs/delivery-system-design.md
 Derives from: [delivery-system design](../../docs/delivery-system-design.md)
@@ -97,7 +109,7 @@ were on `main`:
   is, filing a finding for what it cannot scale or cannot explain.
 
 **What `main` has, and what is left** *(agent's call, answering the plan
-stage; read from `main` at 8cebdd3)*. Specs 022, 026, 030 (through specs 069
+stage; read from `main` at 8cebdd3, and again at 98893c8 on 2026-11-22)*. Specs 022, 026, 030 (through specs 069
 and 099), 050 and 064 are implemented on `main`, so nothing blocks this build
 and the issue needs no `blocked` label. Part of this spec landed with them (PR
 #365 and spec 099's implementation). For a criterion listed as built, the
@@ -112,13 +124,22 @@ passes, and adds the test when it is missing.
   field in `src/aws/ledger.ts` (`aws.test.ts`). AC-9's list in the entry.
 - **To build.** AC-1's `provider: aws` path for the check and for `cred
   exec`. AC-2: `src/aws/sso.ts`, the `aws sso-expiry` command, the expiry
-  written to the index, `renew_steps`. AC-3: both request events, `outcome` on
+  written to the index, `renew_steps`, and which cached time it reads. AC-3: both request events, `outcome` on
   the event schema, the reflection reader. AC-6, AC-7 and AC-8 whole. AC-9's
-  `tools/README.md` text and its capability question. AC-10's recorded runs.
+  `tools/README.md` text (its capability question is answered, AC-9). AC-7's
+  re-arm of the forecast notice in `src/aws/cost.ts`. AC-10's recorded runs.
 
-[102-scheduler-alerts-reach-telegram](../102-scheduler-alerts-reach-telegram/spec.md)
-is a spec on `main` whose implementation is not; AC-4 and AC-10 say what holds
-in either order, so neither build waits for the other.
+*(agent's call, 2026-11-22)*
+[102-scheduler-alerts-reach-telegram](../102-scheduler-alerts-reach-telegram/spec.md)'s
+implementation is on `main` at 98893c8: a send the chat could not take is
+`queued`, and `Notifier.clear` exists (its AC-6). AC-4, AC-7 and AC-10 are
+written for that base. A first build of this spec's earlier text is the head
+of the closed PR #424 (`refs/pull/424/head`, b20ac67); the implement stage may
+take from it what still fits, and what this revision changes (AC-2's time,
+AC-7's re-arm, AC-10's notifier windows) is built to this text. `main`
+changes `tools/README.md`, `tools/scheduler/bin/scheduler.ts`,
+`tools/scheduler/test/helpers/fake-aws` and the infra health input often;
+the build starts from `main`'s head and keeps its edits to them small.
 
 ## 2. Out of scope
 
@@ -126,7 +147,11 @@ in either order, so neither build waits for the other.
   gate, the `TelegramNotifier`, the two standing agents' GitHub-side halves)
   and everything spec 022 builds (the account, the pull, the forecast, the
   ledger's `reserveSpend` and `releaseSpend`, the thresholds, the alarm, the
-  commands). This spec adds to them and changes none of their rules.
+  commands). This spec adds to them and changes none of their rules, except
+  the ones section 4 marks: spec 030 AC-1 (`heads_up_for` and `renewable` in
+  the index record), spec 030 AC-5 and spec 099 AC-3 (the producer skips a
+  renewable credential already warned for) and spec 099 AC-12 (once per
+  distinct `expires_at` for a renewable session).
 - Launching anything in AWS. The `scale` descriptor is written by a launcher;
   the only launcher specified is spec 051's console deploy (its AC-7), and
   whether it passes descriptors for its Lambda functions, distribution and
@@ -259,15 +284,16 @@ section 2, first bullet)
   this entry.
 - AC-2. **The expiry comes from the CLI's cache, and the token is never
   read.** `panelator-scheduler aws sso-expiry [--profile <name>]` (default:
-  `AWS_PROFILE`, else the `aws` block's `profile`) prints the session's
-  `expiresAt` as ISO time, or the word `none` when the profile is not an SSO
+  `AWS_PROFILE`, else the `aws` block's `profile`) prints the time a login
+  is needed by ("Which cached time", below) as ISO time, or the word `none` when the profile is not an SSO
   profile, or exits 1 with a reason when the profile or its cache file is
   missing. It reads the profile stanza from `~/.aws/config`: with
   `sso_session = <name>`, the cache file is `~/.aws/sso/cache/<sha1 hex of
   the session name>.json`; with the legacy `sso_start_url`, `<sha1 hex of
   the start URL>.json` (how the AWS CLI names them). Of that file only
-  `expiresAt` is read; `accessToken`, `clientSecret` and every other field
-  are never read into a variable, logged, printed or recorded, asserted by a
+  `expiresAt`, `registrationExpiresAt` and whether a `refreshToken` key is
+  present are read; `accessToken`, the refresh token's value, `clientSecret`
+  and every other field are never read into a variable, logged, printed or recorded, asserted by a
   test over the service log, the command's output and the index after a
   probe. The same function (`ssoExpiry(profile, env)` in
   `tools/scheduler/src/aws/sso.ts`) serves `aws-check`'s expiry line of spec
@@ -296,9 +322,10 @@ section 2, first bullet)
   is `{ none: true }`; no cache file, or one that does not parse, is `{ error:
   "no cached SSO token found (run aws sso login)" }`; a file without
   `expiresAt`, or with one `Date.parse` rejects, is `{ error: "no expiresAt in
-  the cached token" }`; otherwise `{ expires_at: <the string as cached> }`.
-  The file is parsed and only `expiresAt` is taken from the parsed value,
-  which is not kept, passed on or logged; that is what "never read into a
+  the cached token" }`; otherwise `{ expires_at: <the string as cached> }`
+  (for a session the CLI renews itself, the next paragraph replaces these
+  last two results). The file is parsed and only the three things AC-2 names
+  are taken from the parsed value, which is not kept, passed on or logged; that is what "never read into a
   variable" means above. `aws sso-expiry` prints `expires_at`, or `none`, or
   the error on stderr with exit 1, and needs no `aws` block when `--profile`
   or `AWS_PROFILE` names the profile. `aws-check`'s line keeps its words: `sso
@@ -308,20 +335,121 @@ section 2, first bullet)
   home?)` becomes `awsCheck(ctx, env?)`, and `aws.test.ts`'s fixtures pass `{
   HOME: <dir> }`. The index stores `new Date(expires_at).toISOString()`.
 
+  *(agent's call, 2026-11-22)* **Which cached time says a login is needed.**
+  The cached `expiresAt` is the access token's, about an hour after the CLI
+  last fetched one. For a profile with `sso_session` the cache also holds a
+  refresh token, and the CLI fetches a new access token by itself on its next
+  call (the AWS CLI's `botocore/tokens.py`, `_refresher` and
+  `_refresh_access_token`: inside 15 minutes of `expiresAt` it refreshes, and
+  it cannot once `registrationExpiresAt` has passed). For such a session
+  `expiresAt` is always inside `warn_days` and says nothing about a login:
+  the first build read 2026-11-22T08:33:30Z an hour after the maintainer had
+  logged in, a login was asked for that was not needed, and the daily warning
+  would have fired every day. The maintainer's reply: "The current `aws
+  sso-expiry` implementation reads the cached access token's `expiresAt`. The
+  CLI can refresh that token automatically while the shared SSO session is
+  active, so that timestamp alone is insufficient evidence that someone needs
+  to sign in." (maintainer answer, question #7076977958)
+
+  So `ssoExpiry`'s first result becomes `{ expires_at: string; renewable:
+  boolean }`. A session is *renewable* when its stanza has `sso_session` and
+  its cache file has a `refreshToken` key (the key's presence is tested, its
+  value never taken) and a `registrationExpiresAt` that `Date.parse` accepts.
+  For a renewable session `expires_at` is `registrationExpiresAt` as cached,
+  the last moment the CLI can renew the token and so the time a login is
+  certainly needed by, and `expiresAt` is not required: missing, unparsable
+  or in the past, it is no error. For every other session (the legacy
+  `sso_start_url`, or a cache file without a refresh token) `expires_at` is
+  `expiresAt` as the paragraph above says, with `renewable: false`; there it
+  is the session's end. The portal session's own end (an IAM Identity Center
+  setting; the entry's first `setup` step sets it to 90 days) is in no local
+  file. When it comes before the registration's, the next identity call
+  fails, and that is the check's part: `runCheck` makes the identity call
+  first (AC-1), which is also what makes the CLI renew the token, the failed
+  check puts `aws-sso` in the daily warning with the `renew_steps`, and spec
+  022 AC-2 sends `aws-access`. The warning is therefore early where the date
+  can be known and at the first failed check where it cannot. `aws
+  sso-expiry` prints `expires_at` and nothing else. `aws-check`'s line is
+  `sso session expires: <expires_at>`, followed for a renewable session by
+  ` (login needed by; the CLI renews the access token until then)`. Tests:
+  a renewable fixture whose `expiresAt` is an hour past and whose
+  `registrationExpiresAt` is sixty days ahead gives that later time and no
+  `credential_expiry` event or warning; the same with the registration three
+  days ahead gives the warning once (the paragraph after next); a legacy fixture gives its `expiresAt`; the
+  never-read assertion plants marker strings as `accessToken`, `refreshToken`
+  and `clientSecret` and finds none of them in the service log, the
+  command's output, `aws-check`'s output or the index.
+
+  *(agent's call, 2026-11-22)* **A renewable session's notice is one heads-up,
+  not a daily ask.** Read from the AWS CLI's own source
+  (`awscli/botocore/utils.py`, `SSOTokenFetcher._registration`): `aws sso
+  login` reuses the cached client registration until it is within 15 minutes
+  of its own `expiresAt`, and copies that registration's `expiresAt` into the
+  new token file as `registrationExpiresAt`. So a login inside `warn_days` of
+  `registrationExpiresAt` does not move it: logging in early changes nothing,
+  and only a login in the last 15 minutes, or after it has passed, makes a
+  new registration. The notice must therefore not ask for a login and then
+  repeat. For a renewable session (`renewable: true`) inside `warn_days`,
+  the scheduler sends one `credential-expiry` notification, once for each
+  distinct `expires_at`, not once a day. *Where the flag is kept.* `runCheck`
+  writes `renewable` (boolean, from `ssoExpiry`) to the credential's index
+  record beside `expires_at`, and the index records the time warned for as
+  `heads_up_for` (an optional ISO string, written when the notification is
+  sent); both are optional fields of `IndexEntry`
+  (`src/credentials/store.ts`) and of `schemas/scheduler/credential-index.json`,
+  and a `{ none }` or `{ error }` result leaves `renewable` as it is or, for
+  `none`, removes it. *Who skips.* The skip is the scheduler's, made in two
+  places and nowhere in the agent: the `credential_expiry` producer
+  (`expiryEvents` in `src/credentials/check.ts`, spec 030 AC-5, which reads the
+  index alone) emits no event for an entry that is `renewable`, whose
+  `heads_up_for` equals its `expires_at` and whose last check passed; and
+  `notifyCredential` in `src/standing/run.ts`, where a result's warnings become
+  notifications, sends nothing for such an entry. The credential check's own
+  input, schema and prompt (`credential-check-input.ts`,
+  `credential-check-input.json`, `agents/standing/credential-check.md`) are
+  unchanged, so on day two the agent may still list `aws-sso` in `warnings`;
+  the scheduler discards it for that entry and the notification, not the
+  agent's list, is what the maintainer sees. For any other warning (a
+  non-renewable credential, a renewable one not yet warned for this
+  `expires_at`, a failed last check) `notifyCredential` sends as today, daily,
+  and for a renewable entry first writes `heads_up_for` through
+  `store.writeHeadsUp(name, expires_at)`. The heads-up text states the date
+  ("the CLI's login registration ends <expires_at>; no action is needed before
+  then, the CLI renews the access token by itself; log in again on or after
+  that date, or when a check fails") and carries the `renew_steps` as the
+  steps for that day. A failed check (the portal session ended first, or the
+  profile is wrong) is not renewable-specific: it warns daily with the
+  `renew_steps` as spec 030 AC-13 says, whatever `heads_up_for` holds. A
+  non-renewable session (legacy, or no refresh token) is unchanged: it warns
+  daily inside `warn_days`, and a login there does move `expiresAt`. Tests
+  (`credentials.test.ts` for the index and the producer, `standing.test.ts` for
+  the notification): with the renewable fixture three days ahead, day one
+  gives one `credential_expiry` event, one warning in the scripted result and
+  one notification, and `heads_up_for` equal to `expires_at`; the fixture is
+  then rewritten as a login would leave it (a new access token and `expiresAt`,
+  the same `registrationExpiresAt`), `cred check aws-sso` prints `check ok`,
+  and the next day's hourly step gives no event and a scripted result that
+  still carries the `aws-sso` warning gives no notification; a fixture whose
+  registration has changed to a later time gives none either while it is
+  outside `warn_days`, and one inside it warns once more for the new
+  `expires_at`; a failing identity check on the second day warns once with the
+  `renew_steps`.
+
   *(agent's call)* **The login step comes from the catalogue.** A catalogue
   entry may carry an optional `renew_steps`, a list of at least one string:
   what the maintainer does to renew a credential that is already set up
   (`schemas/scheduler/credential-catalogue.json`, `CredentialEntry`).
   `aws-sso`'s is, in order: run `aws sso login --sso-session default`; run
-  `panelator-scheduler cred check aws-sso`, which prints `check ok` and
-  records the new expiry; if the check still fails, `panelator-scheduler
+  `panelator-scheduler cred check aws-sso`, which prints `check ok`
+  when the identity call passes and records the cached time; if the check still fails, `panelator-scheduler
   aws-check` says why, and the full setup is in `agents/credentials.yaml`.
   Where `src/standing/run.ts` builds a `credential-expiry` notification for a
   warning, the steps are the entry's `renew_steps` when it has them and the
   credential is set in the index, else its `setup` as today. The order is
   therefore the scheduler's, read from the catalogue, and a recorded run
   asserts it whatever steps the scripted result carries.
-  `agents/standing/credential-check.md` and the check's input are unchanged.
+  `agents/standing/credential-check.md` and the check's input are unchanged
+  (the heads-up's skip above is the scheduler's, not the agent's).
 
 **Events for every contact** (design section 7; spec 026 AC-2; spec 030
 section 2, second bullet)
@@ -410,11 +538,10 @@ section 2, second bullet)
   within the rate limit leaves no event; a notification without `contact`
   leaves `kind: notification` as today.
 
-  *(agent's call)* Built on `main` (section 1). A send that failed, or
-  Telegram off, gives `log` until spec 102's implementation is on `main` and
-  `queued` after it, as the mark above says. This criterion's test that
-  asserts `channel: log` for a refused send is changed to `queued` by spec
-  102's implementation, not by this spec's.
+  *(agent's call)* Built on `main` (section 1). Spec 102's implementation is
+  on `main` too (98893c8), so a send that failed, or Telegram off, gives
+  `queued`, as the mark above says, and `main`'s `notify.test.ts` asserts
+  that; this spec's build changes neither.
 
 **The funds request over Telegram** (design section 8, "Funds"; spec 022
 AC-7; spec 030 section 2, third bullet)
@@ -521,6 +648,27 @@ and AC-9; spec 030 section 2, fourth bullet; spec 064 AC-5)
   absent or has no `config`, and with "aws: off: <reason>" when `ensureOn`
   (spec 022 AC-2) is false. `aws_scale` returns its `undo` from `apply`, as
   `ActionKind.apply` allows; `applyAction` computes none for it.
+
+  *(agent's call, 2026-11-22)* **The recovery notice is not held back.** The
+  over-cap notice and the recovery notice are one identity (`0:aws:aws-forecast`),
+  and `aws` is a lasting gate (spec 102 AC-5), so the rate limiter would
+  suppress a recovery that follows the over-cap notice within
+  `notify_repeat_hours` (24 by default): the maintainer would be told the
+  forecast is over the cap and never that infra health brought it back, which
+  is what the first build's review found. `judge` (`src/aws/cost.ts`), which
+  both a pull and a ledger change go through, therefore calls
+  `ctx.notifier.clear?.({ issue: 0, gate: "aws", label: "aws-forecast" })`
+  (spec 102 AC-6's re-arm) before it sends the notice of a change of state:
+  from not over to over, and from over to not over. The repeat it sends while
+  the forecast stays over (after 24 hours) calls no clear. A clear that
+  throws is written to the service log and the notice is still sent. Nothing
+  else in `judge` changes: the alarm, the texts, `notices.json` and the other
+  labels are as spec 022 AC-9 left them. `aws.test.ts` asserts it through a
+  `rateLimited` notifier with the configuration's default windows (`notify_rate_limit_hours` 4 and
+  `notify_repeat_hours` 24, as `config.ts` and `agents/scheduler.yaml` have
+  them): over the cap, then a scale down inside the window, gives two delivered `aws-forecast`
+  notices, the over-cap one and the recovery, and a further `judge` with no
+  change of state sends nothing.
 - AC-8. **Infra health gets the ledger and the alarm.**
   `agents/standing/infra-health.md` (spec 064 AC-5) gains `credentials:
   [aws-sso]` (spec 030 AC-2's optional key; the shim exists per spec 030
@@ -592,18 +740,44 @@ and AC-9; spec 030 section 2, fourth bullet; spec 064 AC-5)
   `organizations:` or `iam:` is asked for.
 
   *(agent's call)* The entry's list is on `main` (section 1); the
-  `tools/README.md` text and the capability question are what is left of this
-  criterion.
+  `tools/README.md` text is what is left of this criterion to build.
+
+  *(agent's call, 2026-11-22)* **The question has been asked and answered.**
+  The first build raised this criterion's capability question, and the
+  maintainer replied: "PanelatorDelivery now carries the six aws_scale actions
+  from tools/README.md (on panelator-* Lambda/DynamoDB and the account's
+  CloudFront distributions), provisioned to 849692148420 and verified from the
+  delivery role (DescribeTable allowed on panelator-*, denied outside the
+  prefix). The SSO session is live and `cred set aws-sso` stored
+  `panelator-delivery`." (maintainer answer, question #7071686442) So the
+  implement stage does not raise it again, and the missing question is not a
+  finding against its PR. The policy JSON in `tools/README.md` is the one that
+  reply describes: the Lambda and DynamoDB statements on resources named
+  `panelator-*`, and the CloudFront statement on the delivery account's
+  distributions, because a distribution's ARN carries an id and no name; that
+  is what "resources whose names start `panelator-`" above means for
+  CloudFront. A stage asks the maintainer again only on a live refusal, and
+  quotes the `aws` error's first line in the question: a `credential` request
+  for a login when `cred check aws-sso` fails and the error says the session
+  or token has expired or a login is needed; one for the permission set when
+  a call is denied (`AccessDenied`) for an action of this list. The printed
+  time of `aws sso-expiry` is never by itself the reason to ask (AC-2).
 - AC-10. **Live cases end to end.** Recorded worlds (`e2e.test.ts`,
   `helpers/e2e-routes.ts`; the fake `aws`, Telegram, `systemd-creds` and the
-  fixture home) drive and assert:
-  - `cred set aws-sso` with a profile whose fixture cache file expires in
-    three days: the probe writes `expires_at` to the index without reading
-    the token, the hourly step emits `credential_expiry` once, the
+  fixture home) drive and assert, *(agent's call, 2026-11-22)* each world
+  with the notifier chain of `bin/scheduler.ts` and the configuration's
+  default `notify_rate_limit_hours` and `notify_repeat_hours`, never with a
+  window set to 0, so a run asserts what the service sends; two cases that
+  would share a notification identity inside a window run in separate
+  worlds:
+  - `cred set aws-sso` with a profile whose renewable fixture cache file
+    (AC-2) has `registrationExpiresAt` three days ahead and `expiresAt` an
+    hour past: the probe writes the registration's time as `expires_at` to
+    the index without reading a token, the hourly step emits `credential_expiry` once, the
     credential check returns one `aws-sso` warning, one `credential-expiry`
     message reaches the fake Telegram with the login step first (from
     `renew_steps`, whatever steps the scripted result carries), logged with
-    `channel: telegram`, and nothing twice that day (AC-1, AC-2);
+    `channel: telegram`, and nothing twice: after a login that leaves the same registration, the next day gives no event, warning or notification (AC-1, AC-2);
   - the same with the fake identity returning another account: the check
     fails, `aws-access` is sent once (spec 022 AC-2), and the credential check warns once with the `renew_steps`, the credential
     being set (AC-1, AC-2);
@@ -618,12 +792,9 @@ and AC-9; spec 030 section 2, fourth bullet; spec 064 AC-5)
     cap-raising steps, one event `{ kind: funds, channel: telegram, request
     }`, no `kind: notification` event for it; the same with the fake
     Telegram refusing: still one event with `kind: funds`, whose `channel`
-    equals the `channel` of the service log line for that send and is not
-    `telegram`. *(agent's call)* The literal is `log` when the build's base
-    lacks spec 102's implementation and `queued` when it has it; the test
-    asserts the literal for its base, and whichever of the two
-    implementations lands second changes that literal in its own PR (AC-4,
-    AC-5);
+    equals the `channel` of the service log line for that send and is
+    `queued` *(agent's call, 2026-11-22: spec 102's implementation is on
+    `main`, section 1)* (AC-4, AC-5);
   - no `aws` block: `cred check aws-sso` prints `check skipped` and exits
     0, the credential check's input has `checks["aws-sso"].status`
     `skipped`, and no `credential_expiry` event or `credential-expiry`
@@ -641,7 +812,9 @@ and AC-9; spec 030 section 2, fourth bullet; spec 064 AC-5)
     USD, `reserved_usd` 9 USD and `forecast_usd` equal to the forecast
     recomputed with A at 1 USD (ledger view 4 + 9 x 15 / 30 = 8.5 USD,
     trend 8 USD, so 8.5 USD), which is at or below the cap, so one
-    `aws-forecast` recovery notification is sent; one `aws.reserve` event
+    `aws-forecast` recovery notification is sent and reaches the fake
+    Telegram after the over-cap one, two `aws-forecast` messages in that
+    order inside the same hour (AC-7's re-arm); one `aws.reserve` event
     `outcome: scaled`, the action log `applied` with an `undo` of direction
     `up`; the agent's finding names B as "cannot scale: no descriptor".
     The saving of 5 USD lowers the forecast by 2.5 USD, not 5: the ledger
@@ -699,15 +872,27 @@ stays:
   expiry.`
 - Spec 099 AC-12: `Amended by ... AC-2: the notification carries the entry's
   renew_steps when it has them and the credential is set, else its setup
-  steps.`
+  steps, and for a renewable credential it is sent once per distinct
+  expires_at, not once a day.`
+- Spec 030 AC-1: `Amended by ... AC-2: a credential's index record may carry
+  renewable and heads_up_for.`
+- Spec 030 AC-5 and spec 099 AC-3: `Amended by ... AC-2: no credential_expiry
+  event is produced for a renewable credential whose heads_up_for equals its
+  expires_at and whose last check passed.`
 - Spec 028 AC-5: `Amended by ... AC-3: open_questions also takes a
   question's text from the maintainer.contact event of a sent request (kind
   credential, funds or first_contact, label request).`
+- Spec 022 AC-3: `Amended by ... AC-2: the expiry line is read by ssoExpiry
+  in src/aws/sso.ts and, for a session the CLI renews itself, shows the time
+  a login is needed by, the cached registrationExpiresAt.`
+- Spec 022 AC-9: `Amended by ... AC-7: a change of the forecast's state, to
+  over the cap or back under it, re-arms the aws-forecast notice before it is
+  sent, so the recovery is not rate-limited away.`
 
 (The `...` above stands for the same link in every mark.) Spec 030 AC-13 is
-not marked: the credential check's rule is unchanged and `aws-sso` is one
-more entry it walks. Spec 022 AC-9 is not marked: the alarm is as it was; a
-subscriber now acts on it. Spec 050 AC-3 is not marked: no kind is added.
+not marked: the credential check agent's rule is unchanged and `aws-sso` is
+one more entry it walks; the heads-up's skip is the scheduler's, in the
+producer and the notifier, as AC-2 says. Spec 050 AC-3 is not marked: no kind is added.
 
 ## 5. Interfaces and files
 
@@ -721,8 +906,14 @@ subscriber now acts on it. Spec 050 AC-3 is not marked: no kind is added.
   moved from `src/aws/check.ts` (AC-2). `src/aws/check.ts`: `aws-check`'s
   expiry line uses it, `awsCheck(ctx, env?)`, and the open reservations show
   `scale.kind` and `scale.state` (AC-6). `src/aws/cli.ts`: unchanged.
+  `src/aws/cost.ts`: `judge`'s clear of the `aws-forecast` identity on a
+  change of state (AC-7), and nothing else in that file.
 - `src/credentials/check.ts`: `CheckContext.aws` and `runCheck`'s `provider:
-  aws` branch (AC-1). `src/credentials/store.ts`: `writeExpiry` accepts null.
+  aws` branch (AC-1), and `expiryEvents`' skip of a renewable credential
+  already warned for (AC-2). `src/credentials/store.ts`: `writeExpiry` accepts
+  null and writes `renewable`; `IndexEntry` gains `renewable` and
+  `heads_up_for`, and `writeHeadsUp(name, expires_at)` (AC-2).
+  `schemas/scheduler/credential-index.json`: the two optional fields.
   `bin/cred-exec.ts`: the `provider: aws` branch (AC-1).
   `src/credentials/commands.ts`: unchanged.
 - `src/aws/scale.ts` (new): the three kinds' calls and the descriptor's
@@ -745,8 +936,9 @@ subscriber now acts on it. Spec 050 AC-3 is not marked: no kind is added.
 - `src/reflection/input.ts`: `openQuestions`' selection (AC-3).
 - `src/standing/infra-health-input.ts` and
   `schemas/scheduler/infra-health-input.json`: `aws` (AC-8).
-  `src/standing/run.ts`: `aws` passed to the input builder, and the
-  `credential-expiry` steps taken from `renew_steps` (AC-2, AC-8).
+  `src/standing/run.ts`: `aws` passed to the input builder, the
+  `credential-expiry` steps taken from `renew_steps`, and `notifyCredential`'s
+  heads-up text, skip and `heads_up_for` write (AC-2, AC-8).
   `src/service/loop.ts`: its `aws` passed on to the standing run's deps where
   it is not already. `agents/standing/infra-health.md`: `credentials`,
   `actions`, the prompt (AC-8).
@@ -756,18 +948,24 @@ subscriber now acts on it. Spec 050 AC-3 is not marked: no kind is added.
   `schemas/scheduler/aws-ledger.json`: `scale` (AC-6).
 - `test/`: `aws.test.ts` (the descriptor, `aws_scale`'s checks and calls,
   the forecast after a scale, `ssoExpiry` over fixture files with each result
-  of AC-2, the never-read-token assertion, `aws-check`'s line);
+  of AC-2, renewable and not, the never-read-token assertion, `aws-check`'s
+  line, the re-armed forecast notice through `rateLimited` with the default
+  windows);
   `credentials.test.ts` (`renew_steps`, `runCheck`'s `provider: aws` branch:
-  skipped, not set, wrong account, ok with the expiry written, `none` clearing
-  it); `bin.test.ts` (`cred-exec.ts`'s `provider: aws` branch and its
+  skipped, not set, wrong account, ok with the expiry and `renewable` written,
+  `none` clearing it, the producer's skip, the index validating against its
+  schema with the new fields); `bin.test.ts` (`cred-exec.ts`'s `provider: aws` branch and its
   refusals, `aws sso-expiry`); `events.test.ts` (the schema's new properties,
   the request's send and answer events); `reflection.test.ts` (AC-3);
   `infra-health-input.test.ts` (AC-8); `standing.test.ts` (the notification's
-  steps); `actions.test.ts` (`aws_scale` in `KINDS`); `stages.test.ts` (the
+  steps, the heads-up once per `expires_at` and the day-two login case of AC-2); `actions.test.ts` (`aws_scale` in `KINDS`); `stages.test.ts` (the
   prompt pins); `e2e.test.ts` and `helpers/e2e-routes.ts` (AC-10).
   `notify.test.ts` is on `main` and is checked, not rewritten (AC-4).
   `test/helpers/fake-aws` gains the AC-7 calls; a fixture home under
-  `test/fixtures/aws-home/` holds `.aws/config` and two cache files. A test
+  `test/fixtures/aws-home/` holds `.aws/config` and two cache files, one renewable (`sso_session`, a
+  `refreshToken` and `registrationExpiresAt`) and one legacy, their token
+  fields obvious fake markers; a test that needs a time relative to its
+  clock writes its cache file into a temporary directory. A test
   may sit in a neighbouring file of this directory when that is where its
   subject is already tested.
 - `tools/README.md`: `aws sso-expiry`, the `aws-sso` entry and its
@@ -805,13 +1003,26 @@ the `maintainer` actor.
   under `src/aws/`.
 - The recorded runs of AC-10 pass, and every earlier recorded chain passes
   unchanged.
-- On the laptop, with spec 022 section 8 done: `panelator-scheduler cred set
-  aws-sso` with the profile name, then `cred check aws-sso` exits 0 and
-  `aws sso-expiry` prints the session's expiry; the implement stage runs them
-  and quotes the output in the PR. The six policy actions of AC-9 are the
-  implement stage's capability question when the live `aws_scale` check
-  cannot pass; until the maintainer answers, the fake `aws` covers AC-7 and
-  the PR says so.
+- *(agent's call, 2026-11-22)* On the laptop, the implement stage runs,
+  from its branch, in this order, and quotes each command's output in the PR:
+  `panelator-scheduler cred check aws-sso`, which makes the identity call for
+  the stored profile and exits 0 with `check ok`; `panelator-scheduler aws
+  sso-expiry`, which prints the time a login is needed by; and
+  `panelator-scheduler aws-check`. The credential is already set: "The SSO
+  session is live and `cred set aws-sso` stored `panelator-delivery`"
+  (maintainer answer, question #7071686442), so `cred set` is run again only
+  when `cred list` shows it missing. The identity call is the judge of the
+  session, as the maintainer asked: "please run `aws sts get-caller-identity
+  --profile panelator-delivery` before requesting another browser login ...
+  If STS returns the delivery account ID, proceed with the remaining checks.
+  If it fails, capture the error and request a login if the CLI reports that
+  reauthentication is required." (maintainer answer, question #7076977958)
+  `cred check aws-sso` is that call made through `src/aws/cli.ts`; a stage
+  whose check fails quotes the error and asks as AC-9 says, and asks nothing
+  while the check passes. No live `aws_scale` is run: the delivery account
+  has no reservation with a descriptor (section 2), so the fake `aws` covers
+  AC-7's calls and the PR says so; the first live scale is the dev-log entry
+  below.
 - After the service is restarted on the merged code, the first
   `credential-expiry` warning for `aws-sso`, the first `maintainer.contact`
   event with `channel: telegram`, and the first `aws_forecast_over_cap`
