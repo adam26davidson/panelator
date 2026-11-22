@@ -46,6 +46,7 @@ import type { ServiceLog } from "./log.ts";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import type { StatePaths } from "../state/paths.ts";
 import { awsTick, type AwsTickField } from "../aws/cost.ts";
+import type { ConsolePusher } from "../console/push.ts";
 import type { AwsContext } from "../aws/context.ts";
 import { schedulerChanged } from "./git.ts";
 import { fileDesignChildren } from "../children/scan.ts";
@@ -75,6 +76,8 @@ export interface SchedulerDeps extends DriverDeps {
   scanChildren?: () => Promise<unknown>;
   /** Spec 022: the delivery-system AWS step of a tick; absent means no step (a context without a config is "AWS off"). */
   aws?: AwsContext;
+  /** Spec 051 AC-3: the maintainer console's pusher and the view the tick fills for the snapshot (titles, classes, next picks); absent means the console is off. */
+  console?: { pusher: ConsolePusher; view: { issues: Map<number, { title: string; class: string }>; next: number[] } };
   /** Spec 100: the host probe the default monitor uses (null when the host can work, else the cause); test seam, bin supplies a monitor with the real probe. */
   probeHost?: () => Promise<string | null>;
 }
@@ -768,6 +771,7 @@ export class Scheduler {
         listed = true;
         try {
           issues = await d.gh.listOpenIssues();
+          if (d.console) d.console.view.issues = new Map(issues.map((i) => [i.number, { title: i.title, class: i.labels.find((l) => l.startsWith("class:"))?.slice(6) ?? "" }]));
         } catch (e) {
           info.errors.push((e as Error).message);
         }
@@ -867,6 +871,7 @@ export class Scheduler {
         info.eligible = sel.eligible.length;
         const share = d.parameters ? Number((await d.parameters.read('system_work_share')).value) : 0.75;
         ranked = rankIssues(sel.eligible, d.cfg.labels, await recentMerges(d.paths, d.now()), share, (i) => classifyWork(i, ctx.readSpec));
+        if (d.console) d.console.view.next = ranked.slice(0, 3).map((i) => i.number);
         await this.#recordEligible(ranked, sel.eligible, claimed, (i) => classifyWork(i, ctx.readSpec));
         return ranked;
       };
@@ -934,6 +939,8 @@ export class Scheduler {
       const quota = await quotaSummary(d.paths, d.now()).catch(() => null);
       await d.host!.markSeen().catch((e) => d.log({ kind: "error", error: `host seen: ${(e as Error).message}` }));
       const hostSummary = d.host!.summary();
+      // Spec 051 AC-3: the console's snapshot, after the tick's work; a failure is logged by the pusher and never waits on anything.
+      if (d.console) void d.console.pusher.tick().catch(() => {});
       d.serviceLog.tick({ ...info, active: [...this.#active.keys()], ...(quota ? { quota } : {}), ...(hostSummary ? { host: hostSummary } : {}) });
       if (this.#restartPending && this.active === 0) d.requestRestart();
     }

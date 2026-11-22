@@ -1,6 +1,7 @@
 packages:
   - "tools/*"
   - "web"
+  - "console"
   - "sdk/assemblyscript"
 # A script installs a missing or stale node_modules first, under any pnpm (spec 035).
 verifyDepsBeforeRun: install
@@ -25,5 +26,11 @@ catalog:
   storybook: ^10.6.5
   "@storybook/react-vite": ^10.6.5
   knip: ^6.44.1
+  # Named by spec 051 (Testing Library in section 3; the AWS clients and Lambda types for console/api/); one version for every UI package.
+  "@testing-library/react": ^16.3.0
+  jsdom: ^27.0.0
+  "@aws-sdk/client-dynamodb": ^3.900.0
+  "@aws-sdk/client-ssm": ^3.900.0
+  "@types/aws-lambda": ^8.10.150
 minimumReleaseAgeExclude:
   - knip@6.44.1

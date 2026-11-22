@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "console-change.json",
+  "title": "A change the maintainer console asks of the scheduler (spec 051 AC-4)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "at", "by", "kind", "args"],
+  "properties": {
+    "id": { "type": "integer", "minimum": 1 },
+    "at": { "type": "string" },
+    "by": { "type": "string", "minLength": 1 },
+    "kind": { "type": "string", "minLength": 1 },
+    "args": { "type": "object" }
+  }
+}

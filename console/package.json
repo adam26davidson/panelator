@@ -1,0 +1,44 @@
+{
+  "name": "@panelator/console",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The maintainer console (spec 051): a static site, a small API and the stack that hosts them.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "biome check . && knip --directory .. --config console/knip.json --workspace console",
+    "build:api": "vite build --ssr api/lambda.ts --outDir dist-api && node scripts/zip-lambda.ts"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "catalog:",
+    "@aws-sdk/client-ssm": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@tanstack/react-query": "^5.90.0",
+    "@tanstack/react-router": "^1.130.0",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwindcss": "catalog:",
+    "vite": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@playwright/browser-chromium": "catalog:",
+    "@testing-library/react": "catalog:",
+    "@types/aws-lambda": "catalog:",
+    "@types/node": "^26.6.5",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "jsdom": "catalog:",
+    "knip": "catalog:",
+    "playwright-core": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

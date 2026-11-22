@@ -1,0 +1,9 @@
+{
+  "workspaces": {
+    "console": {
+      "entry": ["test/**/*.test.{ts,tsx}", "api/lambda.ts", "scripts/zip-lambda.ts"],
+      "project": ["src/**/*.{ts,tsx}", "api/**/*.ts", "test/**/*.{ts,tsx}"],
+      "ignoreDependencies": ["tailwindcss", "@playwright/browser-chromium"]
+    }
+  }
+}
