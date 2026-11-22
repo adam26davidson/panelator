@@ -68,6 +68,11 @@ banner. Every later firmware child adds its tests to that suite.
   clang-tidy covers").
 - Registering the runner, attaching the board and recovering it by hand: the
   maintainer's (section 6).
+- **The firmware implementation profile.** `agents/profiles/` has no
+  `firmware` directory, so a plan whose domain is `firmware` stops with
+  `profile not available` (`agents/stages/plan.md`). Adding the profile is
+  delivery-system work under `agents/`, tracked by issue #459; this spec's
+  implementation starts once it exists and changes nothing under `agents/`.
 - Any change to the sensitive-path list, the security review criteria or
   what routes a diff to the security review.
 
@@ -84,9 +89,9 @@ source, a fake clock and a fake GitHub; none of them needs a board.
 **The project**
 
 - AC-1. **One pinned ESP-IDF, in the official container.** The image file
-  holds one line, `espressif/idf:v5.5.<p>@sha256:<64 hex>`: the newest patch
-  release of the v5.5 line that Docker Hub's `espressif/idf` carries when the
-  implementation is written, pinned by tag and digest. Given a checkout and
+  holds one line, `espressif/idf:v5.5.6@sha256:<64 hex>`: ESP-IDF v5.5.6
+  (section 5, "ESP-IDF v5.5.6"), pinned by tag and by the digest Docker Hub
+  gives that tag when the implementation is written. Given a checkout and
   Docker, when `firmware/scripts/build.sh` runs, then it builds the project
   with `idf.py build` inside exactly that image (the repository mounted, the
   build run as the calling user so no root-owned files are left) and leaves
@@ -211,7 +216,11 @@ source, a fake clock and a fake GitHub; none of them needs a board.
   the artifact `hil-result`. This spec adds the schema file, written from
   section 8 with `additionalProperties: false`, since spec 070's
   implementation has not; a board field the run could not read is `null`,
-  which the schema allows for the five fields after `status`. The harness's
+  which the schema allows for the five fields after `status`. Given spec
+  070's implementation (issue #132) has reached `main` first and the file
+  exists, then the harness validates against that file, and the only change
+  this spec's implementation may make to it is allowing `null` for those
+  five fields if it does not already. The harness's
   exit code is 0 for `pass` and 1 otherwise, after the check run is
   completed.
 - AC-11. **The check is always completed.** Given the `build` job failed or
@@ -350,11 +359,17 @@ the always-completed check of AC-11 tighten the contract and need no mark.
 
 ## 5. Design notes (agent's calls)
 
-- **ESP-IDF v5.5.** The current v5 line: the HUB75 DMA library and WAMR that
-  milestone 1 needs next both build against v5, and v5.5 has the longest
-  support left of the v5 releases. The digest beside the tag makes the
-  container the same bytes on CI, on the runner and on a developer's machine;
-  a version bump is a one-line PR that the HIL run tests.
+- **ESP-IDF v5.5.6.** Docker Hub's `espressif/idf` carried, on 2026-11-22,
+  v5.5.6 (October 2026) as the newest release of the v5 line and v6.1.1 as
+  the newest of v6. The pin is v5.5.6: the HUB75 DMA library and WAMR that
+  milestone 1 needs next are known to build against v5, v6 removed legacy
+  driver APIs and nothing here has shown those two libraries building on it,
+  and v5.5 is the last v5 minor, still receiving patch releases. The digest
+  beside the tag makes the container the same bytes on CI, on the runner and
+  on a developer's machine. A move to v6 is a one-line PR that CI builds and
+  the HIL run tests, made by the child that needs something v6 has or once
+  the two libraries are seen to build on it; with only a banner in the image
+  it costs nothing to reverse.
 - **The harness is a Node package.** AGENTS.md makes `tools/<name>/` a
   TypeScript workspace package tested by vitest, which puts the harness's
   logic (outcomes, restore, the result's shape) under `pnpm test`, the
@@ -392,11 +407,14 @@ can provide (delivery-system design section 3 item 3) and which is asked as
 a capability question from this spec's issue:
 
 - a GitHub Actions self-hosted runner on the laptop registered for the
-  `panelator` repository (the laptop's existing runner is registered for
-  `char-matrix-dashboard` and cannot take this repository's jobs), carrying
-  the label `panelator-hil`, running as a user that can run `docker`;
+  `panelator` repository (the laptop's existing runner, `adam-t480` in
+  `~/actions-runner`, is registered for `char-matrix-dashboard` and cannot
+  take this repository's jobs), carrying the label `panelator-hil`, running
+  as a user that can run `docker` (the laptop's user is in the `docker`
+  group);
 - the test board, an ESP32-S3-N16R8 devkit, attached to the laptop by one of
-  its USB ports and left attached;
+  its USB ports and left attached (on 2026-11-22 `/dev/serial/by-id/` on the
+  laptop held only the LTE modem);
 - on a public repository, the Actions setting that holds workflows from
   outside contributors for approval, beside AC-8's fork rule.
 
