@@ -1,0 +1,425 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "console-state.json",
+  "title": "The snapshot the scheduler pushes to the maintainer console (spec 051 AC-2)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "generated_at",
+    "repo",
+    "tick_s",
+    "questions",
+    "current",
+    "next_tick_at",
+    "up_next",
+    "tiles",
+    "metrics",
+    "actions",
+    "agents",
+    "parameters",
+    "changes"
+  ],
+  "$defs": {
+    "nullableNumber": {
+      "type": [
+        "number",
+        "null"
+      ]
+    }
+  },
+  "properties": {
+    "generated_at": {
+      "type": "string"
+    },
+    "repo": {
+      "type": "string"
+    },
+    "tick_s": {
+      "type": "number"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question_comment_id",
+          "issue",
+          "kind",
+          "text",
+          "options",
+          "asked_at",
+          "status",
+          "question_url"
+        ],
+        "properties": {
+          "question_comment_id": {
+            "type": "integer"
+          },
+          "issue": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "label",
+                "cost",
+                "recommended"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "cost": {
+                  "type": "string"
+                },
+                "recommended": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "asked_at": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "reminded",
+              "answered"
+            ]
+          },
+          "answered_at": {
+            "type": "string"
+          },
+          "question_url": {
+            "type": "string"
+          },
+          "decision_url": {
+            "type": "string"
+          },
+          "telegram_url": {
+            "type": "string"
+          },
+          "reminded_at": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "current": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "issue",
+          "title",
+          "stage",
+          "stages",
+          "model",
+          "started_at",
+          "elapsed_s",
+          "cost_usd"
+        ],
+        "properties": {
+          "issue": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "status"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "done",
+                    "running",
+                    "pending",
+                    "failed"
+                  ]
+                }
+              }
+            }
+          },
+          "model": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "elapsed_s": {
+            "type": "number"
+          },
+          "cost_usd": {
+            "type": "number"
+          },
+          "pr": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "next_tick_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "up_next": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "issue",
+          "title",
+          "class"
+        ],
+        "properties": {
+          "issue": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "class": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "tiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "merged_per_week",
+        "issue_to_merge_days",
+        "rework_per_merge",
+        "aws"
+      ],
+      "properties": {
+        "merged_per_week": {
+          "$ref": "#/$defs/nullableNumber"
+        },
+        "issue_to_merge_days": {
+          "$ref": "#/$defs/nullableNumber"
+        },
+        "rework_per_merge": {
+          "$ref": "#/$defs/nullableNumber"
+        },
+        "aws": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "actual_usd",
+            "forecast_usd",
+            "cap_usd"
+          ],
+          "properties": {
+            "actual_usd": {
+              "$ref": "#/$defs/nullableNumber"
+            },
+            "forecast_usd": {
+              "$ref": "#/$defs/nullableNumber"
+            },
+            "cap_usd": {
+              "$ref": "#/$defs/nullableNumber"
+            }
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "summary",
+          "last_run",
+          "next_run",
+          "cost_30d_usd",
+          "paused",
+          "paused_by"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "last_run": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "at",
+                  "outcome"
+                ],
+                "properties": {
+                  "at": {
+                    "type": "string"
+                  },
+                  "outcome": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          "next_run": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cost_30d_usd": {
+            "type": "number"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "paused_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "parameters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "type",
+          "value",
+          "mode",
+          "description",
+          "at",
+          "set_by"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "value": {},
+          "mode": {
+            "enum": [
+              "auto",
+              "locked"
+            ]
+          },
+          "min": {
+            "type": "number"
+          },
+          "max": {
+            "type": "number"
+          },
+          "description": {
+            "type": "string"
+          },
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "set_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "args",
+          "at",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "args": {},
+          "at": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "applied",
+              "refused"
+            ]
+          },
+          "action_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

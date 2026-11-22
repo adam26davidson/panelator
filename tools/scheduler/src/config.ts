@@ -36,6 +36,27 @@ export interface Config {
   credentials: { dir: string; warn_days: number };
   /** Spec 022 AC-1: the delivery-system AWS account; absent means AWS is off. */
   aws?: AwsConfig;
+  /** Spec 051 AC-1: the maintainer console; absent means the console is off. */
+  console?: ConsoleConfig;
+}
+
+export interface ConsoleConfig { url: string; credentials_path: string; github_client_id: string; push_min_s: number; long_poll_s: number }
+
+function loadConsole(raw: unknown): ConsoleConfig | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("config console must be an object");
+  const c = raw as Record<string, unknown>;
+  if (Object.keys(c).some((k) => !["url", "credentials_path", "github_client_id", "push_min_s", "long_poll_s"].includes(k))) throw new Error("config console unknown key");
+  if (typeof c.url !== "string" || !c.url) throw new Error("config console url must be a string");
+  const cp = c.credentials_path ?? "~/.config/panelator/console.json";
+  if (typeof cp !== "string" || !cp) throw new Error("config console credentials_path must be a string");
+  const gid = c.github_client_id ?? "";
+  if (typeof gid !== "string") throw new Error("config console github_client_id must be a string");
+  const push = c.push_min_s ?? 30;
+  if (typeof push !== "number" || !Number.isFinite(push) || push < 5) throw new Error("config console push_min_s must be a number >= 5");
+  const lp = c.long_poll_s ?? 25;
+  if (typeof lp !== "number" || !Number.isFinite(lp) || lp < 1 || lp > 28) throw new Error("config console long_poll_s must be from 1 to 28");
+  return { url: c.url.replace(/\/+$/, ""), credentials_path: expandHome(cp), github_client_id: gid, push_min_s: push, long_poll_s: lp };
 }
 
 export interface AwsConfig { profile: string; account_id: string; region: string; pull_interval_h: number }
@@ -130,6 +151,7 @@ export function loadConfig(path: string): Config {
     decide: { base_url: String(decide.base_url ?? ""), key_env: String(decide.key_env ?? "PANELATOR_DECIDE_KEY") },
     credentials: { dir: expandHome(String(cr.dir ?? "~/.config/panelator/credentials")), warn_days: warnDays },
     ...(raw.aws === undefined || raw.aws === null ? {} : { aws: loadAws(raw.aws) }),
+    ...(raw.console === undefined || raw.console === null ? {} : { console: loadConsole(raw.console) }),
   };
   if (!Number.isInteger(cfg.reflection_max_issues) || cfg.reflection_max_issues < 1) throw new Error("config reflection_max_issues must be an integer >= 1");
   if (cfg.slots < 1) throw new Error("config slots must be >= 1");

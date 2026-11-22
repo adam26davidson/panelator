@@ -32,6 +32,21 @@ describe("loadConfig", () => {
       expect(() => loadConfig(p), block).toThrow(/aws/);
     }
   });
+  it("reads the console block with defaults and rejects bad ones (spec 051 AC-1)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cfg-"));
+    const p = join(dir, "s.yaml");
+    const base = "repo: a/b\nmaintainer: a\napp: {bot_login: bot}\n";
+    writeFileSync(p, base);
+    expect(loadConfig(p).console).toBeUndefined();
+    writeFileSync(p, base + "console: {url: 'https://x.example/', github_client_id: abc}\n");
+    const c = loadConfig(p).console!;
+    expect(c).toMatchObject({ url: "https://x.example", github_client_id: "abc", push_min_s: 30, long_poll_s: 25 });
+    expect(c.credentials_path.endsWith("/.config/panelator/console.json")).toBe(true);
+    for (const block of ["console: {}", "console: {url: u, extra: 1}", "console: {url: u, push_min_s: 4}", "console: {url: u, long_poll_s: 0}", "console: {url: u, long_poll_s: 29}", "console: []"]) {
+      writeFileSync(p, base + block + "\n");
+      expect(() => loadConfig(p), block).toThrow(/console/);
+    }
+  });
   it("loads the committed agents/scheduler.yaml with defaults", () => {
     const c = loadConfig(defaultConfigPath);
     expect(c.repo).toBe("adam26davidson/panelator");

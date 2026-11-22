@@ -577,3 +577,59 @@ describe("Scheduler.tick credential_expiry producer (spec 099 AC-3)", () => {
     expect(await expiryEvents(ctx)).toEqual([]);
   });
 });
+
+describe("Scheduler.tick console step (spec 051 AC-1, AC-3)", () => {
+  it("fills the issue titles and classes for the snapshot, then pushes after the tick's work", async () => {
+    const h = await setup(routes([issue(1, ["validated", "class:tooling"])]), 1);
+    const { ConsolePusher } = await import("../src/console/push.ts");
+    const puts: string[] = [];
+    const pusher = new ConsolePusher({
+      cfg: { url: "https://c.example", credentials_path: "/none", github_client_id: "", push_min_s: 30, long_poll_s: 25 },
+      fetch: async (url, init) => { puts.push(`${init?.method} ${url}`); return new Response("{}"); }, readKey: async () => "k", now: () => new Date("2026-10-12T12:00:00Z"), log: () => {},
+      build: async () => ({ generated_at: "x" }),
+    });
+    const view = { issues: new Map<number, { title: string; class: string }>(), next: [] as number[] };
+    h.deps.console = { pusher, view };
+    await h.s.tick();
+    await pusher.idle();
+    expect(view.issues.get(1)).toEqual({ title: "i1", class: "tooling" });
+    expect(puts).toEqual(["PUT https://c.example/state"]);
+    await h.s.tick();
+    expect(puts).toHaveLength(1);
+  }, 60000);
+  it("the API key read from credentials_path appears in no state file, log line or stage environment (AC-1)", async () => {
+    const { mkdtemp, writeFile, readdir, readFile, stat } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { stageEnv } = await import("../src/runner/credentials.ts");
+    const { ConsolePusher, readApiKey } = await import("../src/console/push.ts");
+    const KEY = "k-9f3a-never-leaks-0c1d";
+    const h = await setup(routes([issue(1, ["validated", "class:tooling"])]), 1);
+    const dir = await mkdtemp(join(tmpdir(), "console-key-"));
+    const credentials_path = join(dir, "console.json");
+    await writeFile(credentials_path, JSON.stringify({ api_key: KEY }), { mode: 0o600 });
+    const sent: string[] = [];
+    const pusher = new ConsolePusher({
+      cfg: { url: "https://c.example", credentials_path, github_client_id: "", push_min_s: 30, long_poll_s: 25 },
+      fetch: async (_u, init) => { sent.push(JSON.stringify(init?.headers)); return new Response("{}"); },
+      now: () => new Date("2026-10-12T12:00:00Z"), log: (r) => h.deps.serviceLog.write(r),
+      build: async () => ({ generated_at: "x" }),
+    });
+    expect(await readApiKey(credentials_path)).toBe(KEY);
+    h.deps.console = { pusher, view: { issues: new Map(), next: [] } };
+    await h.s.tick();
+    await pusher.idle();
+    expect(sent.join()).toContain(KEY); // it is used for the request...
+    const walk = async (d: string): Promise<string[]> => (await Promise.all((await readdir(d, { withFileTypes: true })).map(async (e) => e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]))).flat();
+    for (const f of await walk(h.paths.root)) {
+      if ((await stat(f)).size > 5_000_000) continue;
+      expect((await readFile(f)).includes(KEY), f).toBe(false); // ...and in no run record, claim, log or index
+    }
+    const env = stageEnv(h.deps.binDir, h.paths.root, undefined, { actor: "implement", runId: "r1" }, null);
+    expect(Object.values(env).some((v) => v.includes(KEY))).toBe(false);
+  }, 60000);
+  it("with no console configured nothing is pushed and the tick is unchanged", async () => {
+    const h = await setup(routes([]));
+    expect(h.deps.console).toBeUndefined();
+    await h.s.tick();
+  }, 60000);
+});

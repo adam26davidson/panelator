@@ -1,0 +1,260 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "The panelator maintainer console (spec 051 AC-7): a private bucket behind CloudFront, an HTTP API with one Lambda, one DynamoDB table."
+
+Parameters:
+  MaintainerLogin:
+    Type: String
+    Description: The one GitHub login that may sign in.
+  GithubClientId:
+    Type: String
+    Default: ""
+    Description: The OAuth app's client id; empty means sign-in is not configured yet (the first deploy).
+  ApiKeyHash:
+    Type: String
+    NoEcho: true
+    Description: SHA-256 hex of the scheduler's API key.
+  DomainName:
+    Type: String
+    Default: ""
+    Description: Optional domain; with it the stack adds a certificate and a Route 53 record. CloudFront certificates must live in us-east-1, so deploy the stack there when a domain is used.
+  HostedZoneId:
+    Type: String
+    Default: ""
+    Description: An existing Route 53 hosted zone of the domain; empty, the stack creates one (point the registrar's name servers at it).
+
+Conditions:
+  HasDomain: !Not [!Equals [!Ref DomainName, ""]]
+  CreateZone: !And [!Not [!Equals [!Ref DomainName, ""]], !Equals [!Ref HostedZoneId, ""]]
+
+Resources:
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub panelator-console-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
+
+  SiteAccess:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        {
+          Name: !Sub "panelator-console-${AWS::StackName}",
+          OriginAccessControlOriginType: s3,
+          SigningBehavior: always,
+          SigningProtocol: sigv4,
+        }
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub "${SiteBucket.Arn}/*"
+            Condition:
+              {
+                StringEquals:
+                  { "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}" },
+              }
+
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: panelator-console
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{ AttributeName: pk, AttributeType: S }, { AttributeName: sk, AttributeType: S }]
+      KeySchema: [{ AttributeName: pk, KeyType: HASH }, { AttributeName: sk, KeyType: RANGE }]
+      TimeToLiveSpecification: { AttributeName: ttl, Enabled: true }
+
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: panelator-console-api
+      AssumeRolePolicyDocument:
+        Statement: [{ Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: sts:AssumeRole }]
+      Policies:
+        - PolicyName: panelator-console-data
+          PolicyDocument:
+            Statement:
+              # Log permissions are inline: a managed policy would need iam:AttachRolePolicy, which spec 051 section 9 step 2 does not grant.
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/panelator-console*"
+              - Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:UpdateItem, dynamodb:Query]
+                Resource: !GetAtt Table.Arn
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/panelator/console/github_client_secret"
+
+  # The code is uploaded by `console deploy` (aws lambda update-function-code); this stub only lets the stack create the function.
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: panelator-console-api
+      Runtime: nodejs22.x
+      Handler: index.handler
+      Timeout: 30
+      MemorySize: 256
+      Role: !GetAtt ApiRole.Arn
+      Code: { ZipFile: "exports.handler = async () => ({ statusCode: 503, body: 'not deployed' });" }
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref Table
+          MAINTAINER_LOGIN: !Ref MaintainerLogin
+          GITHUB_CLIENT_ID: !Ref GithubClientId
+          API_KEY_HASH: !Ref ApiKeyHash
+
+  Api:
+    Type: AWS::ApiGatewayV2::Api
+    Properties: { Name: panelator-console, ProtocolType: HTTP }
+
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      {
+        ApiId: !Ref Api,
+        IntegrationType: AWS_PROXY,
+        IntegrationUri: !GetAtt ApiFunction.Arn,
+        PayloadFormatVersion: "2.0",
+      }
+
+  ApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties: { ApiId: !Ref Api, RouteKey: $default, Target: !Sub "integrations/${ApiIntegration}" }
+
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties: { ApiId: !Ref Api, StageName: $default, AutoDeploy: true }
+
+  ApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      {
+        Action: lambda:InvokeFunction,
+        FunctionName: !Ref ApiFunction,
+        Principal: apigateway.amazonaws.com,
+        SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*",
+      }
+
+  # CloudFront does not pass the viewer's Host to the API (it would break API Gateway), so the function hands it on for the same-origin check.
+  ForwardHost:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub "panelator-console-forward-host-${AWS::Region}"
+      AutoPublish: true
+      FunctionConfig: { Comment: copy Host to x-forwarded-host, Runtime: cloudfront-js-2.0 }
+      FunctionCode: |
+        function handler(event) {
+          var r = event.request;
+          r.headers['x-forwarded-host'] = { value: r.headers.host.value };
+          return r;
+        }
+
+  # The app's routes are client-side. Only the site behaviour rewrites them, so the API's own 403 and 404 reach the caller as they are.
+  SpaRewrite:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub "panelator-console-spa-rewrite-${AWS::Region}"
+      AutoPublish: true
+      FunctionConfig: { Comment: serve index.html for app routes, Runtime: cloudfront-js-2.0 }
+      FunctionCode: |
+        function handler(event) {
+          var r = event.request;
+          var screens = ['/', '/questions', '/history', '/actions', '/agents', '/parameters', '/sign-in-refused'];
+          if (screens.indexOf(r.uri) !== -1) r.uri = '/index.html';
+          return r;
+        }
+
+  HostedZone:
+    Type: AWS::Route53::HostedZone
+    Condition: CreateZone
+    Properties:
+      Name: !Ref DomainName
+
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasDomain
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        [{ DomainName: !Ref DomainName, HostedZoneId: !If [CreateZone, !Ref HostedZone, !Ref HostedZoneId] }]
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Aliases: !If [HasDomain, [!Ref DomainName], !Ref "AWS::NoValue"]
+        ViewerCertificate: !If
+          - HasDomain
+          - { AcmCertificateArn: !Ref Certificate, SslSupportMethod: sni-only, MinimumProtocolVersion: TLSv1.2_2021 }
+          - { CloudFrontDefaultCertificate: true }
+        Origins:
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteAccess.Id
+            S3OriginConfig: { OriginAccessIdentity: "" }
+          - Id: api
+            DomainName: !Sub "${Api}.execute-api.${AWS::Region}.amazonaws.com"
+            CustomOriginConfig: { OriginProtocolPolicy: https-only }
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          FunctionAssociations:
+            [{ EventType: viewer-request, FunctionARN: !GetAtt SpaRewrite.FunctionMetadata.FunctionARN }]
+        CacheBehaviors:
+          - {
+              PathPattern: /state,
+              TargetOriginId: api,
+              ViewerProtocolPolicy: https-only,
+              AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE],
+              CachePolicyId: 4135ea2d-6df8-47a0-a8d7-5b65e6d7d8d3,
+              OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac,
+              FunctionAssociations:
+                [{ EventType: viewer-request, FunctionARN: !GetAtt ForwardHost.FunctionMetadata.FunctionARN }],
+            }
+          - {
+              PathPattern: /changes*,
+              TargetOriginId: api,
+              ViewerProtocolPolicy: https-only,
+              AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE],
+              CachePolicyId: 4135ea2d-6df8-47a0-a8d7-5b65e6d7d8d3,
+              OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac,
+              FunctionAssociations:
+                [{ EventType: viewer-request, FunctionARN: !GetAtt ForwardHost.FunctionMetadata.FunctionARN }],
+            }
+          - {
+              PathPattern: /auth/*,
+              TargetOriginId: api,
+              ViewerProtocolPolicy: https-only,
+              AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE],
+              CachePolicyId: 4135ea2d-6df8-47a0-a8d7-5b65e6d7d8d3,
+              OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac,
+              FunctionAssociations:
+                [{ EventType: viewer-request, FunctionARN: !GetAtt ForwardHost.FunctionMetadata.FunctionARN }],
+            }
+
+  DnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasDomain
+    Properties:
+      HostedZoneId: !If [CreateZone, !Ref HostedZone, !Ref HostedZoneId]
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+
+Outputs:
+  BucketName: { Value: !Ref SiteBucket }
+  DistributionId: { Value: !Ref Distribution }
+  FunctionName: { Value: !Ref ApiFunction }
+  ConsoleUrl: { Value: !If [HasDomain, !Sub "https://${DomainName}", !Sub "https://${Distribution.DomainName}"] }

@@ -508,6 +508,10 @@
             "string",
             "null"
           ]
+        },
+        "fallbackWrongKind": {
+          "type": "boolean",
+          "description": "Issue #467 (spec 007 AC-14): a quota fallback of an answered run returned a conversation turn; until a run on the primary meets no limit, the stage waits for the reset instead of running a fallback."
         }
       }
     },

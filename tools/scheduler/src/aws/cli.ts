@@ -5,6 +5,8 @@ import type { AwsConfig } from "../config.ts";
 export interface AwsCli {
   /** Runs `aws <args> --profile <p> --region <r> --output json` and parses its output. */
   run(args: string[]): Promise<unknown>;
+  /** Same profile, region and redaction, but returns stdout as text: `cloudformation deploy` and `s3 sync` print no JSON (spec 051 AC-7). */
+  runText(args: string[], opts?: { timeoutMs?: number }): Promise<string>;
 }
 
 export interface AwsCliOptions {
@@ -25,6 +27,15 @@ export function awsCli(cfg: Pick<AwsConfig, "profile" | "region">, opts: AwsCliO
   const command = opts.command ?? "aws";
   const timeout = opts.timeoutMs ?? 60_000;
   return {
+    runText(args, o = {}) {
+      const full = [...args, "--profile", cfg.profile, "--region", cfg.region];
+      return new Promise((resolve, reject) => {
+        execFile(command, full, { timeout: o.timeoutMs ?? timeout, env: opts.env ?? process.env, maxBuffer: 8 * 2 ** 20 }, (err, stdout, stderr) => {
+          if (err) return reject(new Error(`aws ${args.slice(0, 2).join(" ")} failed: ${redact(String(stderr || err.message)).trim().slice(0, 300)}`));
+          resolve(stdout);
+        });
+      });
+    },
     run(args) {
       const full = [...args, "--profile", cfg.profile, "--region", cfg.region, "--output", "json"];
       return new Promise((resolve, reject) => {

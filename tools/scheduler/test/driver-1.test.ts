@@ -178,7 +178,7 @@ describe("driver: a branch left on origin by a failed attempt (final review T2)"
 describe("driver: quota (spec 013)", () => {
   const SESSION = "You've hit your session limit · resets 8:10am (Europe/Berlin)";
   const FABLE = "You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage, to continue.";
-  /** Each model answers from its own list: a string is a 429 with that message, an object a result. */
+  /** Each model answers from its own list: a string is a 429 with that message, `{ crash: r }` writes r and exits 1, any other object a result. */
   function quotaAdapter(answers: Record<string, unknown[]>): Adapter & { ran: string[] } {
     const ran: string[] = [];
     let last: unknown;
@@ -187,11 +187,13 @@ describe("driver: quota (spec 013)", () => {
       buildCommand: (run) => {
         ran.push(`${run.stage}:${run.model}`);
         last = answers[run.model]?.shift();
-        const argv = [process.execPath, script, events, run.resultPath, typeof last === "string" ? "2" : "0", "0"];
-        if (typeof last !== "string" && last !== undefined) argv.push(JSON.stringify(last));
+        const crash = typeof last === "object" && last !== null && "crash" in last;
+        const argv = [process.execPath, script, events, run.resultPath, typeof last === "string" ? "2" : crash ? "1" : "0", "0"];
+        if (typeof last !== "string" && last !== undefined) argv.push(JSON.stringify(crash ? (last as { crash: unknown }).crash : last));
         return { argv, env: {} };
       },
-      judge: (_e, exit) => exit === 2 ? { outcome: "failed", reason: String(last), apiErrorStatus: 429, finalText: null } : { outcome: "ok", reason: null, apiErrorStatus: null, finalText: "x" },
+      judge: (_e, exit) => exit === 2 ? { outcome: "failed", reason: String(last), apiErrorStatus: 429, finalText: null }
+        : exit === 1 ? { outcome: "failed", reason: "harness crashed", apiErrorStatus: null, finalText: null } : { outcome: "ok", reason: null, apiErrorStatus: null, finalText: "x" },
       usage: () => ({ cost_usd: 0.5, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0 }),
     };
   }
@@ -232,6 +234,102 @@ describe("driver: quota (spec 013)", () => {
     expect(w.adapter.ran).toEqual(["plan:claude-fable-5-2", "plan:claude-fable-5-2"]);
     expect(r.claim.state.stage).toBe("implement");
   }, 60_000);
+
+  describe("an answered resume that meets a limit (issue #467)", () => {
+    const SETTLED = { conversation: "settled", decision: "The maintainer replied done.", findings: [] };
+    const CAP: Question = { kind: "capability", question: "Can you renew the SSO login?", options: [{ label: "done", cost: "a login" }], recommendation: "done" };
+    const asking = (worktree: string) => ({ harness: "fake" as const, model: "claude-sonnet-5-5", session_id: "asking-session", worktree });
+    /** The #130 state: implement asked a capability question in its own session, and the maintainer answered it. */
+    function answered(claim: Claim): Claim {
+      const paused = { ...claim.state, stage: "paused" as const, plan: plan as never, question: CAP, askingStage: "implement" as const, resumeSession: asking(claim.worktree) };
+      return { ...claim, state: transition(paused, { type: "answered", answer: "done", questionId: 1 }).state };
+    }
+
+    it("waits for the reset instead of failing implement when the fallback returns the conversation shape, and resumes the asking session after it", async () => {
+      const w = await world({ "claude-sonnet-5-5": [SESSION], "openai/gpt-6.1-sol": [SETTLED, SETTLED] }, "2026-10-29T02:58:53Z");
+      const c = answered(w.claim);
+      expect(c.state).toMatchObject({ stage: "implement", attempt: 1, answer: "Question #1: done" });
+      expect(c.state.conversation ?? null).toBeNull();
+      await writeClaim(w.paths, c);
+      let r = await step(w.deps, c);
+      // The resume met the session limit, and its fallback returned a conversation turn it was never asked for.
+      expect(w.adapter.ran).toEqual(["implement:claude-sonnet-5-5", "implement:openai/gpt-6.1-sol"]);
+      expect(w.logs.find((l) => l.kind === "fallback-wrong-kind")).toMatchObject({ issue: 7, stage: "implement", attempt: 1, resume_session: "asking-session" });
+      // No attempt is spent and nothing is failed: the claim waits for the primary's reset with the asking session kept.
+      expect(r.status).toBe("waiting");
+      expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "implement", attempt: 1, rescues: 0, postponedUntil: "2026-10-29T07:10:00.000Z", resumeSession: asking(w.claim.worktree), answer: "Question #1: done", fallbackWrongKind: true });
+      expect(r.claim.state.history.filter((h) => /failed/.test(h))).toEqual([]);
+      expect(w.logs.filter((l) => l.kind === "stale-branch-dropped")).toEqual([]);
+      // After the reset the asking session is resumed on its own model, with the reply prompt.
+      w.setNow("2026-10-29T07:11:00Z");
+      for (let i = 0; i < 3 && w.adapter.ran.length < 3; i++) r = await step(w.deps, r.claim);
+      expect(w.adapter.ran).toEqual(["implement:claude-sonnet-5-5", "implement:openai/gpt-6.1-sol", "implement:claude-sonnet-5-5"]);
+      const last = readdirSync(w.paths.runs).filter((d) => d.startsWith("7-implement-")).sort().at(-1)!;
+      expect(readFileSync(join(w.paths.runs, last, "prompt.md"), "utf8")).toMatch(/^Question #1: done\n\nContinue implement in work mode\./);
+      // That run met no limit, so the next limit may take the fallback again.
+      expect(r.claim.state.fallbackWrongKind).toBeUndefined();
+    }, 60_000);
+
+    it("after one wrong-kind fallback, a later limit waits for the reset without running the fallback again", async () => {
+      const LATER = "You've hit your session limit · resets 2pm (Europe/Berlin)";
+      const w = await world({ "claude-sonnet-5-5": [SESSION, LATER], "openai/gpt-6.1-sol": [SETTLED, SETTLED] }, "2026-10-29T02:58:53Z");
+      const c = answered(w.claim);
+      await writeClaim(w.paths, c);
+      let r = await step(w.deps, c);
+      expect(r.claim.state).toMatchObject({ stage: "waiting", fallbackWrongKind: true });
+      // After the reset the resume meets a new limit: no second fallback run, the claim waits again with the session kept.
+      w.setNow("2026-10-29T07:11:00Z");
+      for (let i = 0; i < 3 && w.adapter.ran.length < 3; i++) r = await step(w.deps, r.claim);
+      expect(w.adapter.ran).toEqual(["implement:claude-sonnet-5-5", "implement:openai/gpt-6.1-sol", "implement:claude-sonnet-5-5"]);
+      const reset = JSON.parse(readFileSync(w.paths.quota, "utf8")).limits.claude.resets_at as string;
+      expect(Date.parse(reset)).toBeGreaterThan(Date.parse("2026-10-29T07:11:00Z"));
+      expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "implement", attempt: 1, resumeSession: asking(w.claim.worktree), fallbackWrongKind: true, postponedUntil: reset });
+      expect(r.claim.state.history.filter((h) => /failed/.test(h))).toEqual([]);
+      expect(w.logs.filter((l) => l.kind === "fallback-wrong-kind")).toHaveLength(1);
+      // A launch the book would move to the fallback waits too.
+      const planned = at(r.claim, { stage: "implement", postponedUntil: null, resumeSession: null });
+      r = await step(w.deps, planned);
+      expect(w.adapter.ran).toHaveLength(3);
+      expect(r.claim.state).toMatchObject({ stage: "waiting", fallbackWrongKind: true, postponedUntil: reset });
+      expect(w.logs.filter((l) => l.kind === "quota-wait").at(-1)).toMatchObject({ stage: "implement", model: "claude-sonnet-5-5", reason: "fallback returned a conversation turn before; waiting for the primary" });
+    }, 60_000);
+
+    it("a fallback run that wrote the conversation shape but failed for another reason still fails the stage", async () => {
+      const w = await world({ "claude-sonnet-5-5": [SESSION], "openai/gpt-6.1-sol": [{ crash: SETTLED }] }, "2026-10-29T02:58:53Z");
+      const c = answered(w.claim);
+      await writeClaim(w.paths, c);
+      const r = await step(w.deps, c);
+      expect(w.adapter.ran).toEqual(["implement:claude-sonnet-5-5", "implement:openai/gpt-6.1-sol"]);
+      expect(r.claim.state.history.at(-1)).toBe("implement attempt 1 failed: harness crashed");
+      expect(r.claim.state.fallbackWrongKind).toBeUndefined();
+      expect(w.logs.filter((l) => l.kind === "fallback-wrong-kind")).toEqual([]);
+    }, 60_000);
+
+    it("a planned fallback run of an answered stage that returns the conversation shape waits too, and spends no attempt", async () => {
+      const w = await world({ "claude-sonnet-5-5": [SESSION], "openai/gpt-6.1-sol": [SETTLED] }, "2026-10-29T02:58:53Z");
+      // The limit is already in the book: the book launches implement on its fallback directly.
+      await observeRun(w.paths, {
+        run_id: "u", issue: 7, stage: "implement", attempt: 1, outcome: "failed", harness: "claude", model: "claude-sonnet-5-5", cost_usd: 0, input_tokens: 0, output_tokens: 0,
+        cache_read_tokens: 0, cache_write_tokens: 0, turns: 1, tool_calls: 0, wall_seconds: 1, started_at: "2026-10-29T02:58:00Z", ended_at: "2026-10-29T02:58:01Z", events_path: "",
+      }, { outcome: "failed", reason: SESSION, apiErrorStatus: 429, finalText: null }, new Date("2026-10-29T02:58:53Z"));
+      const c = at(w.claim, { stage: "implement", attempt: 1, plan: plan as never, answer: "Question #1: done", answerQuestionId: 1, answerQuestionIds: [1], answerKind: "capability", resumeSession: null });
+      await writeClaim(w.paths, c);
+      const r = await step(w.deps, c);
+      expect(w.adapter.ran).toEqual(["implement:openai/gpt-6.1-sol"]);
+      expect(r.claim.state).toMatchObject({ stage: "waiting", resumeStage: "implement", attempt: 1, resumeSession: null });
+      expect(r.claim.state.history.filter((h) => /failed/.test(h))).toEqual([]);
+    }, 60_000);
+
+    it("a fallback run with no answer that returns the conversation shape still fails the stage (spec 044 AC-3)", async () => {
+      const w = await world({ "claude-sonnet-5-5": [SESSION], "openai/gpt-6.1-sol": [SETTLED] }, "2026-10-29T02:58:53Z");
+      const c = at(w.claim, { stage: "implement", attempt: 1, plan: plan as never });
+      await writeClaim(w.paths, c);
+      const r = await step(w.deps, c);
+      expect(w.adapter.ran).toEqual(["implement:claude-sonnet-5-5", "implement:openai/gpt-6.1-sol"]);
+      expect(r.claim.state.history.at(-1)).toBe("implement attempt 1 failed: result: invalid: conversation turn outside a conversation");
+      expect(w.logs.filter((l) => l.kind === "fallback-wrong-kind")).toEqual([]);
+    }, 60_000);
+  });
 
   it("moves a strong stage to the next-best Claude model on a model-only limit, then launches there directly (AC-9)", async () => {
     const w = await world({ "claude-fable-5-2": [FABLE], "claude-opus-5-5": [plan, plan] }, "2026-10-29T07:15:00Z");

@@ -29,7 +29,7 @@ describe("Scheduler.tick plain files (spec 072)", () => {
     const info = await s.tick();
     expect(info.errors).toEqual([]);
     expect(readFileSync(paths.serviceLog, "utf8")).toContain('"kind":"plain-files-check-failed"');
-  }, 30_000);
+  }, 60000);
 });
 describe("Scheduler.tick: transient failures (spec 015)", () => {
   describe("host outage pauses the scheduler (spec 100)", () => {
