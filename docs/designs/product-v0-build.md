@@ -139,19 +139,7 @@ spike's result can move all of it.
     WASM, layers and the compositor are `firmware-wasm-runtime`.
   after: firmware-project-and-hil
   class: class:product
-- planned: widget-abi-and-rust-sdk
-  title: Widget ABI v0 draft, the Rust SDK, the three spike widgets and a Rust test host with golden frames
-  brief: Milestone 1 (product spec 3.2, 3.3, 3.4, 9.2, 12.1, 13). Write the widget ABI document (in
-    `docs/`): the module's exports, the declared update rate and size, and the host imports the spike
-    needs from product spec 3.3 (draw on the widget's own layer by fill, pixel, line, rect, circle, image
-    blit and text with a host font; read config; current time and timezone; random), with the ABI version
-    of 3.4. Build `sdk/rust/` on it, and in `widgets/` the three spike widgets of 12.1 (a clock at 1 Hz,
-    scrolling text at 60 Hz, a 24 KB image blit at 30 Hz) compiled to WASM in CI. Add a Rust test host
-    that runs a module against the retained-layer model and writes frames, and commit golden frames for
-    the three widgets; this is the start of the conformance suite of section 13, which the device runtime
-    and the browser engine are tested against. Rust checks of section 13 apply. Feeds, events, storage,
-    logging, the manifest file and the AssemblyScript SDK are later children.
-  class: class:product
+- `specs/107-widget-abi-and-rust-sdk/spec.md` (issue #430)
 - planned: firmware-wasm-runtime
   title: Firmware: WAMR runs the spike widgets on retained layers under a native 60 Hz compositor
   brief: Milestone 1 (product spec 3.1, 3.2, 3.3, 12.1). Embed WAMR in the firmware, buildable in both
@@ -163,7 +151,7 @@ spike's result can move all of it.
     are milestone 2). Record frame time, fps, free heap and free PSRAM where a HIL test can read them, and
     add HIL tests that the board's frames equal the golden frames. The measurement and the choice of mode
     are `runtime-spike-measurement`.
-  after: firmware-panel-driver, widget-abi-and-rust-sdk
+  after: firmware-panel-driver, specs/107-widget-abi-and-rust-sdk/spec.md
   class: class:product
 - planned: backend-workspace-and-relay-stub
   title: Backend: the Rust workspace with its checks, and a WebSocket relay stub for the spike
@@ -203,7 +191,7 @@ spike's result can move all of it.
     the framebuffer to a canvas at any configured geometry. A test runs the three spike modules and
     requires frames equal to the golden frames. One page in the app shows the three widgets running, with
     raw pixels. The emulated LED look and the draft screen are `layout-editor`.
-  after: web-app-skeleton, widget-abi-and-rust-sdk
+  after: web-app-skeleton, specs/107-widget-abi-and-rust-sdk/spec.md
   class: class:product
 - planned: runtime-spike-measurement
   title: Runtime spike: measure interpreter and AOT on the board, record the numbers and the execution mode
