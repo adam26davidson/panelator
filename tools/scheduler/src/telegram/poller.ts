@@ -17,6 +17,8 @@ export class TelegramPoller {
   private timeout: number;
   private onUpdate: (u: TelegramUpdate) => Promise<void>;
   private log: (r: Record<string, unknown>) => void;
+  /** Spec 051 AC-2: the bot's username once `getMe` has answered, for the console's chat link. */
+  username: string | null = null;
   private sleep?: (ms: number) => Promise<void>;
   private afterConfirm?: (u: TelegramUpdate) => Promise<void>;
   private onConnected?: () => void | Promise<void>;
@@ -65,6 +67,7 @@ export class TelegramPoller {
     while (!this.controller.signal.aborted) {
       try {
         const me = await this.client.getMe(this.controller.signal);
+        this.username = me.username ?? null;
         this.log({ kind: "telegram", status: "connected", username: me.username });
         break;
       } catch (e) {

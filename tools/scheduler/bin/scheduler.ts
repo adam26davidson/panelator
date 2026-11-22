@@ -126,6 +126,12 @@ if(args[0]==='quota') {
   console.log(JSON.stringify({...book,summary:await quotaSummary(paths,new Date())},null,2));
   process.exit(0);
 }
+if(args[0]==='console'&&args[1]==='state') {
+  // Spec 051 AC-3: the laptop fallback; the snapshot as the console would receive it.
+  const {buildConsoleState}=await import('../src/console/state.ts');
+  console.log(JSON.stringify(await buildConsoleState({cfg,paths,parameters,log:actionLog,registry,metrics,now:()=>new Date()}),null,2));
+  process.exit(0);
+}
 if(args[0]==='aws-check'||args[0]==='aws') {
   // Spec 022 AC-3, AC-10: the setup check, the book, and a forced pull; no GitHub and no service auth.
   try {
