@@ -258,21 +258,32 @@ credentials file of AC-1 is present and valid at service start.
   failed run as today. Given the recorded session's harness is not the
   stage's current harness (a fallback model answered the original run), then
   the stage runs fresh without trying.
-  Amended for issue #467: the same holds for a resume that meets a quota
-  limit (spec 013: it meets the limit as a 429) and is retried on the
-  stage's fallback model, whose harness has no such session: that run is
-  fresh, with the question and the reply in its input, and the runner adds
-  to the prompt of every fresh agent-stage run that carries an answer (not
-  the question check) that it is not a conversation turn and must return the
-  stage's own result. Given such a fallback run of an answered run (the
-  claim still has the asking session, or the state carries an answer)
-  returns the conversation shape anyway (spec 044's invalid result, and its
-  only result error), then it is not a failed run: nothing about the issue
-  failed, the primary model's limit did. The driver logs
-  `fallback-wrong-kind`, keeps the asking session on the claim, and
-  postpones the stage to the primary's reset as spec 006 AC-27 postpones a
-  rate-limited run: no attempt, rescue or history entry is spent, and the
-  run after the reset resumes the asking session with the reply.
+  Amended for issue #467: a resume that meets a quota limit meets it as a
+  429 (spec 013) and may be retried on a quota fallback model; and a later
+  launch of the stage may be moved to that model by the quota book. Every
+  such quota fallback run (the book's launch decision or the 429 retry) is a
+  fresh run, never a resume, whatever its harness (a strong tier's fallback
+  can be another Claude model on the same harness): the question and the
+  reply are in its input, and the runner adds to the prompt of every fresh
+  agent-stage run that carries an answer (not the question check) that it is
+  not a conversation turn and must return the stage's own result. Given a
+  quota fallback run of an answered run (the claim still has the asking
+  session, or the state carries an answer) fails with exactly the reason
+  `result: invalid: conversation turn outside a conversation` (spec 044),
+  then it is not a failed run: nothing about the issue failed, the primary
+  model's limit did. The driver logs `fallback-wrong-kind`, keeps the asking
+  session on the claim when there is one, sets the chain state's
+  `fallbackWrongKind`, and postpones the stage to the primary's reset as
+  spec 006 AC-27 postpones a rate-limited run: no attempt, rescue or history
+  entry is spent. The run after the reset resumes the asking session with
+  the reply when there is one; otherwise it is a fresh run on the primary
+  with the reply in its input. While `fallbackWrongKind` is set, no quota
+  fallback runs for the claim: a launch the book would move to the fallback,
+  and a 429 that would be retried on it, both wait for the primary's reset
+  instead (logged `quota-wait`, the asking session kept), so a fallback that
+  keeps returning the wrong kind is run once per limit, not on every wait.
+  The flag is cleared by the first run on the primary that meets no limit.
+  A fallback run that fails for any other reason fails as before.
 - AC-15. **Decide mode and the bounds are unchanged.** A resumed run is
   judged, bounded and counted exactly as a fresh run of the stage: the
   result schema, the follow-up rules, decide mode, the retry and escalation

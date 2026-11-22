@@ -132,11 +132,7 @@ including a resumed session that continues its work with an answer.
   chain error"` is queued, and the PR is neither approved nor merged. Given
   the second attempt returns a valid verdict, then the chain continues as
   spec 006 says for that verdict.
-- AC-3. Amended for issue #467: the one exception is a quota fallback run of an
-  answered run, which spec 007 AC-14 (as amended) sends to wait for the
-  primary model's reset instead of failing; a fallback run with no answer, and
-  every run on the stage's own model, still fail as below.
-  **Every other stage fails the same way.** Given a plain run of
+- AC-3. **Every other stage fails the same way.** Given a plain run of
   plan, implement, fix, spec or design that returns the conversation shape,
   then the claim's history entry is `<stage> attempt <n> failed: result:
   invalid: conversation turn outside a conversation` and the chain takes the
@@ -145,6 +141,13 @@ including a resumed session that continues its work with an answer.
   `result: pr mismatch`, `profile not available` or `spec_path differs` is
   recorded for that result, the issue body is not edited, and no PR is
   looked up for it.
+  Amended for issue #467: the one exception is a quota fallback run (the
+  book's launch decision or the 429 retry) of an answered run whose reason
+  is exactly `result: invalid: conversation turn outside a conversation`:
+  spec 007 AC-14 (as amended) sends it to wait for the primary model's reset
+  instead of failing. A fallback run with no answer, a fallback run that
+  failed for any other reason, and every run on the stage's own model still
+  fail as above.
 - AC-4. **A conversation turn is unchanged.** Given a conversation turn
   (spec 007 AC-13: the asking stage resumed with `conversation` set), when it
   returns `{ "conversation": "settled", "decision": "..." }`, then the
@@ -165,17 +168,19 @@ including a resumed session that continues its work with an answer.
   applies only to agent stages (`req.def.kind !== 'standing'`, not the filer
   result); a standing or filer schema has no such branch and is not touched.
   The findings side channel still queues `findings` from the parsed result,
-  as for any result that parsed (spec 001 AC-28). Nothing else in the runner
-  changes: the final-text fallback, the usage record and `outcome.json` are
-  written as today.
-- Amended for issue #467: `tools/scheduler/src/chain/driver.ts` now reads the
-  runner's exported `OUTSIDE_CONVERSATION` for the quota-fallback exception of
-  AC-3 (spec 007 AC-14); the string itself stays in `runner/run.ts` only.
-- `tools/scheduler/src/chain/driver.ts`, `tools/scheduler/src/chain/machine.ts`,
-  `tools/scheduler/src/service/loop.ts`, `schemas/scheduler/*.json`:
-  unchanged. The review case of `stageOk` keeps reading `findings_on_pr`
-  unconditionally; after this spec no plain run's result reaches it without
-  one.
+  as for any result that parsed (spec 001 AC-28). The final-text fallback,
+  the usage record and `outcome.json` are written as before. Amended for
+  issue #467: the runner exports the reason's text as `OUTSIDE_CONVERSATION`,
+  and adds a line to the prompt of a fresh agent-stage run that carries an
+  answer (spec 007 AC-14).
+- `tools/scheduler/src/chain/driver.ts`: unchanged by this spec. Amended for
+  issue #467: it reads `OUTSIDE_CONVERSATION` for the quota-fallback exception
+  of AC-3 (spec 007 AC-14), so the string itself stays in `runner/run.ts`.
+- `tools/scheduler/src/chain/machine.ts`, `tools/scheduler/src/service/loop.ts`,
+  `schemas/scheduler/*.json`: unchanged by this spec (issue #467 adds the
+  optional `fallbackWrongKind` field to `claim.json`'s chain state). The
+  review case of `stageOk` keeps reading `findings_on_pr` unconditionally;
+  after this spec no plain run's result reaches it without one.
 - `tools/scheduler/test/run.test.ts` (the tests of `runStage`'s result
   check): AC-1 for a plain run with the conversation
   shape (the reason, the one `resultErrors` entry, `result` null) and for a
@@ -192,10 +197,12 @@ including a resumed session that continues its work with an answer.
 
 No file outside `tools/scheduler/` and `specs/` is changed. `tools/scheduler/`
 is a sensitive path, so the security review runs on the implementation PR as
-spec 006 AC-9 says. No schema, config key, stage prompt, state file format
-or log kind changes; the new reason is a run reason like `result: invalid`,
-recorded in the claim's history, the run's `outcome.json` and the `stage`
-service-log line as any failed run's reason is.
+spec 006 AC-9 says. This spec changes no schema, config key, stage prompt,
+state file format or log kind; the new reason is a run reason like `result:
+invalid`, recorded in the claim's history, the run's `outcome.json` and the
+`stage` service-log line as any failed run's reason is. (Issue #467 later adds
+a prompt line for a fresh run with an answer, the `fallbackWrongKind` chain
+state field and the `fallback-wrong-kind` log kind: see spec 007 AC-14.)
 
 ## 5. Verification
 

@@ -20,7 +20,7 @@ import { approveParty } from "../contacts/approve.ts";
 import { actOnAnswer, approvedAnswer, doneAnswer } from "./question.ts";
 import type { RequestOutcome } from "../state/questions.ts";
 import { implementationProfiles, readSensitiveGlobs, resolveProfile } from "../profiles/resolve.ts";
-import { afterFallback, harnessForModel, retryDecision } from "../runner/retry.ts";
+import { afterFallback, harnessForModel, rateLimited, retryDecision } from "../runner/retry.ts";
 import type { ParameterStore } from "../parameters/store.ts";
 import { modelLimitFallback, planLaunch, quotaParams, readBook, waitAfterLimit } from "../quota/book.ts";
 import { OUTSIDE_CONVERSATION, runStage, type StageOutcome } from "../runner/run.ts";
@@ -801,6 +801,12 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
       deps.log({ kind: launch.defer ? "quota-defer" : "quota-wait", issue: claim.issue, stage, model: primaryModel, key: launch.key, until: launch.until, reason: launch.reason, ...launch.defer });
       return { type: "stage_failed", stage, reason: `quota: ${launch.reason}`, postpone: true, until: launch.until };
     }
+    if (launch.model !== primaryModel && state.fallbackWrongKind) {
+      // Issue #467: a fallback already returned a conversation turn for this stage; it waits for the primary's reset instead.
+      const until = await waitAfterLimit(deps.paths, primaryHarness, primaryModel, deps.now());
+      deps.log({ kind: "quota-wait", issue: claim.issue, stage, model: primaryModel, key: launch.note?.key, until, reason: "fallback returned a conversation turn before; waiting for the primary" });
+      return { type: "stage_failed", stage, reason: "quota: fallback returned a conversation turn before", postpone: true, until };
+    }
     if (launch.model !== primaryModel) {
       deps.log({ kind: "quota-fallback", issue: claim.issue, stage, from: primaryModel, to: launch.model, key: launch.note?.key });
       firstRun = { model: launch.model, harness: launch.harness };
@@ -971,6 +977,8 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
   }
   // Issue #467: whether the run judged below ran on a quota fallback (the book's launch decision or the 429 retry).
   let onFallback = firstRun !== null;
+  // Issue #467: a run on the primary that met no limit ends the wait-instead-of-fallback of an earlier wrong-kind fallback.
+  if (!onFallback && !rateLimited(out.judgement)) delete state.fallbackWrongKind;
   if (out.outcome !== "ok") {
     // A rescue is a strong-tier stage: on a rate limit it takes spec 013 AC-9's model-limit fallback (ADR 0003
     // amendment 2026-11-17) or is postponed (AC-27), never the stage's own fallback.
@@ -982,6 +990,12 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
       const toModel = modelLimitFallback(await readBook(deps.paths), { tier: retryDef.tier, harness: primaryHarness, model: primaryModel }, quota, deps.now());
       const retry = retryDecision(retryDef, out.judgement, out.usage.cost_usd ?? 0, deps.cfg.retry_cost_limit_usd, toModel);
       if (retry.kind === "postpone") return postponed(out.reason ?? out.outcome);
+      if (retry.kind === "fallback" && state.fallbackWrongKind) {
+        // Issue #467: a fallback already returned a conversation turn for this stage; it is not run again before the reset.
+        state.resumeSession = resumeBefore;
+        deps.log({ kind: "quota-wait", issue: claim.issue, stage, model: primaryModel, key: out.limit?.key, reason: "fallback returned a conversation turn before; waiting for the primary" });
+        return postponed(out.reason ?? out.outcome);
+      }
       if (retry.kind === "fallback") {
         if (retry.model === toModel) deps.log({ kind: "quota-fallback", issue: claim.issue, stage, from: primaryModel, to: toModel, key: out.limit?.key });
         out = await exec(retry.model, retry.harness, state.rescueRun ? "rescue-fallback" : "fallback");
@@ -995,12 +1009,14 @@ async function runAgentStageOnce(deps: DriverDeps, claim: Claim, stage: AgentSta
       }
     }
   }
-  if (out.outcome !== "ok" && onFallback && (resumeBefore || state.answer) && out.resultErrors.length === 1 && out.resultErrors[0] === OUTSIDE_CONVERSATION) {
+  if (out.outcome !== "ok" && onFallback && (resumeBefore || state.answer) && out.reason === `result: invalid: ${OUTSIDE_CONVERSATION}`) {
     // Issue #467: a quota fallback of an answered run (the asking session's resume, or the fresh run after it) that
     // returned the conversation shape did not do the work, and nothing about the issue failed: the primary's limit did.
     // A limit pauses (spec 013): the stage waits for the primary's reset, no attempt is spent, and the asking session is
     // kept so the run after the reset resumes it with the answer.
+    // Once per wait: until a run on the primary meets no limit, the stage waits for the reset instead of running a fallback.
     state.resumeSession = resumeBefore;
+    state.fallbackWrongKind = true;
     deps.log({ kind: "fallback-wrong-kind", issue: claim.issue, stage, attempt, run_id: out.runId, resume_session: resumeBefore?.session_id ?? null });
     return postponed(out.reason ?? out.outcome);
   }
