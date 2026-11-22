@@ -30,12 +30,19 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub panelator-console-${AWS::AccountId}-${AWS::Region}
-      PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
+      PublicAccessBlockConfiguration:
+        { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
 
   SiteAccess:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
-      OriginAccessControlConfig: { Name: !Sub "panelator-console-${AWS::StackName}", OriginAccessControlOriginType: s3, SigningBehavior: always, SigningProtocol: sigv4 }
+      OriginAccessControlConfig:
+        {
+          Name: !Sub "panelator-console-${AWS::StackName}",
+          OriginAccessControlOriginType: s3,
+          SigningBehavior: always,
+          SigningProtocol: sigv4,
+        }
 
   SiteBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -47,7 +54,11 @@ Resources:
             Principal: { Service: cloudfront.amazonaws.com }
             Action: s3:GetObject
             Resource: !Sub "${SiteBucket.Arn}/*"
-            Condition: { StringEquals: { "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}" } }
+            Condition:
+              {
+                StringEquals:
+                  { "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}" },
+              }
 
   Table:
     Type: AWS::DynamoDB::Table
@@ -100,7 +111,13 @@ Resources:
 
   ApiIntegration:
     Type: AWS::ApiGatewayV2::Integration
-    Properties: { ApiId: !Ref Api, IntegrationType: AWS_PROXY, IntegrationUri: !GetAtt ApiFunction.Arn, PayloadFormatVersion: "2.0" }
+    Properties:
+      {
+        ApiId: !Ref Api,
+        IntegrationType: AWS_PROXY,
+        IntegrationUri: !GetAtt ApiFunction.Arn,
+        PayloadFormatVersion: "2.0",
+      }
 
   ApiRoute:
     Type: AWS::ApiGatewayV2::Route
@@ -112,7 +129,13 @@ Resources:
 
   ApiPermission:
     Type: AWS::Lambda::Permission
-    Properties: { Action: lambda:InvokeFunction, FunctionName: !Ref ApiFunction, Principal: apigateway.amazonaws.com, SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*" }
+    Properties:
+      {
+        Action: lambda:InvokeFunction,
+        FunctionName: !Ref ApiFunction,
+        Principal: apigateway.amazonaws.com,
+        SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*",
+      }
 
   # CloudFront does not pass the viewer's Host to the API (it would break API Gateway), so the function hands it on for the same-origin check.
   ForwardHost:
@@ -162,9 +185,36 @@ Resources:
           ViewerProtocolPolicy: redirect-to-https
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
         CacheBehaviors:
-          - { PathPattern: /state, TargetOriginId: api, ViewerProtocolPolicy: https-only, AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE], CachePolicyId: 4135ea2d-6df8-47a0-a8d7-5b65e6d7d8d3, OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac, FunctionAssociations: [{ EventType: viewer-request, FunctionARN: !GetAtt ForwardHost.FunctionMetadata.FunctionARN }] }
-          - { PathPattern: /changes*, TargetOriginId: api, ViewerProtocolPolicy: https-only, AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE], CachePolicyId: 4135ea2d-6df8-47a0-a8d7-5b65e6d7d8d3, OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac, FunctionAssociations: [{ EventType: viewer-request, FunctionARN: !GetAtt ForwardHost.FunctionMetadata.FunctionARN }] }
-          - { PathPattern: /auth/*, TargetOriginId: api, ViewerProtocolPolicy: https-only, AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE], CachePolicyId: 4135ea2d-6df8-47a0-a8d7-5b65e6d7d8d3, OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac, FunctionAssociations: [{ EventType: viewer-request, FunctionARN: !GetAtt ForwardHost.FunctionMetadata.FunctionARN }] }
+          - {
+              PathPattern: /state,
+              TargetOriginId: api,
+              ViewerProtocolPolicy: https-only,
+              AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE],
+              CachePolicyId: 4135ea2d-6df8-47a0-a8d7-5b65e6d7d8d3,
+              OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac,
+              FunctionAssociations:
+                [{ EventType: viewer-request, FunctionARN: !GetAtt ForwardHost.FunctionMetadata.FunctionARN }],
+            }
+          - {
+              PathPattern: /changes*,
+              TargetOriginId: api,
+              ViewerProtocolPolicy: https-only,
+              AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE],
+              CachePolicyId: 4135ea2d-6df8-47a0-a8d7-5b65e6d7d8d3,
+              OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac,
+              FunctionAssociations:
+                [{ EventType: viewer-request, FunctionARN: !GetAtt ForwardHost.FunctionMetadata.FunctionARN }],
+            }
+          - {
+              PathPattern: /auth/*,
+              TargetOriginId: api,
+              ViewerProtocolPolicy: https-only,
+              AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE],
+              CachePolicyId: 4135ea2d-6df8-47a0-a8d7-5b65e6d7d8d3,
+              OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac,
+              FunctionAssociations:
+                [{ EventType: viewer-request, FunctionARN: !GetAtt ForwardHost.FunctionMetadata.FunctionARN }],
+            }
         CustomErrorResponses:
           - { ErrorCode: 403, ResponseCode: 200, ResponsePagePath: /index.html }
           - { ErrorCode: 404, ResponseCode: 200, ResponsePagePath: /index.html }

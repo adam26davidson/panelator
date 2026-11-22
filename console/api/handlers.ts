@@ -200,7 +200,8 @@ export async function handle(d: Deps, r: Req): Promise<Res> {
     return result ? postResult(d, r, Number(result[1])) : getChanges(d, r);
   }
   if (route === "GET /state") {
-    if (!(await session(d, r))) return text(401, "sign in");
+    const who = await session(d, r);
+    if (!who) return text(401, "sign in");
     const st = await d.table.getState();
     return json(200, {
       snapshot: st?.snapshot ?? null,

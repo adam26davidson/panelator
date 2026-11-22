@@ -125,7 +125,7 @@ export async function buildConsoleState(ctx: ConsoleStateContext) {
   const changes = (await readChanges(ctx.paths)).slice(-50);
   const actions = await ctx.log.list().then((r) => r.slice(-200)).catch(() => []);
   return {
-    generated_at: now.toISOString(), tick_s: ctx.cfg.poll_interval_s,
+    generated_at: now.toISOString(), repo: ctx.cfg.repo, tick_s: ctx.cfg.poll_interval_s,
     questions: await questions(ctx),
     current: cur,
     next_tick_at: cur.length ? null : new Date(now.getTime() + ctx.cfg.poll_interval_s * 1000).toISOString(),

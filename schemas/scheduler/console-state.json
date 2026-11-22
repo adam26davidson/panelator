@@ -4,12 +4,13 @@
   "title": "The snapshot the scheduler pushes to the maintainer console (spec 051 AC-2)",
   "type": "object",
   "additionalProperties": false,
-  "required": ["generated_at", "tick_s", "questions", "current", "next_tick_at", "up_next", "tiles", "metrics", "actions", "agents", "parameters", "changes"],
+  "required": ["generated_at", "repo", "tick_s", "questions", "current", "next_tick_at", "up_next", "tiles", "metrics", "actions", "agents", "parameters", "changes"],
   "$defs": {
     "nullableNumber": { "type": ["number", "null"] }
   },
   "properties": {
     "generated_at": { "type": "string" },
+    "repo": { "type": "string" },
     "tick_s": { "type": "number" },
     "questions": {
       "type": "array",
