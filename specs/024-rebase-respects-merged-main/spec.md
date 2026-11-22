@@ -75,12 +75,23 @@ mocked GitHub API, as in the worktree and driver tests.
   the conflict fix whatever `fixes` is (a PR whose review-fix bound is spent
   still gets its conflict resolved), and escalates instead only with
   `conflictRounds` at the cap. `conflictRounds` starts at 0 wherever a new PR
-  starts, as `fixes` does. **An unchanged head does not resolve a conflict.** Given
+  starts, as `fixes` does. A conflict fix run that fails (a timeout, an invalid
+  result) is a conflict round too: the conflict fix runs again with the same
+  input and no escalation step, until the cap. A `merge_result` of
+  `not_mergeable` (GitHub will not merge the PR, mostly because main moved after
+  the approval) counts one conflict round and goes to verify through spec 097's
+  `rebase_push`, as an unblocked PR does: a real conflict comes back as
+  `rebase_conflict` and runs the conflict fix, and a PR that stays unmergeable
+  reaches the cap. It never runs a review fix and never spends `fixes`.
+  **An unchanged head does not resolve a conflict.** Given
   `conflictPending` and a fix result with no escalation whose `head_sha` equals
-  `pr.head_sha`, then the run is a failed fix: `fixes` is not counted,
+  `pr.head_sha`, then (superseded 2026-11-22 by the amendment above, which
+  makes it a conflict round: `fixes` is not counted, `conflictPending` stays
+  and the conflict fix runs again, escalating only at `MAX_CONFLICT_ROUNDS`;
+  the text it replaces read: "the run is a failed fix: `fixes` is not counted,
   `conflictPending` stays, and the failure takes the existing fix-failure path
   (a rescue, and for a failed rescue the PR closes and the issue is planned
-  again). The next run's input says the head came back unchanged and names it.
+  again)"). The next run's input says the head came back unchanged and names it.
   It does not say the scheduler checked the conflict: no check runs before a
   resumed session or held work (AC-4). Every conflict's fix input opens without
   naming a method, says that resolving it means a new head containing
@@ -102,8 +113,11 @@ mocked GitHub API, as in the worktree and driver tests.
   `MAX_CONFLICT_ROUNDS`; read "spent" and "counts" below that way.) Given the fix still owes work (`recordAnswer`,
   `recordIds`, `answer` or `decideInput`), it runs instead with an input saying
   the conflict is gone. The round is spent on this path too, because main can
-  move into a new conflict before that run starts; a success of that run then
-  counts as well.
+  move into a new conflict before that run starts. (Superseded 2026-11-22; the
+  text it replaces read "a success of that run then counts as well": that run belongs to the conflict round
+  already counted, so its success spends no fix and adds no further round, and
+  `fixes` never passes its bound through it; its failure is a conflict round as
+  AC-3 says).
 - AC-5. **The record explains itself.** Every `rebase_conflict` adds a history
   entry naming the stage, the head and the conflict's detail, so the rescue's
   history and the abandonment comment show it.

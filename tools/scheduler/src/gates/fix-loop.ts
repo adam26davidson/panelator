@@ -11,7 +11,7 @@ export const SPEC_REVISION_FIXES = 4;
 /** Conflict rounds per PR (spec 024 as amended): their own budget, never spent from the fix bound. */
 export const MAX_CONFLICT_ROUNDS = 20;
 
-/** The chain state the fix bound reads. */
+/** The chain state the fix bound reads; `rescueActive`: a rescue is in effect on the branch of the PR the chain works on. */
 export interface FixBoundState { fixes: number; rescueActive: boolean; replans: number; specRevisions: number }
 
 /**

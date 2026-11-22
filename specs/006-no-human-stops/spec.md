@@ -72,7 +72,7 @@ below say what each path must do.
 **Escalation path** (replaces the `needs-human` rows of spec 001 section 5,
 AC-10 second sentence, AC-13)
 
-- AC-1. Amended 2026-11-22 by the maintainer's direction ("Things should never be escalated to me; can we allow for more rounds of review at later escalation stages? 2 seems a little tight."): the rescue stays in effect for the PR. The stuck stage runs once more on the rescue model as below; the PR's fix count starts again at 0 and it gets `RESCUE_FIXES` (3) fix rounds, each a rescue run on the rescue model, until the PR merges or the chain escalates further. When the stuck stage is not fix, the PR the rescued stage opens gets those rounds. Reviews between the rounds run on their own model. **First bound triggers a rescue.** Given any of these:
+- AC-1. Amended 2026-11-22 by the maintainer's direction ("Things should never be escalated to me; can we allow for more rounds of review at later escalation stages? 2 seems a little tight."): the rescue stays in effect for the PR. The stuck stage runs once more on the rescue model as below; the PR's fix count starts again at 0 and it gets `RESCUE_FIXES` (3) fix rounds, each a rescue run on the rescue model, until the PR merges or the chain escalates further. When the stuck stage is not fix, the PR the rescued stage opens gets those rounds. Reviews between the rounds run on their own model. The rescue is bound to a branch (`rescueOn`, the branch of the track the rescue runs on): it is in effect only while the chain works on that branch's PR, so a spec PR opened after a rescued plan's spec gap, or a record PR opened while an issue PR is parked (AC-18), runs its fixes on the spec agent's model under its own bound; a parked issue PR comes back with its rescue, and a rescued plan's issue branch keeps it after the spec PR merges. It ends when its PR merges (a merged spec or design PR ends a rescue on its branch), at a re-plan, a spec revision or abandonment, and when spec 101 AC-5 hands it back; only the rescue's own first run (`rescueFirstRun`, the rerun of the stuck stage) hands it back, and a block on a later round hands back that round's fixes only. A rescue in effect is kept in the escalation ledger (`rescueOn`, written only while one is), so a release and re-claim keeps it. **First bound triggers a rescue.** Given any of these:
   - plan has failed twice;
   - implement has failed twice;
   - review has failed twice;
@@ -633,7 +633,7 @@ first wins.
 | claimed | start, spec ok | plan |
 | claimed | start, spec missing or incomplete | spec (`write`) |
 | any agent stage | failed, postponed for quota | waiting, then the same stage (spec keeps its mode; a rescue stays a rescue and is not spent) |
-| any agent stage | failed, in a rescue run | escalate at once, no retry |
+| any agent stage | failed, in a rescue run | escalate at once, no retry (amended 2026-11-22: not a conflict fix, which spends a conflict round and runs again below the cap, spec 024 AC-3) |
 | plan, implement, review | failed, retry used | escalate |
 | spec | failed, retry unused | spec, same mode, attempt 2 |
 | spec | failed, retry used | escalate (stuck: spec) |
@@ -665,7 +665,8 @@ first wins.
 | spec | `question`, in decide mode | failed run |
 | spec | `question`, kind `other` | as `decide_yourself` from the check (counted) |
 | spec | `question`, other kinds | question check |
-| merge, spec track | merged, spec-present and UI design pass on `origin/main`, a parked issue PR | delete `spec-<issue>`; the parked PR restored; fix applying the answer, fresh stage counters |
+| merge | not mergeable (amended 2026-11-22; spec 024 AC-3) | one conflict round; `rebase_push`, then verify (a real conflict returns as `rebase_conflict`); at `MAX_CONFLICT_ROUNDS`, escalate (stuck: fix) |
+| merge, spec track | merged, spec-present and UI design pass on `origin/main`, a parked issue PR | delete `spec-<issue>`; the parked PR restored with its rescue (amended 2026-11-22); fix applying the answer, fresh stage counters |
 | merge, spec track | merged, both pass, no parked PR | delete `spec-<issue>`; plan, fresh stage counters |
 | merge, spec track | merged, spec-present fails on `origin/main` | delete `spec-<issue>`; escalate (stuck: spec, `write` mode with the reason) |
 | merge, spec track | merged, UI design missing on `origin/main` | delete `spec-<issue>`; `needs-design-stage`; released, ledger kept |

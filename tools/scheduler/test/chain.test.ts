@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   branchOf, checkFailureEntry, FAILURE_MARKER, HISTORY_ENTRY_MAX, HISTORY_MAX_ENTRIES, initialChainState, ledgerOf, MAX_CHAIN_ERRORS, MAX_DECIDE_RETURNS, MAX_REPLANS, MAX_RESCUES,
-  MAX_BLOCKS, MAX_SPEC_ANSWERS, MAX_SPEC_RESCUES, MAX_SPEC_REVISIONS, normalizeChainState, transition, VERIFY_PENDING_MAX_H, type LedgerCounts,
+  MAX_BLOCKS, MAX_SPEC_ANSWERS, MAX_SPEC_RESCUES, MAX_SPEC_REVISIONS, normalizeChainState, prFixBound, transition, VERIFY_PENDING_MAX_H, type LedgerCounts,
 } from "../src/chain/machine.ts";
 import type { Action, ChainEvent, ChainStage, ChainState } from "../src/chain/types.ts";
 import { MAX_CONFLICT_ROUNDS, MAX_FIXES, REPLAN_FIXES, RESCUE_FIXES, SPEC_REVISION_FIXES } from "../src/gates/index.ts";
@@ -301,7 +301,7 @@ describe("chain: escalation path (AC-1 to AC-6)", () => {
     expect(r2.state).toMatchObject({ specRescues: 1, rescueRun: true, specMode: "revise", track: "spec" });
     const r3 = transition(r2.state, { type: "stage_failed", stage: "spec", reason: "t3" });
     expect(r3.actions).toEqual([{ type: "run_stage", stage: "spec", attempt: 1 }]);
-    expect(r3.state).toMatchObject({ specRescues: 2, rescueRun: true, rescueActive: true, specMode: "revise", track: "spec" });
+    expect(r3.state).toMatchObject({ specRescues: 2, rescueRun: true, rescueOn: "spec-1", specMode: "revise", track: "spec" });
     const r4 = transition(r3.state, { type: "stage_failed", stage: "spec", reason: "t4" });
     expect(r4.state.stage).toBe("abandoned");
     expect(types(r4.actions)).toEqual(["comment", "label", "finding", "notify", "done"]);
@@ -391,14 +391,14 @@ describe("chain: escalation path (AC-1 to AC-6)", () => {
     const s = at("review", { track: "spec", fixes: 2, pr: pr12 });
     const r1 = review(s);
     expect(r1.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining("Review requested changes") }]);
-    expect(r1.state).toMatchObject({ specRescues: 1, rescues: 0, rescueRun: true, rescueActive: true, fixes: 0, track: "spec" });
+    expect(r1.state).toMatchObject({ specRescues: 1, rescues: 0, rescueRun: true, rescueOn: "spec-1", fixes: 0, track: "spec" });
     const first = rounds(r1.state);
     expect(first.fixes).toBe(RESCUE_FIXES);
-    expect(first.state).toMatchObject({ stage: "fix", specRescues: 2, rescueRun: true, rescueActive: true, fixes: 0 });
+    expect(first.state).toMatchObject({ stage: "fix", specRescues: 2, rescueRun: true, rescueOn: "spec-1", fixes: 0 });
     const second = rounds(first.state);
     expect(second.fixes).toBe(RESCUE_FIXES);
     expect(second.state.stage).toBe("abandoned");
-    expect(second.state).toMatchObject({ replans: 0, specRevisions: 0, specRescues: 2, rescueActive: false });
+    expect(second.state).toMatchObject({ replans: 0, specRevisions: 0, specRescues: 2, rescueOn: null });
   });
   it("the escalation bounds (AC-6)", () => {
     expect([MAX_RESCUES, MAX_REPLANS, MAX_SPEC_REVISIONS, MAX_SPEC_ANSWERS, MAX_DECIDE_RETURNS, VERIFY_PENDING_MAX_H, MAX_FIXES, MAX_BLOCKS]).toEqual([1, 1, 1, 1, 1, 6, 2, 3]);
@@ -493,9 +493,11 @@ describe("chain: review (AC-8, AC-9)", () => {
 });
 
 describe("chain: merge, rebase, liveness, postpone", () => {
-  it("not mergeable goes to fix", () => {
-    const r = transition(at("merge"), { type: "merge_result", status: "not_mergeable", detail: "conflict in a.ts" });
-    expect(r.actions[0]).toMatchObject({ type: "run_stage", stage: "fix", fixInput: expect.stringContaining("conflict in a.ts") });
+  it("not mergeable is rebased, pushed and verified again, spending a conflict round and no fix (2026-11-22)", () => {
+    const r = transition(at("merge", { pr: pr3 }), { type: "merge_result", status: "not_mergeable", detail: "conflict in a.ts" });
+    expect(r.actions).toEqual([{ type: "rebase_push" }, { type: "verify" }]);
+    expect(r.state).toMatchObject({ stage: "verify", fixes: 0, conflictRounds: 1, rescues: 0 });
+    expect(r.state.history.at(-1)).toContain("conflict in a.ts");
   });
   it("rebase conflict before any stage goes to fix (AC-16)", () => {
     const r = transition(at("review"), { type: "rebase_conflict", detail: "CONFLICT a.ts" });
@@ -1578,10 +1580,10 @@ describe("chain: a fix must resolve a pending rebase conflict (spec 024)", () =>
       expect(s).toMatchObject({ stage: "fix", fixes: 2, conflictRounds: i, conflictPending: true, rescues: 0 });
     }
     const rescue = transition(s, fixOk(pr3.head_sha));
-    expect(rescue.state).toMatchObject({ stage: "fix", conflictRounds: MAX_CONFLICT_ROUNDS, rescues: 1, rescueRun: true, rescueActive: true, fixes: 0, conflictPending: true });
+    expect(rescue.state).toMatchObject({ stage: "fix", conflictRounds: MAX_CONFLICT_ROUNDS, rescues: 1, rescueRun: true, rescueOn: "issue-1", fixes: 0, conflictPending: true });
     expect(rescue.state.history.join("\n")).toMatch(/conflict round limit reached \(20 conflict rounds\)/);
     const r = transition(rescue.state, fixOk(pr3.head_sha));
-    expect(r.state).toMatchObject({ stage: "plan", replans: 1, pr: null, conflictPending: false, conflictRounds: 0, rescueRun: false, rescueActive: false });
+    expect(r.state).toMatchObject({ stage: "plan", replans: 1, pr: null, conflictPending: false, conflictRounds: 0, rescueRun: false, rescueOn: null });
     expect(types(r.actions)).toEqual(["close_pr", "run_stage"]);
   });
   it("a conflict at the cap escalates instead of running the conflict fix (2026-11-22)", () => {
@@ -1610,9 +1612,9 @@ describe("chain: a fix must resolve a pending rebase conflict (spec 024)", () =>
     expect(r.state.history.at(-1)).toMatch(/conflict is gone/);
   });
   it("conflict_gone clears a rescue flag without giving the rescue back (AC-4)", () => {
-    const s = transition(at("review", { plan, pr: pr3, fixes: 2, rescues: 1, rescueActive: true }), conflict).state;
+    const s = transition(at("review", { plan, pr: pr3, fixes: 2, rescues: 1, rescueOn: "issue-1" }), conflict).state;
     expect(s.rescueRun).toBe(true);
-    expect(transition(s, { type: "conflict_gone" }).state).toMatchObject({ stage: "verify", rescueRun: false, rescues: 1, rescueActive: true });
+    expect(transition(s, { type: "conflict_gone" }).state).toMatchObject({ stage: "verify", rescueRun: false, rescues: 1, rescueOn: "issue-1" });
   });
   it("conflict_gone with an answer still to record runs the fix for it, without the conflict (AC-4)", () => {
     const s = { ...pending(), recordAnswer: true, recordIds: [5], recordKind: "technical" as const, answer: "Question #5: yes" };
@@ -1798,7 +1800,7 @@ describe("spec 060: a failed check outside the PR's scope waits for main", () =>
     result: { head_sha: over.head_sha ?? pr8.head_sha, addressed: [], out_of_scope: { cause: "chromium is missing on the runner", paths: over.paths ?? [".github/workflows/ci.yml"] } },
     ...extra,
   } as ChainEvent);
-  const fixing = (track: "issue" | "spec" | "design", over: Partial<ChainState> = {}) => at("fix", { track, pr: track === "issue" ? pr3 : pr8, fixes: 1, rescueRun: true, pendingFixInput: "A required check failed:\ntest\nFAIL x", ...over });
+  const fixing = (track: "issue" | "spec" | "design", over: Partial<ChainState> = {}) => at("fix", { track, pr: track === "issue" ? pr3 : pr8, fixes: 1, rescueRun: true, rescueFirstRun: true, pendingFixInput: "A required check failed:\ntest\nFAIL x", ...over });
 
   it("AC-6 (amended by spec 101 AC-5): a valid verdict blocks, returning the fixes and the rescue it spent", () => {
     const r = transition(fixing("spec", { specRescues: 1 }), verdict());
@@ -1893,32 +1895,32 @@ describe("spec 101: an out-of-scope failure costs the issue nothing", () => {
   });
 
   it("AC-5: the design track returns its rescue; a verdict from a plain fix returns only the fixes", () => {
-    const d = transition(fixing("design", { rescues: 1, rescueRun: true }), verdictEvent());
+    const d = transition(fixing("design", { rescues: 1, rescueRun: true, rescueFirstRun: true }), verdictEvent());
     expect(d.state).toMatchObject({ stage: "blocked", fixes: 0, rescues: 0, specRescues: 0 });
     expect(d.state.history.at(-1)).toBe("block: returned 1 fixes and the rescue spent on main's failure");
     const plain = transition(fixing("spec", { specRescues: 1, fixes: 2 }), verdictEvent());
     expect(plain.state).toMatchObject({ stage: "blocked", fixes: 0, specRescues: 1 });
     expect(plain.state.history.at(-1)).toBe("block: returned 2 fixes");
-    const zero = transition(fixing("spec", { specRescues: 0, rescueRun: true }), verdictEvent());
+    const zero = transition(fixing("spec", { specRescues: 0, rescueRun: true, rescueFirstRun: true }), verdictEvent());
     expect(zero.state.specRescues).toBe(0);
   });
 
   it("AC-5: the main_green block returns nothing; at MAX_BLOCKS nothing is returned", () => {
     const r = transition(at("verify", { track: "spec", pr: pr8, fixes: 1, specRescues: 1 }), { type: "checks", status: "failed", log: failedLog, sensitive: false, at: AT, failedId: 41, main: { sha, failed: ["test"] } });
     expect(r.state).toMatchObject({ stage: "blocked", fixes: 1, specRescues: 1 });
-    const max = transition(fixing("spec", { specRescues: 1, rescueRun: true, blocked: { on: null, since: null, check: null, main_sha: null, blocks: MAX_BLOCKS } }), verdictEvent());
+    const max = transition(fixing("spec", { specRescues: 1, rescueRun: true, rescueFirstRun: true, blocked: { on: null, since: null, check: null, main_sha: null, blocks: MAX_BLOCKS } }), verdictEvent());
     expect(max.state).toMatchObject({ stage: "verify", fixes: 2, specRescues: 1 });
   });
 
   it("AC-5: the abandonment comment's bounds line reads the returned counts", () => {
-    const blocked = transition(fixing("spec", { specRescues: 1, rescueRun: true }), verdictEvent()).state;
+    const blocked = transition(fixing("spec", { specRescues: 1, rescueRun: true, rescueFirstRun: true }), verdictEvent()).state;
     const r = transition(transition(blocked, { type: "unblocked", main_sha: sha }).state, { type: "rebase_conflict", detail: "CONFLICT" });
     expect(r.state).toMatchObject({ stage: "fix", fixes: 0, specRescues: 0 });
     expect(ledgerOf(blocked)).toMatchObject({ specRescues: 0, blocks: 1 });
   });
 
   it("AC-6: after the resume the fix loop counts from 0 and a second verdict blocks again with blocks 2", () => {
-    const blocked = transition(fixing("spec", { specRescues: 1, rescueRun: true }), verdictEvent()).state;
+    const blocked = transition(fixing("spec", { specRescues: 1, rescueRun: true, rescueFirstRun: true }), verdictEvent()).state;
     const resumed = transition(blocked, { type: "unblocked", main_sha: sha }).state;
     const conflict = transition(resumed, { type: "rebase_conflict", detail: "CONFLICT" });
     expect(conflict.state).toMatchObject({ stage: "fix", fixes: 0, specRescues: 0, blocked: { blocks: 1 } });
@@ -2055,17 +2057,17 @@ describe("chain: fix bounds grow with the escalation ladder, conflicts have thei
     const first = exhaust(transition(at("review", { plan, pr: pr3 }), reviewed(changes)).state);
     expect(first.fixes).toBe(MAX_FIXES);
     expect(first.rescueRuns).toEqual([false, false]);
-    expect(first.state).toMatchObject({ stage: "fix", rescues: 1, rescueRun: true, rescueActive: true, fixes: 0 });
+    expect(first.state).toMatchObject({ stage: "fix", rescues: 1, rescueRun: true, rescueOn: "issue-1", fixes: 0 });
 
     const rescue = exhaust(first.state);
     expect(rescue.fixes).toBe(RESCUE_FIXES);
     expect(rescue.rescueRuns).toEqual([true, true, true]);
-    expect(rescue.state).toMatchObject({ stage: "plan", replans: 1, fixes: 0, rescueActive: false, rescueRun: false, pr: null });
+    expect(rescue.state).toMatchObject({ stage: "plan", replans: 1, fixes: 0, rescueOn: null, rescueRun: false, pr: null });
 
     const replanned = exhaust(newIssuePr(rescue.state));
     expect(replanned.fixes).toBe(REPLAN_FIXES);
     expect(replanned.rescueRuns).toEqual([false, false, false]);
-    expect(replanned.state).toMatchObject({ stage: "spec", track: "spec", specMode: "revise", specRevisions: 1, rescueActive: false });
+    expect(replanned.state).toMatchObject({ stage: "spec", track: "spec", specMode: "revise", specRevisions: 1, rescueOn: null });
 
     // The revised spec merges; the issue's next PR has 4 fix rounds, and the bound after them abandons.
     let state = transition(replanned.state, { type: "stage_ok", stage: "spec", result: revised, scope: { ok: true } }).state;
@@ -2087,34 +2089,34 @@ describe("chain: fix bounds grow with the escalation ladder, conflicts have thei
   it("a rescue of a stage other than fix reruns that stage; the PR it opens gets the rescue's 3 fix rounds on the rescue model", () => {
     const r = transition(at("implement", { plan, implementFailures: 1, attempt: 2 }), { type: "stage_failed", stage: "implement", reason: "x" });
     expect(r.actions).toEqual([{ type: "run_stage", stage: "implement", attempt: 1 }]);
-    expect(r.state).toMatchObject({ rescues: 1, rescueRun: true, rescueActive: true, fixes: 0 });
+    expect(r.state).toMatchObject({ rescues: 1, rescueRun: true, rescueOn: "issue-1", fixes: 0 });
     let state = transition(r.state, { type: "stage_ok", stage: "implement", result: impl, scope: { ok: true } }).state;
-    expect(state).toMatchObject({ stage: "verify", rescueRun: false, rescueActive: true });
+    expect(state).toMatchObject({ stage: "verify", rescueRun: false, rescueOn: "issue-1" });
     state = transition(transition(state, green).state, reviewed(changes)).state;
     const rescue = exhaust(state);
     expect(rescue.fixes).toBe(RESCUE_FIXES);
     expect(rescue.rescueRuns).toEqual([true, true, true]);
-    expect(rescue.state).toMatchObject({ stage: "plan", replans: 1, rescueActive: false });
+    expect(rescue.state).toMatchObject({ stage: "plan", replans: 1, rescueOn: null });
   });
   it("a rescue stays in effect across a question and its answer; the resumed fix is a rescue run", () => {
-    const s = at("fix", { plan, pr: pr3, rescues: 1, rescueActive: true, rescueRun: true, fixes: 1, pendingFixInput: "Review requested changes:\n0. x" });
+    const s = at("fix", { plan, pr: pr3, rescues: 1, rescueOn: "issue-1", rescueRun: true, fixes: 1, pendingFixInput: "Review requested changes:\n0. x" });
     const asked = transition(s, { type: "stage_ok", stage: "fix", result: { escalation: qCapability } as never, head: pr3.head_sha });
-    expect(asked.state).toMatchObject({ stage: "question-check", rescueRun: false, rescueActive: true });
+    expect(asked.state).toMatchObject({ stage: "question-check", rescueRun: false, rescueOn: "issue-1" });
     const paused = transition(asked.state, { type: "stage_ok", stage: "question-check", result: { verdict: "send", reasoning: "r" } as never });
     expect(paused.state.stage).toBe("paused");
     const resumed = transition(paused.state, { type: "answered", answer: "the GPU is back", questionId: 9 });
-    expect(resumed.state).toMatchObject({ stage: "fix", rescueRun: true, rescueActive: true, fixes: 1 });
+    expect(resumed.state).toMatchObject({ stage: "fix", rescueRun: true, rescueOn: "issue-1", fixes: 1 });
   });
   it("a merged PR ends the rescue: the next PR's fix rounds run on the stage's own model", () => {
-    const r = transition(at("merge", { track: "spec", pr: pr8, rescueActive: true, specRescues: 1 }), { type: "merge_result", status: "merged", specGate: { ok: true } });
-    expect(r.state).toMatchObject({ stage: "plan", rescueActive: false, rescueRun: false, fixes: 0, conflictRounds: 0, specRescues: 1 });
+    const r = transition(at("merge", { track: "spec", pr: pr8, rescueOn: "spec-1", specRescues: 1 }), { type: "merge_result", status: "merged", specGate: { ok: true } });
+    expect(r.state).toMatchObject({ stage: "plan", rescueOn: null, rescueRun: false, fixes: 0, conflictRounds: 0, specRescues: 1 });
   });
   it("a block that returns a rescue ends it (spec 101 AC-5)", () => {
     const s = at("fix", {
-      track: "spec", pr: pr8, specRescues: 1, rescueActive: true, rescueRun: true, fixes: 1, pendingFixInput: "A required check failed:\ntest\nFAIL x",
+      track: "spec", pr: pr8, specRescues: 1, rescueOn: "spec-1", rescueFirstRun: true, rescueRun: true, fixes: 1, pendingFixInput: "A required check failed:\ntest\nFAIL x",
     });
     const r = transition(s, { type: "stage_ok", stage: "fix", result: { head_sha: pr8.head_sha, out_of_scope: { cause: "main", paths: ["x.ts"] } } as never, scope: { ok: true }, outOfScope: { ok: true }, mainSha: "a".repeat(40) });
-    expect(r.state).toMatchObject({ stage: "blocked", specRescues: 0, fixes: 0, rescueRun: false, rescueActive: false });
+    expect(r.state).toMatchObject({ stage: "blocked", specRescues: 0, fixes: 0, rescueRun: false, rescueOn: null });
   });
   it("conflicts never spend fix rounds: a PR at its fix bound resolves conflict after conflict, and its next review fix still escalates", () => {
     const conflict: ChainEvent = { type: "rebase_conflict", detail: "CONFLICT (content): Merge conflict in a.ts" };
@@ -2136,7 +2138,7 @@ describe("chain: fix bounds grow with the escalation ladder, conflicts have thei
     expect(spec.state).toMatchObject({ stage: "verify", conflictRounds: 0, fixes: 0 });
   });
   it("issue #130's live claim (spec track, waiting to review spec PR #468, the first spec rescue spent) gets more fix rounds, not abandonment", () => {
-    // The claim's state as the scheduler wrote it before this change: no `rescueActive`, no `conflictRounds`.
+    // The claim's state as the scheduler wrote it before this change: no `rescueOn`, `rescueFirstRun`, `conflictRound` or `conflictRounds`.
     const raw = {
       issue: 130, stage: "waiting", attempt: 1, fixes: 2, scopeViolations: 0, planFailures: 0, implementFailures: 1, sensitive: false,
       pr: { number: 468, head_sha: "bf08b3930f03992c8c842cc47ebce52c414ce4ad" }, plan, pendingFixInput: null, postponedUntil: "2026-11-22T22:27:05.866Z",
@@ -2150,7 +2152,7 @@ describe("chain: fix bounds grow with the escalation ladder, conflicts have thei
     const claim = { issue: 130, worktree: "/w/130", started_at: AT, last_activity_at: AT, run_id: null };
     expect(validate("claim", { ...claim, state: raw })).toEqual({ ok: true });
     const s = normalizeChainState(raw);
-    expect(s).toMatchObject({ rescueActive: false, conflictRounds: 0, fixes: 2, specRescues: 1 });
+    expect(s).toMatchObject({ rescueOn: null, conflictRounds: 0, fixes: 2, specRescues: 1 });
     expect(validate("claim", { ...claim, state: s })).toEqual({ ok: true });
 
     const resumed = transition(s, { type: "start" });
@@ -2163,10 +2165,133 @@ describe("chain: fix bounds grow with the escalation ladder, conflicts have thei
     // After its spec revision the spec PR has 4 rounds; the bound then runs the second spec rescue, which keeps that bound.
     const revisionRounds = exhaust(next.state);
     expect(revisionRounds.fixes).toBe(SPEC_REVISION_FIXES - 2);
-    expect(revisionRounds.state).toMatchObject({ stage: "fix", specRescues: 2, rescueRun: true, rescueActive: true, fixes: 0 });
+    expect(revisionRounds.state).toMatchObject({ stage: "fix", specRescues: 2, rescueRun: true, rescueOn: "spec-130", fixes: 0 });
     const secondRescue = exhaust(revisionRounds.state);
     expect(secondRescue.fixes).toBe(SPEC_REVISION_FIXES);
     expect(secondRescue.rescueRuns.every(Boolean)).toBe(true);
     expect(secondRescue.state.stage).toBe("abandoned");
+  });
+});
+
+describe("chain: review round 1 on the escalation bounds (2026-11-22)", () => {
+  const green: ChainEvent = { type: "checks", status: "green", sensitive: false, at: AT };
+  const reviewed = (result: ReviewResult): ChainEvent => ({ type: "stage_ok", stage: "review", result, security: false });
+  const notMergeable: ChainEvent = { type: "merge_result", status: "not_mergeable", detail: "dirty: conflict in a.ts" };
+  const conflict: ChainEvent = { type: "rebase_conflict", detail: "CONFLICT (content): Merge conflict in a.ts" };
+
+  it("not_mergeable at the exhausted fix bound neither escalates nor spends a fix; a real conflict comes back as rebase_conflict and the conflict fix runs", () => {
+    const r = transition(at("merge", { plan, pr: pr3, fixes: MAX_FIXES }), notMergeable);
+    expect(r.state).toMatchObject({ stage: "verify", fixes: MAX_FIXES, conflictRounds: 1, rescues: 0, pr: pr3 });
+    expect(r.actions).toEqual([{ type: "rebase_push" }, { type: "verify" }]);
+    // The driver's rebase_push found the conflict: it comes back in verify.
+    const c = transition(r.state, conflict);
+    expect(c.state).toMatchObject({ stage: "fix", conflictPending: true, fixes: MAX_FIXES, rescues: 0 });
+    const fixed = transition(c.state, fixOk("c".repeat(40)));
+    expect(fixed.state).toMatchObject({ stage: "verify", fixes: MAX_FIXES, conflictRounds: 2 });
+  });
+  it("not_mergeable in a rescue that spent its rounds keeps the approved PR open: no re-plan", () => {
+    const r = transition(at("merge", { plan, pr: pr3, fixes: RESCUE_FIXES, rescues: 1, rescueOn: "issue-1" }), notMergeable);
+    expect(r.state).toMatchObject({ stage: "verify", replans: 0, pr: pr3, fixes: RESCUE_FIXES });
+    expect(types(r.actions)).toEqual(["rebase_push", "verify"]);
+  });
+  it("a PR that stays not mergeable reaches the conflict cap and escalates; it cannot loop", () => {
+    let state = at("merge", { plan, pr: pr3 });
+    let n = 0;
+    while (state.stage === "verify" || state.stage === "merge" || state.stage === "review") {
+      if (++n > 200) throw new Error("no end");
+      state = state.stage === "merge" ? transition(state, notMergeable).state
+        : state.stage === "verify" ? transition(state, green).state : transition(state, reviewed(approve)).state;
+    }
+    expect(state).toMatchObject({ stage: "fix", rescues: 1, conflictRounds: MAX_CONFLICT_ROUNDS });
+    expect(state.history.join("\n")).toMatch(/conflict round limit reached \(20 conflict rounds\): PR not mergeable/);
+  });
+
+  it("a failed conflict fix spends a conflict round and runs again, with no escalation step, until the cap", () => {
+    let s = transition(at("review", { plan, pr: pr3, fixes: MAX_FIXES }), conflict).state;
+    for (let i = 1; i < MAX_CONFLICT_ROUNDS; i++) {
+      const r = transition(s, { type: "stage_failed", stage: "fix", reason: "timeout" });
+      expect(r.actions).toEqual([{ type: "run_stage", stage: "fix", attempt: 1, fixInput: expect.stringContaining("Merge conflict in a.ts") }]);
+      expect(r.state).toMatchObject({ stage: "fix", rescues: 0, conflictRounds: i, conflictPending: true, fixes: MAX_FIXES });
+      s = r.state;
+    }
+    const capped = transition(s, { type: "stage_failed", stage: "fix", reason: "timeout" });
+    expect(capped.state).toMatchObject({ stage: "fix", rescues: 1, conflictRounds: MAX_CONFLICT_ROUNDS });
+  });
+  it("a failed review fix still escalates as before", () => {
+    const r = transition(at("fix", { plan, pr: pr3, pendingFixInput: "Review requested changes:\n0. x" }), { type: "stage_failed", stage: "fix", reason: "timeout" });
+    expect(r.state).toMatchObject({ rescues: 1, rescueRun: true });
+  });
+  it("the owed work run after a conflict was found gone spends no fix: a PR at its bound stays at it", () => {
+    const s = { ...transition(at("review", { plan, pr: pr3, fixes: MAX_FIXES }), conflict).state, recordAnswer: true, recordIds: [5], recordKind: "technical" as const, answer: "Question #5: yes" };
+    const gone = transition(s, { type: "conflict_gone" });
+    expect(gone.state).toMatchObject({ stage: "fix", conflictRounds: 1, conflictRound: true, conflictPending: false });
+    const done = transition(gone.state, fixOk("c".repeat(40)));
+    expect(done.state).toMatchObject({ stage: "verify", fixes: MAX_FIXES, conflictRounds: 1, conflictRound: false });
+    // A review fix after it runs under the normal bound: the bound is hit, the rescue runs.
+    expect(transition(transition(done.state, green).state, reviewed(changes)).state).toMatchObject({ rescues: 1 });
+  });
+
+  it("a rescued plan's spec gap does not carry the rescue onto the spec PR", () => {
+    const rescued = transition(at("plan", { planFailures: 1, attempt: 2 }), { type: "stage_failed", stage: "plan", reason: "x" }).state;
+    expect(rescued).toMatchObject({ stage: "plan", rescues: 1, rescueOn: "issue-1" });
+    const gap = transition(rescued, { type: "stage_ok", stage: "plan", result: { verdict: "spec_gap", domain: "backend", tasks: [], questions: ["Q"] } });
+    expect(gap.state).toMatchObject({ stage: "spec", track: "spec", rescueRun: false, rescueOn: "issue-1" });
+    let state = transition(gap.state, { type: "stage_ok", stage: "spec", result: revised, scope: { ok: true } }).state;
+    state = transition(transition(state, green).state, reviewed(changes)).state;
+    expect(state).toMatchObject({ stage: "fix", rescueRun: false, specRescues: 0 });
+    expect(prFixBound(state)).toBe(MAX_FIXES);
+    // The spec PR merges; the issue's plan runs with the issue branch's rescue still in effect.
+    state = transition(transition(transition({ ...state, stage: "verify" }, green).state, reviewed(approve)).state, { type: "merge_result", status: "merged", specGate: { ok: true } }).state;
+    expect(state).toMatchObject({ stage: "plan", track: "issue", rescueOn: "issue-1" });
+    expect(prFixBound(state)).toBe(RESCUE_FIXES);
+  });
+  it("a product answer on a rescued issue PR parks it with its rescue: the record PR is not rescued, the unparked PR is", () => {
+    const s = at("paused", { plan, pr: pr3, question: qProduct, askingStage: "review", rescues: 1, rescueOn: "issue-1", fixes: 2 });
+    const parked = transition(s, { type: "answered", answer: "yes", questionId: 5 });
+    expect(parked.state).toMatchObject({ stage: "spec", track: "spec", specMode: "record", parkedPr: pr3, rescueOn: "issue-1" });
+    let state = transition(parked.state, { type: "stage_ok", stage: "spec", result: revised, scope: { ok: true } }).state;
+    state = transition(transition(state, green).state, reviewed(changes)).state;
+    expect(state).toMatchObject({ stage: "fix", rescueRun: false });
+    expect(prFixBound(state)).toBe(MAX_FIXES);
+    state = transition(transition(transition({ ...state, stage: "verify" }, green).state, reviewed(approve)).state, { type: "merge_result", status: "merged", specGate: { ok: true } }).state;
+    expect(state).toMatchObject({ stage: "fix", track: "issue", pr: pr3, parkedPr: null, rescueOn: "issue-1", rescueRun: true });
+    expect(prFixBound(state)).toBe(RESCUE_FIXES);
+  });
+  it("a design PR's rescue ends with the design PR closed for a record; it does not reach the issue's plan", () => {
+    const s = at("paused", { track: "design", pr: pr8, question: qProduct, askingStage: "review", rescues: 1, rescueOn: "design-1" });
+    const record = transition(s, { type: "answered", answer: "yes", questionId: 5 }).state;
+    const merged = transition({ ...record, stage: "merge", pr: pr8 }, { type: "merge_result", status: "merged", specGate: { ok: true } });
+    expect(merged.state).toMatchObject({ stage: "plan", rescueOn: null });
+  });
+  it("the ledger keeps a rescue in effect, so a release and re-claim keeps it; it is written only while one is", () => {
+    expect(ledgerOf(initialChainState(1))).not.toHaveProperty("rescueOn");
+    const ledger = ledgerOf({ ...initialChainState(1), rescues: 1, rescueOn: "issue-1" });
+    expect(ledger.rescueOn).toBe("issue-1");
+    expect(validate("escalation-ledger", ledger)).toEqual({ ok: true });
+    const again = initialChainState(1, null, ledger);
+    expect(again).toMatchObject({ rescueOn: "issue-1", rescues: 1, rescueRun: false });
+    expect(prFixBound(again)).toBe(RESCUE_FIXES);
+  });
+
+  it("a block on a later round of a rescue hands back the fixes only; the rescue stays in effect (spec 101 AC-5)", () => {
+    const verdict = {
+      type: "stage_ok", stage: "fix", scope: { ok: true }, mainSha: "a".repeat(40), outOfScope: { ok: true },
+      result: { head_sha: pr8.head_sha, addressed: [], out_of_scope: { cause: "main", paths: ["x.ts"] } },
+    } as ChainEvent;
+    const later = at("fix", { track: "spec", pr: pr8, specRescues: 1, rescueOn: "spec-1", rescueRun: true, rescueFirstRun: false, fixes: 2, pendingFixInput: "A required check failed:\ntest\nFAIL x" });
+    const r = transition(later, verdict);
+    expect(r.state).toMatchObject({ stage: "blocked", specRescues: 1, fixes: 0, rescueOn: "spec-1" });
+    expect(r.state.history.at(-1)).toBe("block: returned 2 fixes");
+    // The rescue's own first run hands the rescue back.
+    const first = transition({ ...later, rescueFirstRun: true, fixes: 0 }, verdict);
+    expect(first.state).toMatchObject({ stage: "blocked", specRescues: 0, rescueOn: null });
+  });
+  it("the rescue's first run is marked; any success of it ends the mark", () => {
+    const r = transition(at("review", { plan, pr: pr3, fixes: MAX_FIXES }), reviewed(changes));
+    expect(r.state).toMatchObject({ rescueRun: true, rescueFirstRun: true });
+    const fixed = transition(r.state, fixOk("c".repeat(40)));
+    expect(fixed.state).toMatchObject({ rescueRun: false, rescueFirstRun: false, rescueOn: "issue-1" });
+    const second = transition(transition(fixed.state, green).state, reviewed(changes));
+    expect(second.state).toMatchObject({ stage: "fix", rescueRun: true, rescueFirstRun: false });
   });
 });

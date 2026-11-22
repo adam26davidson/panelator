@@ -218,7 +218,7 @@ tests of `chain.test.ts`, `driver.test.ts`, `loop.test.ts` and `e2e.test.ts`.
   excerpt and spec 060 AC-5's paragraph as today). `agents/stages/fix.md`'s
   description of the verdict gains one sentence saying the same. On the
   issue track nothing changes.
-- AC-5. **The block returns what the failure spent.** Given spec 060 AC-6
+- AC-5. Amended 2026-11-22 by the maintainer's direction on escalation bounds ([006-no-human-stops](../006-no-human-stops/spec.md) AC-1 as amended): a rescue now has several fix rounds, each a rescue run; "a rescue run" below means the rescue's own first run (`rescueFirstRun`), and a block on a later round returns that round's fixes only, leaving the rescue in effect. **The block returns what the failure spent.** Given spec 060 AC-6
   blocks (the verdict honoured), then the blocked state's `fixes` is 0, and,
   when the run that returned the verdict was a rescue run (`rescueRun` true
   before the step), the track's rescue counter (`specRescues` on the spec

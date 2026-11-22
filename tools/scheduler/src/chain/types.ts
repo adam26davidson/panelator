@@ -59,10 +59,19 @@ export interface ChainState {
   /** The current run is a rescue (AC-1): a failure escalates at once; any stage_ok clears it. */
   rescueRun: boolean;
   /**
-   * A rescue is in effect (maintainer direction 2026-11-22): the PR gets the rescue's fix bound and every fix round runs as
-   * a rescue run, on the rescue model, until the PR merges or the chain escalates further.
+   * The branch a rescue is in effect on (maintainer direction 2026-11-22), or null. While the chain works on that branch,
+   * its PR gets the rescue's fix bound and every fix round runs as a rescue run, on the rescue model, until the PR merges or
+   * the chain escalates further. A PR on another branch (a spec PR after a spec gap, a record PR) is not rescued by it, and a
+   * parked PR keeps it. Kept in the ledger, so a release and re-claim keeps it too.
    */
-  rescueActive: boolean;
+  rescueOn: string | null;
+  /** The current run is the rescue's own first run (the rerun of the stuck stage); spec 101 AC-5 hands back only that run's rescue. */
+  rescueFirstRun: boolean;
+  /**
+   * The current fix run belongs to a conflict round (spec 024 as amended 2026-11-22): a conflict fix, its retry, or the
+   * owed work run after a conflict was found gone. Its success spends no fix and its failure only a conflict round.
+   */
+  conflictRound: boolean;
   specMode: SpecMode | null;
   specProblem: string | null;
   /** Spec 029 AC-1: why the design stage runs (the gate's reason); null when it does not. */
