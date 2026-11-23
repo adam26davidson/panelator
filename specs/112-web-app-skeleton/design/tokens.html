@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>panelator web app tokens (spec 112)</title>
+<style>
+  /* The product web app's token set. It extends tools/design-stage/src/tokens.css: every base name
+     is kept; the colour names and the two breakpoints get the product's own values, the type scale,
+     spacing and radii keep the base values and gain steps. This block is the whole set: the app's
+     stylesheet (spec 112 AC-10) carries exactly these custom properties with these values. */
+  :root {
+    /* colour: base names, product values (one dark theme) */
+    --color-bg: #0e1116;
+    --color-surface: #161b22;
+    --color-text: #e9edf2;
+    --color-muted: #a7b1be;
+    --color-accent: #6cb6ff;
+    --color-danger: #ff9189;
+    --color-ok: #5fd39a;
+    /* colour: extensions */
+    --color-raised: #1f2630;
+    --color-border: #2b3340;
+    --color-border-strong: #7d8896;
+    --color-accent-hover: #92c9ff;
+    --color-accent-soft: #152a41;
+    --color-on-accent: #0b1320;
+    --color-focus: #ffffff;
+
+    /* type: base scale unchanged, --text-2xl added */
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --text-sm: 14px;
+    --text-base: 16px;
+    --text-lg: 20px;
+    --text-xl: 28px;
+    --text-2xl: 36px;
+    --leading-tight: 1.2;
+    --leading-normal: 1.55;
+    --font-weight-normal: 400;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+    --tracking-wide: 0.06em;
+
+    /* spacing: base steps unchanged, --space-12 and --space-16 added */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-12: 48px;
+    --space-16: 64px;
+
+    /* sizes */
+    --size-tap: 44px;
+    --size-band: 56px;
+    --size-band-wide: 64px;
+    --size-tabbar: 56px;
+    --size-reading: 680px;
+    --size-term: 144px;
+
+    /* radii: base unchanged */
+    --radius-sm: 6px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+
+    /* lines */
+    --line: 1px;
+    --line-focus: 2px;
+
+    /* breakpoints: base names, product values */
+    --bp-tablet: 720px;
+    --bp-desktop: 1200px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: var(--space-8); font-family: var(--font-sans); font-size: var(--text-base);
+    line-height: var(--leading-normal); color: var(--color-text); background: var(--color-bg); color-scheme: dark; }
+  h1 { font-size: var(--text-2xl); line-height: var(--leading-tight); margin: 0 0 var(--space-4); }
+  h2 { font-size: var(--text-lg); margin: var(--space-12) 0 var(--space-3); }
+  p { max-width: 76ch; margin: 0 0 var(--space-3); }
+  .muted { color: var(--color-muted); }
+  table { border-collapse: collapse; background: var(--color-surface); font-size: var(--text-sm); }
+  th, td { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: var(--line) solid var(--color-border); vertical-align: middle; }
+  th { color: var(--color-muted); font-weight: var(--font-weight-semibold); }
+  code { font-family: var(--font-mono); }
+  .sw { width: 40px; height: 24px; border-radius: var(--radius-sm); border: var(--line) solid var(--color-border-strong); }
+  .row { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: center; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; min-height: var(--size-tap);
+    padding: 0 var(--space-6); border-radius: var(--radius-sm); border: var(--line) solid transparent;
+    font: inherit; font-weight: var(--font-weight-semibold); line-height: var(--leading-tight); text-decoration: none; }
+  .btn.primary { background: var(--color-accent); color: var(--color-on-accent); }
+  .btn.primary.hover { background: var(--color-accent-hover); }
+  .btn.secondary { background: transparent; color: var(--color-text); border-color: var(--color-border-strong); }
+  .btn.secondary.hover { background: var(--color-raised); }
+  .focus { outline: var(--line-focus) solid var(--color-focus); outline-offset: var(--line-focus); }
+  .label { font-size: var(--text-sm); color: var(--color-muted); }
+  /* frame diagrams */
+  .frame { border: var(--line) solid var(--color-border-strong); border-radius: var(--radius-md); overflow: hidden;
+    background: var(--color-bg); display: flex; flex-direction: column; }
+  .frame .band { display: flex; align-items: center; gap: var(--space-3); background: var(--color-surface);
+    border-bottom: var(--line) solid var(--color-border); padding: 0 var(--space-3); height: var(--size-band); }
+  .frame .brand { font-weight: var(--font-weight-bold); }
+  .slot { border: var(--line) dashed var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-muted);
+    font-size: var(--text-sm); padding: var(--space-1) var(--space-2); white-space: nowrap; }
+  .frame .grow { flex: 1; }
+  .frame .main { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--color-muted);
+    font-size: var(--text-sm); padding: var(--space-4); text-align: center; }
+  .frame .tabbar { height: var(--size-tabbar); display: flex; align-items: center; justify-content: center;
+    border-top: var(--line) dashed var(--color-border-strong); color: var(--color-muted); font-size: var(--text-sm); }
+</style>
+</head>
+<body>
+<h1>panelator web app tokens</h1>
+<p>One token set for the product's web app, fixed by spec 112's design and inherited by every later web
+child. The three stories carry it in <code>web-kit.tsx</code>; the app's stylesheet in <code>src/app/</code>
+carries the same custom properties and maps them into Tailwind's theme (see "Tailwind mapping" below). A later
+child extends the set only through its own design.</p>
+<p><strong>One theme, dark.</strong> The centre of this app will be a simulated LED panel: light sources on
+black. A dark surround shows those colours and their glow as they look on the wall, and the app is often used
+beside the real panel in a dim room. One theme also keeps every later design to one set of renders. The
+components read colours only through these names, so a light theme can be added later as a second value set by
+its own design, without touching a component.</p>
+<p class="muted">This is the product's own set, not the console's (spec 051): the console keeps the base
+light values and its own extensions.</p>
+
+<h2>Colour</h2>
+<table>
+  <tr><th></th><th>Token</th><th>Value</th><th>Base value</th><th>Use</th><th>Contrast (WCAG)</th></tr>
+  <tr><td><div class="sw" style="background:#0e1116"></div></td><td><code>--color-bg</code></td><td>#0e1116</td><td>#ffffff</td><td>the page, the main region</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#161b22"></div></td><td><code>--color-surface</code></td><td>#161b22</td><td>#f6f7f9</td><td>the band, notes and cards, the tab bar</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#1f2630"></div></td><td><code>--color-raised</code></td><td>#1f2630</td><td>new</td><td>hover fill of a secondary button or a navigation entry</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#e9edf2"></div></td><td><code>--color-text</code></td><td>#e9edf2</td><td>#14181f</td><td>headings, body text, the name in the band, secondary button label</td><td>16.1 on bg · 14.7 on surface · 13.0 on raised · 12.4 on accent-soft</td></tr>
+  <tr><td><div class="sw" style="background:#a7b1be"></div></td><td><code>--color-muted</code></td><td>#a7b1be</td><td>#4a5360</td><td>secondary text, eyebrows</td><td>8.7 on bg · 8.0 on surface · 7.0 on raised</td></tr>
+  <tr><td><div class="sw" style="background:#6cb6ff"></div></td><td><code>--color-accent</code></td><td>#6cb6ff</td><td>#0b5fd6</td><td>primary button fill, text links, lit dots of the mark, the current navigation entry</td><td>8.8 on bg · 8.1 on surface · 6.8 on accent-soft</td></tr>
+  <tr><td><div class="sw" style="background:#92c9ff"></div></td><td><code>--color-accent-hover</code></td><td>#92c9ff</td><td>new</td><td>primary button fill and link colour on hover</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#0b1320"></div></td><td><code>--color-on-accent</code></td><td>#0b1320</td><td>new</td><td>label on a primary button</td><td>8.7 on accent · 10.7 on accent-hover</td></tr>
+  <tr><td><div class="sw" style="background:#152a41"></div></td><td><code>--color-accent-soft</code></td><td>#152a41</td><td>new</td><td>fill behind the current navigation entry (reserved for the frame's navigation; no screen of spec 112 shows it)</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#ff9189"></div></td><td><code>--color-danger</code></td><td>#ff9189</td><td>#b42318</td><td>the eyebrow of the error page; always beside words that say what is wrong</td><td>8.7 on bg · 8.0 on surface</td></tr>
+  <tr><td><div class="sw" style="background:#5fd39a"></div></td><td><code>--color-ok</code></td><td>#5fd39a</td><td>#067647</td><td>success text (base name, given its dark value; no screen of spec 112 shows it)</td><td>10.2 on bg · 9.3 on surface</td></tr>
+  <tr><td><div class="sw" style="background:#2b3340"></div></td><td><code>--color-border</code></td><td>#2b3340</td><td>new</td><td>dividers, the band's lower edge, note outlines, unlit dots of the mark (decorative)</td><td>—</td></tr>
+  <tr><td><div class="sw" style="background:#7d8896"></div></td><td><code>--color-border-strong</code></td><td>#7d8896</td><td>new</td><td>the outline of a control (secondary button, later inputs)</td><td>graphic 5.3 on bg · 4.8 on surface (≥ 3)</td></tr>
+  <tr><td><div class="sw" style="background:#ffffff"></div></td><td><code>--color-focus</code></td><td>#ffffff</td><td>new</td><td>the focus ring</td><td>graphic 18.9 on bg · 17.3 on surface</td></tr>
+</table>
+<p class="muted">Every text pair used on the three screens is at least 7:1, above AA (4.5:1) throughout. Colour
+never carries meaning alone: the error page says "Page error" and "Something went wrong" in words.</p>
+
+<h2>Type</h2>
+<table>
+  <tr><th>Token</th><th>Value</th><th>Use</th><th>Sample</th></tr>
+  <tr><td><code>--font-sans</code></td><td>system stack</td><td>everything on these screens</td><td>panelator</td></tr>
+  <tr><td><code>--font-mono</code></td><td>system mono stack</td><td>code and identifiers (base token; no screen of spec 112 uses it)</td><td><code>board-7f3a</code></td></tr>
+  <tr><td><code>--text-sm</code></td><td>14px</td><td>eyebrows; the smallest size used anywhere</td><td style="font-size:14px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#a7b1be">Error 404</td></tr>
+  <tr><td><code>--text-base</code></td><td>16px</td><td>body text, button labels, the lead on mobile</td><td style="font-size:16px">Build screens from widgets</td></tr>
+  <tr><td><code>--text-lg</code></td><td>20px</td><td>the name in the band; the lead from tablet up</td><td style="font-size:20px">This address leads nowhere.</td></tr>
+  <tr><td><code>--text-xl</code></td><td>28px</td><td>the page heading (<code>h1</code>) on mobile</td><td style="font-size:28px;font-weight:700;line-height:1.2">Page not found</td></tr>
+  <tr><td><code>--text-2xl</code></td><td>36px</td><td>the page heading (<code>h1</code>) from tablet up</td><td style="font-size:36px;font-weight:700;line-height:1.2">Page not found</td></tr>
+  <tr><td><code>--leading-tight</code></td><td>1.2</td><td>headings, the name, button labels</td><td></td></tr>
+  <tr><td><code>--leading-normal</code></td><td>1.55</td><td>body text and leads</td><td></td></tr>
+  <tr><td><code>--font-weight-normal</code> · <code>-semibold</code> · <code>-bold</code></td><td>400 · 600 · 700</td><td>body · eyebrows, terms, button labels · headings and the name</td><td></td></tr>
+  <tr><td><code>--tracking-wide</code></td><td>0.06em</td><td>eyebrows (uppercase)</td><td></td></tr>
+</table>
+<p class="muted">System font stacks only; no font file is loaded. The page heading wraps balanced
+(<code>text-wrap: balance</code>), so a long heading never leaves one word on its last line.</p>
+
+<h2>Spacing and sizes</h2>
+<table>
+  <tr><th>Token</th><th>Value</th><th>Use</th></tr>
+  <tr><td><code>--space-1 … --space-8</code></td><td>4 · 8 · 12 · 16 · 24 · 32 px</td><td>the base steps. 8 between the mark and the name; 12 between eyebrow, heading and lead, and between buttons; 16 row and note padding, and the page's side padding on mobile; 24 side padding on tablet and a button's side padding; 32 side padding on desktop, the gap between a page's blocks, and the main region's top padding on mobile</td></tr>
+  <tr><td><code>--space-12</code></td><td>48px</td><td>the main region's top padding on tablet, bottom padding on mobile</td></tr>
+  <tr><td><code>--space-16</code></td><td>64px</td><td>the main region's top padding on desktop, bottom padding from tablet up</td></tr>
+  <tr><td><code>--size-tap</code></td><td>44px</td><td>the least height and width of every link and button, at every viewport</td></tr>
+  <tr><td><code>--size-band</code> · <code>--size-band-wide</code></td><td>56px · 64px</td><td>the band's height on mobile · from tablet up</td></tr>
+  <tr><td><code>--size-tabbar</code></td><td>56px</td><td>the height reserved for the mobile tab bar once primary navigation exists (no screen of spec 112 shows it)</td></tr>
+  <tr><td><code>--size-reading</code></td><td>680px</td><td>the reading width: the widest a text screen's column gets</td></tr>
+  <tr><td><code>--size-term</code></td><td>144px</td><td>the term column of Home's list from tablet up</td></tr>
+</table>
+
+<h2>Radii and lines</h2>
+<table>
+  <tr><th>Token</th><th>Value</th><th>Use</th></tr>
+  <tr><td><code>--radius-sm</code></td><td>6px</td><td>buttons, the focus ring's corners on links</td></tr>
+  <tr><td><code>--radius-md</code></td><td>12px</td><td>notes and cards</td></tr>
+  <tr><td><code>--radius-lg</code></td><td>20px</td><td>large surfaces such as sheets (base token; no screen of spec 112 uses it)</td></tr>
+  <tr><td><code>--line</code></td><td>1px</td><td>dividers and outlines</td></tr>
+  <tr><td><code>--line-focus</code></td><td>2px</td><td>the focus ring's width and its offset</td></tr>
+</table>
+
+<h2>Breakpoints</h2>
+<table>
+  <tr><th>Token</th><th>Value</th><th>Base value</th><th>Range it starts</th><th>Rendered at</th><th>What changes</th></tr>
+  <tr><td>—</td><td>—</td><td>—</td><td>mobile, under 720px</td><td>390 × 844</td><td>band 56px; side padding 16; heading 28px, lead 16px; buttons stacked at full width; Home's list as term over text</td></tr>
+  <tr><td><code>--bp-tablet</code></td><td>720px</td><td>820px</td><td>tablet, 720 to 1199px</td><td>820 × 1180</td><td>band 64px; side padding 24; heading 36px, lead 20px; buttons side by side at their own width; Home's list as term beside text; main top padding 48</td></tr>
+  <tr><td><code>--bp-desktop</code></td><td>1200px</td><td>1440px</td><td>desktop, 1200px and up</td><td>1440 × 900</td><td>side padding 32; main top padding 64. The reading column stays 680px, centred</td></tr>
+</table>
+<p class="muted">The base values name the widths the design stage renders at; a layout that changed exactly at
+1440px would give a 1280px laptop the tablet layout, so the product's breakpoints sit below the render widths.
+A media query cannot read a custom property, so a stylesheet writes 720px and 1200px there; that is the one
+place a token's value is repeated.</p>
+
+<h2>Tailwind mapping</h2>
+<p>The app's stylesheet declares the custom properties above on <code>:root</code> and maps them in
+<code>@theme</code>, clearing Tailwind's defaults for each namespace so that a utility for a value outside the
+set does not exist. The right-hand names are Tailwind 4's theme namespaces as this design understands them; what
+is fixed here is the token names, their values and that utilities resolve to them, and the implementation uses
+whichever namespace of the installed Tailwind yields these utilities:</p>
+<table>
+  <tr><th>Tokens</th><th>Tailwind theme variable</th><th>Utilities</th></tr>
+  <tr><td><code>--color-*</code></td><td><code>--color-*</code> (same names; Tailwind's palette cleared)</td><td><code>bg-surface</code>, <code>text-muted</code>, <code>border-border-strong</code>, <code>outline-focus</code></td></tr>
+  <tr><td><code>--font-sans</code>, <code>--font-mono</code></td><td>same names</td><td><code>font-sans</code>, <code>font-mono</code></td></tr>
+  <tr><td><code>--text-sm … --text-2xl</code></td><td>same names (Tailwind's other steps cleared)</td><td><code>text-sm</code> … <code>text-2xl</code></td></tr>
+  <tr><td><code>--leading-*</code>, <code>--font-weight-*</code>, <code>--tracking-wide</code></td><td>same names</td><td><code>leading-tight</code>, <code>font-semibold</code>, <code>tracking-wide</code></td></tr>
+  <tr><td><code>--space-N</code></td><td><code>--spacing-N</code> (the numeric scale cleared, so only 1, 2, 3, 4, 6, 8, 12, 16 exist)</td><td><code>p-4</code>, <code>gap-3</code>, <code>pt-16</code></td></tr>
+  <tr><td><code>--size-*</code></td><td>named sizes <code>tap</code>, <code>band</code>, <code>band-wide</code>, <code>tabbar</code>, <code>reading</code>, <code>term</code></td><td><code>min-h-tap</code>, <code>h-band</code>, <code>max-w-reading</code>, <code>w-term</code></td></tr>
+  <tr><td><code>--radius-*</code></td><td>same names</td><td><code>rounded-sm</code>, <code>rounded-md</code>, <code>rounded-lg</code></td></tr>
+  <tr><td><code>--line</code>, <code>--line-focus</code></td><td>the default border width (1px) and <code>outline-2 outline-offset-2</code></td><td><code>border</code>, <code>border-b</code>, <code>outline-2</code></td></tr>
+  <tr><td><code>--bp-tablet</code>, <code>--bp-desktop</code></td><td><code>--breakpoint-tablet: 720px</code>, <code>--breakpoint-desktop: 1200px</code> (Tailwind's <code>sm</code> … <code>2xl</code> cleared)</td><td><code>tablet:flex-row</code>, <code>desktop:px-8</code></td></tr>
+</table>
+
+<h2>Controls and their states</h2>
+<p>Two button looks, used by a <code>button</code> and by a link alike. Both are 44px tall at every viewport,
+with 24px side padding and a 16px semibold label.</p>
+<div class="row">
+  <div><div class="label">primary</div><span class="btn primary">Reload the page</span></div>
+  <div><div class="label">primary, hover</div><span class="btn primary hover">Reload the page</span></div>
+  <div><div class="label">primary, keyboard focus</div><span class="btn primary focus">Reload the page</span></div>
+  <div><div class="label">secondary</div><span class="btn secondary">Go to the home page</span></div>
+  <div><div class="label">secondary, hover</div><span class="btn secondary hover">Go to the home page</span></div>
+  <div><div class="label">secondary, keyboard focus</div><span class="btn secondary focus">Go to the home page</span></div>
+</div>
+<p class="muted" style="margin-top:16px">Focus: a 2px <code>--color-focus</code> outline, offset 2px, on
+<code>:focus-visible</code> for every link and button, the name in the band included. The offset puts the ring
+on the page or band colour, where it reads at 17:1 or more, whatever the control's own fill. Pressed has no
+look of its own beyond hover. There is no disabled control on these screens.</p>
+
+<h2>The frame and its reserved places</h2>
+<p>The frame is the band and the main region. Spec 112 renders only the name in the band. The dashed boxes
+show where later children put primary navigation and the account control; neither is rendered until it has
+somewhere to lead. <code>flow.md</code> has the rules.</p>
+<div class="row" style="align-items:stretch">
+  <div>
+    <div class="label">mobile, under 720px</div>
+    <div class="frame" style="width:300px;height:320px">
+      <div class="band"><span class="brand">panelator</span><span class="grow"></span><span class="slot">account</span></div>
+      <div class="main">main region<br>reading width, or full width</div>
+      <div class="tabbar">primary navigation: tab bar</div>
+    </div>
+  </div>
+  <div>
+    <div class="label">tablet and desktop, 720px and up</div>
+    <div class="frame" style="width:560px;height:320px">
+      <div class="band" style="height:var(--size-band-wide)"><span class="brand">panelator</span><span class="slot">primary navigation</span><span class="grow"></span><span class="slot">account</span></div>
+      <div class="main">main region<br>reading width (680px, centred), or full width</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
