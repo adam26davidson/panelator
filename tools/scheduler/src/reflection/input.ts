@@ -84,7 +84,7 @@ export function timeline(db: DatabaseSync, issue: number) {
 /** Questions sent and not answered (design section 3), matched by the recorded question comment id. */
 export function openQuestions(db: DatabaseSync) {
   const q = rows(db, "SELECT * FROM events WHERE kind = 'question' ORDER BY at, rowid");
-  const contacts = rows(db, "SELECT * FROM events WHERE kind = 'maintainer.contact' AND json_extract(payload, '$.kind') = 'question'");
+  const contacts = rows(db, "SELECT * FROM events WHERE kind = 'maintainer.contact' AND (json_extract(payload, '$.kind') = 'question' OR (json_extract(payload, '$.kind') IN ('credential', 'funds', 'first_contact') AND json_extract(payload, '$.label') = 'request'))");
   return q
     .filter((e) => e.payload.event === "sent")
     .filter((e) => !q.some((a) => a.payload.event === "answered" && a.issue === e.issue && a.payload.question_comment_id === e.payload.question_comment_id && a.at >= e.at))

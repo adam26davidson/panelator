@@ -12,6 +12,10 @@ export interface IndexEntry {
   expires_at: string | null;
   last_checked_at: string | null;
   last_check: string | null;
+  /** Spec 068 AC-2: the CLI renews the access token itself; `expires_at` is then the login registration's end. */
+  renewable?: boolean;
+  /** Spec 068 AC-2: the `expires_at` a heads-up was last sent for. */
+  heads_up_for?: string;
 }
 export type CredentialIndex = Record<string, IndexEntry>;
 
@@ -66,10 +70,18 @@ export class CredentialStore {
     await this.saveIndex(index);
   }
   /** Spec 099 AC-13: the expiry a renewal's probe read; a name with no entry is left alone. */
-  async writeExpiry(name: string, expires_at: string): Promise<void> {
+  async writeExpiry(name: string, expires_at: string | null, renewable?: boolean): Promise<void> {
     const index = await this.readIndex();
     if (!index[name]) return;
-    index[name] = { ...index[name], expires_at };
+    const { renewable: _old, ...rest } = index[name];
+    index[name] = { ...rest, expires_at, ...(renewable === undefined ? (_old === undefined ? {} : { renewable: _old }) : renewable ? { renewable } : {}) };
+    await this.saveIndex(index);
+  }
+  /** Spec 068 AC-2: the time a renewable credential's heads-up was sent for. */
+  async writeHeadsUp(name: string, expires_at: string): Promise<void> {
+    const index = await this.readIndex();
+    if (!index[name]) return;
+    index[name] = { ...index[name], heads_up_for: expires_at };
     await this.saveIndex(index);
   }
   async readSecret(name: string): Promise<string> {

@@ -71,6 +71,16 @@ describe("reflection input (spec 028 AC-5)", () => {
     expect(input.open_questions).toEqual([{ issue: 9, stage: "spec", sent_at: "2026-11-05T00:00:00.000Z", question: "Should we ship X?" }]);
   });
 
+  it("takes a sent credential request's question text from its send event, and an answered one is not open (spec 068 AC-3)", async () => {
+    const paths = await world();
+    const request = { type: "credential" as const, name: "aws-sso", provider: "aws", access: ["sts:GetCallerIdentity"], setup: ["1. log in"] };
+    await appendQuestionLog(paths, { issue: 9, at: "2026-11-05T00:00:00.000Z", event: "sent", asking_stage: "plan", question_comment_id: 70, request }, "May we have the AWS session?");
+    await appendQuestionLog(paths, { issue: 11, at: "2026-11-05T00:00:00.000Z", event: "sent", asking_stage: "plan", question_comment_id: 71, request }, "Second request?");
+    await appendQuestionLog(paths, { issue: 11, at: "2026-11-06T00:00:00.000Z", event: "answered", asking_stage: "plan", question_comment_id: 71, request, answer: "done (verified)", outcome: "verified" });
+    const input = await buildReflectionInput(deps(paths), registry()["delivery-reflection"]!, "r", FROM, mkdtempSync(join(tmpdir(), "root-")));
+    expect(input.open_questions).toEqual([{ issue: 9, stage: "plan", sent_at: "2026-11-05T00:00:00.000Z", question: "May we have the AWS session?" }]);
+  });
+
   it("matches answers to the question comment, not merely the issue and stage", async () => {
     const paths = await world();
     await appendQuestionLog(paths, { issue: 9, at: "2026-11-05T00:00:00.000Z", event: "sent", asking_stage: "spec", question_comment_id: 55 }, "First question?");

@@ -137,9 +137,18 @@ export async function judge(ctx: AwsContext, cost: AwsCost, notices: AwsNotices,
     }
   }
   const over = cap > 0 && cost.forecast_usd > cap;
+  // Spec 068 AC-7: a change of state is a new condition; the lasting gate's window must not hold its notice back (spec 102 AC-6).
+  const rearm = async () => {
+    try {
+      await ctx.notifier.clear?.({ issue: 0, gate: "aws", label: "aws-forecast" });
+    } catch (e) {
+      ctx.log({ kind: "aws-forecast-clear-failed", error: (e as Error).message });
+    }
+  };
   if (over) {
     const last = n.forecast_notified_at ? Date.parse(n.forecast_notified_at) : 0;
     if (!n.forecast_over || ctx.now().getTime() - last >= 24 * HOUR) {
+      if (!n.forecast_over) await rearm();
       const days = daysToCap(cost, cap);
       const shortfall = round(cost.forecast_usd - cap);
       await ctx.emitEvent?.("infra_alarm", { kind: "aws_forecast_over_cap", forecast_usd: cost.forecast_usd, cap_usd: cap, actual_usd: cost.actual_usd, reserved_usd: cost.reserved_usd, days_to_cap: days });
@@ -147,6 +156,7 @@ export async function judge(ctx: AwsContext, cost: AwsCost, notices: AwsNotices,
       n = { ...n, forecast_over: true, forecast_notified_at: ctx.now().toISOString() };
     }
   } else if (n.forecast_over) {
+    if (cap > 0) await rearm();
     if (cap > 0) await notify("aws-forecast", `The delivery-system AWS forecast for ${cost.month} is back under the cap: ${cost.forecast_usd} USD against ${cap} USD. Launches are allowed again.`);
     n = { ...n, forecast_over: false, forecast_notified_at: null };
   }

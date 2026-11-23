@@ -8,8 +8,9 @@ const dir = process.env.FAKE_AWS_DIR;
 const args = process.argv.slice(2);
 appendFileSync(join(dir, "calls.log"), JSON.stringify(args) + "\n");
 const service = args[0] + " " + args[1];
+const SCALE = { "lambda put-function-concurrency": 1, "cloudfront get-distribution-config": 1, "cloudfront update-distribution": 1, "dynamodb update-table": 1 };
 // Spec 051: the console's deploy commands. describe-stacks answers from stack.json (absent: the stack does not exist); the rest print nothing.
-if (["cloudformation", "s3", "lambda", "cloudfront"].includes(args[0])) {
+if (["cloudformation", "s3", "lambda", "cloudfront"].includes(args[0]) && !SCALE[service]) {
   if (service === "cloudformation describe-stacks") {
     if (existsSync(join(dir, "fail-cf"))) { console.error("An error occurred (ExpiredToken): the SSO session has expired"); process.exit(255); }
     if (!existsSync(join(dir, "stack.json"))) { console.error("An error occurred (ValidationError): Stack does not exist"); process.exit(255); }
@@ -18,7 +19,9 @@ if (["cloudformation", "s3", "lambda", "cloudfront"].includes(args[0])) {
   else process.stdout.write("{}");
   process.exit(0);
 }
-const key = service === "sts get-caller-identity" ? "sts" : service === "ce get-cost-and-usage" ? "ce" : null;
+// Spec 068 AC-7: the calls `aws_scale` makes. cloudfront get-distribution-config answers dist.json, or a default config.
+const KEYS = { "sts get-caller-identity": "sts", "ce get-cost-and-usage": "ce", "lambda put-function-concurrency": "lambda", "cloudfront get-distribution-config": "cloudfront", "cloudfront update-distribution": "cloudfront", "dynamodb update-table": "dynamodb" };
+const key = KEYS[service] ?? null;
 if (!key) {
   console.error("fake aws: unknown command " + service);
   process.exit(2);
@@ -27,4 +30,7 @@ if (existsSync(join(dir, `fail-${key}`))) {
   console.error("An error occurred (ExpiredToken): the SSO session has expired aws_secret_access_key=FAKESECRET123 AKIAFAKEKEYID123456");
   process.exit(255);
 }
-process.stdout.write(readFileSync(join(dir, key === "sts" ? "identity.json" : "ce.json"), "utf8"));
+if (key === "lambda") process.stdout.write(JSON.stringify({ FunctionName: args[args.indexOf("--function-name") + 1], ReservedConcurrentExecutions: Number(args[args.indexOf("--reserved-concurrent-executions") + 1]) }));
+else if (service === "cloudfront get-distribution-config") process.stdout.write(existsSync(join(dir, "dist.json")) ? readFileSync(join(dir, "dist.json"), "utf8") : JSON.stringify({ ETag: "ETAG-1", DistributionConfig: { CallerReference: "r", Enabled: true } }));
+else if (key === "cloudfront" || key === "dynamodb") process.stdout.write("{}");
+else process.stdout.write(readFileSync(join(dir, key === "sts" ? "identity.json" : "ce.json"), "utf8"));

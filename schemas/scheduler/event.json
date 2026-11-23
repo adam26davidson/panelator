@@ -349,7 +349,69 @@
             "type": "string"
           },
           "request": {
-            "type": "object"
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "enum": [
+                  "credential",
+                  "funds",
+                  "first_contact"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "access": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "setup": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "amount_usd": {
+                "type": "number"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "charter_goal": {
+                "type": "string"
+              },
+              "party": {
+                "type": "string"
+              },
+              "channel": {
+                "type": "string"
+              },
+              "why": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "outcome": {
+            "enum": [
+              "approved",
+              "denied",
+              "declined",
+              "verified",
+              "check_failed",
+              "text"
+            ]
           }
         },
         "required": [
@@ -534,7 +596,14 @@
             "enum": [
               "reserved",
               "refused",
-              "released"
+              "released",
+              "scaled"
+            ]
+          },
+          "direction": {
+            "enum": [
+              "up",
+              "down"
             ]
           }
         }

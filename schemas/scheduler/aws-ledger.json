@@ -53,6 +53,70 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "scale": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "id",
+              "up",
+              "down",
+              "state"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "lambda-concurrency",
+                  "cloudfront-distribution",
+                  "dynamodb-throughput"
+                ]
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "up": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "expected_monthly_usd",
+                  "setting"
+                ],
+                "properties": {
+                  "expected_monthly_usd": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "setting": {
+                    "type": "object"
+                  }
+                }
+              },
+              "down": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "expected_monthly_usd",
+                  "setting"
+                ],
+                "properties": {
+                  "expected_monthly_usd": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "setting": {
+                    "type": "object"
+                  }
+                }
+              },
+              "state": {
+                "enum": [
+                  "up",
+                  "down"
+                ]
+              }
+            }
           }
         }
       }

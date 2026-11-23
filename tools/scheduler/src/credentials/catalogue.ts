@@ -48,6 +48,8 @@ export interface CredentialEntry {
   check: string | { builtin: Builtin };
   renew: "none" | "manual" | { command: string };
   setup: string[];
+  /** Spec 068 AC-2: what the maintainer does to renew a credential that is already set up. */
+  renew_steps?: string[];
 }
 
 /** Spec 030 AC-2 as amended by spec 069 AC-1 and AC-8. `known` names the profiles and standing agents a `used_by` may name. */

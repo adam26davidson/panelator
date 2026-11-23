@@ -11,7 +11,8 @@ import { undoAction } from "../src/actions/undo.ts";
 import { agentsDir, defaultConfigPath, loadConfig } from "../src/config.ts";
 import { loadCatalogue, profileNames, validateSchema } from "../src/credentials/catalogue.ts";
 import { validate } from "../src/schema/validate.ts";
-import { runCheck, type CheckContext } from "../src/credentials/check.ts";
+import { awsCli } from "../src/aws/cli.ts";
+import { expiryEvents, runCheck, type CheckContext } from "../src/credentials/check.ts";
 import { credCommand } from "../src/credentials/commands.ts";
 import { appPrivateKey, appPrivateKeySource, CredentialStore } from "../src/credentials/store.ts";
 import { createAppClient } from "../src/github/auth.ts";
@@ -73,6 +74,8 @@ describe("catalogue (AC-1, AC-8)", () => {
     expect(c["github-app-key"].check).toEqual({ builtin: "github-app" });
     expect(c["telegram-bot"].check).toEqual({ builtin: "telegram-get-me" });
     expect(c["aws-sso"].check).toBe("aws sts get-caller-identity");
+    expect(c["aws-sso"]).toMatchObject({ provider: "aws", used_by: ["infra-health"], wrapper: { command: "aws", env: "AWS_PROFILE" }, expiry: { probe: "panelator-scheduler aws sso-expiry" }, renew: "manual" });
+    expect(c["aws-sso"].access).toEqual(["sts:GetCallerIdentity", "ce:GetCostAndUsage", "lambda:PutFunctionConcurrency", "lambda:DeleteFunctionConcurrency", "cloudfront:GetDistributionConfig", "cloudfront:UpdateDistribution", "dynamodb:DescribeTable", "dynamodb:UpdateTable"]);
     expect(validate("credential-catalogue", parse(readFileSync(join(agentsDir, "credentials.yaml"), "utf8"))).ok).toBe(true);
     expect(c["github-app-key"].setup.at(-1) + c["github-app-key"].setup.join("")).toContain("cred set github-app-key <");
   });
@@ -94,6 +97,14 @@ describe("catalogue (AC-1, AC-8)", () => {
     ["scheduler on a wrapped entry", (e: any[]) => { e[2].used_by = ["scheduler"]; }, /aws-sso: .*scheduler/],
   ])("fails loading for %s", (_n, fn, re) => {
     expect(mutate(fn)).toThrow(re);
+  });
+  it("loads an optional renew_steps list (spec 068 AC-2) and rejects an empty one", () => {
+    const c = repoCatalogue();
+    expect(c["aws-sso"].renew_steps?.[0]).toContain("aws sso login --sso-session default");
+    expect(c["aws-sso"].renew_steps?.[1]).toContain("cred check aws-sso");
+    expect(c["github-app-key"].renew_steps).toBeUndefined();
+    expect(mutate((e) => { e[2].renew_steps = []; })).toThrow(/aws-sso/);
+    expect(mutate((e) => { e[2].renew_steps = ["x"]; })).not.toThrow();
   });
   it("describes the index", async () => {
     const t = await setup();
@@ -195,7 +206,7 @@ describe("cred set and cred check (AC-3, AC-5, AC-10, AC-11)", () => {
     expect((await t.log.list()).length).toBe(before);
     const checked = await t.cred("check", undefined);
     expect(checked.exitCode).toBe(0);
-    expect(checked.lines).toContain("aws-sso: check skipped: wrapper not built");
+    expect(checked.lines).toContain("aws-sso: check skipped: aws: off: no aws block in agents/scheduler.yaml");
     expect((await t.store.readIndex())["aws-sso"]).toBeUndefined();
     writeFileSync(t.ctx.credentials!.configPaths["github-app-key"], keys.priv);
     const imported = await t.cred("import", undefined);
@@ -435,3 +446,93 @@ describe("credential check input (spec 099 AC-12)", () => {
 });
 
 }
+
+describe("the aws-sso check (spec 068 AC-1, AC-2)", () => {
+  const FIXHOME = join(import.meta.dirname, "fixtures", "aws-home");
+  const ACCT = "123456789012";
+  async function awsSetup(opts: { block?: boolean; account?: string; profile?: string; secret?: string | null } = {}) {
+    const t = await setup();
+    const fx = mkdtempSync(join(tmpdir(), "fxaws-"));
+    writeFileSync(join(fx, "identity.json"), JSON.stringify({ Account: opts.account ?? ACCT, Arn: "arn:x" }));
+    writeFileSync(join(fx, "calls.log"), "");
+    const config = { profile: "panelator-delivery", account_id: ACCT, region: "us-east-2", pull_interval_h: 24 };
+    const env = { ...process.env, HOME: FIXHOME, FAKE_AWS_DIR: fx };
+    const mk = (profile: string) => awsCli({ profile, region: config.region }, { command: join(import.meta.dirname, "helpers", "fake-aws"), env });
+    const probe: CheckContext = { ...t.probe, aws: { config: opts.block === false ? undefined : config, cli: mk, env } };
+    if (opts.secret !== null) await t.store.writeSecret("aws-sso", opts.secret ?? opts.profile ?? "panelator-delivery", "maintainer");
+    const calls = () => readFileSync(join(fx, "calls.log"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as string[]);
+    return { ...t, probe, calls, entry: t.catalogue["aws-sso"] };
+  }
+  it("is ok for the configured account, runs through --profile, and writes the expiry to the index", async () => {
+    const t = await awsSetup();
+    expect(await runCheck(t.entry, t.probe)).toEqual({ status: "ok" });
+    expect(t.calls()).toEqual([["sts", "get-caller-identity", "--profile", "panelator-delivery", "--region", "us-east-2", "--output", "json"]]);
+    const i = (await t.store.readIndex())["aws-sso"];
+    expect([i.last_check, i.expires_at]).toEqual(["ok", "2027-01-01T00:00:00.000Z"]);
+    expect(JSON.stringify(i)).not.toContain("SSOSECRET");
+  });
+  it("fails for another account but still records the expiry", async () => {
+    const t = await awsSetup({ account: "999999999999" });
+    const r = await runCheck(t.entry, t.probe);
+    expect(r).toMatchObject({ status: "failed", reason: expect.stringContaining("999999999999") });
+    expect((await t.store.readIndex())["aws-sso"].expires_at).toBe("2027-01-01T00:00:00.000Z");
+  });
+  it("is skipped without an aws block, reads nothing and leaves last_check null", async () => {
+    const t = await awsSetup({ block: false });
+    expect(await runCheck(t.entry, t.probe)).toEqual({ status: "skipped", reason: "aws: off: no aws block in agents/scheduler.yaml" });
+    expect(t.calls()).toEqual([]);
+    expect((await t.store.readIndex())["aws-sso"].last_check).toBeNull();
+  });
+  it("fails naming cred set when the credential is not set, and for a secret that is not a profile name", async () => {
+    const t = await awsSetup({ secret: null });
+    const r = await runCheck(t.entry, t.probe);
+    expect(r).toMatchObject({ status: "failed", reason: expect.stringContaining("cred set aws-sso") });
+    const u = await awsSetup({ secret: "bad name; rm" });
+    expect(await runCheck(u.entry, u.probe)).toEqual({ status: "failed", reason: "not a profile name" });
+    expect(u.calls()).toEqual([]);
+  });
+  it("sets expires_at to null for a non-SSO profile and leaves the index alone on an error", async () => {
+    const t = await awsSetup({ profile: "plain" });
+    await t.store.writeExpiry("aws-sso", "2030-01-01T00:00:00.000Z");
+    expect((await runCheck(t.entry, t.probe)).status).toBe("ok");
+    expect((await t.store.readIndex())["aws-sso"].expires_at).toBeNull();
+    const u = await awsSetup({ profile: "nope" });
+    await u.store.writeExpiry("aws-sso", "2030-01-01T00:00:00.000Z");
+    expect((await runCheck(u.entry, u.probe)).status).toBe("ok");
+    expect((await u.store.readIndex())["aws-sso"].expires_at).toBe("2030-01-01T00:00:00.000Z");
+  });
+  it("writes renewable with the expiry, and the index validates with renewable and heads_up_for (spec 068 AC-2)", async () => {
+    const t = await awsSetup({ profile: "plain" });
+    await t.store.writeExpiry("aws-sso", "2030-01-01T00:00:00.000Z", true);
+    await t.store.writeHeadsUp("aws-sso", "2030-01-01T00:00:00.000Z");
+    await t.store.writeHeadsUp("nobody", "x");
+    const i = await t.store.readIndex();
+    expect(i["aws-sso"]).toMatchObject({ renewable: true, heads_up_for: "2030-01-01T00:00:00.000Z" });
+    expect(i.nobody).toBeUndefined();
+    expect(validate("credential-index", i).ok).toBe(true);
+    await t.store.writeExpiry("aws-sso", "2031-01-01T00:00:00.000Z");
+    expect((await t.store.readIndex())["aws-sso"].renewable).toBe(true);
+    expect((await runCheck(t.entry, t.probe)).status).toBe("ok"); // a plain profile: none clears renewable
+    expect((await t.store.readIndex())["aws-sso"]).not.toHaveProperty("renewable");
+  });
+  it("the producer skips a renewable credential already warned for its expires_at, unless the last check failed", async () => {
+    const t = await awsSetup();
+    const soon = new Date(Date.now() + 3 * 86400000).toISOString();
+    const run = async () => {
+      const statePath = join(mkdtempSync(join(tmpdir(), "exp-")), "state.json");
+      return expiryEvents({ store: t.store, catalogue: { "aws-sso": t.entry }, warnDays: 7, statePath, now: () => new Date() });
+    };
+    await t.store.writeExpiry("aws-sso", soon, true);
+    expect(await run()).toHaveLength(1);
+    await t.store.writeHeadsUp("aws-sso", soon);
+    expect(await run()).toEqual([]);
+    await t.store.writeCheck("aws-sso", { last_checked_at: new Date().toISOString(), last_check: "failed: no" });
+    expect(await run()).toHaveLength(1);
+    await t.store.writeCheck("aws-sso", { last_checked_at: new Date().toISOString(), last_check: "ok" });
+    await t.store.writeExpiry("aws-sso", new Date(Date.parse(soon) + 86400000).toISOString(), true);
+    expect(await run()).toHaveLength(1); // a new expires_at is warned for again
+    await t.store.writeExpiry("aws-sso", soon, false);
+    await t.store.writeHeadsUp("aws-sso", soon);
+    expect(await run()).toHaveLength(1); // not renewable: daily as before
+  });
+});

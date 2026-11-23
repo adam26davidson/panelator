@@ -1,6 +1,7 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { validate } from "../schema/validate.ts";
 import type { StatePaths } from "../state/paths.ts";
+import type { ScaleDescriptor } from "./scale.ts";
 
 /** `aws/cost.json` (spec 022 AC-4). */
 export interface AwsCost {
@@ -24,6 +25,8 @@ export interface Reservation {
   by: string;
   at: string;
   released_at: string | null;
+  /** Spec 068 AC-6: written by the launcher; `expected_monthly_usd` is the down figure while `scale.state` is down. */
+  scale?: ScaleDescriptor & { state: "up" | "down" };
 }
 export interface AwsLedger {
   reservations: Reservation[];
