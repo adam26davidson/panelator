@@ -100,6 +100,7 @@ pub fn generate(sans: &[String], days: u32) -> Result<CertSet, ConfigError> {
     let mut params = CertificateParams::new(Vec::<String>::new()).map_err(|e| err("server", e))?;
     params.subject_alt_names = san_types;
     params.is_ca = IsCa::ExplicitNoCa;
+    params.use_authority_key_identifier_extension = true;
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     params.distinguished_name = dn("panelator relay stub");
