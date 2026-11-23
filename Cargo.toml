@@ -25,3 +25,7 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# The test host runs modules in an interpreter; keep it quick in debug test runs too.
+[profile.dev.package."*"]
+opt-level = 2
