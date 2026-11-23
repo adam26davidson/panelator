@@ -82,7 +82,7 @@ directory. *A check* is one of the package's scripts named in AC-12.
 
 **The package**
 
-- AC-1. **One package, on the catalog.** `web/package.json` names the
+- AC-1. Amended by [115-simulator-engine](../115-simulator-engine/spec.md) AC-1: the app also declares the workspace package `@panelator/simulator` as `workspace:*`. **One package, on the catalog.** `web/package.json` names the
   package `@panelator/web`, private, `"type": "module"`, `engines.node`
   `>=26`, with the scripts `dev` (the Vite dev server), `build`, `preview`,
   `typecheck`, `lint`, `fsd`, `knip`, `test`, `storybook`, `build-storybook`
@@ -162,7 +162,7 @@ directory. *A check* is one of the package's scripts named in AC-12.
   The router is built by a function that takes its history, so a test builds
   one with a memory history at any address; each app instance and each test
   gets its own `QueryClient`.
-- AC-7. **Home.** Given the address `/`, then the frame shows the `home`
+- AC-7. Amended by [115-simulator-engine](../115-simulator-engine/spec.md) AC-15: Home gains one link, to `/simulator`, and its copy no longer says the simulator is absent. **Home.** Given the address `/`, then the frame shows the `home`
   page: one `h1` and the copy the design gives, which says what panelator
   is. It offers no control and no link that leads to something this spec
   does not build (no sign-in, no board, no editor). The document title is
@@ -229,7 +229,7 @@ directory. *A check* is one of the package's scripts named in AC-12.
 
 **The wiring**
 
-- AC-14. **`pnpm test` runs every check.** `web/checks.test.ts` is a Vitest
+- AC-14. Amended by [115-simulator-engine](../115-simulator-engine/spec.md) AC-17: the checks `simulator typecheck` and `simulator test` run after `knip`, and the dependency test accepts `workspace:*` for a package of this repository. **`pnpm test` runs every check.** `web/checks.test.ts` is a Vitest
   file that the root configuration runs. It has one test per check, named
   for it and run in this order: `typecheck`, `lint`, `fsd`, `knip`, `test`,
   `build`, `build-storybook`, `e2e`. Each runs
