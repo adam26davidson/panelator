@@ -87,8 +87,9 @@ impl Slot {
     }
 
     /// Frames held, 0 or 1.
+    #[cfg(test)]
     #[must_use]
-    pub fn held(&self) -> usize {
+    fn held(&self) -> usize {
         usize::from(lock(&self.frame).is_some())
     }
 }

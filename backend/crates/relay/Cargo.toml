@@ -21,6 +21,7 @@ path = "src/main.rs"
 [dependencies]
 axum = { workspace = true }
 bytes = { workspace = true }
+ciborium-ll = { workspace = true }
 clap = { workspace = true }
 futures-util = { workspace = true }
 hyper = { workspace = true }

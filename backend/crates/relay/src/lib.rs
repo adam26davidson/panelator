@@ -4,9 +4,9 @@
 pub mod app;
 pub mod cbor;
 pub mod certs;
-pub mod cli;
+mod cli;
 mod connection;
 pub mod events;
 pub mod server;
 pub mod tls;
-pub mod traffic;
+mod traffic;

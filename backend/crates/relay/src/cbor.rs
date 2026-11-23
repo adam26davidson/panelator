@@ -1,7 +1,8 @@
 //! The only CBOR the stub deals in: byte-string filler going out and a well-formedness check on
 //! what comes in (RFC 8949 section 3 and Appendix C). The check never builds or looks at a value.
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::Bytes;
+use ciborium_ll::{Encoder, Header};
 
 /// The deepest nesting of arrays, maps, tags and indefinite-length strings the check accepts.
 pub const MAX_NESTING: usize = 64;
@@ -11,23 +12,16 @@ pub const MAX_NESTING: usize = 64;
 /// The content is filler: it means nothing and may change in any release.
 #[must_use]
 pub fn filler_frame(size: usize) -> Bytes {
-    let mut buf = BytesMut::with_capacity(size + 9);
-    if let Ok(n) = u8::try_from(size) {
-        if n < 24 {
-            buf.put_u8(0x40 | n);
-        } else {
-            buf.put_u8(0x58);
-            buf.put_u8(n);
-        }
-    } else if let Ok(n) = u16::try_from(size) {
-        buf.put_u8(0x59);
-        buf.put_u16(n);
-    } else {
-        buf.put_u8(0x5a);
-        buf.put_u32(u32::try_from(size).unwrap_or(u32::MAX));
-    }
+    let mut head = [0; 9];
+    let mut remaining = head.as_mut_slice();
+    let result = Encoder::from(&mut remaining).push(Header::Bytes(Some(size)));
+    // Nine bytes accommodate even a 64-bit length, so this slice writer cannot run out.
+    debug_assert!(result.is_ok());
+    let head_len = 9 - remaining.len();
+    let mut buf = Vec::with_capacity(size + head_len);
+    buf.extend_from_slice(&head[..head_len]);
     buf.resize(buf.len() + size, 0xa5);
-    buf.freeze()
+    Bytes::from(buf)
 }
 
 /// What is open on the stack while an item is being read.
