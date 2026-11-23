@@ -1,1 +1,1 @@
-export { renderUi } from "./render";
+export { renderApp, renderUi } from "./render";

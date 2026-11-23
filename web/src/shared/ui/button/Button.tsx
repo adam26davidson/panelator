@@ -26,9 +26,14 @@ export function Button({
 }
 
 /** A router link in the same two looks. */
-export function ButtonLink(props: { variant: ButtonVariant; to: LinkProps["to"]; children: ReactNode }) {
+export function ButtonLink(props: {
+  variant: ButtonVariant;
+  to: LinkProps["to"];
+  onClick?: () => void;
+  children: ReactNode;
+}) {
   return (
-    <Link to={props.to} className={look(props.variant)}>
+    <Link to={props.to} onClick={props.onClick} className={look(props.variant)}>
       {props.children}
     </Link>
   );
