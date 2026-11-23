@@ -111,7 +111,7 @@ const CSS = `
 .p-eyebrow.danger { color: var(--color-danger); }
 .p-heading h1 { font-size: var(--text-xl); line-height: var(--leading-tight); font-weight: var(--font-weight-bold);
   text-wrap: balance; }
-.p-root .p-lead { margin-top: var(--space-1); font-size: var(--text-base); color: var(--color-text); }
+.p-lead { font-size: var(--text-base); line-height: var(--leading-normal); color: var(--color-text); }
 
 /* Button and ButtonLink */
 .p-actions { display: flex; flex-direction: column; gap: var(--space-3); }

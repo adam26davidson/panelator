@@ -145,7 +145,7 @@ Home offers no action, so nothing leaves Home but the name in the band.
 |---|---|---|
 | `Frame` | `Frame`, `Mark` | the band with the name as the link home, and the `main` landmark holding its children. The root route in `app` renders it around the matched route. The mark is part of it. |
 | `ReadingColumn` | `ReadingColumn` | the main region at reading width: the centred column with its padding and the 32px gap between blocks. A full-width screen leaves it out. |
-| `PageHeading` | `PageHeading` | eyebrow, the screen's one `h1` (focusable by script, `tabindex="-1"`) and the lead; tone `neutral` or `danger` colours the eyebrow. |
+| `PageHeading` | `PageHeading` | eyebrow (14px), the screen's one `h1` (focusable by script, `tabindex="-1"`; 28px, 36px from 720px) and the lead (16px, 20px from 720px, line height 1.55, `--color-text`), stacked with one 12px gap between each pair and no other margin; tone `neutral` or `danger` colours the eyebrow. |
 | `Button` | `Button` | a `button` in the `primary` or `secondary` look, 44px tall. |
 | `ButtonLink` | `ButtonLink` | a router link in the same two looks. |
 
