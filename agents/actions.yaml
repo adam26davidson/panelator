@@ -34,3 +34,6 @@ cred_remove:
 renew_credential:
   level: 1
   description: Run a catalogue entry's renew command through its wrapper, check the credential and record its new expiry (the secret is never in the request).
+aws_scale:
+  level: 1
+  description: Move a ledger reservation between the two states its launcher described, within the AWS cap.

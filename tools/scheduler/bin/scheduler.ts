@@ -42,6 +42,7 @@ import {credCommand} from '../src/credentials/commands.ts';
 import {awsCli} from '../src/aws/cli.ts';
 import {newAwsState,type AwsContext} from '../src/aws/context.ts';
 import {awsCheck,awsPull,awsStatus} from '../src/aws/check.ts';
+import {ssoExpiry,ssoExpiryText} from '../src/aws/sso.ts';
 import {emit} from '../src/standing/events.ts';
 import {loadMetricDefinitions,assertReadOnlySelect} from '../src/metrics/definitions.ts';
 import {computeMetrics,historyRange,recordSnapshot,weekStart} from '../src/metrics/compute.ts';
@@ -84,6 +85,7 @@ const actionLog=new ActionLog(paths.actionsLog,paths);
 // Spec 099 AC-6: one chain for every notification; the poller attaches the Telegram channel once it is up.
 let attachedTelegram:TelegramChannel|null=null;
 const notifier=rateLimited(recordedNotifier(TelegramNotifier(new LogNotifier(paths.serviceLog),{telegram:()=>attachedTelegram,alertsPath:paths.telegramAlerts,outboxPath:paths.telegramOutbox,now:()=>new Date(),log:rec=>serviceLog.write(rec)}),paths),{hours:cfg.notify_rate_limit_hours,repeatHours:cfg.notify_repeat_hours,path:paths.notifySent});
+const awsForCheck={config:cfg.aws,cli:(profile:string)=>awsCli({profile,region:cfg.aws?.region??''}),env:process.env};
 const awsContext:AwsContext={config:cfg.aws,paths,cli:cfg.aws?awsCli(cfg.aws):undefined,parameters,
  notifier,notifyHours:cfg.notify_rate_limit_hours,
  now:()=>new Date(),log:rec=>serviceLog.write(rec),emitEvent:(event,payload)=>emit(paths,registry,event,payload,new Date()),state:newAwsState()};
@@ -126,6 +128,15 @@ if(args[0]==='quota') {
   console.log(JSON.stringify({...book,summary:await quotaSummary(paths,new Date())},null,2));
   process.exit(0);
 }
+if(args[0]==='aws'&&args[1]==='sso-expiry') {
+  // Spec 068 AC-2: the SSO session's expiry from the CLI's cache; only expiresAt is read, and no aws is spawned.
+  const profile=flag('--profile')??process.env.AWS_PROFILE??cfg.aws?.profile;
+  if(!profile){console.error('no profile: pass --profile, set AWS_PROFILE, or add an aws block to agents/scheduler.yaml');process.exit(1);}
+  const r=ssoExpiry(profile);
+  if('error' in r){console.error(r.error);process.exit(1);}
+  console.log(ssoExpiryText(r));
+  process.exit(0);
+}
 if(args[0]==='console'&&args[1]==='state') {
   // Spec 051 AC-3: the laptop fallback; the snapshot as the console would receive it.
   const {buildConsoleState}=await import('../src/console/state.ts');
@@ -163,8 +174,8 @@ if(args[0]==='aws-check'||args[0]==='aws') {
 if(['param','agent','action','cred','contacts'].includes(args[0])) {
   let client:GitHubClient|undefined;
   const remote=async()=>client??=new GitHubClient(createAppClient(cfg.app,await appPrivateKey(cfg,credStore)).octokit,cfg.repo);
-  const ctx={paths,parameters,log:actionLog,levels,now:()=>new Date(),gh:{rerunWorkflowRun:async(id:number)=>(await remote()).rerunWorkflowRun(id),cancelWorkflowRun:async(id:number)=>(await remote()).cancelWorkflowRun(id)},
-   credentials:{store:credStore,catalogue,probe:{store:credStore,app:cfg.app,now:()=>new Date()},configPaths:{'github-app-key':cfg.app.private_key_path,'telegram-bot':cfg.telegram!.credentials_path}}};
+  const ctx={paths,parameters,log:actionLog,levels,now:()=>new Date(),aws:awsContext,gh:{rerunWorkflowRun:async(id:number)=>(await remote()).rerunWorkflowRun(id),cancelWorkflowRun:async(id:number)=>(await remote()).cancelWorkflowRun(id)},
+   credentials:{store:credStore,catalogue,probe:{store:credStore,app:cfg.app,now:()=>new Date(),aws:awsForCheck},configPaths:{'github-app-key':cfg.app.private_key_path,'telegram-bot':cfg.telegram!.credentials_path}}};
   try {
     const [command,verb,name,value]=args;
     if(command==='param'&&verb==='list')console.log(JSON.stringify(await parameters.all(),null,2));
@@ -260,7 +271,7 @@ if(cfg.console){
 }else serviceLog.write({kind:'console',status:'off'});
 const scheduler: Scheduler = new Scheduler({
   cfg, paths, gh, telegram: null,registry,metrics,credentials:{store:credStore,catalogue,warnDays:cfg.credentials.warn_days},plainFiles:{store:credStore,paths:{'github-app-key':cfg.app.private_key_path,...(cfg.telegram?{'telegram-bot':cfg.telegram.credentials_path}:{})},fromStore}, parameters, notifier,
-  stages: loadStageDefinitions(join(agentsRoot, "stages")), agentsDir: agentsRoot, repoDir: repoRoot, binDir, configPath: flag("--config") ?? defaultConfigPath, catalogue, scope: () => checkInstallationScope({ app, installationId: cfg.app.installation_id, repo: cfg.repo }), checkContext: { store: credStore, app: cfg.app, now: () => new Date() },
+  stages: loadStageDefinitions(join(agentsRoot, "stages")), agentsDir: agentsRoot, repoDir: repoRoot, binDir, configPath: flag("--config") ?? defaultConfigPath, catalogue, scope: () => checkInstallationScope({ app, installationId: cfg.app.installation_id, repo: cfg.repo }), checkContext: { store: credStore, app: cfg.app, now: () => new Date(), aws: awsForCheck },
   adapterFor: (h) => adapterFor(h), systemdScope: cfg.systemd.scope, now: () => new Date(),
   unitActive: (unit) => systemdUnitActive(unit, { enabled: cfg.systemd.scope }),
   stopUnit: (unit) => systemdStopUnit(unit, { enabled: cfg.systemd.scope }),

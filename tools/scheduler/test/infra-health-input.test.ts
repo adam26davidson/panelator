@@ -11,6 +11,10 @@ import { EVENT_NAMES } from "../src/standing/events.ts";
 import { registryActionsCheck } from "../src/actions/index.ts";
 import { writeDiskSweep } from "../src/service/sweep.ts";
 
+import { awsWorld } from "./helpers/aws.ts";
+import { writeLedger, writeCost } from "../src/aws/book.ts";
+import { readFileSync } from "node:fs";
+
 const NOW = new Date("2026-11-14T12:00:00Z");
 
 it("builds the input from the sweep report, free space, agent states, the last day of the service log and a week of actions", async () => {
@@ -66,5 +70,46 @@ it("builds over torn lines, reads the day's reports of other readers, and collec
 it("the checked-in infra health agent loads with its limits", () => {
   const def = loadRegistry("agents/standing", EVENT_NAMES, registryActionsCheck("agents/actions.yaml"))["infra-health"];
   for (const word of ["skipped_lines", "jsonl-skipped-lines", "infra health input"]) expect(def.prompt).toContain(word);
-  expect(def).toMatchObject({ tier: "standard", worktree: "none", input: "infra-health-input", actions: ["rerun_workflow", "run_agent", "pause_agent", "sweep_volume"], trigger: { schedule: "6h", events: ["infra_alarm", "ci_failure_main"] } });
+  expect(def).toMatchObject({ tier: "standard", worktree: "none", input: "infra-health-input", actions: ["rerun_workflow", "run_agent", "pause_agent", "sweep_volume", "aws_scale"], credentials: ["aws-sso"], trigger: { schedule: "6h", events: ["infra_alarm", "ci_failure_main"] } });
+});
+
+it("pins the prompt on the AWS alarm and action (spec 068 AC-8)", () => {
+  const text = readFileSync("agents/standing/infra-health.md", "utf8");
+  for (const word of ["aws_forecast_over_cap", "aws_scale", "cannot scale: no descriptor", "aws_cap_usd", "20 percent"]) expect(text).toContain(word);
+  expect(text).toMatch(/`aws_forecast_over_cap` is known/);
+});
+
+it("carries the AWS account in its input in three states (spec 068 AC-8)", async () => {
+  const paths = statePaths(mkdtempSync(join(tmpdir(), "infra-aws-")));
+  await ensureStateDirs(paths);
+  const freeSpace = async () => ({ bytes: 5, inodes: null });
+  const none = await buildInfraHealthInput({ paths, freeSpace }, [], null, NOW);
+  expect(none.aws).toEqual({ on: false, off_reason: "no aws block", cap_usd: 0, cost: null, reservations: [] });
+  expect(validate("infra-health-input", none)).toEqual({ ok: true });
+
+  const off = await awsWorld({ start: NOW.toISOString(), cap: 10 });
+  off.setIdentity("999999999999");
+  const offIn = await buildInfraHealthInput({ paths, freeSpace, aws: off.ctx }, [], null, NOW);
+  expect(offIn.aws).toMatchObject({ on: false, off_reason: expect.stringContaining("999999999999"), cap_usd: 10, cost: null, reservations: [] });
+  expect(off.calls().map((c) => c[0])).toEqual(["sts"]);
+  expect(validate("infra-health-input", offIn)).toEqual({ ok: true });
+
+  const on = await awsWorld({ start: NOW.toISOString(), cap: 10 });
+  const base = { why: "charter: a console the maintainer can reach", by: "spec-e", at: "2026-11-01T00:00:00Z" };
+  const scale = { kind: "lambda-concurrency", id: "f", up: { expected_monthly_usd: 6, setting: { reserved_concurrency: 1 } }, down: { expected_monthly_usd: 1, setting: { reserved_concurrency: 0 } }, state: "up" } as const;
+  await writeLedger(on.ctx.paths, { reservations: [
+    { id: "A", what: "the console api functions", expected_monthly_usd: 6, ...base, released_at: null, scale },
+    { id: "R", what: "a released thing for tests", expected_monthly_usd: 2, ...base, released_at: "2026-11-05T00:00:00Z" },
+    { id: "B", what: "the console storage and so on", expected_monthly_usd: 8, ...base, released_at: null },
+  ] });
+  const cost = { month: "2026-11", actual_usd: 4, as_of: NOW.toISOString(), cap_usd: 10, reserved_usd: 14, forecast_usd: 11, days_elapsed: 14, days_in_month: 30, source: "ce" as const };
+  await writeCost(on.ctx.paths, cost);
+  const onIn = await buildInfraHealthInput({ paths, freeSpace, aws: on.ctx }, [], null, NOW);
+  expect(onIn.aws.on).toBe(true);
+  expect(onIn.aws.off_reason).toBeUndefined();
+  expect(onIn.aws).toMatchObject({ cap_usd: 10, cost });
+  expect(onIn.aws.reservations.map((r) => r.id)).toEqual(["A", "B"]);
+  expect(onIn.aws.reservations[0].scale).toMatchObject({ state: "up" });
+  expect(on.calls().map((c) => c[0])).toEqual(["sts"]);
+  expect(validate("infra-health-input", onIn)).toEqual({ ok: true });
 });

@@ -10,6 +10,7 @@ import { recordBackfillEvent, recordEvent } from "../src/events/store.ts";
 import { recordChecks } from "../src/events/ci.ts";
 import { validate } from "../src/schema/validate.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
+import { appendQuestionLog } from "../src/state/questions.ts";
 
 async function fresh() {
   const p = statePaths(mkdtempSync(join(tmpdir(), "events-")));
@@ -323,5 +324,59 @@ describe("ci.check (AC-2)", () => {
     const db = openIndex(p);
     expect(db.prepare("SELECT json_extract(payload, '$.sha') AS sha, json_extract(payload, '$.status') AS status FROM events WHERE kind = 'ci.check' ORDER BY rowid").all().map((r) => `${String(r.sha).slice(0, 1)}:${r.status}`)).toEqual(["a:success", "b:success", "a:failure"]);
     db.close();
+  });
+});
+
+describe("a request's send and answer events (spec 068 AC-3)", () => {
+  const contacts = async (p: ReturnType<typeof statePaths>) => {
+    const db = openIndex(p, { readOnly: true });
+    const rows = db.prepare("SELECT payload FROM events WHERE kind = 'maintainer.contact' ORDER BY at, rowid").all() as { payload: string }[];
+    db.close();
+    return rows.map((r) => JSON.parse(r.payload));
+  };
+  const request = { type: "credential" as const, name: "aws-sso", provider: "aws", access: ["sts:GetCallerIdentity"], setup: ["1. log in"] };
+  const sent = { issue: 5, at: "2026-11-05T00:00:00.000Z", event: "sent" as const, asking_stage: "plan" as const, question_comment_id: 8 };
+
+  it("records the send as one contact whose kind is the request type, with the request and the question text", async () => {
+    const p = await fresh();
+    await appendQuestionLog(p, { ...sent, request }, "May we have it?");
+    expect(await contacts(p)).toEqual([{ channel: "issue", kind: "credential", issue: 5, question_comment_id: 8, label: "request", text: "May we have it?", request }]);
+    await appendQuestionLog(p, { ...sent, event: "reminded", at: "2026-11-06T00:00:00.000Z", request }, "Reminder");
+    expect((await contacts(p)).at(-1)).toMatchObject({ kind: "reminder", label: "plan" });
+  });
+
+  it("records a send without a request as before", async () => {
+    const p = await fresh();
+    await appendQuestionLog(p, sent, "Q?");
+    expect(await contacts(p)).toEqual([{ channel: "issue", kind: "question", issue: 5, question_comment_id: 8, label: "plan", text: "Q?" }]);
+  });
+
+  it.each([
+    ["verified", "done (verified)", "telegram"],
+    ["check_failed", "done (check failed: no)", "telegram"],
+    ["denied", "denied", "telegram"],
+    ["approved", "approved", "issue"],
+    ["declined", "declined", "telegram"],
+    ["text", "done (not checked: wrapper not built)", "issue"],
+    ["text", "done (unverified: x is not in the catalogue)", "issue"],
+  ] as const)("records an answer with outcome %s as one contact with the request", async (outcome, answer, channel) => {
+    const p = await fresh();
+    await appendQuestionLog(p, { ...sent, event: "answered", at: "2026-11-06T00:00:00.000Z", channel, request, answer, outcome });
+    expect(await contacts(p)).toEqual([{ channel, kind: "credential", issue: 5, question_comment_id: 8, label: "answer", text: answer, request, outcome }]);
+  });
+
+  it("records no contact for an answered entry without a request", async () => {
+    const p = await fresh();
+    await appendQuestionLog(p, { ...sent, event: "answered", answer: "yes" });
+    expect(await contacts(p)).toEqual([]);
+  });
+
+  it("types the payload's request and outcome in the schema", async () => {
+    const p = await fresh();
+    const payload = { channel: "log", kind: "funds", label: "x", text: "t" };
+    await expect(recordEvent(p, ev({ kind: "maintainer.contact", payload: { ...payload, request: { amount_usd: 1 } } }))).rejects.toThrow(/invalid maintainer.contact event/);
+    await expect(recordEvent(p, ev({ kind: "maintainer.contact", payload: { ...payload, outcome: "maybe" } }))).rejects.toThrow(/invalid maintainer.contact event/);
+    await recordEvent(p, ev({ kind: "maintainer.contact", payload: { ...payload, request: { type: "funds", amount_usd: 1 }, outcome: "approved" } }));
+    await expect(recordEvent(p, ev({ kind: "aws.reserve", payload: { id: "i", what: "w", expected_monthly_usd: 1, why: "y", by: "b", outcome: "scaled", direction: "down" } }))).resolves.toBeDefined();
   });
 });

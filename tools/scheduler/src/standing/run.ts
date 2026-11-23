@@ -32,8 +32,9 @@ import {openIndex} from '../events/index.ts';
 import {buildReflectionInput,periodStart} from '../reflection/input.ts';
 import {applyReflectionResult,type ReflectionResult} from '../reflection/apply.ts';
 import type {MetricDefinition} from '../metrics/definitions.ts';
+import type {AwsContext} from '../aws/context.ts';
 const exec=promisify(execFile);
-export interface StandingDeps extends DriverDeps {parameters:ParameterStore;botLogin:string;metrics?:Record<string,MetricDefinition>;registry?:Record<string,StandingDefinition>}
+export interface StandingDeps extends DriverDeps {aws?:AwsContext;parameters:ParameterStore;botLogin:string;metrics?:Record<string,MetricDefinition>;registry?:Record<string,StandingDefinition>}
 /** The end of the agent's latest successful run: its state record, else its latest `ok` agent.run event (a failed pair of attempts leaves `last_run` failed). */
 function lastSuccess(d:StandingDeps,def:StandingDefinition,state:AgentState):string|null {
  if(state.last_run?.outcome==='ok')return state.last_run.at;
@@ -86,7 +87,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
    await exec('git',['worktree','add','--detach',worktree,'origin/main'],{cwd:d.repoDir});created=true;
   }
   const reflectionInput=reflective?await buildReflectionInput({paths:d.paths,gh:d.gh,botLogin:d.botLogin,parameters:d.parameters,metrics:d.metrics??{},agentsDir:d.agentsDir,reflectionAgents:Object.values(d.registry??{[def.name]:def}).filter(x=>x.output==='reflection-result').map(x=>x.name),now:d.now},def,runId,new Date(reflection!.period_from),worktree):null;
-  const input=reflectionInput??(def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now,d.log):def.input==='credential-check-input'&&d.checkContext&&d.catalogue?await buildCredentialCheckInput({paths:d.paths,catalogue:d.catalogue,probe:d.checkContext,warnDays:d.cfg.credentials.warn_days,scope:d.scope??(async()=>({status:'failed' as const,reason:'no scope check wired'})),now},received,state.last_run?.at??null):def.input==='infra-health-input'?await buildInfraHealthInput({paths:d.paths,freeSpace:d.freeSpace,log:d.log},received,state.last_run?.at??null,now):null);
+  const input=reflectionInput??(def.output==='filer-result'?await buildFilerInput(filer):def.input==='audit-input'?await buildAuditInput(d.paths,state.last_run?.at??null,now,d.log):def.input==='credential-check-input'&&d.checkContext&&d.catalogue?await buildCredentialCheckInput({paths:d.paths,catalogue:d.catalogue,probe:d.checkContext,warnDays:d.cfg.credentials.warn_days,scope:d.scope??(async()=>({status:'failed' as const,reason:'no scope check wired'})),now},received,state.last_run?.at??null):def.input==='infra-health-input'?await buildInfraHealthInput({paths:d.paths,freeSpace:d.freeSpace,log:d.log,aws:d.aws},received,state.last_run?.at??null,now):null);
   if(def.input==='credential-check-input'&&(input as {scope?:{status:string;reason?:string}}|null)?.scope?.status==='failed')await d.notifier.notify({issue:0,gate:'infra',label:'contact-scope',text:`${(input as {scope:{reason:string}}).scope.reason}; ${SCOPE_FIX}`}).catch(()=>{});
   const parameters=await d.parameters.all();
   const inputCheck=validateSchema(def.input,input??{events:received,since:state.last_run?.at??null,parameters});
@@ -140,19 +141,33 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
     lines.push(`${action.kind} ${JSON.stringify(action.args)}: ${row.status}${row.reason?` (${row.reason})`:''}`);
    }
    for(const f of renewFailures)await notifyCredential(f.name,null,d.catalogue?.[f.name]?.setup??[],`renewal failed: ${f.reason}`);
-   for(const w of (body as {warnings?:{name:string;expires_at:string|null;steps:string[]}[]}).warnings??[])await notifyCredential(w.name,w.expires_at,d.catalogue?.[w.name]?.setup??w.steps,'needs renewal by hand');
+   const setNow=(await d.checkContext?.store.readIndex().catch(()=>({} as Record<string,never>)))??{};
+   // Spec 068 AC-2: a credential that is already set up is renewed by the entry's renew_steps; one that is not, by its setup.
+   for(const w of (body as {warnings?:{name:string;expires_at:string|null;steps:string[]}[]}).warnings??[]){
+    const e=d.catalogue?.[w.name];const idx=(setNow as Record<string,{expires_at:string|null;last_check:string|null;renewable?:boolean;heads_up_for?:string}|undefined>)[w.name];
+    const steps=(e?.renew_steps&&idx?e.renew_steps:e?.setup)??w.steps;
+    const passed=!(typeof idx?.last_check==='string'&&idx.last_check.startsWith('failed'));
+    if(idx?.renewable===true&&passed&&idx.expires_at){
+     // a renewable session is one heads-up per distinct expires_at; the skip is the scheduler's, whatever the agent listed
+     if(idx.heads_up_for===idx.expires_at)continue;
+     await notifyCredential(w.name,idx.expires_at,steps,`the CLI's login registration ends ${idx.expires_at}; no action is needed before then, the CLI renews the access token by itself; log in again on or after that date, or when a check fails`,idx.expires_at);
+     continue;
+    }
+    await notifyCredential(w.name,w.expires_at,steps,'needs renewal by hand');
+   }
    return lines;
   };
   // Spec 099 AC-12, AC-13: one `credential-expiry` notification per credential per day (tracked in expiry-state.json under `notified`).
-  const notifyCredential=async(name:string,expires_at:string|null,steps:string[],why:string)=>{
+  const notifyCredential=async(name:string,expires_at:string|null,steps:string[],why:string,headsUpFor?:string)=>{
    const raw=await readJsonFile<Record<string,unknown>>(d.paths.credentialsExpiryState,{});
    const notified=(raw.notified&&typeof raw.notified==='object'?raw.notified:{}) as Record<string,string>;
    const last=notified[name]?Date.parse(notified[name]!):NaN;
    if(!Number.isNaN(last)&&d.now().getTime()-last<86400000)return;
-   await d.notifier.notify({issue:0,gate:'credential-expiry',label:name,text:`${name}: ${why}${expires_at?` (expires ${expires_at})`:''}\n${steps.map((x,i)=>`${i+1}. ${x}`).join('\n')}`});
+   if(headsUpFor)await d.checkContext?.store.writeHeadsUp(name,headsUpFor);
+   await d.notifier.notify({issue:0,gate:'credential-expiry',label:name,text:`${name}: ${why}${expires_at&&!headsUpFor?` (expires ${expires_at})`:''}\n${steps.map((x,i)=>`${i+1}. ${x}`).join('\n')}`});
    await writeJsonAtomic(d.paths.credentialsExpiryState,{...raw,notified:{...notified,[name]:d.now().toISOString()}});
   };
-  const ctx={paths:d.paths,parameters:d.parameters,log:new ActionLog(d.paths.actionsLog,d.paths),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now,repoDir:d.repoDir,serviceLog:d.log,
+  const ctx={paths:d.paths,parameters:d.parameters,aws:d.aws,log:new ActionLog(d.paths.actionsLog,d.paths),levels:loadActionLevels(join(d.agentsDir,'actions.yaml')),gh:d.gh,now:d.now,repoDir:d.repoDir,serviceLog:d.log,
    ...(d.catalogue&&d.checkContext?{credentials:{store:d.checkContext.store,catalogue:d.catalogue,probe:d.checkContext,configPaths:{'github-app-key':d.cfg.app.private_key_path,'telegram-bot':d.cfg.telegram?.credentials_path??''},
     shim:{configPath:d.configPath??'',binDir:d.binDir,cataloguePath:d.cataloguePath,runDir:join(d.paths.runs,result.runId,'renew')},
     onRenewFailure:(name:string,reason:string)=>{renewFailures.push({name,reason});}}}:{})};

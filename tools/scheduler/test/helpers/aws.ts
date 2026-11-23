@@ -23,7 +23,7 @@ export interface AwsWorld {
   calls: () => string[][];
   setIdentity: (account: string) => void;
   setCost: (amount: number) => void;
-  fail: (what: "sts" | "ce", on: boolean) => void;
+  fail: (what: "sts" | "ce" | "lambda" | "cloudfront" | "dynamodb", on: boolean) => void;
   events: (kind: string) => Record<string, any>[];
   cleanup: () => void;
 }

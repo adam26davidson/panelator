@@ -1,14 +1,21 @@
+import { rateLimited } from "../src/notify/rate-limit.ts";
+import type { Notification } from "../src/notify/types.ts";
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 import { awsCheck, awsPull, awsStatus } from "../src/aws/check.ts";
+import { ssoExpiry } from "../src/aws/sso.ts";
 import { redact } from "../src/aws/cli.ts";
 import { awsTick, pull } from "../src/aws/cost.ts";
 import { forecastUsd } from "../src/aws/book.ts";
 import { checkIdentity } from "../src/aws/identity.ts";
 import { releaseSpend, reserveSpend } from "../src/aws/ledger.ts";
+import { writeLedger } from "../src/aws/book.ts";
+import { applyAction, loadActionLevels, type ActionContext } from "../src/actions/index.ts";
+import { awsScaleKind } from "../src/actions/aws-scale.ts";
 import { validate } from "../src/schema/validate.ts";
 import { ACCOUNT, awsWorld } from "./helpers/aws.ts";
 
@@ -298,6 +305,31 @@ describe("the forecast alarm (spec 022 AC-9, AC-11)", () => {
     expect(await reserveSpend(w.ctx, ask("one more small thing for the console", 1))).toMatchObject({ ok: true });
   });
 
+  it("re-arms the aws-forecast notice on a change of state, so a recovery inside the window is delivered (spec 068 AC-7)", async () => {
+    const { w, id } = await overCap();
+    const sent: Notification[] = [];
+    const limited = rateLimited({ notify: async (n) => { sent.push(n); return { channel: "log" as const }; } }, { hours: 4, repeatHours: 24, path: join(w.dir, "sent.json") }, () => w.ctx.now());
+    w.ctx.notifier = limited;
+    await awsTick(w.ctx);
+    expect(sent.map((n) => n.label)).toEqual(["aws-forecast"]);
+    advance(w, HOUR);
+    await releaseSpend(w.ctx, id);
+    expect(sent.map((n) => n.label)).toEqual(["aws-forecast", "aws-forecast"]);
+    expect(sent[1]!.text).toContain("back under the cap");
+    await awsTick(w.ctx);
+    expect(sent).toHaveLength(2);
+  });
+
+  it("sends the notice even when the clear throws, and writes it to the service log", async () => {
+    const { w, id } = await overCap();
+    const sent: Notification[] = [];
+    w.ctx.notifier = { notify: async (n) => { sent.push(n); return { channel: "log" as const }; }, clear: async () => { throw new Error("clear broke"); } };
+    await awsTick(w.ctx);
+    await releaseSpend(w.ctx, id);
+    expect(sent).toHaveLength(2);
+    expect(w.logs.some((l) => l.kind === "aws-forecast-clear-failed" && l.error === "clear broke")).toBe(true);
+  });
+
   it("allows what was refused after the cap is raised, with no pull", async () => {
     const { w } = await overCap();
     await awsTick(w.ctx);
@@ -347,7 +379,7 @@ describe("the commands (spec 022 AC-3, AC-10; spec 050 AC-6 to AC-8)", () => {
   it("aws-check prints identity, cost, cap and the SSO expiry, and exits 0 only when both calls succeed", async () => {
     const w = await awsWorld();
     w.setCost(12.5);
-    const out = await awsCheck(w.ctx, home(sso, "2027-01-01T00:00:00Z"));
+    const out = await awsCheck(w.ctx, { HOME: home(sso, "2027-01-01T00:00:00Z") });
     expect(out.exitCode).toBe(0);
     const text = out.lines.join("\n");
     expect(text).toContain(`(account ${ACCOUNT})`);
@@ -357,16 +389,16 @@ describe("the commands (spec 022 AC-3, AC-10; spec 050 AC-6 to AC-8)", () => {
     expect(text).toContain("sso session expires: 2027-01-01T00:00:00Z");
     expect(text).not.toContain("SSOSECRET");
     w.fail("ce", true);
-    expect((await awsCheck(w.ctx, home("[profile panelator-delivery]\nregion = us-east-2\n"))).exitCode).toBe(1);
-    expect((await awsCheck(w.ctx, home("[profile panelator-delivery]\nregion = us-east-2\n"))).lines.join("\n")).toContain("not SSO");
+    expect((await awsCheck(w.ctx, { HOME: home("[profile panelator-delivery]\nregion = us-east-2\n") })).exitCode).toBe(1);
+    expect((await awsCheck(w.ctx, { HOME: home("[profile panelator-delivery]\nregion = us-east-2\n") })).lines.join("\n")).toContain("not SSO");
   });
 
   it("aws-check exits 1 for another account, and at cap 0 skips the cost call and exits 0 on a match", async () => {
     const w = await awsWorld();
     w.setIdentity("999999999999");
-    expect((await awsCheck(w.ctx, home(sso))).exitCode).toBe(1);
+    expect((await awsCheck(w.ctx, { HOME: home(sso) })).exitCode).toBe(1);
     const z = await awsWorld({ cap: 0 });
-    const out = await awsCheck(z.ctx, home(sso));
+    const out = await awsCheck(z.ctx, { HOME: home(sso) });
     expect(out.exitCode).toBe(0);
     expect(out.lines).toContain("cost call skipped: aws_cap_usd is 0; panelator-scheduler aws pull makes one (about one cent)");
     expect(ceCalls(z)).toEqual([]);
@@ -403,6 +435,216 @@ describe("what the AWS code may and may not do (spec 022 AC-1, AC-6, AC-11; spec
 
   it("never sets a parameter and adds no action kind", () => {
     for (const f of all.filter((f) => relative(srcDir, f).startsWith("aws/"))) expect(readFileSync(f, "utf8"), f).not.toMatch(/setParameter|setParameterMode/);
-    expect(readFileSync(join(srcDir, "..", "..", "..", "agents", "actions.yaml"), "utf8")).not.toMatch(/aws/i);
+    // Spec 068 AC-7 adds the one kind that reads the ledger; nothing else under agents/actions.yaml is for AWS.
+    const kinds = Object.keys(parse(readFileSync(join(srcDir, "..", "..", "..", "agents", "actions.yaml"), "utf8")) as object);
+    expect(kinds.filter((k) => /aws/i.test(k))).toEqual(["aws_scale"]);
+  });
+});
+
+describe("ssoExpiry (spec 068 AC-2)", () => {
+  const FIX = join(import.meta.dirname, "fixtures", "aws-home");
+  const env = { HOME: FIX };
+  it("reads expiresAt for an sso_session profile and for a legacy start URL, and says none for a plain profile", () => {
+    expect(ssoExpiry("panelator-delivery", env)).toEqual({ expires_at: "2027-01-01T00:00:00Z", renewable: false });
+    expect(ssoExpiry("legacy", env)).toEqual({ expires_at: "2027-02-01T00:00:00Z", renewable: false });
+    expect(ssoExpiry("plain", env)).toEqual({ none: true });
+  });
+  it("errors for a missing profile, config file, cache file or expiresAt", () => {
+    expect(ssoExpiry("nope", env)).toEqual({ error: `no profile nope in ${join(FIX, ".aws", "config")}` });
+    expect(ssoExpiry("x", { HOME: join(FIX, "absent") })).toMatchObject({ error: expect.stringContaining("no profile x in") });
+    const dir = join(tmpdir(), `sso-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    const cfg = join(dir, "config");
+    writeFileSync(cfg, "[profile p]\nsso_session = s\n");
+    const e = { AWS_CONFIG_FILE: cfg, AWS_SSO_CACHE_DIR: dir };
+    expect(ssoExpiry("p", e)).toEqual({ error: "no cached SSO token found (run aws sso login)" });
+    const file = join(dir, `${createHash("sha1").update("s").digest("hex")}.json`);
+    writeFileSync(file, "not json");
+    expect(ssoExpiry("p", e)).toEqual({ error: "no cached SSO token found (run aws sso login)" });
+    writeFileSync(file, JSON.stringify({ accessToken: "SSOSECRET" }));
+    expect(ssoExpiry("p", e)).toEqual({ error: "no expiresAt in the cached token" });
+    writeFileSync(file, JSON.stringify({ expiresAt: "garbage" }));
+    expect(ssoExpiry("p", e)).toEqual({ error: "no expiresAt in the cached token" });
+    writeFileSync(file, JSON.stringify({ expiresAt: "2030-05-05T00:00:00Z", accessToken: "SSOSECRET" }));
+    expect(ssoExpiry("p", e)).toEqual({ expires_at: "2030-05-05T00:00:00Z", renewable: false });
+  });
+  it("a renewable session (sso_session, refreshToken, registrationExpiresAt) says the registration's end, whatever expiresAt is", () => {
+    const dir = join(tmpdir(), `sso-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    const cfg = join(dir, "config");
+    writeFileSync(cfg, "[profile p]\nsso_session = s\n[profile q]\nsso_start_url = https://x/start\n");
+    const e = { AWS_CONFIG_FILE: cfg, AWS_SSO_CACHE_DIR: dir };
+    const file = join(dir, `${createHash("sha1").update("s").digest("hex")}.json`);
+    const reg = new Date(Date.now() + 60 * 86400000).toISOString();
+    writeFileSync(file, JSON.stringify({ accessToken: "SSOSECRET", refreshToken: "SSOSECRET-R", clientSecret: "SSOSECRET-C", expiresAt: new Date(Date.now() - 3600000).toISOString(), registrationExpiresAt: reg }));
+    expect(ssoExpiry("p", e)).toEqual({ expires_at: reg, renewable: true });
+    writeFileSync(file, JSON.stringify({ refreshToken: "x", registrationExpiresAt: reg }));
+    expect(ssoExpiry("p", e)).toEqual({ expires_at: reg, renewable: true });
+    writeFileSync(file, JSON.stringify({ expiresAt: "2030-05-05T00:00:00Z", registrationExpiresAt: reg }));
+    expect(ssoExpiry("p", e)).toEqual({ expires_at: "2030-05-05T00:00:00Z", renewable: false });
+    writeFileSync(file, JSON.stringify({ expiresAt: "2030-05-05T00:00:00Z", refreshToken: "x", registrationExpiresAt: "garbage" }));
+    expect(ssoExpiry("p", e)).toEqual({ expires_at: "2030-05-05T00:00:00Z", renewable: false });
+    expect(JSON.stringify(ssoExpiry("p", e))).not.toContain("SSOSECRET");
+  });
+  it("never returns or prints the token", () => {
+    for (const p of ["panelator-delivery", "legacy", "plain", "nope"]) expect(JSON.stringify(ssoExpiry(p, env))).not.toContain("SSOSECRET");
+  });
+});
+
+const lambda = (up: number, down: number, id = "panelator-console-api", conc = [100, 0]) => ({
+  kind: "lambda-concurrency" as const, id,
+  up: { expected_monthly_usd: up, setting: { reserved_concurrency: conc[0] } },
+  down: { expected_monthly_usd: down, setting: { reserved_concurrency: conc[1] } },
+});
+
+describe("the scale descriptor (spec 068 AC-6)", () => {
+  const withScale = (scale: unknown, usd = 6) => ({ ...ask("console api functions for the console", usd), scale } as any);
+  it("is written with state up for each kind, and a reservation without one is unchanged", async () => {
+    const w = await awsWorld();
+    const cf = { kind: "cloudfront-distribution", id: "E123", up: { expected_monthly_usd: 3, setting: { enabled: true } }, down: { expected_monthly_usd: 1, setting: { enabled: false } } };
+    const ddb = { kind: "dynamodb-throughput", id: "panelator-table", up: { expected_monthly_usd: 4, setting: { billing_mode: "PROVISIONED", read_capacity_units: 5, write_capacity_units: 5 } }, down: { expected_monthly_usd: 1, setting: { billing_mode: "PAY_PER_REQUEST" } } };
+    expect(await reserveSpend(w.ctx, withScale(lambda(6, 1)))).toMatchObject({ ok: true });
+    expect(await reserveSpend(w.ctx, { ...withScale(cf, 3), what: "the console distribution for the console" })).toMatchObject({ ok: true });
+    expect(await reserveSpend(w.ctx, { ...withScale(ddb, 4), what: "the console table for the console data" })).toMatchObject({ ok: true });
+    expect(await reserveSpend(w.ctx, ask("a plain thing for the console", 2))).toMatchObject({ ok: true });
+    const ledger = JSON.parse(readFileSync(w.ctx.paths.awsLedger, "utf8"));
+    expect(validate("aws-ledger", ledger).ok).toBe(true);
+    expect(ledger.reservations.map((r: any) => r.scale?.state)).toEqual(["up", "up", "up", undefined]);
+    expect("scale" in ledger.reservations[3]).toBe(false);
+  });
+  it.each([
+    ["an unknown kind", { ...lambda(6, 1), kind: "ec2" }, /scale.kind/],
+    ["an empty id", lambda(6, 1, ""), /scale.id/],
+    ["a negative concurrency", lambda(6, 1, "f", [100, -1]), /reserved_concurrency/],
+    ["a fractional concurrency", lambda(6, 1, "f", [1.5, 0]), /reserved_concurrency/],
+    ["down not below up", lambda(6, 6), /below/],
+    ["up different from the reservation's own cost", lambda(7, 1), /must equal/],
+    ["a setting of another kind", { ...lambda(6, 1), down: { expected_monthly_usd: 1, setting: { enabled: false } } }, /setting/],
+  ])("refuses %s before anything is written", async (_n, scale, re) => {
+    const w = await awsWorld();
+    const r = await reserveSpend(w.ctx, withScale(scale));
+    expect(r).toMatchObject({ ok: false, reason: expect.stringMatching(re) });
+    expect(() => readFileSync(w.ctx.paths.awsLedger)).toThrow();
+    expect(w.notes).toEqual([]);
+  });
+  it("shows scale.kind and scale.state in the open reservations of aws", async () => {
+    const w = await awsWorld();
+    await reserveSpend(w.ctx, withScale(lambda(6, 1)));
+    const out = await awsStatus(w.ctx, false);
+    expect(out.lines.join("\n")).toContain("[scale lambda-concurrency: up]");
+  });
+});
+
+describe("aws_scale (spec 068 AC-7)", () => {
+  /** The fixture of AC-10: A (6 USD up, 1 down) and B (8 USD, no descriptor), cap 10, the 15th of a 30-day month, actual 4 USD. */
+  async function fixture(cap = 10) {
+    const w = await awsWorld({ start: "2026-11-15T12:00:00Z", cap });
+    const base = { why: "charter: a console the maintainer can reach", by: "spec-e", at: "2026-11-01T00:00:00Z", released_at: null };
+    await writeLedger(w.ctx.paths, { reservations: [
+      { id: "A", what: "the console api functions", expected_monthly_usd: 6, ...base, scale: { ...lambda(6, 1), state: "up" } },
+      { id: "B", what: "the console storage and so on", expected_monthly_usd: 8, ...base },
+    ] });
+    w.setCost(4);
+    await awsTick(w.ctx);
+    const ctx = { aws: w.ctx } as unknown as ActionContext;
+    const check = (reservation_id: string, direction: string) => awsScaleKind.check({ reservation_id, direction }, ctx);
+    const apply = (reservation_id: string, direction: string) => awsScaleKind.apply({ reservation_id, direction }, ctx);
+    const cost = () => JSON.parse(readFileSync(w.ctx.paths.awsCost, "utf8"));
+    const ledger = () => JSON.parse(readFileSync(w.ctx.paths.awsLedger, "utf8")).reservations;
+    return { w, check, apply, cost, ledger };
+  }
+  it("starts from forecast 11 over a cap of 10, and the alarm names it", async () => {
+    const { w, cost } = await fixture();
+    expect(cost()).toMatchObject({ reserved_usd: 14, forecast_usd: forecastUsd(4, 14, 15, 30) });
+    expect(cost().forecast_usd).toBe(11);
+    expect(w.alarms).toMatchObject([{ kind: "aws_forecast_over_cap", forecast_usd: 11, cap_usd: 10 }]);
+  });
+  it("scales down through put-function-concurrency, recomputes by the formula, recovers, and returns the opposite undo", async () => {
+    const { w, check, apply, cost, ledger } = await fixture();
+    expect(await check("A", "down")).toBeNull();
+    const out = await apply("A", "down");
+    expect(out.undo).toEqual({ kind: "aws_scale", args: { reservation_id: "A", direction: "up" } });
+    expect(w.calls().filter((c) => c[0] === "lambda")).toEqual([["lambda", "put-function-concurrency", "--function-name", "panelator-console-api", "--reserved-concurrent-executions", "0", "--profile", "panelator-delivery", "--region", "us-east-2", "--output", "json"]]);
+    expect(ledger()[0]).toMatchObject({ expected_monthly_usd: 1, scale: { state: "down" } });
+    expect(cost()).toMatchObject({ reserved_usd: 9, forecast_usd: forecastUsd(4, 9, 15, 30) });
+    expect(cost().forecast_usd).toBeLessThanOrEqual(10);
+    expect(labels(w)).toEqual(["aws-forecast", "aws-forecast"]);
+    expect(w.notes.at(-1)!.text).toContain("back under the cap");
+    expect(w.events("aws.reserve")).toMatchObject([{ payload: { id: "A", expected_monthly_usd: 1, outcome: "scaled", direction: "down", by: "spec-e" } }]);
+    expect(await check("A", "down")).toBe("already down");
+  });
+  it("scales back up when the cap allows, and refuses up while it would put the forecast over the cap", async () => {
+    const { w, check, apply, cost, ledger } = await fixture();
+    await apply("A", "down");
+    expect(await check("A", "up")).toBe("scaling up would put the forecast over the cap");
+    w.cap.value = 20;
+    expect(await check("A", "up")).toBeNull();
+    await apply("A", "up");
+    expect(ledger()[0]).toMatchObject({ expected_monthly_usd: 6, scale: { state: "up" } });
+    expect(cost().forecast_usd).toBe(forecastUsd(4, 14, 15, 30));
+    expect(w.calls().filter((c) => c[0] === "lambda").map((c) => c[5])).toEqual(["0", "100"]);
+    expect(await check("A", "up")).toBe("already up");
+  });
+  it("refuses an unknown or released reservation, one without a descriptor, a bad direction, bad args and aws off", async () => {
+    const { w, check } = await fixture();
+    expect(await check("nope", "down")).toContain("not in the ledger");
+    expect(await check("B", "down")).toContain("no scale descriptor");
+    expect(await check("A", "sideways")).toContain("direction");
+    await expect(awsScaleKind.check({ reservation_id: "A" }, { aws: w.ctx } as never)).rejects.toThrow(/args must contain/);
+    expect(await awsScaleKind.check({ reservation_id: "A", direction: "down" }, {} as never)).toBe("aws: off");
+    expect(await awsScaleKind.check({ reservation_id: "A", direction: "down" }, { aws: { ...w.ctx, config: undefined } } as never)).toBe("aws: off");
+    await releaseSpend(w.ctx, "A");
+    expect(await check("A", "down")).toContain("is released");
+    w.setIdentity("999999999999");
+    w.ctx.state.identityAt = null;
+    expect(await check("B", "down")).toContain("no scale descriptor");
+    const f = await fixture();
+    f.w.setIdentity("999999999999");
+    f.w.ctx.state.identityAt = null;
+    expect(await f.check("A", "down")).toMatch(/^aws: off: profile panelator-delivery is in account 999999999999/);
+  });
+  it("leaves the ledger and the forecast unchanged when the call fails", async () => {
+    const { w, apply, ledger, cost } = await fixture();
+    const before = [JSON.stringify(ledger()), JSON.stringify(cost())];
+    w.fail("lambda", true);
+    await expect(apply("A", "down")).rejects.toThrow(/aws lambda put-function-concurrency failed/);
+    expect([JSON.stringify(ledger()), JSON.stringify(cost())]).toEqual(before);
+    expect(w.events("aws.reserve")).toEqual([]);
+  });
+  it("round-trips the CloudFront ETag and sets Enabled, and calls dynamodb update-table with the throughput", async () => {
+    const w = await awsWorld({ start: "2026-11-15T12:00:00Z", cap: 100 });
+    const base = { why: "charter: a console the maintainer can reach", by: "spec-e", at: "2026-11-01T00:00:00Z", released_at: null };
+    await writeLedger(w.ctx.paths, { reservations: [
+      { id: "C", what: "the console distribution", expected_monthly_usd: 3, ...base, scale: { kind: "cloudfront-distribution", id: "E123", up: { expected_monthly_usd: 3, setting: { enabled: true } }, down: { expected_monthly_usd: 1, setting: { enabled: false } }, state: "up" } },
+      { id: "D", what: "the console table", expected_monthly_usd: 1, ...base, scale: { kind: "dynamodb-throughput", id: "panelator-table", up: { expected_monthly_usd: 4, setting: { billing_mode: "PROVISIONED", read_capacity_units: 5, write_capacity_units: 7 } }, down: { expected_monthly_usd: 1, setting: { billing_mode: "PAY_PER_REQUEST" } }, state: "down" } },
+    ] });
+    const ctx = { aws: w.ctx } as unknown as ActionContext;
+    await awsScaleKind.apply({ reservation_id: "C", direction: "down" }, ctx);
+    const cf = w.calls().filter((c) => c[0] === "cloudfront");
+    expect(cf[0].slice(0, 4)).toEqual(["cloudfront", "get-distribution-config", "--id", "E123"]);
+    expect(cf[1].slice(0, 6)).toEqual(["cloudfront", "update-distribution", "--id", "E123", "--if-match", "ETAG-1"]);
+    expect(JSON.parse(cf[1][7])).toEqual({ CallerReference: "r", Enabled: false });
+    await awsScaleKind.apply({ reservation_id: "D", direction: "up" }, ctx);
+    expect(w.calls().find((c) => c[0] === "dynamodb")!.slice(0, 7)).toEqual(["dynamodb", "update-table", "--table-name", "panelator-table", "--billing-mode", "PROVISIONED", "--provisioned-throughput"]);
+    expect(w.calls().find((c) => c[0] === "dynamodb")![7]).toBe("ReadCapacityUnits=5,WriteCapacityUnits=7");
+  });
+  it("is reached through applyAction only for an allowed agent, and its undo goes back", async () => {
+    const { w, ledger } = await fixture();
+    const { ActionLog } = await import("../src/actions/log.ts");
+    const { ParameterStore } = await import("../src/parameters/store.ts");
+    const { loadParameterDefinitions } = await import("../src/parameters/definitions.ts");
+    const { agentsDir } = await import("../src/config.ts");
+    const log = new ActionLog(w.ctx.paths.actionsLog, w.ctx.paths);
+    const ctx = { paths: w.ctx.paths, parameters: new ParameterStore(w.ctx.paths, loadParameterDefinitions(join(agentsDir, "parameters.yaml"), { slots: 1 } as never, {})), log, levels: loadActionLevels(join(agentsDir, "actions.yaml")), now: () => w.clock.now, gh: { rerunWorkflowRun: async () => {}, cancelWorkflowRun: async () => {} }, aws: w.ctx } as ActionContext;
+    const req = { agent: "infra-health", run_id: "r", kind: "aws_scale", args: { reservation_id: "A", direction: "down" }, why: "forecast 11 USD against a cap of 10 USD; saving 5 USD" };
+    expect((await applyAction(ctx, req, ["pause_agent"])).reason).toBe("action not allowed");
+    const row = await applyAction(ctx, req, ["aws_scale", "undo"]);
+    expect(row).toMatchObject({ status: "applied", undo: { kind: "aws_scale", args: { reservation_id: "A", direction: "up" } } });
+    expect(ledger()[0].scale.state).toBe("down");
+    w.cap.value = 20;
+    const undone = await applyAction(ctx, { ...req, kind: "undo", args: { action_id: row.id } }, ["undo"]);
+    expect(undone.status).toBe("applied");
+    expect(ledger()[0].scale.state).toBe("up");
+    expect((await applyAction(ctx, { ...req, args: { reservation_id: "A", direction: "up" } }, ["aws_scale"])).reason).toBe("already up");
   });
 });
