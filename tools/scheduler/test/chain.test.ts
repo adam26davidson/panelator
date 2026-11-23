@@ -1548,7 +1548,7 @@ describe("chain: every event in every stage (AC-27)", () => {
       expect(normalizeChainState({ ...base, heldWork: held }).heldWork).toEqual(held);
     });
     it("a claim's nested conversation state without closedWork normalizes to [] (spec 113 AC-6)", () => {
-      const { closedWork: _c, ...next } = initialChainState(1) as Record<string, unknown>;
+      const { closedWork: _c, ...next } = initialChainState(1) as unknown as Record<string, unknown>;
       const conversation = { next, decision: null };
       const n = normalizeChainState({ ...initialChainState(1), closedWork: undefined, conversation });
       expect(n.closedWork).toEqual([]);
