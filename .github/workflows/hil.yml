@@ -1,0 +1,93 @@
+# The firmware's own verification on the board (spec 106, spec 070 section 8). The check run it posts is `hil`.
+name: hil
+on:
+  pull_request:
+    paths: ["firmware/**", "tools/hil/**", ".github/workflows/hil.yml"]
+  push:
+    branches: [main]
+    paths: ["firmware/**", "tools/hil/**", ".github/workflows/hil.yml"]
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      soak:
+        description: "Read the board without flashing (false: a flashing run of the dispatched ref)"
+        type: boolean
+        default: false
+# One run per pull request (or per commit): only a superseded head of the same PR loses its queued run. One run at a
+# time on the board is kept by the single runner labelled panelator-hil and the harness's lock (spec 106 section 4).
+concurrency:
+  group: hil-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: false
+jobs:
+  build:
+    if: ${{ github.event_name != 'schedule' && !(github.event_name == 'workflow_dispatch' && inputs.soak) }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      PANELATOR_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - run: firmware/scripts/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            firmware/build/flasher_args.json
+            firmware/build/panelator.bin
+            firmware/build/bootloader/bootloader.bin
+            firmware/build/partition_table/partition-table.bin
+          if-no-files-found: error
+  board:
+    needs: build
+    # Nothing from a fork runs on the laptop. always(): a failed build still gets its check completed.
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: [self-hosted, panelator-hil]
+    timeout-minutes: 20
+    permissions:
+      checks: write
+      contents: read
+      actions: read
+    env:
+      SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      GITHUB_TOKEN: ${{ github.token }}
+      BUILD_RESULT: ${{ needs.build.result }}
+      SOAK: ${{ inputs.soak }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 26 }
+      # The harness's own dependencies only: a whole-workspace install would download Chromium onto the laptop.
+      - run: pnpm install --frozen-lockfile --filter @panelator/hil
+      - name: Start the check run
+        run: node tools/hil/src/cli.ts start --sha "$SHA"
+      - uses: actions/download-artifact@v4
+        if: ${{ needs.build.result == 'success' }}
+        with:
+          name: firmware-${{ github.event.pull_request.head.sha || github.sha }}
+          path: firmware-build
+      - name: Run the harness
+        run: |
+          args=(--sha "$SHA")
+          if [ "$SOAK" = true ]; then args+=(--soak); fi
+          if [ "$BUILD_RESULT" = success ]; then
+            args+=(--build-dir firmware-build)
+          elif [ "$BUILD_RESULT" != skipped ]; then
+            args+=(--build-failed)
+          fi
+          node tools/hil/src/cli.ts run "${args[@]}"
+      - name: Complete the check when the harness wrote no result
+        if: always()
+        run: node tools/hil/src/cli.ts complete-failed --sha "$SHA"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hil-result
+          path: hil-result.json
+          if-no-files-found: ignore
