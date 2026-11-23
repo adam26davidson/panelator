@@ -204,10 +204,24 @@ mod tests {
                 .iter()
                 .any(|n| matches!(n, GeneralName::IPAddress(b) if *b == [192, 168, 1, 5]))
         );
-        assert_eq!(
-            sv.public_key().algorithm.algorithm.to_id_string(),
-            "1.2.840.10045.2.1"
-        );
+        for cert in [&ca_cert, &sv] {
+            assert_eq!(
+                cert.public_key().algorithm.algorithm.to_id_string(),
+                "1.2.840.10045.2.1"
+            );
+            assert_eq!(
+                cert.public_key()
+                    .algorithm
+                    .parameters
+                    .as_ref()
+                    .unwrap()
+                    .as_oid()
+                    .unwrap()
+                    .to_id_string(),
+                "1.2.840.10045.3.1.7",
+                "both keys must use the P-256 curve"
+            );
+        }
         let key = fs::read_to_string(out.join("server.key")).unwrap();
         assert!(key.contains("PRIVATE KEY"));
         let days =
