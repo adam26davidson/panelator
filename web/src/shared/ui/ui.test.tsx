@@ -57,6 +57,7 @@ describe("Button and ButtonLink", () => {
     expect((await screen.findByRole("button", { name: "Go" })).className).toContain("bg-accent");
     const stop = screen.getByRole("button", { name: "Stop" });
     expect(stop.className).toContain("border-border-strong");
+    expect(stop.className).not.toContain("border-transparent");
     expect(stop.className).toContain("min-h-tap");
     expect(stop.getAttribute("type")).toBe("button");
   });
