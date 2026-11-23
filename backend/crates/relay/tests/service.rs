@@ -444,29 +444,63 @@ async fn a_peer_that_stops_reading_and_answering_times_out() {
 }
 
 #[tokio::test]
-async fn stopping_closes_every_connection_with_1001() {
+async fn stopping_closes_a_reading_connection_with_1001() {
+    // An idle writer and no deadline a stall could reach: the close frame cannot be lost to a
+    // timer, so the reading client must receive 1001.
     let mut rig = start(common::Config {
-        down_rate: 100,
-        down_size: 1 << 20,
-        timings: open_timings(),
+        down_rate: 0,
+        timings: common::Timings {
+            idle_timeout: Duration::from_secs(600),
+            close_grace: Duration::from_secs(600),
+            shutdown_deadline: Duration::from_secs(600),
+            ..common::Timings::default()
+        },
         ..base_config()
     })
     .await;
     assert_eq!(rig.event("listening").await["event"], "listening");
     let mut reading = rig.connect().await;
-    let _stalled = rig.connect().await;
-    next_binary(&mut reading).await;
-    let started = Instant::now();
+    rig.event("connected").await;
     rig.stop();
     assert_eq!(close_code(&mut reading).await, 1001);
+    let d = rig.event("disconnected").await;
+    assert_eq!(d["conn"], 1);
+    assert_eq!(d["reason"], "shutdown");
+    let task = rig.task.take().unwrap();
+    timeout(Duration::from_secs(20), task)
+        .await
+        .expect("run returned")
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn stopping_returns_in_time_when_a_peer_has_stopped_reading() {
+    // The peer never reads, so no close frame is expected here; the bound is AC-13's 5 seconds.
+    let mut rig = start(common::Config {
+        down_rate: 100,
+        down_size: 1 << 20,
+        timings: common::Timings {
+            shutdown_deadline: Duration::from_secs(3),
+            ..open_timings()
+        },
+        ..base_config()
+    })
+    .await;
+    let _stalled = rig.connect().await;
+    // Skipped ticks show the writer is held by the peer before the stub is told to stop.
+    rig.event_where(|v| {
+        v["event"] == "stats" && v["conn"] == 1 && v["skipped"].as_u64().unwrap() > 0
+    })
+    .await;
+    rig.stop();
     let task = rig.task.take().unwrap();
     timeout(Duration::from_secs(5), task)
         .await
         .expect("run returned")
         .unwrap()
         .unwrap();
-    assert!(started.elapsed() < Duration::from_secs(4));
-    for _ in 0..2 {
-        assert_eq!(rig.event("disconnected").await["reason"], "shutdown");
-    }
+    let d = rig.event("disconnected").await;
+    assert_eq!(d["conn"], 1);
+    assert_eq!(d["reason"], "shutdown");
 }

@@ -179,9 +179,14 @@ async fn stops_on(signal: &str) {
     .unwrap();
     assert_eq!(code, 1001);
     assert_eq!(stub.wait_exit(Duration::from_secs(5)), Some(0));
+    // Read to the end of the child's stdout: the reader thread drops its sender at end of file.
     let mut last = None;
-    while let Ok(l) = stub.lines.try_recv() {
-        last = Some(l);
+    loop {
+        match stub.lines.recv_timeout(Duration::from_secs(20)) {
+            Ok(l) => last = Some(l),
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => panic!("stdout did not end"),
+        }
     }
     let last: Value = serde_json::from_str(&last.expect("a final line")).unwrap();
     assert_eq!(last["event"], "disconnected");
