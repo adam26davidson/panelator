@@ -1,0 +1,41 @@
+{
+  "scene": "spike-image",
+  "panel": {
+    "height": 64,
+    "width": 128
+  },
+  "frames": [
+    {
+      "tick": 0,
+      "sha256": "536f2065fafa1ee1ad09df5b2107b20c0bb47159e74e7392af5ffe01f9d37174"
+    },
+    {
+      "tick": 1,
+      "sha256": "536f2065fafa1ee1ad09df5b2107b20c0bb47159e74e7392af5ffe01f9d37174"
+    },
+    {
+      "tick": 2,
+      "sha256": "f71f42e3a8641e7c037589af9d71d812ec12bef3b02a6fc0b24784c476a96e6c"
+    },
+    {
+      "tick": 3,
+      "sha256": "f71f42e3a8641e7c037589af9d71d812ec12bef3b02a6fc0b24784c476a96e6c"
+    },
+    {
+      "tick": 128,
+      "sha256": "bce26aa9c97b429446b8a908abfa5dd2a598858c1f38c8440a283d458b1ece51"
+    },
+    {
+      "tick": 254,
+      "sha256": "d5771d77dcdc3439fc948a6b60dc29823caa188f51f67242716af08eac2bf522"
+    },
+    {
+      "tick": 255,
+      "sha256": "d5771d77dcdc3439fc948a6b60dc29823caa188f51f67242716af08eac2bf522"
+    },
+    {
+      "tick": 256,
+      "sha256": "536f2065fafa1ee1ad09df5b2107b20c0bb47159e74e7392af5ffe01f9d37174"
+    }
+  ]
+}

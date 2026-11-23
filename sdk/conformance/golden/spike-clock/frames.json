@@ -1,0 +1,33 @@
+{
+  "scene": "spike-clock",
+  "panel": {
+    "height": 32,
+    "width": 64
+  },
+  "frames": [
+    {
+      "tick": 0,
+      "sha256": "7e80022ad59f25de933f0e24504df647659c4c7524992e13d1878c9903dfd26d"
+    },
+    {
+      "tick": 59,
+      "sha256": "7e80022ad59f25de933f0e24504df647659c4c7524992e13d1878c9903dfd26d"
+    },
+    {
+      "tick": 60,
+      "sha256": "0392d81852b363441338ee8521a77dd313485e4a0c2fec35a67ce3c6f9303de0"
+    },
+    {
+      "tick": 119,
+      "sha256": "0392d81852b363441338ee8521a77dd313485e4a0c2fec35a67ce3c6f9303de0"
+    },
+    {
+      "tick": 120,
+      "sha256": "c7862c321eee589b842c595b83ce8ec63e3e45074af5cc0b9eac5eab4ff31146"
+    },
+    {
+      "tick": 180,
+      "sha256": "6337f3ce4f80f5761d7206d5627b0e836c5befb2f689dea9d2a9a4c9a93ae3c0"
+    }
+  ]
+}

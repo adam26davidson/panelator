@@ -1,0 +1,8 @@
+# A widget's linear memory is at most 4 pages (docs/widget-abi.md): a small stack, and an initial
+# memory of one page that the module may grow to the limit.
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "-C", "link-arg=-zstack-size=16384",
+  "-C", "link-arg=--initial-memory=65536",
+  "-C", "link-arg=--max-memory=262144",
+]

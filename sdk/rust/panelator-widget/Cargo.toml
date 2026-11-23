@@ -1,0 +1,12 @@
+[package]
+name = "panelator-widget"
+description = "The Rust SDK for panelator widgets (widget ABI 0.1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+
+[lints]
+workspace = true
