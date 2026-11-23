@@ -266,9 +266,9 @@ is an error for which `transientCause` returns `ENOSPC` (spec 059 AC-1).
   read of the credentials and the building of the sender; `startTelegram`,
   the App key read, `app.refreshTokenFile` (which writes the token file),
   `actionLog.markStalePending()` and every other step stay where they are,
-  after the gate saying that the scheduler
-  cannot start because the state volume is full, the path and the numbers,
-  and that it starts by itself when there is room, then re-reads the space
+  after the gate. The message says that the scheduler cannot start because
+  the state volume is full, gives the path and the numbers, and says that it
+  starts by itself when there is room. The gate then re-reads the space
   after `outageBackoffS(n)` for the n-th read (spec 015's backoff, 60 s
   doubling to 1800 s) until the volume is at or above the launch floors,
   and returns `{ since, waited_ms, free_bytes, free_inodes }` (the first
@@ -355,8 +355,9 @@ is an error for which `transientCause` returns `ENOSPC` (spec 059 AC-1).
   `initializeAgents`, with the paused return (AC-2); `SchedulerDeps.freeSpace` is the reader, as for the sweep.
 - `tools/scheduler/src/service/sweep.ts`: the alarm's order and its
   in-memory episode (AC-4).
-- `tools/scheduler/src/notify/telegram.ts`, `notify/rate-limit.ts`,
-  `notify/log.ts`: a recorded-after-send failure does not reject (AC-5).
+- `tools/scheduler/src/notify/telegram.ts`,
+  `tools/scheduler/src/notify/rate-limit.ts`,
+  `tools/scheduler/src/notify/log.ts`: a recorded-after-send failure does not reject (AC-5).
 - `tools/scheduler/src/service/start-gate.ts` (new): `waitForStateSpace`
   (AC-6).
 - `tools/scheduler/bin/scheduler.ts`: the gate, the `start-waited` record and
@@ -366,10 +367,26 @@ is an error for which `transientCause` returns `ENOSPC` (spec 059 AC-1).
 - `schemas/scheduler/`: no change; `host.json`, the finding and the
   `infra_alarm` payloads keep their shapes.
 - Tests: `tools/scheduler/test/service-log.test.ts` (new, AC-1),
-  `host.test.ts` (AC-2 to AC-4), `sweep.test.ts` (AC-4), the Telegram
-  notifier's test file (AC-5), `start-gate.test.ts` (new, AC-6), the bin's
-  exit test of spec 088 (AC-7), the parameter store's test file (AC-8),
-  `loop.test.ts` in spec 100's block (AC-1, AC-2, AC-9).
+  `tools/scheduler/test/host.test.ts` (AC-2 to AC-4),
+  `tools/scheduler/test/sweep.test.ts` (AC-4),
+  `tools/scheduler/test/telegram.test.ts` and
+  `tools/scheduler/test/notify.test.ts` (AC-5),
+  `tools/scheduler/test/start-gate.test.ts` (new, AC-6),
+  `tools/scheduler/test/bin.test.ts` (AC-7),
+  `tools/scheduler/test/parameters.test.ts` (AC-8),
+  `tools/scheduler/test/loop-1.test.ts` to `tools/scheduler/test/loop-6.test.ts`
+  (AC-1, AC-2, AC-9), and `tools/scheduler/test/helpers/e2e-routes.ts` and
+  `tools/scheduler/test/helpers/loop-harness.ts` (the AC-9 world whose every
+  write under the state root throws `ENOSPC`).
+- New outbound call: the start gate (AC-6) sends one `sendMessage` to the
+  Telegram Bot API (`api.telegram.org`) through `TelegramClient`, directly and
+  not through `startTelegram`, the notifier, the outbox or the rate limiter,
+  with the `telegram-bot` credential that the bin now reads before the gate.
+  It is sent once the gate finds the volume full and again at each backoff
+  re-read (`outageBackoffS(n)`, 60 s doubling to 1800 s) until one send
+  succeeds. The text carries only the state root path and the free-space
+  numbers. A failed send's error is logged without the token. No new network
+  listener and no new shell execution is added.
 
 `tools/scheduler/` is a sensitive path (the whole directory), so the
 implementation PR gets the security review; `docs/delivery-system-design.md`
