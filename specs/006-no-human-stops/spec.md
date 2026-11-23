@@ -122,7 +122,7 @@ AC-10 second sentence, AC-13)
   the issue is abandoned. Given the UI-design gate fails, then the issue
   receives `needs-design-stage` as in AC-20 and the claim is released; the
   escalation ledger is kept.
-- AC-5. **After a revision, the next bound ends in abandonment.** Given a spec
+- AC-5. Amended by [113-retried-chain-starts-from-closed-pr](../113-retried-chain-starts-from-closed-pr/spec.md) AC-1: each PR the abandonment closes is recorded (number, branch, head, patch) in the state and the fresh ledger for a retried chain, and the comment names it. **After a revision, the next bound ends in abandonment.** Given a spec
   revision has merged for the issue, when a bound from AC-1 is hit again,
   then:
   - the issue's PR (and a parked issue PR, AC-18) is closed, its branch saved
@@ -161,7 +161,7 @@ AC-10 second sentence, AC-13)
 
   All are counted per issue. A test asserts their values. No stage definition
   or prompt can change them.
-- AC-7. **Escalation state is per issue and survives a release.** Given an
+- AC-7. Amended by [113-retried-chain-starts-from-closed-pr](../113-retried-chain-starts-from-closed-pr/spec.md) AC-2: the fresh ledger written at abandonment also carries the closed PRs' pointers, and a retried chain starts with fresh counts and, at the spec or design stage, a hold on that stage's branch from them. **Escalation state is per issue and survives a release.** Given an
   issue whose chain has used any escalation bound and was then released (for
   example by liveness) and claimed again, then the new chain starts with the
   same counters and history. They are kept in `escalations/<issue>.json` in
