@@ -120,6 +120,11 @@ loop:
     if e2 <= dx: err += dx; y += sy
 ```
 
+A host may use this closed form for the same pixels: with `d` the larger of `|x1 - x0|` and
+`|y1 - y0|` and `m` the smaller, the pixel at step `i` (0 to `d`) along the larger axis is `m_i =
+(2 * i * m + d) / (2 * d)` steps along the smaller one (ties round up; `d == 0` is one pixel). Use
+128-bit integers for `2 * i * m`.
+
 **Rectangle.** Nothing when `w <= 0` or `h <= 0`. With `filled != 0` the `w` by `h` pixels from
 `(x, y)`; otherwise the pixels of that rectangle with `i == 0` or `i == w - 1` or `j == 0` or
 `j == h - 1` (`i`, `j` the offsets from `(x, y)`). A rectangle of width or height 1 or 2 is

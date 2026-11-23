@@ -1,0 +1,21 @@
+[package]
+name = "panelator-test-host"
+description = "The reference host of widget ABI 0.1: runs modules as a scene and writes frames"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+wasmi = "2.0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+png = "0.18"
+sha2 = "0.11"
+
+[dev-dependencies]
+wat = "1"
