@@ -379,26 +379,7 @@
               },
               "carried": {
                 "type": "string"
-              },
-              "pr": {
-                "type": "integer"
               }
-            }
-          }
-        },
-        "closedWork": {
-          "type": "array",
-          "description": "Spec 113: the PRs an abandonment closed.",
-          "items": {
-            "type": "object",
-            "required": ["pr", "branch", "head"],
-            "additionalProperties": false,
-            "properties": {
-              "pr": { "type": "integer" },
-              "branch": { "type": "string" },
-              "head": { "type": "string" },
-              "patch": { "type": ["string", "null"] },
-              "at": { "type": ["string", "null"] }
             }
           }
         },

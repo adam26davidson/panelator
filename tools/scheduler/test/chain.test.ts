@@ -1336,9 +1336,7 @@ describe("chain: every event in every stage (AC-27)", () => {
   it("held work is carried, set, replaced or removed per entry by every valid pair, and cleared whole only when something is discarded (spec 040 AC-4)", () => {
     const h = (branch: string) => ({ branch, head: "a".repeat(40) });
     const carriedEntry = { ...h("issue-1"), carried: "max budget reached" };
-    const heldVariants: ChainState["heldWork"][] = [[], [h("issue-1")], [h("spec-1")], [h("issue-1"), h("spec-1")], [carriedEntry], [h("spec-1"), carriedEntry],
-      // Spec 113 AC-5: closed-PR holds (with `pr`) on the spec, issue and design branches.
-      [{ ...h("spec-1"), pr: 5 }], [{ ...h("issue-1"), pr: 6 }], [{ ...h("design-1"), pr: 7 }], [{ ...h("spec-1"), pr: 5 }, { ...h("design-1"), pr: 7 }, h("issue-1")]];
+    const heldVariants: ChainState["heldWork"][] = [[], [h("issue-1")], [h("spec-1")], [h("issue-1"), h("spec-1")], [carriedEntry], [h("spec-1"), carriedEntry]];
     const ledger = (s: ChainState) => s.rescues + s.specRescues + s.replans + s.specRevisions;
     let carried = 0;
     let cleared = 0;
@@ -1384,13 +1382,7 @@ describe("chain: every event in every stage (AC-27)", () => {
               if (ledger(r.state) > ledger(state)) {
                 // Spec 085 AC-1: the escalate to a spec-track rescue removes only the spec-1 hold; AC-2: every other one clears.
                 if (r.state.specRescues > state.specRescues) {
-                  expect(after, label).toEqual([...heldWork.filter((x) => x.branch !== "spec-1"), ...heldWork.filter((x) => x.branch === "spec-1" && x.pr !== undefined)]);
-                  if (heldWork.length) { if (after.length) carried++; else cleared++; }
-                  continue;
-                }
-                // The design-track rescue keeps a closed-PR hold on design-1 (spec 113 AC-5); every other escalation clears.
-                if (r.state.rescues > state.rescues && r.state.track === "design") {
-                  expect(after, label).toEqual(heldWork.filter((x) => x.branch === "design-1" && x.pr !== undefined));
+                  expect(after, label).toEqual(heldWork.filter((x) => x.branch !== "spec-1"));
                   if (heldWork.length) { if (after.length) carried++; else cleared++; }
                   continue;
                 }
@@ -1546,13 +1538,6 @@ describe("chain: every event in every stage (AC-27)", () => {
       expect(normalizeChainState({ ...base, heldWork: null }).heldWork).toEqual([]);
       expect(normalizeChainState({ ...base, heldWork: held[0] }).heldWork).toEqual(held);
       expect(normalizeChainState({ ...base, heldWork: held }).heldWork).toEqual(held);
-    });
-    it("a claim's nested conversation state without closedWork normalizes to [] (spec 113 AC-6)", () => {
-      const { closedWork: _c, ...next } = initialChainState(1) as unknown as Record<string, unknown>;
-      const conversation = { next, decision: null };
-      const n = normalizeChainState({ ...initialChainState(1), closedWork: undefined, conversation });
-      expect(n.closedWork).toEqual([]);
-      expect(n.conversation!.next.closedWork).toEqual([]);
     });
   });
   it("rebase_conflict is invalid in the spec stage and the question check", () => {
@@ -2308,109 +2293,5 @@ describe("chain: review round 1 on the escalation bounds (2026-11-22)", () => {
     expect(fixed.state).toMatchObject({ rescueRun: false, rescueFirstRun: false, rescueOn: "issue-1" });
     const second = transition(transition(fixed.state, green).state, reviewed(changes));
     expect(second.state).toMatchObject({ stage: "fix", rescueRun: true, rescueFirstRun: false });
-  });
-});
-
-describe("spec 113: a retried chain starts from the closed PR's work", () => {
-  const H1 = "1".repeat(40);
-  const H2 = "2".repeat(40);
-  const entry = (pr: number, branch: string, head = H1) => ({ pr, branch, head, patch: null, at: null });
-  const ledger = (over: Partial<LedgerCounts> = {}): LedgerCounts => ({ ...ledgerOf(initialChainState(1)), ...over });
-  const abandonSpec = (s: ChainState) => {
-    let r = transition({ ...s, specRescues: MAX_SPEC_RESCUES }, { type: "stage_failed", stage: "spec", reason: "x" });
-    for (let i = 0; i < 4 && r.state.stage !== "abandoned"; i++) r = transition(r.state, { type: "stage_failed", stage: "spec", reason: "x" });
-    return r;
-  };
-
-  it("AC-6: a state and a ledger without closedWork normalize to an empty list; ledgerOf writes it only when non-empty", () => {
-    const { closedWork: _c, ...old } = initialChainState(1);
-    expect(normalizeChainState(old).closedWork).toEqual([]);
-    expect(ledgerOf(initialChainState(1))).not.toHaveProperty("closedWork");
-    expect(ledgerOf({ ...initialChainState(1), closedWork: [entry(5, "spec-1")] }).closedWork).toEqual([entry(5, "spec-1")]);
-  });
-
-  it("AC-1: the abandonment records the PRs it closes, replaces an entry on the same branch and carries others", () => {
-    const s = at("fix", { track: "spec", pr: pr8, parkedPr: pr3, closedWork: [entry(4, "spec-1", H2), entry(2, "design-1")] });
-    const r = transition({ ...s, rescues: MAX_RESCUES, specRescues: MAX_SPEC_RESCUES, replans: MAX_REPLANS, specRevisions: MAX_SPEC_REVISIONS }, { type: "stage_failed", stage: "fix", reason: "boom" });
-    // the fix failing is retried first; drive on to the abandonment
-    let cur = r;
-    for (let i = 0; i < 10 && cur.state.stage !== "abandoned"; i++) cur = transition(cur.state, { type: "stage_failed", stage: cur.state.stage as AgentStageName, reason: "boom" });
-    expect(cur.state.stage).toBe("abandoned");
-    expect(cur.state.closedWork).toEqual([entry(8, "spec-1", pr8.head_sha), entry(2, "design-1"), entry(3, "issue-1", pr3.head_sha)]);
-    const comment = (cur.actions.find((a) => a.type === "comment") as { text: string }).text;
-    expect(comment).toContain(`PR #8 (spec-1 at ${pr8.head_sha}) is closed, not lost: its commits are saved as a patch in the scheduler state directory, and a chain retried after this abandonment starts from it.`);
-    expect(comment).toContain(`PR #3 (issue-1 at ${pr3.head_sha}) is closed, not lost: its commits are saved as a patch in the scheduler state directory; a retried chain plans again and is pointed to it.`);
-    expect(comment).toContain("PR #2 (design-1 at");
-    expect(comment).not.toContain("@");
-  });
-
-  it("AC-1: an abandonment that closes nothing leaves the incoming list unchanged", () => {
-    const closed = [entry(4, "spec-1")];
-    const r = abandonSpec(at("spec", { track: "spec", pr: null, specMode: "write", closedWork: closed }));
-    expect(r.state.stage).toBe("abandoned");
-    expect(r.state.closedWork).toEqual(closed);
-  });
-
-  it("AC-2: the ledger's closedWork seeds a hold on the first stage's branch only", () => {
-    const l = ledger({ closedWork: [entry(5, "spec-1"), entry(6, "design-1", H2), entry(7, "issue-1")] });
-    const spec = initialChainState(1, "no spec", l);
-    expect(spec.closedWork).toEqual(l.closedWork);
-    expect(spec.heldWork).toEqual([{ branch: "spec-1", head: H1, pr: 5 }]);
-    const design = initialChainState(1, null, l, "no design");
-    expect(design.heldWork).toEqual([{ branch: "design-1", head: H2, pr: 6 }]);
-    const record = initialChainState(1, null, { ...l, pendingAnswer: { ids: [1], kind: "product", text: "t" } }, "no design");
-    expect(record.heldWork).toEqual([]);
-    expect(initialChainState(1, null, l).heldWork).toEqual([]);
-    expect(initialChainState(1, "no spec", ledger({ closedWork: [entry(7, "issue-1")] })).heldWork).toEqual([]);
-    // the claimed chain's start keeps the hold on its way into the stage
-    expect(transition(spec, { type: "start" }).state.heldWork).toEqual(spec.heldWork);
-    expect(transition(design, { type: "start" }).state.heldWork).toEqual(design.heldWork);
-  });
-
-  it("AC-2: a merge on a branch removes that branch's closed work", () => {
-    const closed = [entry(5, "spec-1"), entry(7, "issue-1")];
-    const spec = transition(at("merge", { track: "spec", pr: pr8, closedWork: closed }), { type: "merge_result", status: "merged", specGate: { ok: true } });
-    expect(spec.state.closedWork).toEqual([entry(7, "issue-1")]);
-    const issue = transition(at("merge", { track: "issue", pr: pr3, closedWork: closed }), { type: "merge_result", status: "merged" });
-    expect(issue.state.closedWork).toEqual([entry(5, "spec-1")]);
-  });
-
-  it("AC-5: the spec-track rescue keeps a closed-PR hold on spec-<n> and drops a hold without pr; a design rescue likewise", () => {
-    const withPr = { branch: "spec-1", head: H1, pr: 5 };
-    const kept = transition(at("spec", { track: "spec", specMode: "write", heldWork: [withPr], specRescues: 0 }), { type: "stage_failed", stage: "spec", reason: "x" });
-    let r = kept;
-    for (let i = 0; i < 4 && r.state.specRescues === 0; i++) r = transition(r.state, { type: "stage_failed", stage: "spec", reason: "x" });
-    expect(r.state.specRescues).toBe(1);
-    expect(r.state.heldWork).toEqual([withPr]);
-    let plain = transition(at("spec", { track: "spec", specMode: "write", heldWork: [{ branch: "spec-1", head: H1 }] }), { type: "stage_failed", stage: "spec", reason: "x" });
-    for (let i = 0; i < 4 && plain.state.specRescues === 0; i++) plain = transition(plain.state, { type: "stage_failed", stage: "spec", reason: "x" });
-    expect(plain.state.heldWork).toEqual([]);
-    const design = { branch: "design-1", head: H2, pr: 6 };
-    let d = transition(at("design", { track: "design", heldWork: [design] }), { type: "stage_failed", stage: "design", reason: "x" });
-    for (let i = 0; i < 4 && d.state.rescues === 0; i++) d = transition(d.state, { type: "stage_failed", stage: "design", reason: "x" });
-    expect(d.state.rescues).toBe(1);
-    expect(d.state.heldWork).toEqual([design]);
-  });
-
-  it("AC-5: every valid event on a closed-PR hold records, carries, replaces or removes closedWork as AC-1 and AC-2 say", () => {
-    const events: ChainEvent[] = [
-      { type: "stage_failed", stage: "spec", reason: "x" }, { type: "stage_failed", stage: "design", reason: "x" }, { type: "stage_failed", stage: "plan", reason: "x" },
-      { type: "stage_ok", stage: "spec", result: revised, scope: { ok: true } }, { type: "merge_result", status: "merged" },
-      { type: "merge_result", status: "merged", specGate: { ok: true } }, { type: "liveness_expired" }, { type: "chain_error", error: "boom" },
-      { type: "stage_ok", stage: "spec", result: { verdict: "question", question: qProduct }, head: HEAD },
-    ];
-    for (const [stage, track, branch] of [["spec", "spec", "spec-1"], ["design", "design", "design-1"], ["merge", "spec", "spec-1"], ["merge", "design", "design-1"], ["plan", "issue", "issue-1"]] as const) {
-      for (const event of events) {
-        const state = at(stage, { track, specMode: "write", pr: stage === "merge" ? pr8 : null, closedWork: [entry(5, branch), entry(9, "other-1")], heldWork: [{ branch, head: H1, pr: 5 }] });
-        let r: ReturnType<typeof transition>;
-        try { r = transition(state, event); } catch { continue; }
-        const label = `${stage}/${track}: ${JSON.stringify(event)}`;
-        const mine = r.state.closedWork.filter((c) => c.branch === branch);
-        expect(r.state.closedWork.find((c) => c.branch === "other-1"), label).toBeDefined();
-        if (event.type === "merge_result") expect(mine, label).toEqual([]);
-        else expect(mine, label).toEqual([entry(5, branch)]);
-        if (r.state.stage === "abandoned" || r.state.stage === "released") expect(r.state.heldWork, label).toEqual([]);
-      }
-    }
   });
 });

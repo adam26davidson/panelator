@@ -293,11 +293,7 @@ export async function chainWorld(opts: {
     {
       method: "PATCH", path: /^\/repos\/o\/r\/pulls\/(\d+)$/, reply: (m, b) => {
         const pr = prs.get(Number(m[1]))!;
-        if ((b as { state?: string }).state === "closed") {
-          Object.assign(pr, { sha: headOf(pr), state: "closed" });
-          // GitHub keeps a closed PR's head at refs/pull/<n>/head (spec 113).
-          git(pair.origin, "update-ref", `refs/pull/${pr.number}/head`, pr.sha);
-        }
+        if ((b as { state?: string }).state === "closed") Object.assign(pr, { sha: headOf(pr), state: "closed" });
         return { body: {} };
       },
     },

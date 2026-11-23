@@ -450,18 +450,7 @@ describe("driver: escalation (spec 006 AC-1 to AC-5, AC-7)", () => {
     expect(gh.calls.find((x) => x.url === "/repos/o/r/issues/7/labels")?.body).toEqual({ labels: ["abandoned"] });
     expect(readFileSync(paths.findingsQueue, "utf8").trim().split("\n")).toHaveLength(1);
     expect(notifications.map((n) => n.gate)).toEqual(["abandoned"]);
-    // Spec 113 AC-1: the comment names each closed PR and the fresh ledger carries them, with the saved patch and the time.
-    expect(comment).toContain(`PR #12 (spec-7 at ${sha}) is closed, not lost: its commits are saved as a patch in the scheduler state directory, and a chain retried after this abandonment starts from it.`);
-    expect(comment).toContain(`PR #9 (issue-7 at ${issueSha}) is closed, not lost: its commits are saved as a patch in the scheduler state directory; a retried chain plans again and is pointed to it.`);
-    const fresh = JSON.parse(readFileSync(ledgerFile(paths), "utf8")) as { rescues: number; history: string[]; closedWork: { pr: number; branch: string; head: string; patch: string | null; at: string | null }[] };
-    expect(fresh.rescues).toBe(0);
-    expect(fresh.history).toEqual([]);
-    expect(fresh.closedWork.map((w) => [w.pr, w.branch, w.head])).toEqual([[12, "spec-7", sha], [9, "issue-7", issueSha]]);
-    for (const w of fresh.closedWork) {
-      expect(w.patch).toMatch(/closed-pr(-\d+)?\.patch$/);
-      expect(existsSync(w.patch!)).toBe(true);
-      expect(w.at).not.toBeNull();
-    }
+    expect(existsSync(ledgerFile(paths))).toBe(false);
     expect(readdirSync(paths.escalations).some((f) => f.startsWith("7.abandoned-"))).toBe(true);
     expect(await listClaims(paths)).toEqual([]);
     const patches = readdirSync(paths.patches).filter((f) => f.includes("closed-pr")).map((f) => readFileSync(join(paths.patches, f), "utf8"));

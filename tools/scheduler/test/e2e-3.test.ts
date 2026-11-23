@@ -3,8 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { StageRun } from "../src/adapters/types.ts";
 import { CHARTER_REVERT_LINE } from "../src/chain/driver.ts";
-import { initialChainState, ledgerOf, MAX_REPLANS, MAX_RESCUES, MAX_SPEC_RESCUES, MAX_SPEC_REVISIONS } from "../src/chain/machine.ts";
-import { writeLedger } from "../src/state/ledger.ts";
+import { ledgerOf } from "../src/chain/machine.ts";
 import { listClaims } from "../src/state/claims.ts";
 import { listPaused } from "../src/state/paused.ts";
 import type { Question } from "../src/types.ts";
@@ -135,116 +134,6 @@ describe("end to end: escalation outcomes (spec 006 AC-28)", () => {
     expect(filer.pending_events.filter((e) => e.event === "issue_abandoned")).toEqual([{ event: "issue_abandoned", payload: { issue: 7 }, at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) }]);
     expect((await readAgentState(w.paths, "infra-health"))!.pending_events).toEqual([]);
   }, 120_000);
-
-  describe("a chain retried after abandonment starts from the closed PR's work (spec 113 AC-7)", () => {
-    const ledgerOn = (w: ChainWorld) => JSON.parse(readFileSync(join(w.paths.escalations, "7.json"), "utf8")) as { closedWork?: { pr: number; branch: string; head: string; patch: string | null; at: string | null }[]; history: string[]; specRescues: number };
-    const amended = (n: number) => ({ "specs/010-thing/spec.md": specOf(), "docs/charter.md": `${CHARTER}\nAmended by ${n}.\n` });
-
-    it("a spec-track chain: the abandonment records the closed spec PR and the retry continues from its head", async () => {
-      let w!: ChainWorld;
-      const a = agents(() => w);
-      const keepsCharter = (n: number) => a.fix({ "docs/charter.md": `${CHARTER}\nAmended by fix ${n}.\n`, "specs/010-thing/notes.md": `fix ${n}\n` });
-      const seen: { head?: string; branch?: string } = {};
-      // The retried spec run: continues from the restored work, takes the charter amendment out and opens a new PR.
-      const continues = (run: StageRun) => {
-        seen.head = rev(run);
-        seen.branch = git(run.worktree, "rev-parse", "--abbrev-ref", "HEAD").trim();
-        return a.spec(14, { "specs/010-thing/spec.md": specOf(), "docs/charter.md": CHARTER })(run);
-      };
-      w = await chainWorld({
-        files: repoFiles({ spec: null }),
-        results: {
-          spec: [a.spec(12, amended(1)), continues], fix: [keepsCharter(1), keepsCharter(2), keepsCharter(3)],
-          review: [APPROVE, APPROVE], plan: [PLAN], implement: [a.implement(13, { "a.txt": "pr 13\n" })],
-        },
-      });
-      await w.tick();
-      expect(w.labelLog).toEqual(["+in-progress", "+abandoned", "-in-progress"]);
-      const closedHead = git(w.pair.origin, "rev-parse", "refs/pull/12/head").trim();
-      expect(w.comments[0].body).toContain(`PR #12 (spec-7 at ${closedHead}) is closed, not lost: its commits are saved as a patch in the scheduler state directory, and a chain retried after this abandonment starts from it.`);
-      const ledger = ledgerOn(w);
-      expect(ledger.specRescues).toBe(0);
-      expect(ledger.history).toEqual([]);
-      expect(ledger.closedWork).toEqual([{ pr: 12, branch: "spec-7", head: closedHead, patch: expect.stringMatching(/closed-pr\.patch$/), at: expect.stringMatching(/^\d{4}-/) }]);
-      expect(existsSync(ledger.closedWork![0].patch!)).toBe(true);
-      const logsBefore = w.logs.length;
-
-      // The filer's retry removes the label; the loop claims the issue again.
-      w.labels.delete("abandoned");
-      await w.tick();
-      await expectSettled(w);
-      expect(seen.branch).toBe("spec-7");
-      expect(seen.head).toBe(closedHead);
-      const retried = runsOf(w, "spec")[1].input;
-      expect(retried.held_work).toContain(`Branch spec-7 is at ${closedHead}`);
-      expect(retried.held_work).toContain("PR #12, closed (not merged) when the issue was abandoned on");
-      expect(retried.history ?? "(none)").toBe("(none)");
-      const since = w.logs.slice(logsBefore);
-      expect(since).toContainEqual({ kind: "held-work-kept", issue: 7, branch: "spec-7", head: closedHead });
-      expect(since.filter((r) => r.kind === "recovered-commits" || r.kind === "stale-branch-dropped")).toEqual([]);
-      // The retried chain merges its PR and goes on; its bounds were fresh.
-      expect(w.mergeRequests).toEqual([14, 13]);
-      expect(w.onMain("docs/charter.md")).toBe(CHARTER);
-      expect(w.onMain("specs/010-thing/spec.md")).toBe(specOf());
-      expect(existsSync(join(w.paths.escalations, "7.json")) ? ledgerOn(w).closedWork : undefined).toBeUndefined();
-    }, 180_000);
-
-    it("an issue-track chain: the abandonment records the implementation PR, the retried plan gets a pointer and no hold", async () => {
-      let w!: ChainWorld;
-      const a = agents(() => w);
-      const seen: { head?: string } = {};
-      w = await chainWorld({
-        files: repoFiles(),
-        results: {
-          plan: [PLAN, (run: StageRun) => { seen.head = rev(run); return PLAN; }],
-          implement: [a.implement(9, { "a.txt": "pr 9\n" }), a.implement(10, { "a.txt": "pr 10\n" })],
-          review: [CHANGES, CHANGES, CHANGES, CHANGES, CHANGES, CHANGES, APPROVE],
-          fix: [FAIL, FAIL, FAIL, FAIL, FAIL, FAIL],
-        },
-      });
-      // Every escalation but the abandonment is spent, so the failing fix loop on PR 9 ends in the abandonment.
-      await writeLedger(w.paths, 7, { ...ledgerOf(initialChainState(7)), rescues: MAX_RESCUES, replans: MAX_REPLANS, specRevisions: MAX_SPEC_REVISIONS, specRescues: MAX_SPEC_RESCUES });
-      await w.tick();
-      if (w.labelLog.at(-2) !== "+abandoned") throw new Error(`not abandoned: ${w.labelLog.join(",")} ran ${w.adapter.ran.join(",")}`);
-      const ledger = ledgerOn(w);
-      expect(ledger.closedWork).toEqual([expect.objectContaining({ pr: 9, branch: "issue-7" })]);
-      const entry = ledger.closedWork![0];
-      expect(w.comments[0].body).toContain(`PR #9 (issue-7 at ${entry.head}) is closed, not lost: its commits are saved as a patch in the scheduler state directory; a retried chain plans again and is pointed to it.`);
-      const planRuns = w.adapter.runs.filter((r) => r.stage === "plan").length;
-
-      w.labels.delete("abandoned");
-      await w.tick();
-      const retried = runsOf(w, "plan")[planRuns];
-      expect(retried.input.held_work).toContain(`The earlier chain's PR #9 (issue-7 at ${entry.head}`);
-      expect(retried.input.held_work).toContain("This chain's plan is new; read the earlier work as reference where the plan covers the same ground.");
-      expect(seen.head).toBe(git(w.pair.repo, "rev-parse", "origin/main").trim());
-      expect(retried.branch).toBe("issue-7");
-    }, 180_000);
-
-    it("a retried spec stage that fails twice still starts from the closed head, in its retry and in the rescue", async () => {
-      let w!: ChainWorld;
-      const a = agents(() => w);
-      const keepsCharter = (n: number) => a.fix({ "docs/charter.md": `${CHARTER}\nAmended by fix ${n}.\n`, "specs/010-thing/notes.md": `fix ${n}\n` });
-      const heads: string[] = [];
-      const failing = (run: StageRun) => { heads.push(rev(run)); return undefined; };
-      const finishing = (run: StageRun) => { heads.push(rev(run)); return a.spec(14, { "specs/010-thing/spec.md": specOf(), "docs/charter.md": CHARTER })(run); };
-      w = await chainWorld({
-        files: repoFiles({ spec: null }),
-        results: {
-          spec: [a.spec(12, amended(1)), failing, failing, finishing], fix: [keepsCharter(1), keepsCharter(2), keepsCharter(3)],
-          review: [APPROVE, APPROVE], plan: [PLAN], implement: [a.implement(13, { "a.txt": "pr 13\n" })],
-        },
-      });
-      await w.tick();
-      const closedHead = git(w.pair.origin, "rev-parse", "refs/pull/12/head").trim();
-      w.labels.delete("abandoned");
-      await w.tick();
-      await expectSettled(w);
-      expect(heads).toEqual([closedHead, closedHead, closedHead]);
-      expect(runsOf(w, "spec")[3].model).toBe(w.cfg.rescue_model);
-      expect(w.mergeRequests).toEqual([14, 13]);
-    }, 180_000);
-  });
 
   it("security finding fixed then merged (spec 006 AC-28)", async () => {
     let w!: ChainWorld;

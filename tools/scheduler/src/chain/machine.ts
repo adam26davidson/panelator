@@ -1,7 +1,7 @@
 import { fixBound, fixLoopGate, MAX_CONFLICT_ROUNDS, readyGate, type ScopeResult } from "../gates/index.ts";
 import type { AgentStageName, AskingStage, ImplementResult, PendingAnswer, PlanResult, Question, SpecMode } from "../types.ts";
 import { checkRequest } from "./question.ts";
-import type { Action, BlockCondition, ChainEvent, ChainStage, ChainState, ClosedWork } from "./types.ts";
+import type { Action, BlockCondition, ChainEvent, ChainStage, ChainState } from "./types.ts";
 
 export const CLAIM_LABEL = "in-progress";
 export const ABANDONED_LABEL = "abandoned";
@@ -49,8 +49,6 @@ export type LedgerCounts = Pick<
   incompleteRequests?: number;
   /** 2026-11-22: the branch a rescue is in effect on, written only while one is, so a re-claim keeps the rescue. */
   rescueOn?: string | null;
-  /** Spec 113: the PRs an abandonment closed, written only while there are any, so a retried chain starts from their work. */
-  closedWork?: ClosedWork[];
 };
 type LedgerSource = Omit<LedgerCounts, "pendingAnswer" | "chainFailures" | "chainErrors"> & Partial<LedgerCounts> & { blocked?: ChainState["blocked"] };
 
@@ -65,7 +63,6 @@ export function ledgerOf(state: LedgerSource): LedgerCounts {
     ...(blocks ? { blocks } : {}),
     ...(state.incompleteRequests ? { incompleteRequests: state.incompleteRequests } : {}),
     ...(state.rescueOn ? { rescueOn: state.rescueOn } : {}),
-    ...(state.closedWork?.length ? { closedWork: state.closedWork.map((c) => ({ ...c })) } : {}),
   };
 }
 
@@ -83,20 +80,14 @@ export function initialChainState(issue: number, specProblem: string | null = nu
     rescueRun: false, rescueOn: null, rescueFirstRun: false, specMode: null, specProblem, designProblem, question: null, askingStage: null, answer: null, answerQuestionId: null, answerQuestionIds: [], answerKind: null,
     pendingAnswer: null, recordIds: [], recordKind: null, recordAnswer: false, decideInput: null, decidedQuestion: null, parkedPr: null, pendingSince: null, checksRerun: false, securityPass: false,
     chainFailures: null, chainErrors: 0, heldWork: [], checkRerun: null, unchangedWithoutVerdict: false, blocked: null, reserved: { spec: null, adr: null },
-    closedWork: [],
-    ...(ledger ? seedFromLedger(ledger, issue, specProblem, designProblem) : {}),
+    ...(ledger ? seedFromLedger(ledger) : {}),
   };
 }
 
-function seedFromLedger(ledger: LedgerSource, issue: number, specProblem: string | null, designProblem: string | null): Partial<ChainState> {
-  const { blocks, closedWork: closed, ...counts } = ledgerOf(ledger);
-  const closedWork = closed ?? [];
-  // Spec 113 AC-2: the closed PR's work on the first stage's branch is a hold, from the start the claim will take.
-  const startBranch = specProblem ? `spec-${issue}` : designProblem && !ledger.pendingAnswer ? `design-${issue}` : null;
-  const onStart = startBranch ? closedWork.find((c) => c.branch === startBranch) : undefined;
+function seedFromLedger(ledger: LedgerSource): Partial<ChainState> {
+  const { blocks, ...counts } = ledgerOf(ledger);
   return {
-    ...counts, closedWork, heldWork: onStart ? [{ branch: onStart.branch, head: onStart.head, pr: onStart.pr }] : [],
-    history: ledger.history.slice(-HISTORY_MAX_ENTRIES).map(clip),
+    ...counts, history: ledger.history.slice(-HISTORY_MAX_ENTRIES).map(clip),
     ...(blocks ? { blocked: { on: null, since: null, check: null, main_sha: null, blocks } } : {}),
   };
 }
@@ -109,10 +100,9 @@ export function normalizeChainState(raw: unknown): ChainState {
   const { securityFinding: _dropped, ...rest } = raw as Record<string, unknown>;
   const state = { ...initialChainState(rest.issue as number), ...rest } as ChainState;
   state.heldWork = normalizeHeld(rest.heldWork);
-  if (!Array.isArray(rest.closedWork)) state.closedWork = [];
   const conv = state.conversation;
   if (conv && typeof conv === "object" && conv.next && typeof conv.next === "object") {
-    state.conversation = { ...conv, next: { ...conv.next, heldWork: normalizeHeld((conv.next as { heldWork?: unknown }).heldWork), closedWork: Array.isArray((conv.next as { closedWork?: unknown }).closedWork) ? conv.next.closedWork : [] } };
+    state.conversation = { ...conv, next: { ...conv.next, heldWork: normalizeHeld((conv.next as { heldWork?: unknown }).heldWork) } };
   }
   return state;
 }
@@ -264,18 +254,16 @@ function rescue(s: ChainState, track: ChainState["track"]): Partial<ChainState> 
  */
 function escalate(state: ChainState, stuck: Stuck, reason: string, fixInput: string = reason): Step {
   const s = note({ ...state, heldWork: [] }, `${stuck}: ${reason}`);
-  // Spec 113 AC-5: a rescue is one more attempt of the stuck stage, so a closed-PR hold on its branch stays its input.
-  const keepClosed = (branch: string) => state.heldWork.filter((h) => h.branch === branch && h.pr !== undefined);
   if (s.track === "spec" || stuck === "spec") {
     // Spec 085 AC-1: the rescue starts the recording on spec-<n> again, so only that branch's hold goes; other branches' holds are kept.
     if (s.specRescues < MAX_SPEC_RESCUES) {
-      return rerun(s, stuck, fixInput, { ...rescue(s, "spec"), specRescues: s.specRescues + 1, track: "spec", heldWork: [...state.heldWork.filter((h) => h.branch !== `spec-${state.issue}`), ...keepClosed(`spec-${state.issue}`)] });
+      return rerun(s, stuck, fixInput, { ...rescue(s, "spec"), specRescues: s.specRescues + 1, track: "spec", heldWork: state.heldWork.filter((h) => h.branch !== `spec-${state.issue}`) });
     }
     return abandon(s, stuck);
   }
   // Spec 029 AC-4: the design track gets one rescue, then the spec agent revises the UI design section, then the issue is abandoned.
   if (s.track === "design" || stuck === "design") {
-    if (s.rescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { ...rescue(s, "design"), rescues: s.rescues + 1, track: "design", heldWork: keepClosed(`design-${state.issue}`) });
+    if (s.rescues < MAX_RESCUES) return rerun(s, stuck, fixInput, { ...rescue(s, "design"), rescues: s.rescues + 1, track: "design" });
     const next = designToSpecRevise(s, reason);
     return next ?? abandon(s, stuck);
   }
@@ -317,7 +305,7 @@ function boundsText(s: ChainState): string {
 }
 
 /** Informational only: no @ anywhere (AC-5, C11), the newest history entries that fit. The driver appends the run-record paths. */
-function abandonmentComment(s: ChainState, closedWork: ClosedWork[] = s.closedWork): string {
+function abandonmentComment(s: ChainState): string {
   const entries = s.history.map((e) => e.replaceAll("@", "(at)"));
   const render = (e: string, n: number) => `${n}. ${e.split("\n").join("\n   ")}`;
   // The rendered size, bounded from above: the widest "N. " prefix, three spaces per continuation line, and the joining newline.
@@ -338,12 +326,6 @@ function abandonmentComment(s: ChainState, closedWork: ClosedWork[] = s.closedWo
     "The scheduler stopped work on this issue: its escalation path is used up. The issue stays open.",
     "",
     `Bounds hit: ${boundsText(s)}.`,
-    ...closedWork.filter((c) => c.branch === `spec-${s.issue}` || c.branch === `design-${s.issue}` || c.branch === `issue-${s.issue}`).map((c) => {
-      const tail = c.branch === `issue-${s.issue}`
-        ? "its commits are saved as a patch in the scheduler state directory; a retried chain plans again and is pointed to it."
-        : "its commits are saved as a patch in the scheduler state directory, and a chain retried after this abandonment starts from it.";
-      return `PR #${c.pr} (${c.branch} at ${c.head}) is closed, not lost: ${tail}`;
-    }),
     "",
     "History, oldest first:",
     "",
@@ -360,20 +342,11 @@ function abandon(s: ChainState, stuck: Stuck): Step {
   const closes: Action[] = [];
   if (s.pr) closes.push({ type: "close_pr", pr: s.pr.number, branch: branchOf(s), comment: why });
   if (s.parkedPr) closes.push({ type: "close_pr", pr: s.parkedPr.number, branch: `issue-${s.issue}`, comment: why });
-  const closedWork = [...s.closedWork];
-  const record = (pr: number, branch: string, head: string) => {
-    const entry: ClosedWork = { pr, branch, head, patch: null, at: null };
-    const i = closedWork.findIndex((c) => c.branch === branch);
-    if (i < 0) closedWork.push(entry);
-    else closedWork[i] = entry;
-  };
-  if (s.pr) record(s.pr.number, branchOf(s), s.pr.head_sha);
-  if (s.parkedPr) record(s.parkedPr.number, `issue-${s.issue}`, s.parkedPr.head_sha);
   return {
-    state: { ...s, stage: "abandoned", pr: null, parkedPr: null, rescueRun: false, rescueOn: null, rescueFirstRun: false, heldWork: [], closedWork },
+    state: { ...s, stage: "abandoned", pr: null, parkedPr: null, rescueRun: false, rescueOn: null, rescueFirstRun: false, heldWork: [] },
     actions: [
       ...closes,
-      { type: "comment", text: abandonmentComment(s, closedWork) },
+      { type: "comment", text: abandonmentComment(s) },
       { type: "label", add: [ABANDONED_LABEL], remove: [CLAIM_LABEL] },
       {
         type: "finding", stage: stuck,
@@ -1133,11 +1106,9 @@ function baseTransition(state: ChainState, event: ChainEvent, bounds: Bounds): S
       if (event.type === "merge_result") {
         if (event.status === "merged") {
           const gate = event.specGate ?? { ok: false as const, gate: "spec-present" as const, reason: "the post-merge spec gates did not run" };
-          // Spec 113 AC-2: what merged supersedes the closed PRs' work on its branch.
-          const merged: ChainState = { ...state, closedWork: state.closedWork.filter((c) => c.branch !== branchOf(state)) };
-          if (state.track === "spec") return specMerged(merged, gate);
-          if (state.track === "design") return designMerged(merged, gate, bounds);
-          return { state: { ...merged, stage: "done", pendingAnswer: null, heldWork: [] }, actions: [{ type: "label", add: [], remove: [CLAIM_LABEL] }, { type: "done" }] };
+          if (state.track === "spec") return specMerged(state, gate);
+          if (state.track === "design") return designMerged(state, gate, bounds);
+          return { state: { ...state, stage: "done", pendingAnswer: null, heldWork: [] }, actions: [{ type: "label", add: [], remove: [CLAIM_LABEL] }, { type: "done" }] };
         }
         return notMergeable(state, event.detail ?? "");
       }

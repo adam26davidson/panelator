@@ -35,7 +35,7 @@ Viewports: {{viewports}}
 History of earlier attempts: {{history}}
 The question, if any: {{question}}
 The maintainer's answer, if any: {{answer}}
-Work of an earlier run of this issue (before your question, or of a chain that was abandoned and retried), if any: {{held_work}}
+Work you did before your question, if any: {{held_work}}
 The question check sent this back for you to decide: {{decide_input}}
 Settled decision, if any: {{decision}}
 

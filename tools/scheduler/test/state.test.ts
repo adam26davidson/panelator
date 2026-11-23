@@ -5,8 +5,7 @@ import { describe, expect, it } from "vitest";
 import { appendMerge } from "../src/state/merges.ts";
 import { openIndex } from "../src/events/index.ts";
 import { savePatch } from "../src/state/patches.ts";
-import { initialChainState, ledgerOf } from "../src/chain/machine.ts";
-import { readLedger, writeLedger } from "../src/state/ledger.ts";
+import { initialChainState } from "../src/chain/machine.ts";
 import { listClaims, readClaim, removeClaim, touchClaim, writeClaim } from "../src/state/claims.ts";
 import { ensureStateDirs, statePaths } from "../src/state/paths.ts";
 import { newRunId, pruneUsage, runDir, writeUsageRecord, type UsageRecord } from "../src/state/runs.ts";
@@ -48,27 +47,6 @@ describe("claims", () => {
     expect(t.last_activity_at > c.last_activity_at).toBe(true);
     await removeClaim(p, 7);
     expect(await readClaim(p, 7)).toBeNull();
-  });
-  it("reads a claim written before spec 113 with closedWork as an empty list, and keeps one that has it (AC-6)", async () => {
-    const p = fresh();
-    await ensureStateDirs(p);
-    const { closedWork: _c, ...old } = initialChainState(7);
-    const c = { issue: 7, state: old, worktree: "/w/7", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null };
-    writeFileSync(join(p.claims, "7.json"), JSON.stringify(c));
-    expect((await readClaim(p, 7))!.state.closedWork).toEqual([]);
-    const closed = [{ pr: 5, branch: "spec-7", head: "a".repeat(40), patch: null, at: null }];
-    await writeClaim(p, { ...c, state: { ...initialChainState(7), closedWork: closed } });
-    expect((await readClaim(p, 7))!.state.closedWork).toEqual(closed);
-  });
-  it("reads a ledger without closedWork and round-trips one with it (AC-6)", async () => {
-    const p = fresh();
-    await ensureStateDirs(p);
-    expect(await readLedger(p, 7)).toBeNull();
-    writeFileSync(join(p.escalations, "7.json"), JSON.stringify(ledgerOf(initialChainState(7))));
-    expect((await readLedger(p, 7))!.closedWork).toBeUndefined();
-    const closed = [{ pr: 5, branch: "spec-7", head: "a".repeat(40), patch: "/p", at: "2026-11-23T00:00:00.000Z" }];
-    await writeLedger(p, 7, { ...ledgerOf(initialChainState(7)), closedWork: closed });
-    expect((await readLedger(p, 7))!.closedWork).toEqual(closed);
   });
   it("reads a pre-034 claim without slot and drops it on the next write (spec 034 AC-4)", async () => {
     const p = fresh();

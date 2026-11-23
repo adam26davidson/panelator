@@ -38,22 +38,6 @@
       "minimum": 0,
       "description": "Spec 060: blocks on main for this issue."
     },
-    "closedWork": {
-      "type": "array",
-      "description": "Spec 113: the PRs an abandonment closed; written only while there are any.",
-      "items": {
-        "type": "object",
-        "required": ["pr", "branch", "head"],
-        "additionalProperties": false,
-        "properties": {
-          "pr": { "type": "integer" },
-          "branch": { "type": "string" },
-          "head": { "type": "string" },
-          "patch": { "type": ["string", "null"] },
-          "at": { "type": ["string", "null"] }
-        }
-      }
-    },
     "rescueOn": {
       "type": "string",
       "description": "2026-11-22: the branch a rescue is in effect on; written only while one is."
