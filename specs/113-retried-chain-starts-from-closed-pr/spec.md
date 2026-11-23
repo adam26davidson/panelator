@@ -355,8 +355,9 @@ names is still saved.
   bare origin gains a `refs/pull/<n>/head` ref in the test); AC-4's texts.
 - `tools/scheduler/test/helpers/`: what the chains of AC-7 need from the
   recorded worlds (removing the `abandoned` label on the mocked GitHub).
-- `tools/scheduler/test/e2e-*.test.ts`: the chains of AC-7, in an existing
-  file or a new one of that pattern.
+- `tools/scheduler/test/`: the end-to-end chains of AC-7, added to an
+  existing `e2e-*.test.ts` file or a new one of that pattern (the directory is
+  listed because the scope gate matches listed paths literally).
 - `tools/scheduler/test/state.test.ts`, `tools/scheduler/test/schema.test.ts`,
   `tools/scheduler/test/stages.test.ts`: AC-6, and the prompt lines of AC-4
   where a test pins them.
