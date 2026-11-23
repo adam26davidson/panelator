@@ -1,0 +1,5 @@
+{
+  "expected": { "flash_mb": 16, "psram_mb": 8 },
+  "port_prefixes": ["usb-Espressif_", "usb-Silicon_Labs_CP21", "usb-1a86_"],
+  "timeouts_s": { "banner": 30, "status": 10, "soak": 20, "lock": 900, "download_mode": 60, "flash": 300 }
+}

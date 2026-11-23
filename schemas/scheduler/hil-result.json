@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hil-result.json",
+  "title": "HIL result",
+  "description": "The output.text of the hil check run (spec 070 section 8, spec 106 AC-10): one object per run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["outcome", "kind", "sha", "run_id", "board", "tests", "log"],
+  "properties": {
+    "outcome": { "enum": ["pass", "fail", "bricked", "absent"] },
+    "kind": { "enum": ["pr", "main", "soak"] },
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "run_id": { "type": "integer", "minimum": 0 },
+    "board": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "firmware_sha", "uptime_s", "resets", "free_heap", "free_psram"],
+      "properties": {
+        "status": { "enum": ["ok", "bricked", "absent"] },
+        "firmware_sha": { "type": ["string", "null"] },
+        "uptime_s": { "type": ["integer", "null"], "minimum": 0 },
+        "resets": { "type": ["integer", "null"], "minimum": -1 },
+        "free_heap": { "type": ["integer", "null"], "minimum": 0 },
+        "free_psram": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status", "duration_ms"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["pass", "fail", "skip"] },
+          "duration_ms": { "type": "integer", "minimum": 0 },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "reason": { "type": "string" },
+    "log": { "type": "string", "maxLength": 32768 }
+  }
+}
