@@ -7,7 +7,14 @@
 use panelator_widget::{Color, Font, Widget, config, draw, layer, random, text};
 
 const BACKGROUND: Color = Color(0x0B1F_3AFF);
-const COLORS: [Color; 6] = [Color(0xFFB0_00FF), Color(0xFFFF_FFFF), Color(0x5CFF_8AFF), Color(0x4FD8_FFFF), Color(0xFF7A_B6FF), Color(0xB9A1_FFFF)];
+const COLORS: [Color; 6] = [
+    Color(0xFFB0_00FF),
+    Color(0xFFFF_FFFF),
+    Color(0x5CFF_8AFF),
+    Color(0x4FD8_FFFF),
+    Color(0xFF7A_B6FF),
+    Color(0xB9A1_FFFF),
+];
 const DEFAULT_TEXT: &str = "panelator";
 
 /// The widget.
@@ -35,7 +42,12 @@ impl Widget for Scroll {
     fn init() -> Self {
         let mut doc = [0u8; 256];
         let n = config::read(&mut doc[..config::len().min(256)]);
-        let mut me = Scroll { text: [0; 64], len: 0, width: 0, color: 0 };
+        let mut me = Scroll {
+            text: [0; 64],
+            len: 0,
+            width: 0,
+            color: 0,
+        };
         let mut out = [0u8; 64];
         let s = config::str(&doc[..n], "text", &mut out).unwrap_or(DEFAULT_TEXT);
         me.len = s.len();
@@ -48,7 +60,7 @@ impl Widget for Scroll {
     fn update(&mut self, tick: u64) {
         let (w, h) = layer::size();
         let period = u64::try_from(w + self.width).unwrap_or(1).max(1);
-        if tick > 0 && tick % period == 0 {
+        if tick > 0 && tick.is_multiple_of(period) {
             self.color = Scroll::pick();
         }
         let x = w - i32::try_from(tick % period).unwrap_or(0);

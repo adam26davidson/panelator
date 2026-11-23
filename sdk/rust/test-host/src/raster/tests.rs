@@ -1,6 +1,6 @@
 use super::Layer;
 
-const C: u32 = 0x11223344;
+const C: u32 = 0x1122_3344;
 
 /// A literal transcription of the document's pseudo-code: the sparse pixel list, unbounded.
 mod reference {
@@ -91,7 +91,16 @@ fn lines_equal_the_pseudo_code_over_all_small_arguments() {
                 for y1 in -5..14 {
                     let mut l = Layer::new(9, 9);
                     l.line(x0, y0, x1, y1, C);
-                    let want = expected(9, 9, &reference::line(i64::from(x0), i64::from(y0), i64::from(x1), i64::from(y1)));
+                    let want = expected(
+                        9,
+                        9,
+                        &reference::line(
+                            i64::from(x0),
+                            i64::from(y0),
+                            i64::from(x1),
+                            i64::from(y1),
+                        ),
+                    );
                     assert_eq!(l, want, "line ({x0},{y0}) to ({x1},{y1})");
                 }
             }
@@ -107,7 +116,11 @@ fn circles_equal_the_pseudo_code_over_all_small_arguments() {
                 for filled in [false, true] {
                     let mut l = Layer::new(10, 10);
                     l.circle(cx, cy, r, C, filled);
-                    let want = expected(10, 10, &reference::circle(i64::from(cx), i64::from(cy), i64::from(r), filled));
+                    let want = expected(
+                        10,
+                        10,
+                        &reference::circle(i64::from(cx), i64::from(cy), i64::from(r), filled),
+                    );
                     assert_eq!(l, want, "circle ({cx},{cy}) r {r} filled {filled}");
                 }
             }
@@ -122,10 +135,21 @@ fn circles_of_every_radius_up_to_300_equal_the_pseudo_code() {
             let mut l = Layer::new(81, 81);
             l.circle(40, 40, r, C, filled);
             // A window at the circle's edge, where the shape crosses the layer.
-            assert_eq!(l, expected(81, 81, &reference::circle(40, 40, i64::from(r), filled)), "r {r} filled {filled}");
+            assert_eq!(
+                l,
+                expected(81, 81, &reference::circle(40, 40, i64::from(r), filled)),
+                "r {r} filled {filled}"
+            );
             let mut l = Layer::new(64, 64);
-            l.circle(-i32::try_from(r).unwrap() + 20, 31, r, C, filled);
-            assert_eq!(l, expected(64, 64, &reference::circle(-i64::from(r) + 20, 31, i64::from(r), filled)));
+            l.circle(-r + 20, 31, r, C, filled);
+            assert_eq!(
+                l,
+                expected(
+                    64,
+                    64,
+                    &reference::circle(-i64::from(r) + 20, 31, i64::from(r), filled)
+                )
+            );
         }
     }
 }
@@ -138,8 +162,14 @@ fn rectangles_in_both_modes() {
         let mut b = Layer::new(8, 8);
         b.rect(1, 1, w, h, C, false);
         let (w, h) = (i64::from(w), i64::from(h));
-        let fill: Vec<_> = (0..h).flat_map(|j| (0..w).map(move |i| (1 + i, 1 + j))).collect();
-        let border: Vec<_> = fill.iter().copied().filter(|&(x, y)| x == 1 || y == 1 || x == w || y == h).collect();
+        let fill: Vec<_> = (0..h)
+            .flat_map(|j| (0..w).map(move |i| (1 + i, 1 + j)))
+            .collect();
+        let border: Vec<_> = fill
+            .iter()
+            .copied()
+            .filter(|&(x, y)| x == 1 || y == 1 || x == w || y == h)
+            .collect();
         assert_eq!(f, expected(8, 8, &fill));
         assert_eq!(lit(&b).len(), border.len(), "border of {w}x{h}");
         assert_eq!(b, expected(8, 8, &border));
@@ -165,10 +195,23 @@ fn horizontal_vertical_and_single_point_lines() {
 
 #[test]
 fn the_eight_octants_from_the_centre() {
-    for (dx, dy) in [(5, 2), (2, 5), (-2, 5), (-5, 2), (-5, -2), (-2, -5), (2, -5), (5, -2)] {
+    for (dx, dy) in [
+        (5, 2),
+        (2, 5),
+        (-2, 5),
+        (-5, 2),
+        (-5, -2),
+        (-2, -5),
+        (2, -5),
+        (5, -2),
+    ] {
         let mut l = Layer::new(13, 13);
         l.line(6, 6, 6 + dx, 6 + dy, C);
-        let want = expected(13, 13, &reference::line(6, 6, i64::from(6 + dx), i64::from(6 + dy)));
+        let want = expected(
+            13,
+            13,
+            &reference::line(6, 6, i64::from(6 + dx), i64::from(6 + dy)),
+        );
         assert_eq!(l, want, "octant {dx},{dy}");
         assert_eq!(lit(&l).len(), 6, "one pixel per major step");
     }
@@ -189,7 +232,9 @@ fn radius_3_outline_and_radius_4_disc_as_the_design_lists() {
     assert_eq!(lit(&l).len(), 16);
     let mut l = Layer::new(9, 9);
     l.circle(4, 4, 4, C, true);
-    let widths: Vec<_> = (0..9).map(|y| lit(&l).iter().filter(|p| p.1 == y).count()).collect();
+    let widths: Vec<_> = (0..9)
+        .map(|y| lit(&l).iter().filter(|p| p.1 == y).count())
+        .collect();
     assert_eq!(widths, [3, 7, 7, 9, 9, 9, 7, 7, 3]);
 }
 

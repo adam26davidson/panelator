@@ -14,4 +14,4 @@ crate-type = ["cdylib", "rlib"]
 workspace = true
 
 [dependencies]
-panelator-widget = { path = "../../sdk/rust/panelator-widget" }
+panelator-widget = { path = "../../sdk/rust/panelator-widget", version = "0.1.0" }

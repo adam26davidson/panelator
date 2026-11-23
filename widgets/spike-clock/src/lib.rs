@@ -44,15 +44,31 @@ fn two(n: u8) -> [u8; 2] {
 /// Formats the local time of `unix_ms` in a timezone `offset_s` seconds east of UTC.
 #[must_use]
 pub fn format(unix_ms: i64, offset_s: i32) -> Formatted {
-    let t = time::local(unix_ms, offset_s);
-    let (h, m, s) = (two(t.hour), two(t.minute), two(t.second));
-    let y = u32::try_from(t.year).unwrap_or(0) % 10_000;
-    let digit = |d: u32| b'0' + u8::try_from(y / d % 10).unwrap_or(0);
-    let (mo, d) = (two(t.month), two(t.day));
+    let now = time::local(unix_ms, offset_s);
+    let hours = two(now.hour);
+    let minutes = two(now.minute);
+    let seconds = two(now.second);
+    let year = u32::try_from(now.year).unwrap_or(0) % 10_000;
+    let digit = |place: u32| b'0' + u8::try_from(year / place % 10).unwrap_or(0);
+    let month = two(now.month);
+    let day = two(now.day);
     Formatted {
-        time: [h[0], h[1], b':', m[0], m[1], b':', s[0], s[1]],
-        date: [digit(1000), digit(100), digit(10), digit(1), b'-', mo[0], mo[1], b'-', d[0], d[1]],
-        second: t.second,
+        time: [
+            hours[0], hours[1], b':', minutes[0], minutes[1], b':', seconds[0], seconds[1],
+        ],
+        date: [
+            digit(1000),
+            digit(100),
+            digit(10),
+            digit(1),
+            b'-',
+            month[0],
+            month[1],
+            b'-',
+            day[0],
+            day[1],
+        ],
+        second: now.second,
     }
 }
 
@@ -108,9 +124,18 @@ mod tests {
     fn two_seconds_before_midnight_and_at_midnight() {
         // Tick 0 and tick 120 of the conformance scene: start + (tick * 1000) / 60, offset 3600.
         let f = format(START, 3600);
-        assert_eq!((f.time_str(), f.date_str(), f.second), ("23:59:58", "2026-12-31", 58));
+        assert_eq!(
+            (f.time_str(), f.date_str(), f.second),
+            ("23:59:58", "2026-12-31", 58)
+        );
         let f = format(START + 120 * 1000 / 60, 3600);
-        assert_eq!((f.time_str(), f.date_str(), f.second), ("00:00:00", "2027-01-01", 0));
-        assert_eq!(format(START + 59 * 1000 / 60 + 1000, 3600).time_str(), "23:59:59");
+        assert_eq!(
+            (f.time_str(), f.date_str(), f.second),
+            ("00:00:00", "2027-01-01", 0)
+        );
+        assert_eq!(
+            format(START + 59 * 1000 / 60 + 1000, 3600).time_str(),
+            "23:59:59"
+        );
     }
 }

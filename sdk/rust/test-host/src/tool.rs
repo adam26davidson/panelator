@@ -11,7 +11,12 @@ pub fn dir_loader(dir: &Path) -> impl FnMut(&str) -> Result<Vec<u8>, String> {
     let dir = dir.to_path_buf();
     move |name| {
         let path = dir.join(format!("{name}.wasm"));
-        std::fs::read(&path).map_err(|e| format!("{}: {e} (build the modules with sdk/rust/build-widgets.sh)", path.display()))
+        std::fs::read(&path).map_err(|e| {
+            format!(
+                "{}: {e} (build the modules with sdk/rust/build-widgets.sh)",
+                path.display()
+            )
+        })
     }
 }
 
@@ -24,8 +29,10 @@ pub fn write_frames(dir: &Path, scene: &Scene, frames: &[(u64, Frame)]) -> Resul
     for (tick, frame) in frames {
         frame.write_png(&dir.join(format!("tick-{tick}.png")))?;
     }
-    let json = serde_json::to_string_pretty(&FramesJson::of(scene, frames)).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join("frames.json"), json + "\n").map_err(|e| format!("{}: {e}", dir.display()))
+    let json =
+        serde_json::to_string_pretty(&FramesJson::of(scene, frames)).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("frames.json"), json + "\n")
+        .map_err(|e| format!("{}: {e}", dir.display()))
 }
 
 /// `run`: runs the scene and writes its frames. The frames before an error are written; none for
@@ -60,18 +67,36 @@ pub fn compare(frames: &[(u64, Frame)], golden: &Path) -> Check {
         let path = golden.join(format!("tick-{tick}.png"));
         let want = match Frame::read_png(&path) {
             Ok(f) => f,
-            Err(e) => return Check { ok: false, report: format!("tick {tick}: no golden frame: {e}") },
+            Err(e) => {
+                return Check {
+                    ok: false,
+                    report: format!("tick {tick}: no golden frame: {e}"),
+                };
+            }
         };
         if let Some((x, y, got, expected)) = frame.first_difference(&want) {
             let size = if frame.width == want.width && frame.height == want.height {
                 String::new()
             } else {
-                format!(" (sizes differ: {}x{} against golden {}x{})", frame.width, frame.height, want.width, want.height)
+                format!(
+                    " (sizes differ: {}x{} against golden {}x{})",
+                    frame.width, frame.height, want.width, want.height
+                )
             };
-            return Check { ok: false, report: format!("tick {tick}: first difference at ({x}, {y}): got {}, golden {}{size}", hex(got), hex(expected)) };
+            return Check {
+                ok: false,
+                report: format!(
+                    "tick {tick}: first difference at ({x}, {y}): got {}, golden {}{size}",
+                    hex(got),
+                    hex(expected)
+                ),
+            };
         }
     }
-    Check { ok: true, report: String::new() }
+    Check {
+        ok: true,
+        report: String::new(),
+    }
 }
 
 /// `check`: runs the scene and compares every captured frame with the golden frames. Given
@@ -79,14 +104,23 @@ pub fn compare(frames: &[(u64, Frame)], golden: &Path) -> Check {
 ///
 /// # Errors
 /// The scene or I/O error as text; a run error is a failed check, reported in the result.
-pub fn check(scene_path: &Path, modules: &Path, golden: &Path, actual: Option<&Path>, fuel: u64) -> Result<Check, String> {
+pub fn check(
+    scene_path: &Path,
+    modules: &Path,
+    golden: &Path,
+    actual: Option<&Path>,
+    fuel: u64,
+) -> Result<Check, String> {
     let scene = Scene::load(scene_path)?;
     let Run { frames, error } = run(&scene, &mut dir_loader(modules), fuel);
     if let Some(dir) = actual {
         write_frames(dir, &scene, &frames)?;
     }
     if let Some(e) = error {
-        return Ok(Check { ok: false, report: format!("run failed: {e}") });
+        return Ok(Check {
+            ok: false,
+            report: format!("run failed: {e}"),
+        });
     }
     Ok(compare(&frames, golden))
 }
@@ -105,7 +139,11 @@ pub fn inspect(wasm: &[u8]) -> String {
                 i.width,
                 i.height,
                 i.memory_pages,
-                i.imports.iter().map(|s| format!("  {s}")).collect::<Vec<_>>().join("\n")
+                i.imports
+                    .iter()
+                    .map(|s| format!("  {s}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             )
         }
         Err(e) => format!("load error: {e}\n"),

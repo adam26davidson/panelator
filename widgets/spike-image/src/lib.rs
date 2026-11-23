@@ -30,7 +30,10 @@ impl Widget for Spike {
         let n = config::read(&mut doc[..config::len().min(256)]);
         let mut out = [0u8; 64];
         let s = config::str(&doc[..n], "asset", &mut out).unwrap_or(DEFAULT_ASSET);
-        let mut me = Spike { name: [0; 64], len: s.len() };
+        let mut me = Spike {
+            name: [0; 64],
+            len: s.len(),
+        };
         me.name[..me.len].copy_from_slice(s.as_bytes());
         me
     }
@@ -38,7 +41,9 @@ impl Widget for Spike {
     fn update(&mut self, tick: u64) {
         let (w, _) = layer::size();
         let o = i32::try_from((tick / 2) % u64::try_from(w).unwrap_or(1).max(1)).unwrap_or(0);
-        if image::blit(self.name(), 0, -o, 0).is_err() || image::blit(self.name(), 0, w - o, 0).is_err() {
+        if image::blit(self.name(), 0, -o, 0).is_err()
+            || image::blit(self.name(), 0, w - o, 0).is_err()
+        {
             draw::fill(MAGENTA);
         }
     }

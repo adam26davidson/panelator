@@ -34,15 +34,22 @@ impl Args {
     }
 
     fn flag(&self, name: &str) -> Option<&str> {
-        self.flags.iter().find(|f| f.0 == name).map(|f| f.1.as_str())
+        self.flags
+            .iter()
+            .find(|f| f.0 == name)
+            .map(|f| f.1.as_str())
     }
 
     fn path(&self, name: &str) -> Result<PathBuf, String> {
-        self.flag(name).map(PathBuf::from).ok_or(format!("--{name} is required"))
+        self.flag(name)
+            .map(PathBuf::from)
+            .ok_or(format!("--{name} is required"))
     }
 
     fn fuel(&self) -> Result<u64, String> {
-        self.flag("fuel").map_or(Ok(DEFAULT_FUEL), |v| v.parse().map_err(|_| format!("--fuel {v} is not a number")))
+        self.flag("fuel").map_or(Ok(DEFAULT_FUEL), |v| {
+            v.parse().map_err(|_| format!("--fuel {v} is not a number"))
+        })
     }
 }
 
@@ -57,7 +64,13 @@ fn real_main(args: &[String]) -> Result<bool, String> {
         }
         "check" => {
             let actual = a.flag("actual").map(PathBuf::from);
-            let c = tool::check(&target, &a.path("modules")?, &a.path("golden")?, actual.as_deref(), a.fuel()?)?;
+            let c = tool::check(
+                &target,
+                &a.path("modules")?,
+                &a.path("golden")?,
+                actual.as_deref(),
+                a.fuel()?,
+            )?;
             if !c.ok {
                 eprintln!("{}", c.report);
             }

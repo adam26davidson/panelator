@@ -93,8 +93,14 @@ impl Scene {
     /// A message naming the file and the problem (an unknown or missing field by its name).
     pub fn load(path: &Path) -> Result<Scene, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("scene").to_string();
-        let assets_dir = path.parent().map_or_else(|| "assets".into(), |p| p.join("../assets"));
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("scene")
+            .to_string();
+        let assets_dir = path
+            .parent()
+            .map_or_else(|| "assets".into(), |p| p.join("../assets"));
         Scene::from_json(&name, &text, &assets_dir).map_err(|e| format!("{}: {e}", path.display()))
     }
 
@@ -105,7 +111,10 @@ impl Scene {
     pub fn from_json(name: &str, text: &str, assets_dir: &Path) -> Result<Scene, String> {
         let s: SceneFile = serde_json::from_str(text).map_err(|e| e.to_string())?;
         if s.abi != "0.1" {
-            return Err(format!("abi: the scene is for ABI {}, this host runs 0.1", s.abi));
+            return Err(format!(
+                "abi: the scene is for ABI {}, this host runs 0.1",
+                s.abi
+            ));
         }
         if !(1..=16384).contains(&s.panel.width) || !(1..=16384).contains(&s.panel.height) {
             return Err("panel: width and height are 1 to 16384".into());
@@ -115,7 +124,10 @@ impl Scene {
         }
         for (i, p) in s.placements.iter().enumerate() {
             if p.opacity > 255 {
-                return Err(format!("placements[{i}].opacity: {} is not 0 to 255", p.opacity));
+                return Err(format!(
+                    "placements[{i}].opacity: {} is not 0 to 255",
+                    p.opacity
+                ));
             }
             if p.seed == 0 {
                 return Err(format!("placements[{i}].seed: must not be 0"));
@@ -126,7 +138,8 @@ impl Scene {
         }
         let mut assets = Assets::new();
         for a in &s.assets {
-            let data = std::fs::read(assets_dir.join(&a.file)).map_err(|e| format!("assets: {}: {e}", a.file))?;
+            let data = std::fs::read(assets_dir.join(&a.file))
+                .map_err(|e| format!("assets: {}: {e}", a.file))?;
             if data.len() != a.width * a.height * a.frames * 3 {
                 return Err(format!(
                     "assets: {} is {} bytes, width {} x height {} x frames {} x 3 is {}",
@@ -138,7 +151,15 @@ impl Scene {
                     a.width * a.height * a.frames * 3
                 ));
             }
-            assets.insert(a.name.clone(), Asset { width: a.width, height: a.height, frames: a.frames, data });
+            assets.insert(
+                a.name.clone(),
+                Asset {
+                    width: a.width,
+                    height: a.height,
+                    frames: a.frames,
+                    data,
+                },
+            );
         }
         Ok(Scene {
             name: name.to_string(),
@@ -170,7 +191,11 @@ pub struct RunError {
 
 impl fmt::Display for RunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "placement {} ({}): {} at tick {}: {}", self.placement, self.module, self.export, self.tick, self.message)
+        write!(
+            f,
+            "placement {} ({}): {} at tick {}: {}",
+            self.placement, self.module, self.export, self.tick, self.message
+        )
     }
 }
 
@@ -193,20 +218,36 @@ pub fn time_at(start_unix_ms: i64, tick: u64) -> i64 {
 
 /// Composes layers (already in order) onto a black frame.
 #[must_use]
-pub fn compose(width: usize, height: usize, layers: &[(&crate::raster::Layer, i32, i32, u32)]) -> Frame {
+pub fn compose(
+    width: usize,
+    height: usize,
+    layers: &[(&crate::raster::Layer, i32, i32, u32)],
+) -> Frame {
     let mut frame = Frame::black(width, height);
     for &(layer, ox, oy, opacity) in layers {
         for ly in 0..layer.height {
-            let Some(py) = usize::try_from(i64::from(oy) + i64::try_from(ly).unwrap_or(i64::MAX)).ok().filter(|y| *y < height) else { continue };
+            let Some(py) = usize::try_from(i64::from(oy) + i64::try_from(ly).unwrap_or(i64::MAX))
+                .ok()
+                .filter(|y| *y < height)
+            else {
+                continue;
+            };
             for lx in 0..layer.width {
-                let Some(px) = usize::try_from(i64::from(ox) + i64::try_from(lx).unwrap_or(i64::MAX)).ok().filter(|x| *x < width) else { continue };
-                let p = layer.pixels[ly * layer.width + lx];
-                let a = ((p & 0xFF) * opacity + 127) / 255;
-                let o = (py * width + px) * 3;
-                for (c, shift) in [24, 16, 8].into_iter().enumerate() {
-                    let s = (p >> shift) & 0xFF;
-                    let d = u32::from(frame.rgb[o + c]);
-                    frame.rgb[o + c] = u8::try_from((s * a + d * (255 - a) + 127) / 255).unwrap_or(255);
+                let Some(px) =
+                    usize::try_from(i64::from(ox) + i64::try_from(lx).unwrap_or(i64::MAX))
+                        .ok()
+                        .filter(|x| *x < width)
+                else {
+                    continue;
+                };
+                let pixel = layer.pixels[ly * layer.width + lx];
+                let alpha = ((pixel & 0xFF) * opacity + 127) / 255;
+                let at = (py * width + px) * 3;
+                for (channel, shift) in [24, 16, 8].into_iter().enumerate() {
+                    let src = (pixel >> shift) & 0xFF;
+                    let dst = u32::from(frame.rgb[at + channel]);
+                    let out = (src * alpha + dst * (255 - alpha) + 127) / 255;
+                    frame.rgb[at + channel] = u8::try_from(out).unwrap_or(255);
                 }
             }
         }
@@ -217,7 +258,10 @@ pub fn compose(width: usize, height: usize, layers: &[(&crate::raster::Layer, i3
 /// Runs a scene: loads each module with `load`, initialises, steps through the ticks and captures
 /// the frames. `fuel` is the limit of one call to an export.
 pub fn run(scene: &Scene, load: &mut dyn FnMut(&str) -> Result<Vec<u8>, String>, fuel: u64) -> Run {
-    let mut run = Run { frames: vec![], error: None };
+    let mut run = Run {
+        frames: vec![],
+        error: None,
+    };
     let err = |placement: usize, export: &str, tick: u64, message: String| RunError {
         placement,
         module: scene.placements[placement].module.clone(),
@@ -235,7 +279,8 @@ pub fn run(scene: &Scene, load: &mut dyn FnMut(&str) -> Result<Vec<u8>, String>,
             assets: Rc::clone(&scene.assets),
             fuel,
         };
-        let loaded = load(&p.module).and_then(|bytes| Instance::new(&bytes, setup).map_err(|e| e.to_string()));
+        let loaded = load(&p.module)
+            .and_then(|bytes| Instance::new(&bytes, setup).map_err(|e| e.to_string()));
         match loaded {
             Ok(inst) => instances.push(inst),
             Err(m) => {
@@ -255,11 +300,15 @@ pub fn run(scene: &Scene, load: &mut dyn FnMut(&str) -> Result<Vec<u8>, String>,
     let last = scene.ticks.last().copied().unwrap_or(0);
     for tick in 0..=last {
         for &i in &order {
-            if update_due(instances[i].info.update_hz, tick) {
-                if let Err(m) = instances[i].update(tick, time_at(scene.start_unix_ms, tick), scene.utc_offset_s) {
-                    run.error = Some(err(i, "pn_update", tick, m));
-                    return run;
-                }
+            if update_due(instances[i].info.update_hz, tick)
+                && let Err(m) = instances[i].update(
+                    tick,
+                    time_at(scene.start_unix_ms, tick),
+                    scene.utc_offset_s,
+                )
+            {
+                run.error = Some(err(i, "pn_update", tick, m));
+                return run;
             }
         }
         if scene.ticks.binary_search(&tick).is_ok() {
@@ -270,7 +319,8 @@ pub fn run(scene: &Scene, load: &mut dyn FnMut(&str) -> Result<Vec<u8>, String>,
                     (instances[i].layer(), p.x, p.y, p.opacity)
                 })
                 .collect();
-            run.frames.push((tick, compose(scene.width, scene.height, &layers)));
+            run.frames
+                .push((tick, compose(scene.width, scene.height, &layers)));
         }
     }
     run
@@ -302,8 +352,17 @@ impl FramesJson {
     pub fn of(scene: &Scene, frames: &[(u64, Frame)]) -> FramesJson {
         FramesJson {
             scene: scene.name.clone(),
-            panel: BTreeMap::from([("height".to_string(), scene.height), ("width".to_string(), scene.width)]),
-            frames: frames.iter().map(|(tick, f)| FrameHash { tick: *tick, sha256: f.sha256() }).collect(),
+            panel: BTreeMap::from([
+                ("height".to_string(), scene.height),
+                ("width".to_string(), scene.width),
+            ]),
+            frames: frames
+                .iter()
+                .map(|(tick, f)| FrameHash {
+                    tick: *tick,
+                    sha256: f.sha256(),
+                })
+                .collect(),
         }
     }
 }

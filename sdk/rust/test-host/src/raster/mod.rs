@@ -19,7 +19,11 @@ impl Layer {
     /// A transparent layer.
     #[must_use]
     pub fn new(width: usize, height: usize) -> Layer {
-        Layer { width, height, pixels: vec![0; width * height] }
+        Layer {
+            width,
+            height,
+            pixels: vec![0; width * height],
+        }
     }
 
     fn w(&self) -> i64 {
@@ -36,9 +40,14 @@ impl Layer {
         self.index(x, y).map(|i| self.pixels[i])
     }
 
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation, reason = "both are checked to be in 0..size first")]
+    #[allow(
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation,
+        reason = "both are checked to be in 0..size first"
+    )]
     fn index(&self, x: i64, y: i64) -> Option<usize> {
-        ((0..self.w()).contains(&x) && (0..self.h()).contains(&y)).then(|| y as usize * self.width + x as usize)
+        ((0..self.w()).contains(&x) && (0..self.h()).contains(&y))
+            .then(|| y as usize * self.width + x as usize)
     }
 
     /// Sets a pixel when it is inside the layer.
@@ -49,7 +58,11 @@ impl Layer {
     }
 
     /// Sets the pixels of row `y` from `x0` to `x1` inclusive, clipped.
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation, reason = "clamped to the layer first")]
+    #[allow(
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation,
+        reason = "clamped to the layer first"
+    )]
     fn hspan(&mut self, y: i64, x0: i64, x1: i64, color: u32) {
         if !(0..self.h()).contains(&y) {
             return;
@@ -150,7 +163,11 @@ impl Layer {
 /// The range of step numbers `i` in `0..=d` for which `start + step * i` lies in `0..size`.
 fn clip_range(start: i64, step: i64, d: i64, size: i64) -> (i64, i64) {
     // position p(i) = start + step * i; in range when 0 <= p < size.
-    let (a, b) = if step > 0 { (-start, size - 1 - start) } else { (start - (size - 1), start) };
+    let (a, b) = if step > 0 {
+        (-start, size - 1 - start)
+    } else {
+        (start - (size - 1), start)
+    };
     (a.max(0), b.min(d))
 }
 
@@ -174,7 +191,7 @@ fn circle_x(r: i64, y: i64) -> i64 {
 fn inv_xx(m: i128) -> Option<i64> {
     let m = u128::try_from(m).ok()?;
     let s = (1 + 4 * m).isqrt();
-    i64::try_from((1 + s) / 2).ok()
+    i64::try_from(s.div_ceil(2)).ok()
 }
 
 /// The largest `y` of the octant loop: `x(y) >= y`, that is `2*y*y - y <= r*r - 1`.
@@ -182,7 +199,7 @@ fn circle_ymax(r: i64) -> i64 {
     let (mut lo, mut hi) = (0i64, r);
     while lo < hi {
         let mid = (lo + hi + 1) / 2;
-        if 2 * i128::from(mid) * i128::from(mid) - i128::from(mid) <= i128::from(r) * i128::from(r) - 1 {
+        if 2 * i128::from(mid) * i128::from(mid) - i128::from(mid) < i128::from(r) * i128::from(r) {
             lo = mid;
         } else {
             hi = mid - 1;
@@ -197,7 +214,9 @@ fn circle_second(r: i64, k: i64, ymax: i64) -> Option<(i64, i64)> {
     // x(y) >= k  <=>  y*y <= r*r - 1 - k*k + k.
     let reach = |k: i64| {
         let m = i128::from(r) * i128::from(r) - 1 - i128::from(k) * i128::from(k) + i128::from(k);
-        u128::try_from(m).ok().map(|m| i64::try_from(m.isqrt()).unwrap_or(i64::MAX))
+        u128::try_from(m)
+            .ok()
+            .map(|m| i64::try_from(m.isqrt()).unwrap_or(i64::MAX))
     };
     let hi = reach(k)?.min(ymax);
     let lo = reach(k + 1).map_or(0, |v| v + 1);

@@ -5,7 +5,10 @@ use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
-use wasmi::{Caller, Config, Engine, Error, Extern, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc, ValType};
+use wasmi::{
+    Caller, Config, Engine, Error, Extern, Linker, Module, Store, StoreLimits, StoreLimitsBuilder,
+    TypedFunc, ValType,
+};
 
 use crate::abi::{self, EXPORTS, IMPORTS, MAX_PAGES};
 use crate::font::{self, Fonts};
@@ -29,7 +32,10 @@ impl fmt::Display for LoadError {
 impl std::error::Error for LoadError {}
 
 fn bad(rule: &str, detail: impl Into<String>) -> LoadError {
-    LoadError { rule: rule.to_string(), detail: detail.into() }
+    LoadError {
+        rule: rule.to_string(),
+        detail: detail.into(),
+    }
 }
 
 /// An image the host can blit.
@@ -68,7 +74,14 @@ impl Setup {
     /// A 1 by 1 layer, config `{}`, no assets: enough to read a module's declarations.
     #[must_use]
     pub fn minimal() -> Setup {
-        Setup { width: 1, height: 1, config: b"{}".to_vec(), seed: 1, assets: Rc::new(Assets::new()), fuel: DEFAULT_FUEL }
+        Setup {
+            width: 1,
+            height: 1,
+            config: b"{}".to_vec(),
+            seed: 1,
+            assets: Rc::new(Assets::new()),
+            fuel: DEFAULT_FUEL,
+        }
     }
 }
 
@@ -129,8 +142,15 @@ fn engine_config(strict: bool, without: Option<&str>) -> Config {
     c
 }
 
-const FORBIDDEN: &[&str] =
-    &["start function", "tail-call", "multi-memory", "memory64", "extended-const", "wide-arithmetic", "custom-page-sizes"];
+const FORBIDDEN: &[&str] = &[
+    "start function",
+    "tail-call",
+    "multi-memory",
+    "memory64",
+    "extended-const",
+    "wide-arithmetic",
+    "custom-page-sizes",
+];
 
 fn compile(wasm: &[u8]) -> Result<(Engine, Module), LoadError> {
     if wasm.get(4..8) == Some(&[0x0d, 0x00, 0x01, 0x00]) {
@@ -142,9 +162,15 @@ fn compile(wasm: &[u8]) -> Result<(Engine, Module), LoadError> {
     if let Err(e) = Module::new(&all, wasm) {
         let text = e.to_string();
         if text.to_lowercase().contains("simd") || text.contains("v128") {
-            return Err(bad("feature simd", format!("the module uses SIMD, which ABI 0.1 never allows: {text}")));
+            return Err(bad(
+                "feature simd",
+                format!("the module uses SIMD, which ABI 0.1 never allows: {text}"),
+            ));
         }
-        return Err(bad("module form", format!("not a valid core module with the supported features: {e}")));
+        return Err(bad(
+            "module form",
+            format!("not a valid core module with the supported features: {e}"),
+        ));
     }
     for name in FORBIDDEN {
         let engine = Engine::new(&engine_config(false, Some(name)));
@@ -152,7 +178,10 @@ fn compile(wasm: &[u8]) -> Result<(Engine, Module), LoadError> {
             return Err(if *name == "start function" {
                 bad("start function", "the module has a start function")
             } else {
-                bad(&format!("feature {name}"), format!("the module uses {name}, which ABI 0.1 never allows"))
+                bad(
+                    &format!("feature {name}"),
+                    format!("the module uses {name}, which ABI 0.1 never allows"),
+                )
             });
         }
     }
@@ -161,7 +190,7 @@ fn compile(wasm: &[u8]) -> Result<(Engine, Module), LoadError> {
     Ok((engine, module))
 }
 
-fn ty_name(t: &ValType) -> &'static str {
+fn ty_name(t: ValType) -> &'static str {
     match t {
         ValType::I32 => "i32",
         ValType::I64 => "i64",
@@ -172,10 +201,10 @@ fn ty_name(t: &ValType) -> &'static str {
 }
 
 fn sig_of(params: &[ValType], results: &[ValType]) -> String {
-    let p: Vec<_> = params.iter().map(ty_name).collect();
+    let p: Vec<_> = params.iter().copied().map(ty_name).collect();
     let r = match results {
         [] => "()",
-        [one] => ty_name(one),
+        [one] => ty_name(*one),
         _ => "multi",
     };
     format!("({})->{r}", p.join(","))
@@ -186,17 +215,29 @@ fn check_shape(module: &Module) -> Result<(u64, Vec<String>), LoadError> {
     for imp in module.imports() {
         let id = format!("{}.{}", imp.module(), imp.name());
         let wasmi::ExternType::Func(ft) = imp.ty() else {
-            return Err(bad("imports", format!("{id} is not a function; a module imports only functions of ABI 0.1")));
+            return Err(bad(
+                "imports",
+                format!("{id} is not a function; a module imports only functions of ABI 0.1"),
+            ));
         };
         if imp.module() != "panelator" {
-            return Err(bad("imports", format!("{id}: imports come from the module `panelator` only")));
+            return Err(bad(
+                "imports",
+                format!("{id}: imports come from the module `panelator` only"),
+            ));
         }
         let Some(def) = IMPORTS.iter().find(|d| d.name == imp.name()) else {
             return Err(bad("imports", format!("{id} is not an import of ABI 0.1")));
         };
         let got = sig_of(ft.params(), ft.results());
         if got != abi::signature(def) {
-            return Err(bad("imports", format!("{id} has signature {got}, the ABI says {}", abi::signature(def))));
+            return Err(bad(
+                "imports",
+                format!(
+                    "{id} has signature {got}, the ABI says {}",
+                    abi::signature(def)
+                ),
+            ));
         }
         imports.push(id);
     }
@@ -207,29 +248,57 @@ fn check_shape(module: &Module) -> Result<(u64, Vec<String>), LoadError> {
         match exp.ty() {
             wasmi::ExternType::Memory(mt) if name == "memory" => {
                 if mt.minimum() > MAX_PAGES {
-                    return Err(bad("memory", format!("the module declares {} pages, the limit is {MAX_PAGES}", mt.minimum())));
+                    return Err(bad(
+                        "memory",
+                        format!(
+                            "the module declares {} pages, the limit is {MAX_PAGES}",
+                            mt.minimum()
+                        ),
+                    ));
                 }
                 memory_pages = Some(mt.minimum());
             }
             wasmi::ExternType::Func(ft) => {
                 let Some(def) = EXPORTS.iter().find(|d| d.name == name) else {
-                    return Err(bad("exports", format!("{name} is not an export of ABI 0.1")));
+                    return Err(bad(
+                        "exports",
+                        format!("{name} is not an export of ABI 0.1"),
+                    ));
                 };
                 let got = sig_of(ft.params(), ft.results());
                 if got != abi::signature(def) {
-                    return Err(bad("exports", format!("{name} has signature {got}, the ABI says {}", abi::signature(def))));
+                    return Err(bad(
+                        "exports",
+                        format!(
+                            "{name} has signature {got}, the ABI says {}",
+                            abi::signature(def)
+                        ),
+                    ));
                 }
                 seen.push(def.name);
             }
-            _ => return Err(bad("exports", format!("{name} is not an export of ABI 0.1"))),
+            _ => {
+                return Err(bad(
+                    "exports",
+                    format!("{name} is not an export of ABI 0.1"),
+                ));
+            }
         }
     }
     for def in EXPORTS {
         if !seen.contains(&def.name) {
-            return Err(bad("exports", format!("the export {} is missing", def.name)));
+            return Err(bad(
+                "exports",
+                format!("the export {} is missing", def.name),
+            ));
         }
     }
-    let pages = memory_pages.ok_or_else(|| bad("memory", "the module does not export its memory as `memory`"))?;
+    let pages = memory_pages.ok_or_else(|| {
+        bad(
+            "memory",
+            "the module does not export its memory as `memory`",
+        )
+    })?;
     Ok((pages, imports))
 }
 
@@ -242,7 +311,10 @@ fn range(mem: &[u8], ptr: i32, len: i32, what: &str) -> Result<std::ops::Range<u
     let (p, n) = (ptr.cast_unsigned() as usize, usize::try_from(len).ok());
     match n.and_then(|n| p.checked_add(n).map(|end| (p, end))) {
         Some((p, end)) if end <= mem.len() => Ok(p..end),
-        _ => Err(trap(format!("{what}: pointer {ptr} length {len} is outside the module's memory of {} bytes", mem.len()))),
+        _ => Err(trap(format!(
+            "{what}: pointer {ptr} length {len} is outside the module's memory of {} bytes",
+            mem.len()
+        ))),
     }
 }
 
@@ -250,6 +322,10 @@ fn range(mem: &[u8], ptr: i32, len: i32, what: &str) -> Result<std::ops::Range<u
 ///
 /// # Errors
 /// If the linker refuses a definition.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one registration per import, in the document's order"
+)]
 pub fn register(linker: &mut Linker<State>) -> Result<Vec<&'static str>, Error> {
     let mut names = vec![];
     macro_rules! reg {
@@ -258,44 +334,122 @@ pub fn register(linker: &mut Linker<State>) -> Result<Vec<&'static str>, Error> 
             names.push($name);
         }};
     }
-    reg!("layer_width", |c: Caller<'_, State>| i32::try_from(c.data().layer.width).unwrap_or(i32::MAX));
-    reg!("layer_height", |c: Caller<'_, State>| i32::try_from(c.data().layer.height).unwrap_or(i32::MAX));
-    reg!("draw_fill", |mut c: Caller<'_, State>, color: i32| c.data_mut().layer.fill(color.cast_unsigned()));
-    reg!("draw_pixel", |mut c: Caller<'_, State>, x: i32, y: i32, color: i32| c.data_mut().layer.pixel(x, y, color.cast_unsigned()));
-    reg!("draw_line", |mut c: Caller<'_, State>, x0: i32, y0: i32, x1: i32, y1: i32, color: i32| {
-        c.data_mut().layer.line(x0, y0, x1, y1, color.cast_unsigned());
+    reg!("layer_width", |c: Caller<'_, State>| i32::try_from(
+        c.data().layer.width
+    )
+    .unwrap_or(i32::MAX));
+    reg!("layer_height", |c: Caller<'_, State>| i32::try_from(
+        c.data().layer.height
+    )
+    .unwrap_or(i32::MAX));
+    reg!("draw_fill", |mut c: Caller<'_, State>, color: i32| c
+        .data_mut()
+        .layer
+        .fill(color.cast_unsigned()));
+    reg!("draw_pixel", |mut c: Caller<'_, State>,
+                        x: i32,
+                        y: i32,
+                        color: i32| c
+        .data_mut()
+        .layer
+        .pixel(x, y, color.cast_unsigned()));
+    reg!("draw_line", |mut c: Caller<'_, State>,
+                       x0: i32,
+                       y0: i32,
+                       x1: i32,
+                       y1: i32,
+                       color: i32| {
+        c.data_mut()
+            .layer
+            .line(x0, y0, x1, y1, color.cast_unsigned());
     });
-    reg!("draw_rect", |mut c: Caller<'_, State>, x: i32, y: i32, w: i32, h: i32, color: i32, filled: i32| {
-        c.data_mut().layer.rect(x, y, w, h, color.cast_unsigned(), filled != 0);
+    reg!("draw_rect", |mut c: Caller<'_, State>,
+                       x: i32,
+                       y: i32,
+                       w: i32,
+                       h: i32,
+                       color: i32,
+                       filled: i32| {
+        c.data_mut()
+            .layer
+            .rect(x, y, w, h, color.cast_unsigned(), filled != 0);
     });
-    reg!("draw_circle", |mut c: Caller<'_, State>, cx: i32, cy: i32, r: i32, color: i32, filled: i32| {
-        c.data_mut().layer.circle(cx, cy, r, color.cast_unsigned(), filled != 0);
+    reg!("draw_circle", |mut c: Caller<'_, State>,
+                         cx: i32,
+                         cy: i32,
+                         r: i32,
+                         color: i32,
+                         filled: i32| {
+        c.data_mut()
+            .layer
+            .circle(cx, cy, r, color.cast_unsigned(), filled != 0);
     });
-    reg!("draw_text", |mut c: Caller<'_, State>, font_id: i32, x: i32, y: i32, ptr: i32, len: i32, color: i32| -> Result<i32, Error> {
+    reg!("draw_text", |mut c: Caller<'_, State>,
+                       font_id: i32,
+                       x: i32,
+                       y: i32,
+                       ptr: i32,
+                       len: i32,
+                       color: i32|
+     -> Result<i32, Error> {
         let (mem, st) = memory(&mut c)?;
         let r = range(mem, ptr, len, "draw_text")?;
         let fonts = Rc::clone(&st.fonts);
-        let Some(font) = fonts.get(font_id) else { return Ok(-1) };
+        let Some(font) = fonts.get(font_id) else {
+            return Ok(-1);
+        };
         let color = color.cast_unsigned();
-        Ok(font::draw_text(font, x, y, &mem[r], |px, py| st.layer.set(px, py, color)))
+        Ok(font::draw_text(font, x, y, &mem[r], |px, py| {
+            st.layer.set(px, py, color);
+        }))
     });
-    reg!("text_width", |mut c: Caller<'_, State>, font_id: i32, ptr: i32, len: i32| -> Result<i32, Error> {
+    reg!("text_width", |mut c: Caller<'_, State>,
+                        font_id: i32,
+                        ptr: i32,
+                        len: i32|
+     -> Result<i32, Error> {
         let (mem, st) = memory(&mut c)?;
         let r = range(mem, ptr, len, "text_width")?;
-        Ok(st.fonts.get(font_id).map_or(-1, |font| font::text_width(font, &mem[r])))
+        Ok(st
+            .fonts
+            .get(font_id)
+            .map_or(-1, |font| font::text_width(font, &mem[r])))
     });
-    reg!("font_height", |c: Caller<'_, State>, font_id: i32| c.data().fonts.get(font_id).map_or(-1, |f| f.height));
-    reg!("draw_image", |mut c: Caller<'_, State>, ptr: i32, len: i32, frame: i32, x: i32, y: i32| -> Result<i32, Error> {
+    reg!("font_height", |c: Caller<'_, State>, font_id: i32| c
+        .data()
+        .fonts
+        .get(font_id)
+        .map_or(-1, |f| f.height));
+    reg!("draw_image", |mut c: Caller<'_, State>,
+                        ptr: i32,
+                        len: i32,
+                        frame: i32,
+                        x: i32,
+                        y: i32|
+     -> Result<i32, Error> {
         let (mem, st) = memory(&mut c)?;
         let r = range(mem, ptr, len, "draw_image")?;
         let assets = Rc::clone(&st.assets);
-        let Some(asset) = std::str::from_utf8(&mem[r]).ok().and_then(|n| assets.get(n)) else { return Ok(-1) };
-        let Some(frame) = usize::try_from(frame).ok().filter(|f| *f < asset.frames) else { return Ok(-2) };
+        let Some(asset) = std::str::from_utf8(&mem[r])
+            .ok()
+            .and_then(|n| assets.get(n))
+        else {
+            return Ok(-1);
+        };
+        let Some(frame) = usize::try_from(frame).ok().filter(|f| *f < asset.frames) else {
+            return Ok(-2);
+        };
         blit(&mut st.layer, asset, frame, x, y);
         Ok(0)
     });
-    reg!("config_len", |c: Caller<'_, State>| i32::try_from(c.data().config.len()).unwrap_or(i32::MAX));
-    reg!("config_read", |mut c: Caller<'_, State>, ptr: i32, cap: i32| -> Result<i32, Error> {
+    reg!("config_len", |c: Caller<'_, State>| i32::try_from(
+        c.data().config.len()
+    )
+    .unwrap_or(i32::MAX));
+    reg!("config_read", |mut c: Caller<'_, State>,
+                         ptr: i32,
+                         cap: i32|
+     -> Result<i32, Error> {
         let (mem, st) = memory(&mut c)?;
         let n = usize::try_from(cap).unwrap_or(0).min(st.config.len());
         let r = range(mem, ptr, i32::try_from(n).unwrap_or(0), "config_read")?;
@@ -303,7 +457,9 @@ pub fn register(linker: &mut Linker<State>) -> Result<Vec<&'static str>, Error> 
         Ok(i32::try_from(n).unwrap_or(0))
     });
     reg!("time_unix_ms", |c: Caller<'_, State>| c.data().time_ms);
-    reg!("time_utc_offset_s", |c: Caller<'_, State>| c.data().offset_s);
+    reg!("time_utc_offset_s", |c: Caller<'_, State>| c
+        .data()
+        .offset_s);
     reg!("random_u32", |mut c: Caller<'_, State>| {
         let st = c.data_mut();
         st.rng = abi::xorshift32(st.rng);
@@ -313,20 +469,31 @@ pub fn register(linker: &mut Linker<State>) -> Result<Vec<&'static str>, Error> 
 }
 
 fn memory<'a>(c: &'a mut Caller<'_, State>) -> Result<(&'a mut [u8], &'a mut State), Error> {
-    let m = c.get_export("memory").and_then(Extern::into_memory).ok_or_else(|| trap("the module has no memory"))?;
+    let m = c
+        .get_export("memory")
+        .and_then(Extern::into_memory)
+        .ok_or_else(|| trap("the module has no memory"))?;
     Ok(m.data_and_store_mut(c))
 }
 
-fn blit(layer: &mut Layer, asset: &Asset, frame: usize, x: i32, y: i32) {
+fn blit(layer: &mut Layer, asset: &Asset, frame: usize, left: i32, top: i32) {
     let base = frame * asset.width * asset.height * 3;
-    let (x, y) = (i64::from(x), i64::from(y));
-    let (w, h) = (i64::try_from(asset.width).unwrap_or(0), i64::try_from(asset.height).unwrap_or(0));
-    let (lw, lh) = (i64::try_from(layer.width).unwrap_or(0), i64::try_from(layer.height).unwrap_or(0));
-    for j in (-y).max(0)..h.min(lh - y) {
-        for i in (-x).max(0)..w.min(lw - x) {
-            let o = base + (usize::try_from(j).unwrap_or(0) * asset.width + usize::try_from(i).unwrap_or(0)) * 3;
-            let px = &asset.data[o..o + 3];
-            layer.set(x + i, y + j, u32::from_be_bytes([px[0], px[1], px[2], 255]));
+    let (left, top) = (i64::from(left), i64::from(top));
+    let to_i64 = |n: usize| i64::try_from(n).unwrap_or(0);
+    let (aw, ah) = (to_i64(asset.width), to_i64(asset.height));
+    let (lw, lh) = (to_i64(layer.width), to_i64(layer.height));
+    for row in (-top).max(0)..ah.min(lh - top) {
+        for col in (-left).max(0)..aw.min(lw - left) {
+            let at = base
+                + (usize::try_from(row).unwrap_or(0) * asset.width
+                    + usize::try_from(col).unwrap_or(0))
+                    * 3;
+            let rgb = &asset.data[at..at + 3];
+            layer.set(
+                left + col,
+                top + row,
+                u32::from_be_bytes([rgb[0], rgb[1], rgb[2], 255]),
+            );
         }
     }
 }
@@ -351,35 +518,63 @@ impl Instance {
             time_ms: 0,
             offset_s: 0,
             rng: setup.seed,
-            limits: StoreLimitsBuilder::new().memory_size(usize::try_from(MAX_PAGES * 65536).unwrap_or(0)).build(),
+            limits: StoreLimitsBuilder::new()
+                .memory_size(usize::try_from(MAX_PAGES * 65536).unwrap_or(0))
+                .build(),
         };
         let mut store = Store::new(&engine, state);
         store.limiter(|s| &mut s.limits);
-        store.set_fuel(setup.fuel).map_err(|e| bad("instantiate", e.to_string()))?;
-        let instance = linker.instantiate_and_start(&mut store, &module).map_err(|e| bad("instantiate", e.to_string()))?;
+        store
+            .set_fuel(setup.fuel)
+            .map_err(|e| bad("instantiate", e.to_string()))?;
+        let instance = linker
+            .instantiate_and_start(&mut store, &module)
+            .map_err(|e| bad("instantiate", e.to_string()))?;
         let mut declare = |name: &str| -> Result<i32, LoadError> {
-            let f = instance.get_typed_func::<(), i32>(&store, name).map_err(|e| bad("exports", format!("{name}: {e}")))?;
-            store.set_fuel(setup.fuel).map_err(|e| bad("instantiate", e.to_string()))?;
-            f.call(&mut store, ()).map_err(|e| bad("declaration", format!("{name} failed: {e}")))
+            let f = instance
+                .get_typed_func::<(), i32>(&store, name)
+                .map_err(|e| bad("exports", format!("{name}: {e}")))?;
+            store
+                .set_fuel(setup.fuel)
+                .map_err(|e| bad("instantiate", e.to_string()))?;
+            f.call(&mut store, ())
+                .map_err(|e| bad("declaration", format!("{name} failed: {e}")))
         };
         let version = declare("pn_abi_version")?.cast_unsigned();
         let (major, minor) = (version >> 16, version & 0xFFFF);
         if major != abi::MAJOR || minor > abi::MINOR {
-            return Err(bad("abi version", format!("the module is built for ABI {major}.{minor}, this host is ABI {}.{}", abi::MAJOR, abi::MINOR)));
+            return Err(bad(
+                "abi version",
+                format!(
+                    "the module is built for ABI {major}.{minor}, this host is ABI {}.{}",
+                    abi::MAJOR,
+                    abi::MINOR
+                ),
+            ));
         }
         let hz = declare("pn_update_hz")?;
         if !(0..=60).contains(&hz) {
-            return Err(bad("declaration", format!("pn_update_hz returned {hz}, expected 0 to 60")));
+            return Err(bad(
+                "declaration",
+                format!("pn_update_hz returned {hz}, expected 0 to 60"),
+            ));
         }
         let width = declare("pn_width")?;
         let height = declare("pn_height")?;
         for (name, v) in [("pn_width", width), ("pn_height", height)] {
             if !(1..=4096).contains(&v) {
-                return Err(bad("declaration", format!("{name} returned {v}, expected 1 to 4096")));
+                return Err(bad(
+                    "declaration",
+                    format!("{name} returned {v}, expected 1 to 4096"),
+                ));
             }
         }
-        let init = instance.get_typed_func::<(), ()>(&store, "pn_init").map_err(|e| bad("exports", e.to_string()))?;
-        let update = instance.get_typed_func::<i64, ()>(&store, "pn_update").map_err(|e| bad("exports", e.to_string()))?;
+        let init = instance
+            .get_typed_func::<(), ()>(&store, "pn_init")
+            .map_err(|e| bad("exports", e.to_string()))?;
+        let update = instance
+            .get_typed_func::<i64, ()>(&store, "pn_update")
+            .map_err(|e| bad("exports", e.to_string()))?;
         Ok(Instance {
             store,
             init,
@@ -402,7 +597,13 @@ impl Instance {
         &self.store.data().layer
     }
 
-    fn call<P: wasmi::WasmParams>(&mut self, f: &TypedFunc<P, ()>, p: P, time_ms: i64, offset_s: i32) -> Result<(), String> {
+    fn call<P: wasmi::WasmParams>(
+        &mut self,
+        f: TypedFunc<P, ()>,
+        p: P,
+        time_ms: i64,
+        offset_s: i32,
+    ) -> Result<(), String> {
         let st = self.store.data_mut();
         st.time_ms = time_ms;
         st.offset_s = offset_s;
@@ -416,7 +617,7 @@ impl Instance {
     /// The trap or fuel overrun, as text.
     pub fn init(&mut self, time_ms: i64, offset_s: i32) -> Result<(), String> {
         let f = self.init;
-        self.call(&f, (), time_ms, offset_s)
+        self.call(f, (), time_ms, offset_s)
     }
 
     /// Calls `pn_update(tick)` with the clock fixed at `time_ms`.
@@ -425,6 +626,6 @@ impl Instance {
     /// The trap or fuel overrun, as text.
     pub fn update(&mut self, tick: u64, time_ms: i64, offset_s: i32) -> Result<(), String> {
         let f = self.update;
-        self.call(&f, tick.cast_signed(), time_ms, offset_s)
+        self.call(f, tick.cast_signed(), time_ms, offset_s)
     }
 }

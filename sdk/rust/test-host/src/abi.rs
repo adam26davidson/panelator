@@ -41,7 +41,11 @@ pub struct Func {
 use Ty::{I32, I64};
 
 const fn f(name: &'static str, params: &'static [Ty], result: Option<Ty>) -> Func {
-    Func { name, params, result }
+    Func {
+        name,
+        params,
+        result,
+    }
 }
 
 /// The exports besides `memory`.
@@ -78,7 +82,11 @@ pub const IMPORTS: &[Func] = &[
 #[must_use]
 pub fn signature(f: &Func) -> String {
     let params: Vec<_> = f.params.iter().map(|t| t.name()).collect();
-    format!("({})->{}", params.join(","), f.result.map_or("()", Ty::name))
+    format!(
+        "({})->{}",
+        params.join(","),
+        f.result.map_or("()", Ty::name)
+    )
 }
 
 /// Whether a placement's update is due at `tick` (AC-5 of spec 107, "When a widget is called").
@@ -87,7 +95,8 @@ pub fn update_due(hz: u32, tick: u64) -> bool {
     if tick == 0 {
         return true;
     }
-    hz > 0 && (u128::from(tick) * u128::from(hz)) / 60 != (u128::from(tick - 1) * u128::from(hz)) / 60
+    hz > 0
+        && (u128::from(tick) * u128::from(hz)) / 60 != (u128::from(tick - 1) * u128::from(hz)) / 60
 }
 
 /// The xorshift32 step of the conformance profile; returns the new state, which is the value.

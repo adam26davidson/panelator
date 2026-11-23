@@ -70,7 +70,8 @@ impl Wat {
     }
 }
 
-pub const DRAW_PIXEL: &str = r#"(import "panelator" "draw_pixel" (func $draw_pixel (param i32 i32 i32)))"#;
+pub const DRAW_PIXEL: &str =
+    r#"(import "panelator" "draw_pixel" (func $draw_pixel (param i32 i32 i32)))"#;
 
 pub fn err(w: &Wat) -> String {
     match w.load() {
