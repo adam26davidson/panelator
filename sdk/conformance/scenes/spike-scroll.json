@@ -1,0 +1,13 @@
+{
+  "abi": "0.1",
+  "panel": { "width": 96, "height": 16 },
+  "start_unix_ms": 1798757998000,
+  "utc_offset_s": 3600,
+  "ticks": [0, 1, 2, 48, 95, 215, 216, 217, 500],
+  "assets": [
+    { "name": "spike-image", "file": "spike-image.rgb", "width": 128, "height": 64, "frames": 1 }
+  ],
+  "placements": [
+    { "module": "spike-scroll", "x": 0, "y": 0, "width": 96, "height": 16, "z": 0, "opacity": 255, "config": { "text": "panelator 60 Hz" }, "seed": 2 }
+  ]
+}

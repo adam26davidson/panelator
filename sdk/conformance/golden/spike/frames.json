@@ -1,0 +1,41 @@
+{
+  "scene": "spike",
+  "panel": {
+    "height": 64,
+    "width": 128
+  },
+  "frames": [
+    {
+      "tick": 0,
+      "sha256": "86308d20c80d4b1996fd594323ebc078e9ae3d9d998b9739b9e0e0ccbf7f4dc3"
+    },
+    {
+      "tick": 1,
+      "sha256": "0aeb75bbb81bcd44208fd0d7e2cea70f919f04c4d176232383562a3f38d927ab"
+    },
+    {
+      "tick": 2,
+      "sha256": "cd6e67a5e25b455be97ad7358986f3d3d60419ea49d263bb006c4fdf700c00bc"
+    },
+    {
+      "tick": 60,
+      "sha256": "efe19e721bfd7ce77b17f415aa74e1ac7be5166c1e61a93b64d54c187f90843d"
+    },
+    {
+      "tick": 120,
+      "sha256": "b61799872a05f773f0c8dc2eb27df7384f18df649be58e9478288344f5088695"
+    },
+    {
+      "tick": 248,
+      "sha256": "cb8a35d5f2843e09718443d6dba5fedf8ea9f9d5617d02e720d7e18ee65c6195"
+    },
+    {
+      "tick": 256,
+      "sha256": "a5794b9b95baef46515dc8e189f5d92646a8467e8e8d7fbf3aa6d5f7b5762773"
+    },
+    {
+      "tick": 599,
+      "sha256": "d162dc2bd372af9d265a3f93c90b8bdf8805760e721375b81bc0e80fa9211f2a"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "abi": "0.1",
+  "panel": { "width": 64, "height": 32 },
+  "start_unix_ms": 1798757998000,
+  "utc_offset_s": 3600,
+  "ticks": [0, 59, 60, 119, 120, 180],
+  "assets": [
+    { "name": "spike-image", "file": "spike-image.rgb", "width": 128, "height": 64, "frames": 1 }
+  ],
+  "placements": [
+    { "module": "spike-clock", "x": 0, "y": 0, "width": 64, "height": 32, "z": 0, "opacity": 255, "config": {}, "seed": 1 }
+  ]
+}
