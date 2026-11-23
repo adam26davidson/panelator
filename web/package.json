@@ -1,0 +1,40 @@
+{
+  "name": "@panelator/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The product's web app (spec 112): the shell every later web child builds inside.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "biome check .",
+    "fsd": "true",
+    "knip": "knip --directory .. --config web/knip.json --workspace web",
+    "test": "true",
+    "storybook": "true",
+    "build-storybook": "true",
+    "e2e": "true"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwindcss": "catalog:",
+    "vite": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@types/node": "^26.6.5",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "knip": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

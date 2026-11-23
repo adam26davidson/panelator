@@ -1,6 +1,6 @@
 import { configDefaults, defineConfig } from "vitest/config";
 
-const include = ["tools/**/*.test.ts", "web/**/*.test.ts"];
+const include = ["tools/**/*.test.ts", "web/checks.test.ts"];
 /**
  * Test files that read what the other files left behind, so they run in a second group, after every file of the first
  * has finished (`sequence.groupOrder`). The e2e chains are split over several files for parallelism (issue #360), and

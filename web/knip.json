@@ -1,0 +1,8 @@
+{
+  "workspaces": {
+    "web": {
+      "project": ["src/**/*.{ts,tsx}", "*.ts"],
+      "ignoreDependencies": ["tailwindcss"]
+    }
+  }
+}
