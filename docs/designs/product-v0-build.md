@@ -141,16 +141,7 @@ spike's result can move all of it.
     are `runtime-spike-measurement`.
   after: firmware-panel-driver, specs/107-widget-abi-and-rust-sdk/spec.md
   class: class:product
-- planned: backend-workspace-and-relay-stub
-  title: Backend: the Rust workspace with its checks, and a WebSocket relay stub for the spike
-  brief: Milestone 1 (product spec 5, 12.1, 13). Create the Rust workspace in `backend/` (axum, tokio,
-    tower, crates split by domain) with rustfmt, clippy pedantic as errors, cargo-deny and cargo-nextest
-    in CI. Add one service with a WebSocket endpoint that accepts a board connection and exchanges CBOR
-    traffic at a configurable rate and size, so the spike can run relay traffic while rendering; a way to
-    run it on the laptop for the HIL rig (TLS included, since the board connects over TLS). It fixes no
-    message shape, stores nothing and has no accounts: Postgres, sqlx and the real relay are
-    `backend-screen-store-and-relay`, the message types `screen-config-and-type-sharing`.
-  class: class:product
+- `specs/111-backend-workspace-and-relay-stub/spec.md` (issue #432)
 - planned: firmware-relay-client
   title: Firmware: an outbound WebSocket over TLS on the networking core, with reconnect and backoff
   brief: Milestone 1 (product spec 4, 12.1). On the networking core, join WiFi with credentials given at
@@ -159,7 +150,7 @@ spike's result can move all of it.
     with backoff. Rendering keeps its rate while traffic flows and while the connection is down. HIL tests
     cover connect, traffic and reconnect; the rig's WiFi credentials are a capability request if the
     runner does not have them. Message families and their decoders are `firmware-screen-config`.
-  after: firmware-panel-driver, backend-workspace-and-relay-stub
+  after: firmware-panel-driver, specs/111-backend-workspace-and-relay-stub/spec.md
   class: class:product
 - `specs/112-web-app-skeleton/spec.md` (issue #434)
 - planned: simulator-engine
