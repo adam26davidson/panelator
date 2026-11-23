@@ -52,6 +52,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 pub struct Slot {
     frame: Mutex<Option<Bytes>>,
     notify: Notify,
+    emptied: Notify,
 }
 
 impl Slot {
@@ -80,10 +81,21 @@ impl Slot {
     /// The write of the frame completed: empties the slot and counts it.
     pub fn written(&self, counters: &Counters, content_bytes: u64) {
         *lock(&self.frame) = None;
+        self.emptied.notify_one();
         counters.sent.fetch_add(1, Ordering::Relaxed);
         counters
             .sent_bytes
             .fetch_add(content_bytes, Ordering::Relaxed);
+    }
+
+    /// Waits until the slot holds no frame.
+    async fn wait_empty(&self) {
+        loop {
+            if lock(&self.frame).is_none() {
+                return;
+            }
+            self.emptied.notified().await;
+        }
     }
 
     /// Frames held, 0 or 1.
@@ -104,8 +116,17 @@ pub async fn generate(rate: u32, frame: Bytes, slot: Arc<Slot>, counters: Arc<Co
     let mut ticker = interval_at(Instant::now() + period, period);
     loop {
         ticker.tick().await;
-        if !slot.offer(&frame) {
-            counters.skipped.fetch_add(1, Ordering::Relaxed);
+        // A tick whose slot is still full waits for the writer until the next tick is due, so a
+        // timer that wakes late and delivers two ticks at once loses nothing for a reading peer;
+        // only a tick that is overtaken by the next one is skipped (one held frame at most).
+        while !slot.offer(&frame) {
+            tokio::select! {
+                biased;
+                () = slot.wait_empty() => {}
+                _ = ticker.tick() => {
+                    counters.skipped.fetch_add(1, Ordering::Relaxed);
+                }
+            }
         }
     }
 }
@@ -178,7 +199,8 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(5005)).await;
         assert_eq!(c.sent.load(Ordering::Relaxed), 0);
         assert_eq!(slot.held(), 1);
-        assert_eq!(c.skipped.load(Ordering::Relaxed), 49);
+        // The tick still waiting for the slot (at 5000 ms) is counted once the next one overtakes it.
+        assert_eq!(c.skipped.load(Ordering::Relaxed), 48);
         // The consumer resumes: one frame now, then the rate with no burst of the skipped ones.
         let f = slot.next_frame().await;
         slot.written(&c, (f.len() - 1) as u64);
@@ -193,5 +215,29 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(5)).await;
         let sent = c.sent.load(Ordering::Relaxed);
         assert!((50..=52).contains(&sent), "{sent}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_of_two_ticks_is_caught_up_for_a_reading_peer() {
+        // A consumer that needs 3 ms per write at 100 per second, and a timer that is late:
+        // two ticks are due at once after the long advance below.
+        let slot = Arc::new(Slot::default());
+        let c = Arc::new(Counters::default());
+        tokio::spawn(generate(100, filler_frame(10), slot.clone(), c.clone()));
+        let (s, c2) = (slot.clone(), c.clone());
+        tokio::spawn(async move {
+            loop {
+                let f = s.next_frame().await;
+                tokio::time::sleep(Duration::from_millis(3)).await;
+                s.written(&c2, (f.len() - 1) as u64);
+            }
+        });
+        for _ in 0..200 {
+            tokio::time::advance(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(c.skipped.load(Ordering::Relaxed), 0);
+        let sent = c.sent.load(Ordering::Relaxed);
+        assert!(sent.abs_diff(200) <= 2, "{sent}");
     }
 }

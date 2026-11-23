@@ -176,15 +176,18 @@ fn live_cfg() -> common::Config {
 async fn the_stub_pings_and_a_polling_client_stays_connected() {
     let rig = start(live_cfg()).await;
     let mut ws = rig.connect().await;
-    let started = Instant::now();
+    // Wait for the third ping under a generous deadline; a stalled machine only delays it.
     let mut pings = 0;
-    while started.elapsed() < Duration::from_millis(1500) {
-        if let Ok(Some(Ok(Message::Ping(_)))) = timeout(Duration::from_millis(200), ws.next()).await
-        {
-            pings += 1;
+    timeout(Duration::from_secs(20), async {
+        while pings < 3 {
+            if let Some(Ok(Message::Ping(_))) = ws.next().await {
+                pings += 1;
+            }
         }
-    }
-    assert!(pings >= 3, "{pings}");
+    })
+    .await
+    .expect("three pings");
+    assert_eq!(pings, 3);
 }
 
 #[tokio::test]
@@ -261,16 +264,19 @@ async fn rate_zero_sends_no_data_frames() {
     })
     .await;
     let mut ws = rig.connect().await;
-    let mut pings = 0;
-    let started = Instant::now();
-    while started.elapsed() < Duration::from_millis(700) {
-        match timeout(Duration::from_millis(100), ws.next()).await {
-            Ok(Some(Ok(Message::Binary(_)))) => panic!("data frame at rate 0"),
-            Ok(Some(Ok(Message::Ping(_)))) => pings += 1,
-            _ => {}
+    // No data frame may arrive up to the moment the first ping does.
+    timeout(Duration::from_secs(20), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(Message::Binary(_))) => panic!("data frame at rate 0"),
+                Some(Ok(Message::Ping(_))) => break,
+                Some(Ok(_)) => {}
+                other => panic!("connection ended: {other:?}"),
+            }
         }
-    }
-    assert!(pings > 0);
+    })
+    .await
+    .expect("a ping");
 }
 
 #[tokio::test]
@@ -372,7 +378,7 @@ async fn a_peer_that_stops_reading_costs_the_others_nothing() {
         down_rate: 100,
         down_size: 1 << 20,
         timings: common::Timings {
-            idle_timeout: Duration::from_millis(1500),
+            idle_timeout: Duration::from_secs(4),
             ..fast_timings()
         },
         ..base_config()
@@ -381,24 +387,23 @@ async fn a_peer_that_stops_reading_costs_the_others_nothing() {
     let _stalled = rig.connect().await;
     let mut reader = rig.connect().await;
     let mut got = 0;
-    let started = Instant::now();
-    while started.elapsed() < Duration::from_millis(1200) {
-        // Answer liveness by sending a small frame, and keep reading.
-        reader
-            .send(Message::Binary(vec![0x00].into()))
-            .await
-            .unwrap();
-        if let Ok(Some(Ok(Message::Binary(b)))) =
-            timeout(Duration::from_millis(100), reader.next()).await
-        {
-            assert!(is_well_formed(&b));
-            got += 1;
+    // Keep reading (and so answering pings) and sending until the stalled connection ends; the
+    // reader's own idle clock is far shorter than the stall the test tolerates.
+    let ended = rig.event_where(|v| v["event"] == "disconnected" && v["conn"] == 1);
+    tokio::pin!(ended);
+    let d = loop {
+        tokio::select! {
+            d = &mut ended => break d,
+            m = reader.next() => {
+                if let Some(Ok(Message::Binary(b))) = m {
+                    assert!(is_well_formed(&b));
+                    got += 1;
+                    let _ = reader.send(Message::Binary(vec![0x00].into())).await;
+                }
+            }
         }
-    }
+    };
     assert!(got >= 3, "{got}");
-    let d = rig
-        .event_where(|v| v["event"] == "disconnected" && v["conn"] == 1)
-        .await;
     assert_eq!(d["reason"], "timeout");
     assert!(d["skipped"].as_u64().unwrap() > 0, "{d}");
 }
