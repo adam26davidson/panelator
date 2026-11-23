@@ -2,7 +2,7 @@
 
 mod common;
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -16,7 +16,7 @@ use tokio_tungstenite::tungstenite::Message;
 const BIN: &str = env!("CARGO_BIN_EXE_panelator-relay-stub");
 
 fn run(args: &[&str], envs: &[(&str, &str)]) -> std::process::Output {
-    let child = Command::new(BIN)
+    let mut child = Command::new(BIN)
         .args(args)
         .envs(envs.iter().copied())
         .stdin(Stdio::null())
@@ -24,7 +24,35 @@ fn run(args: &[&str], envs: &[(&str, &str)]) -> std::process::Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.wait_with_output().unwrap()
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let out = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).unwrap();
+        bytes
+    });
+    let err = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).unwrap();
+        bytes
+    });
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if started.elapsed() >= Duration::from_secs(20) {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("command {args:?} did not exit within 20 seconds");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    std::process::Output {
+        status,
+        stdout: out.join().unwrap(),
+        stderr: err.join().unwrap(),
+    }
 }
 
 fn gen_certs(dir: &Path) {
