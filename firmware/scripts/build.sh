@@ -13,5 +13,6 @@ if [ -n "${PANELATOR_COMMIT:-}" ]; then
 fi
 
 # Reconfigure every time so a different PANELATOR_COMMIT always reaches the image.
-exec docker run --rm --user "$(id -u):$(id -g)" "${env_args[@]}" -v "$root:/work" -w /work/firmware "$image" \
+# The component manager writes under /opt/esp, which only root owns: give it a scratch directory.
+exec docker run --rm --user "$(id -u):$(id -g)" --tmpfs /opt/esp/root_managed_components:rw,mode=1777 "${env_args[@]}" -v "$root:/work" -w /work/firmware "$image" \
   idf.py reconfigure build
