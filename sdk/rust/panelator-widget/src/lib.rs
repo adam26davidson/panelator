@@ -271,28 +271,35 @@ impl<T> Default for Slot<T> {
 #[macro_export]
 macro_rules! widget {
     ($ty:ty) => {
+        #[doc(hidden)]
         static __PANELATOR_SLOT: $crate::Slot<$ty> = $crate::Slot::new();
 
+        #[doc(hidden)]
         #[unsafe(no_mangle)]
         pub extern "C" fn pn_abi_version() -> i32 {
             $crate::ABI_VERSION
         }
+        #[doc(hidden)]
         #[unsafe(no_mangle)]
         pub extern "C" fn pn_update_hz() -> i32 {
             i32::from(<$ty as $crate::Widget>::UPDATE_HZ)
         }
+        #[doc(hidden)]
         #[unsafe(no_mangle)]
         pub extern "C" fn pn_width() -> i32 {
             i32::from(<$ty as $crate::Widget>::SIZE.0)
         }
+        #[doc(hidden)]
         #[unsafe(no_mangle)]
         pub extern "C" fn pn_height() -> i32 {
             i32::from(<$ty as $crate::Widget>::SIZE.1)
         }
+        #[doc(hidden)]
         #[unsafe(no_mangle)]
         pub extern "C" fn pn_init() {
             __PANELATOR_SLOT.set(<$ty as $crate::Widget>::init());
         }
+        #[doc(hidden)]
         #[unsafe(no_mangle)]
         pub extern "C" fn pn_update(tick: i64) {
             __PANELATOR_SLOT.with(|w| <$ty as $crate::Widget>::update(w, tick.cast_unsigned()));

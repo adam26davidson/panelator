@@ -2,7 +2,7 @@
 # (backend/) and the firmware is built by ESP-IDF; both are excluded.
 [workspace]
 resolver = "3"
-members = ["sdk/rust/panelator-widget", "sdk/rust/test-host"]
+members = ["sdk/rust/panelator-widget", "sdk/rust/test-host", "widgets/spike-clock", "widgets/spike-scroll", "widgets/spike-image"]
 exclude = ["backend", "firmware"]
 
 [workspace.package]

@@ -309,6 +309,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 
 [[package]]
+name = "spike-clock"
+version = "0.1.0"
+dependencies = [
+ "panelator-widget",
+]
+
+[[package]]
+name = "spike-image"
+version = "0.1.0"
+dependencies = [
+ "panelator-widget",
+]
+
+[[package]]
+name = "spike-scroll"
+version = "0.1.0"
+dependencies = [
+ "panelator-widget",
+]
+
+[[package]]
 name = "spin"
 version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
