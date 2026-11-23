@@ -28,7 +28,8 @@ whose sweep and alarm it leaves as they are except for AC-2's order;
 ## 1. Goal
 
 When the volume holding the state root is full, the scheduler stays up: it
-pauses as spec 100 says, sends the maintainer one Telegram message at once,
+pauses as spec 100 says, sends the maintainer a Telegram message at once
+(the host notice, and the sweep's disk-full alarm when it is the state volume),
 keeps what it could not write and writes it when the volume has room, and
 resumes by itself. A scheduler started on a full state volume waits before its
 first write instead of dying, so systemd is not restarting it every thirty
@@ -92,8 +93,9 @@ health agent's (spec 064 AC-5), not this spec's.
    goes to stderr, which is the journal, and waits in memory; the next append
    that succeeds writes the waiting records first, with their own times.
 2. **A state volume under the write floor pauses the scheduler** (AC-2,
-   AC-3). The tick reads the state root's free space before anything else and
-   pauses with cause `ENOSPC` when it is under the *write floor*, without
+   AC-3). The tick reads the state root's free space right after
+   `host.beginTick()`, before the sample, the backfill and `initializeAgents`
+   (which write), and pauses with cause `ENOSPC` when it is under the *write floor*, without
    waiting for some step to fail. The pause holds in memory when `host.json`
    cannot be saved.
 3. **The notice goes out first and each part stands alone** (AC-4, AC-5). The
@@ -169,16 +171,24 @@ is an error for which `transientCause` returns `ENOSPC` (spec 059 AC-1).
   tick rejects and whose log append throws does not reject (the failure of
   22:51:02Z).
 - AC-2. **A state volume under the write floor pauses the scheduler.** Given a
-  tick, when the loop has called `host.beginTick()` and before it reads
-  `host.paused`, then it reads the state root's free space; given it is under
+  tick, when the loop has called `host.beginTick()` (which only reads the host
+  state) and before anything else in the tick (before the `slots` read, the
+  events backfill, `#sample()`, `initializeAgents` and the read of
+  `host.paused`), then it reads the state root's free space; given it is under
   the write floor and the host is not paused, then the monitor's
   `pauseFor("ENOSPC", error)` records the pause exactly as spec 100 AC-2 does
   for a failed probe (`paused: { since, cause: "ENOSPC", probes: 1,
   next_probe_at, notified: false }`, one `{ kind: "host-paused", cause, error
   }` line), with `error` `state volume under the write floor: <path> has <n>
   MiB free and <m> free inodes (floor 64 MiB, 100 inodes)`, and the tick is a
-  paused tick (spec 100 AC-3), whose notice is due at once (spec 100 AC-5,
-  cause `ENOSPC`). No claim, ledger or agent state is touched. Given the read
+  paused tick (spec 100 AC-3) returned at once, without the probe (which
+  needs the launch floors, which the volume does not meet): the sample, the
+  events backfill and `initializeAgents` (each of which writes, the last one
+  `parameters.json.lock`) do not run on a tick under the write floor, so
+  none of them can stop the tick before the pause is recorded and its notice
+  is due (spec 100 AC-5, cause `ENOSPC`). The same holds for a tick that finds
+  the host already paused with cause `ENOSPC` and the volume still under the
+  write floor. No claim, ledger or agent state is touched. Given the read
   itself fails, then `host-space-unknown` is logged as in spec 059 AC-3 and
   the tick goes on. Given the volume is at or above the write floor, nothing
   changes: between the write floor and the launch floors the scheduler runs,
@@ -216,9 +226,14 @@ is an error for which `transientCause` returns `ENOSPC` (spec 059 AC-1).
   notification first, then the `disk-sweep-alarm` line, the finding and the
   `infra_alarm`; `episode: { since, alarmed: true }` is held in the process's
   memory when `disk-sweep.json` cannot be written, so each part happens once
-  per episode. Tests: with every state write failing, one paused tick sends
-  exactly one notification (gate `infra`, label `host`) and appends nothing;
-  ten more such ticks send nothing more; the first tick whose writes work
+  per episode. When the full volume is the state volume, a paused tick's volume sweep
+  (spec 100 AC-3) reaches that alarm too, and the maintainer gets both
+  messages, one per label: the host notice (label `host`) and the sweep's
+  alarm (label `disk_full`); the rate limiter suppresses neither, as their
+  identities differ, and each is sent once (the alarm's episode is held in
+  memory). Spec 064 AC-2 is marked for this. Tests: with every state write
+  failing, one paused tick sends exactly one notification of label `host` (gate `infra`) and appends nothing;
+  ten more such ticks send nothing more of that label; the first tick whose writes work
   appends exactly one finding (`stops_pipeline: true`, `timestamp` the due
   time) and emits exactly one `infra_alarm` of kind `disk_full`.
 - AC-5. **A sent message is a delivered notification.** Given
@@ -234,16 +249,24 @@ is an error for which `transientCause` returns `ENOSPC` (spec 059 AC-1).
   once, resolves, and suppresses the second call.
 - AC-6. **A start on a full state volume waits before its first write.** In
   the service path of `bin/scheduler.ts` (no subcommand; `--check-auth`
-  excluded), after the configuration and credentials are read and before
-  `actionLog.markStalePending()`, which is the first state write, the bin
-  awaits `waitForStateSpace(deps)` of `src/service/start-gate.ts`. Given the
+  excluded), after the configuration and the registry are loaded and the
+  Telegram credentials are read, and before `await initializeAgents(...)`
+  (`bin/scheduler.ts`, which runs before every subcommand branch and writes
+  `parameters.json.lock` through `parameters.initialize()`: the first state
+  write of every start), the bin awaits `waitForStateSpace(deps)` of `src/service/start-gate.ts`. Given the
   state root at or above the write floor, it returns `null` at once and
   writes nothing. Given it is under the write floor, then it writes one
   stderr line `panelator-scheduler: state volume full, waiting to start:
   <path> has <n> MiB free and <m> free inodes`, sends one Telegram message
-  through `deps.send` (the bin builds it from `startTelegram`; absent when
-  Telegram is off or its credentials cannot be read, and a send that fails
-  is retried at each re-read until one succeeds) saying that the scheduler
+  through `deps.send` (the bin builds it before the gate from the Telegram
+  credentials, read with `telegramCredentials` and the credential store and
+  sent with `TelegramClient`, which write nothing; absent when Telegram is
+  off or its credentials cannot be read, and a send that fails is retried at
+  each re-read until one succeeds). What moves before the gate is only that
+  read of the credentials and the building of the sender; `startTelegram`,
+  the App key read, `app.refreshTokenFile` (which writes the token file),
+  `actionLog.markStalePending()` and every other step stay where they are,
+  after the gate saying that the scheduler
   cannot start because the state volume is full, the path and the numbers,
   and that it starts by itself when there is room, then re-reads the space
   after `outageBackoffS(n)` for the n-th read (spec 015's backoff, 60 s
@@ -258,13 +281,16 @@ is an error for which `transientCause` returns `ENOSPC` (spec 059 AC-1).
   "scheduler start gate"`, `stops_pipeline: true`, issue 0, stage
   `scheduler`, run id `start-gate`). The start then goes on as today; the
   interval since the last tick is `stopped` downtime as spec 100 AC-6
-  records it. `SIGTERM` during the wait exits 0. Tests drive
+  records it. `SIGTERM` during the wait exits 0. A
+  start-order test over the bin's source order or a bin run with a state
+  root whose every write fails `ENOSPC` asserts that no file is created under
+  the state root before the gate returns. Tests drive
   `waitForStateSpace` with a fake clock: room at once (null, nothing sent);
   full for three reads then room (one stderr line, one message, the
   returned record, the read times); a send that fails twice then succeeds
   (one delivered message); a read that throws (null).
 - AC-7. **A space failure during start is not a crash loop.** Given the
-  service path of the bin, when any step between the gate and the first tick
+  service path of the bin, when any step after the gate and before the first tick
   rejects or throws with a space failure, then the process writes one stderr
   line `panelator-scheduler: state volume full during start: <message>` (no
   stack) and exits 75, so systemd starts it again and the new process waits
@@ -280,17 +306,21 @@ is an error for which `transientCause` returns `ENOSPC` (spec 059 AC-1).
   lock.** Given `open(lock, "wx")` succeeded and the write of the pid
   rejects, then the handle is closed, the lock file is removed (a failure to
   remove is ignored), and the call rejects with the write's error; no handle
-  is left for the garbage collector. Given an existing lock file that is
-  empty, then it is reclaimed as a dead process's lock at once, not after 30
-  seconds. Tests: a write that rejects `ENOSPC` leaves no lock file and no
-  open handle and a second call takes the lock at once; an empty lock file
-  is taken at once.
+  is left for the garbage collector. The 30-second age rule for a lock
+  that cannot be read as a live pid stays as it is: an empty lock is the
+  window between the `open` and the pid write of a live owner, shared with
+  command-line processes, and is not reclaimed earlier. Tests: a write that
+  rejects `ENOSPC` leaves no lock file and no open handle and a second call
+  takes the lock at once; an empty lock younger than 30 seconds is not
+  taken.
 - AC-9. **The outage of 2026-11-22, end to end.** A recorded world with one
   claim in flight and Telegram attached; from tick 2 the state root reads 0
-  bytes free and every write under it (the service log's append included)
-  throws `ENOSPC`; from tick 8 it reads 30 GiB and writes succeed. Then:
+  bytes free and every write under it (the service log's append, the event
+  store's sample, the events backfill and `parameters.json.lock` in
+  `initializeAgents` included) throws `ENOSPC`; from tick 8 it reads 30 GiB and writes succeed. Then:
   `run()` never rejects; tick 2 is a paused tick and exactly one Telegram
-  message is sent in ticks 2 to 7; nothing is counted on the claim; on tick
+  message of label `host` and one of label `disk_full` (the sweep's alarm,
+  AC-4) are sent in ticks 2 to 7, and no other; nothing is counted on the claim; on tick
   8 or the first tick whose probe is due the scheduler resumes; afterwards
   `service.jsonl` holds, in time order with their original times, the
   `host-paused`, `host-paused-notice` and `host-resumed` records and every
@@ -320,8 +350,9 @@ is an error for which `transientCause` returns `ENOSPC` (spec 059 AC-1).
 - `tools/scheduler/src/service/host.ts`: `HostMonitor.pauseFor(cause,
   error)`; saves that survive a space failure; the notice's ordered,
   separately retried parts (AC-2 to AC-4).
-- `tools/scheduler/src/service/loop.ts`: the write-floor read at the start of
-  `tick()` (AC-2); `SchedulerDeps.freeSpace` is the reader, as for the sweep.
+- `tools/scheduler/src/service/loop.ts`: the write-floor read after
+  `host.beginTick()` and before the `slots` read, the backfill, `#sample()` and
+  `initializeAgents`, with the paused return (AC-2); `SchedulerDeps.freeSpace` is the reader, as for the sweep.
 - `tools/scheduler/src/service/sweep.ts`: the alarm's order and its
   in-memory episode (AC-4).
 - `tools/scheduler/src/notify/telegram.ts`, `notify/rate-limit.ts`,
