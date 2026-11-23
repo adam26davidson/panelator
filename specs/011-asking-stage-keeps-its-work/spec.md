@@ -64,6 +64,8 @@ nothing.
 
 ## 2. Out of scope
 
+> Amended by [113-retried-chain-starts-from-closed-pr](../113-retried-chain-starts-from-closed-pr/spec.md) section 1: the spec or design work an abandonment closed is carried to the retried chain as a closed-PR hold; a release and a chain-error release keep today's rules.
+
 > Amended by [085-spec-rescue-keeps-issue-hold](../085-spec-rescue-keeps-issue-hold/spec.md) AC-1: a spec-track rescue starts again on `spec-<n>` only and keeps work held on any other branch.
 
 - Uncommitted changes at the moment a stage asks. They are saved as a patch
@@ -135,7 +137,7 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
   it runs on the branch at the held head, with the pushed branch and any
   open PR from it still there. The same holds for the resumed stage in decide
   mode (spec 006 AC-14) and after a follow-up's reply.
-- AC-4. **The resumed stage is told.** Given a plan, implement, fix or spec
+- AC-4. Amended by [113-retried-chain-starts-from-closed-pr](../113-retried-chain-starts-from-closed-pr/spec.md) AC-4: with no hold kept and a closed PR recorded on the chain's branch, `held_work` names the PR, its head and the saved patch instead of being absent, and a kept closed-PR hold is described as the earlier chain's work. **The resumed stage is told.** Given a plan, implement, fix or spec
   stage runs while the chain holds work on the chain's branch, then its input
   carries `held_work`: a short text naming the branch, the held head, whether
   the branch is on origin, and any open PR from it (`gh pr list` would show
@@ -148,7 +150,7 @@ the *question path* are as spec 006 AC-12 to AC-15 define them.
   with `held_work` naming an open PR, then its result may report that PR: the
   binding check of spec 001 (open, from the chain's branch, at the result's
   head) is unchanged.
-- AC-5. Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) AC-5: `held-work-lost` removes the hold on that branch only. **A lost worktree is restored.** Given held work and a worktree whose
+- AC-5. Amended by [113-retried-chain-starts-from-closed-pr](../113-retried-chain-starts-from-closed-pr/spec.md) AC-3: a hold carrying a closed PR is fetched from `refs/pull/<pr>/head` before it is declared lost, logged as `held-work-restored` with `source: "pull"`. Amended by [040-held-work-per-branch](../040-held-work-per-branch/spec.md) AC-5: `held-work-lost` removes the hold on that branch only. **A lost worktree is restored.** Given held work and a worktree whose
   `HEAD` is not the held head (the worktree was recreated from `origin/main`,
   or a crash left it elsewhere), when the next stage on the question path is
   prepared, then the driver puts the branch at the held head when that commit

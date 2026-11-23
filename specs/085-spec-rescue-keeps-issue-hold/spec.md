@@ -98,7 +98,7 @@ section 3 says. A *spec-track rescue* is the `escalate` step that reruns the
 stuck stage with `specRescues` raised by one and the track set to `spec`
 (spec 006 AC-1 on the spec track).
 
-- AC-1. **A spec-track rescue removes the `spec-<n>` hold only.** Given any
+- AC-1. Amended by [113-retried-chain-starts-from-closed-pr](../113-retried-chain-starts-from-closed-pr/spec.md) AC-5: a closed-PR hold on `spec-<n>` is kept into a spec-track rescue of the spec stage. **A spec-track rescue removes the `spec-<n>` hold only.** Given any
   holds, when an `escalate` transition reruns a stage as a spec-track
   rescue (whatever led to it: the spec stage's second failure in any mode,
   the question check's second failure for a question the spec stage asked,
@@ -107,7 +107,7 @@ stuck stage with `specRescues` raised by one and the track set to `spec`
   the transition started from with the `spec-<n>` entry removed, every
   other entry unchanged and in its order, a carried entry on `issue-<n>`
   (spec 053) included.
-- AC-2. **Every other escalation still clears every hold.** Given any
+- AC-2. Amended by [113-retried-chain-starts-from-closed-pr](../113-retried-chain-starts-from-closed-pr/spec.md) AC-5: a closed-PR hold on `design-<n>` is kept into a design-track rescue of the design stage. **Every other escalation still clears every hold.** Given any
   holds, when an `escalate` transition abandons the issue (the spec-track
   rescue already used), reruns a stage as an issue-track rescue, re-plans,
   revises the spec from the issue track, or runs a design-track rescue or
