@@ -60,6 +60,15 @@ is never written, and a server certificate whose subject alternative names are e
 values. `--days` defaults to 30. If any of the three files exists nothing is written and the exit status
 is 2, unless `--force`.
 
+| Option | Range / accepted values | Default |
+|---|---|---|
+| `--out <dir>` | output directory, created if absent | required |
+| `--san <name-or-ip>` | DNS name or IP address; repeat for multiple SANs | at least one required |
+| `--days <n>` | 1 to 825 days | 30 |
+| `--force` | flag: replace all three existing files | false |
+
+`gen-cert` has no environment-variable options. The CA private key is discarded after signing.
+
 ## Exit status
 
 0 after a signalled stop or a finished `gen-cert`; 2 for a configuration or file error before
@@ -74,7 +83,8 @@ stdout carries only events, one JSON object per line, flushed when written, each
 - `connected`: `conn` (from 1, never reused), `peer`.
 - `handshake_failed`: `peer`, `error`.
 - `stats` (one per open connection every `--stats-interval`): `conn`, `sent`, `sent_bytes`, `skipped`,
-  `received`, `received_bytes`, `malformed` (data frames only; bytes are content bytes).
+  `received`, `received_bytes`, `malformed` (data frames only; `sent_bytes` counts filler content
+  bytes, `received_bytes` counts complete binary payload bytes, including their CBOR heads).
 - `disconnected`: `conn`, `reason`, and the same counters. `reason` is one of `peer_closed`, `peer_lost`,
   `timeout`, `too_big`, `text_frame`, `shutdown`, `error`.
 
