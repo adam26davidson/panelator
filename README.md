@@ -33,6 +33,10 @@ schemas/             JSON Schema generated from Rust types
 hardware/            Carrier PCB (CERN-OHL-S)
 ```
 
+## Running the web app
+
+Start it with `pnpm -F @panelator/web dev`; `web/README.md` lists its checks.
+
 ## Licence
 
 Software: Apache-2.0 (see [LICENSE](LICENSE)). Hardware under `hardware/`:

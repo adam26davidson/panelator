@@ -1,0 +1,51 @@
+{
+  "name": "@panelator/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The product's web app (spec 112): the shell every later web child builds inside.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "biome check .",
+    "fsd": "steiger ./src --config steiger.config.ts",
+    "knip": "knip --directory .. --config web/knip.json --workspace web",
+    "test": "vitest run",
+    "storybook": "storybook dev --port 6006 --no-open",
+    "build-storybook": "storybook build --output-dir storybook-static",
+    "e2e": "playwright test"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "catalog:",
+    "@tanstack/react-query": "catalog:",
+    "@tanstack/react-router": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwindcss": "catalog:",
+    "vite": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@playwright/browser-chromium": "catalog:",
+    "@playwright/test": "catalog:",
+    "@storybook/react-vite": "catalog:",
+    "@testing-library/react": "catalog:",
+    "@testing-library/user-event": "catalog:",
+    "@types/node": "^26.6.5",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "knip": "catalog:",
+    "typescript": "catalog:",
+    "@feature-sliced/steiger-plugin": "catalog:",
+    "jsdom": "catalog:",
+    "steiger": "catalog:",
+    "storybook": "catalog:",
+    "vitest": "catalog:"
+  }
+}
