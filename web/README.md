@@ -8,17 +8,17 @@ Spec 112 built the shell; nothing in it talks to a backend yet.
 Run them with `pnpm -F @panelator/web <script>`. `pnpm test` at the repository root runs the checks marked ✓ through
 `checks.test.ts`, one test per script, in this order.
 
-| Script | What it does |
-|---|---|
-| `dev`, `preview` | the Vite dev server; a server for the production build |
-| `typecheck` ✓ | `tsc --noEmit`, strict, over source, tests, stories, browser tests and config |
-| `lint` ✓ | Biome: formatting and the recommended rules |
-| `fsd` ✓ | steiger's recommended rules on `src/`: import direction, public APIs, layer and segment names |
-| `knip` ✓ | files, exports and dependencies nothing uses |
-| `test` ✓ | Vitest in jsdom with Testing Library: `src/**/*.test.{ts,tsx}`, the steiger fixtures and every story |
-| `build` ✓ | the production build into `dist/` |
-| `build-storybook` ✓ | the Storybook catalogue into `storybook-static/`; `storybook` serves it |
-| `e2e` ✓ | Playwright against the production build, in the three viewports (mobile, tablet, desktop), on a free port |
+| Script              | What it does                                                                                              |
+| ------------------- | --------------------------------------------------------------------------------------------------------- |
+| `dev`, `preview`    | the Vite dev server; a server for the production build                                                    |
+| `typecheck` ✓       | `tsc --noEmit`, strict, over source, tests, stories, browser tests and config                             |
+| `lint` ✓            | Biome: formatting and the recommended rules                                                               |
+| `fsd` ✓             | steiger's recommended rules on `src/`: import direction, public APIs, layer and segment names             |
+| `knip` ✓            | files, exports and dependencies nothing uses                                                              |
+| `test` ✓            | Vitest in jsdom with Testing Library: `src/**/*.test.{ts,tsx}`, the steiger fixtures and every story      |
+| `build` ✓           | the production build into `dist/`                                                                         |
+| `build-storybook` ✓ | the Storybook catalogue into `storybook-static/`; `storybook` serves it                                   |
+| `e2e` ✓             | Playwright against the production build, in the three viewports (mobile, tablet, desktop), on a free port |
 
 A new kind of check is a new script with its own test in `checks.test.ts`.
 
