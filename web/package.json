@@ -15,7 +15,7 @@
     "test": "vitest run",
     "storybook": "storybook dev --port 6006 --no-open",
     "build-storybook": "storybook build --output-dir storybook-static",
-    "e2e": "true"
+    "e2e": "playwright test"
   },
   "engines": {
     "node": ">=26"
@@ -31,6 +31,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",
+    "@playwright/browser-chromium": "catalog:",
+    "@playwright/test": "catalog:",
     "@storybook/react-vite": "catalog:",
     "@testing-library/react": "catalog:",
     "@testing-library/user-event": "catalog:",
