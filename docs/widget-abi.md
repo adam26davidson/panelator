@@ -183,7 +183,8 @@ never holds the image bytes: the board only blits (product spec 5.3).
 A placement's config is one JSON document in UTF-8 whose top level is an object; a placement with
 no config has `{}`. `config_len` returns its length in bytes; `config_read(ptr, cap)` copies its
 first `min(cap, length)` bytes to `ptr` and returns that count (a negative `cap` copies nothing and
-returns 0). The document does not change during a placement's life in 0.1.
+returns 0). The buffer is `[ptr, ptr + cap)` for a non-negative `cap`, and all of it must lie
+inside the module's memory, not only the bytes copied, else the call traps. The document does not change during a placement's life in 0.1.
 
 ## Time, timezone and random
 

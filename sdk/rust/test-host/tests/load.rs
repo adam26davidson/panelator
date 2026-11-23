@@ -1,15 +1,4 @@
 //! Tests of the load rules of the document (modules written in WAT).
-#![allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::type_complexity,
-    clippy::many_single_char_names,
-    clippy::format_collect,
-    clippy::semicolon_if_nothing_returned,
-    clippy::needless_raw_string_hashes,
-    reason = "test code: small fixed values and throwaway shapes, where the lint's fix costs readability"
-)]
 
 mod common;
 
@@ -154,8 +143,8 @@ fn memory_is_at_most_four_pages() {
 fn memory_grow_past_the_limit_returns_minus_one() {
     let w = Wat {
         imports: DRAW_PIXEL.into(),
-        init: r#"(call $draw_pixel (i32.const 0) (i32.const 0) (memory.grow (i32.const 3)))
-                 (call $draw_pixel (i32.const 1) (i32.const 0) (memory.grow (i32.const 1)))"#
+        init: r"(call $draw_pixel (i32.const 0) (i32.const 0) (memory.grow (i32.const 3)))
+                 (call $draw_pixel (i32.const 1) (i32.const 0) (memory.grow (i32.const 1)))"
             .into(),
         ..Wat::default()
     };

@@ -1,21 +1,15 @@
 //! Tests of scenes, stepping, composition and the commands (modules written in WAT).
-#![allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::type_complexity,
-    clippy::many_single_char_names,
-    clippy::format_collect,
-    clippy::semicolon_if_nothing_returned,
-    clippy::needless_raw_string_hashes,
-    reason = "test code: small fixed values and throwaway shapes, where the lint's fix costs readability"
-)]
 
 mod common;
 
 use std::path::{Path, PathBuf};
 
 use common::Wat;
+
+/// A table of named module builders.
+type Modules = &'static [(&'static str, fn() -> Vec<u8>)];
+/// A composition case: opacity, then (alpha, expected RGB) pairs.
+type Case = (u32, [(u32, [u8; 3]); 2]);
 use panelator_test_host::frame::Frame;
 use panelator_test_host::raster::Layer;
 use panelator_test_host::scene::{FramesJson, Scene, compose, run, time_at};
@@ -43,6 +37,10 @@ fn filler(color: u32) -> Vec<u8> {
     .bytes()
 }
 
+#[allow(
+    clippy::many_single_char_names,
+    reason = "x, y, w, h and z are the scene fields"
+)]
 fn placement(module: &str, x: i32, y: i32, w: u32, h: u32, z: i32, opacity: u32) -> String {
     format!(
         r#"{{"module": "{module}", "x": {x}, "y": {y}, "width": {w}, "height": {h}, "z": {z}, "opacity": {opacity}, "config": {{}}, "seed": 1}}"#
@@ -58,9 +56,7 @@ fn scene_json(panel: (u32, u32), ticks: &str, placements: &[String]) -> String {
     )
 }
 
-fn load(
-    modules: &'static [(&'static str, fn() -> Vec<u8>)],
-) -> impl FnMut(&str) -> Result<Vec<u8>, String> {
+fn load(modules: Modules) -> impl FnMut(&str) -> Result<Vec<u8>, String> {
     move |name| {
         modules
             .iter()
@@ -143,12 +139,12 @@ fn the_clock_of_each_tick_is_start_plus_tick_times_1000_over_60() {
         imports: r#"(import "panelator" "draw_pixel" (func $draw_pixel (param i32 i32 i32)))
                     (import "panelator" "time_unix_ms" (func $t (result i64)))"#
             .into(),
-        update: r#"(local $d i32)
+        update: r"(local $d i32)
             (local.set $d (i32.wrap_i64 (i64.sub (call $t) (i64.const 1798757998000))))
             (call $draw_pixel (i32.const 0) (i32.const 0)
               (i32.or (i32.or (i32.shl (local.get $d) (i32.const 24))
                               (i32.shl (i32.and (i32.shr_u (local.get $d) (i32.const 8)) (i32.const 255)) (i32.const 16)))
-                      (i32.const 255)))"#
+                      (i32.const 255)))"
             .into(),
         hz: 60,
         ..Wat::default()
@@ -170,7 +166,7 @@ fn the_clock_of_each_tick_is_start_plus_tick_times_1000_over_60() {
 /// (255, 10, 0) of alpha `pa` at layer opacity `op`.
 #[test]
 fn composition_with_alpha_and_opacity_against_hand_computed_values() {
-    let cases: [(u32, [(u32, [u8; 3]); 2]); 6] = [
+    let cases: [Case; 6] = [
         (0, [(255, [200, 0, 255]), (128, [200, 0, 255])]),
         (1, [(255, [200, 0, 254]), (128, [200, 0, 254])]),
         (127, [(255, [227, 5, 128]), (128, [214, 3, 191])]),
@@ -200,7 +196,7 @@ fn composition_with_alpha_and_opacity_against_hand_computed_values() {
 
 #[test]
 fn layers_are_applied_in_ascending_z_with_ties_in_scene_order_and_clipped_to_the_panel() {
-    fn mods() -> &'static [(&'static str, fn() -> Vec<u8>)] {
+    fn mods() -> Modules {
         &[("red", red), ("green", green)]
     }
     // z decides, not scene order
@@ -344,7 +340,7 @@ fn a_trap_and_a_fuel_overrun_name_the_placement_export_and_tick_and_write_no_lat
 
 #[test]
 fn two_runs_of_a_scene_are_byte_identical() {
-    fn mods() -> &'static [(&'static str, fn() -> Vec<u8>)] {
+    fn mods() -> Modules {
         &[("red", red), ("green", green)]
     }
     let scene = parse(&scene_json(

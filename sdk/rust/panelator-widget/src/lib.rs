@@ -20,6 +20,7 @@ mod sys_host;
 use sys_host as sys;
 
 use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 /// The ABI version this SDK is built for, as `pn_abi_version` returns it: `(major << 16) | minor`.
 pub const ABI_VERSION: i32 = 1;
@@ -229,28 +230,71 @@ pub trait Widget: Sized {
 }
 
 /// The one place a widget keeps its state between calls. Used by [`widget!`].
-pub struct Slot<T>(UnsafeCell<Option<T>>);
+///
+/// Re-entry is a panic: `set` and `with` refuse to run while another `set` or `with` on the same
+/// slot is active, so no two references to the state are ever alive.
+pub struct Slot<T> {
+    value: UnsafeCell<Option<T>>,
+    busy: AtomicBool,
+}
 
-// SAFETY: a module is single threaded (no threads feature), so there is no concurrent access.
-unsafe impl<T> Sync for Slot<T> {}
+// SAFETY: every access to `value` happens while the atomic `busy` flag is held (it is taken with
+// `swap`, so at most one holder at a time on any target, any other caller panics), so shared
+// access from several threads never makes two references; `T: Send` because the value can be
+// created on one thread and used or dropped on another.
+unsafe impl<T: Send> Sync for Slot<T> {}
+
+/// Marks a slot busy for the life of the guard, also when the closure panics.
+struct Busy<'a>(&'a AtomicBool);
+
+impl<'a> Busy<'a> {
+    fn enter(flag: &'a AtomicBool) -> Self {
+        assert!(
+            !flag.swap(true, Ordering::Acquire),
+            "Slot used re-entrantly"
+        );
+        Busy(flag)
+    }
+}
+
+impl Drop for Busy<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
 
 impl<T> Slot<T> {
     /// An empty slot.
     #[must_use]
     pub const fn new() -> Self {
-        Slot(UnsafeCell::new(None))
+        Slot {
+            value: UnsafeCell::new(None),
+            busy: AtomicBool::new(false),
+        }
     }
 
     /// Stores the value, dropping any earlier one.
+    ///
+    /// # Panics
+    /// If `set` or `with` on this slot is running (including from a destructor of the
+    /// value it replaces).
     pub fn set(&self, value: T) {
-        // SAFETY: single threaded and not re-entered: no reference into the slot is alive here.
-        unsafe { *self.0.get() = Some(value) }
+        let _busy = Busy::enter(&self.busy);
+        // SAFETY: the busy flag is held, so no other `set` or `with` on this slot is active and no
+        // reference into the value is alive. The old value is dropped while the flag is still held,
+        // so a destructor that reaches the slot panics instead of aliasing.
+        unsafe { *self.value.get() = Some(value) }
     }
 
     /// Runs `f` on the value; does nothing before `set`.
+    ///
+    /// # Panics
+    /// If called while `set` or `with` on this slot is running, for example by `f` itself.
     pub fn with(&self, f: impl FnOnce(&mut T)) {
-        // SAFETY: as in `set`; `f` cannot reach the slot again because it has no access to it.
-        if let Some(v) = unsafe { (*self.0.get()).as_mut() } {
+        let _busy = Busy::enter(&self.busy);
+        // SAFETY: the busy flag is held until `f` returns or unwinds, so any re-entry panics
+        // before it can make a second reference, and this is the only reference into the value.
+        if let Some(v) = unsafe { (*self.value.get()).as_mut() } {
             f(v);
         }
     }
@@ -311,4 +355,35 @@ macro_rules! widget {
             core::arch::wasm32::unreachable()
         }
     };
+}
+
+#[cfg(test)]
+mod slot_tests {
+    use super::Slot;
+
+    #[test]
+    #[should_panic(expected = "re-entrantly")]
+    fn with_inside_with_panics() {
+        let s = Slot::new();
+        s.set(1u8);
+        s.with(|_| s.with(|_| {}));
+    }
+
+    #[test]
+    #[should_panic(expected = "re-entrantly")]
+    fn set_inside_with_panics() {
+        let s = Slot::new();
+        s.set(1u8);
+        s.with(|_| s.set(2));
+    }
+
+    #[test]
+    fn the_slot_is_usable_again_after_a_panic() {
+        let s = Slot::new();
+        s.set(1u8);
+        let _ = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| s.with(|_| panic!("x"))));
+        let mut seen = 0;
+        s.with(|v| seen = *v);
+        assert_eq!(seen, 1);
+    }
 }

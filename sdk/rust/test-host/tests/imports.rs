@@ -1,15 +1,4 @@
 //! Tests of the host imports of the document (modules written in WAT).
-#![allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::type_complexity,
-    clippy::many_single_char_names,
-    clippy::format_collect,
-    clippy::semicolon_if_nothing_returned,
-    clippy::needless_raw_string_hashes,
-    reason = "test code: small fixed values and throwaway shapes, where the lint's fix costs readability"
-)]
 
 mod common;
 
@@ -23,7 +12,11 @@ use panelator_test_host::raster::Layer;
 const WHITE: u32 = 0xFFFF_FFFF;
 
 fn escape(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("\\{b:02x}")).collect()
+    use std::fmt::Write;
+    bytes.iter().fold(String::new(), |mut s, b| {
+        write!(s, "\\{b:02x}").unwrap();
+        s
+    })
 }
 
 fn imports() -> String {
@@ -75,6 +68,10 @@ fn run_init(
     Ok(i)
 }
 
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "test layers are a few pixels across"
+)]
 fn lit(l: &Layer, color: u32) -> BTreeSet<(i64, i64)> {
     (0..l.height as i64)
         .flat_map(|y| (0..l.width as i64).map(move |x| (x, y)))
@@ -83,6 +80,7 @@ fn lit(l: &Layer, color: u32) -> BTreeSet<(i64, i64)> {
 }
 
 /// An independent reading of a BDF file: code point to (dwidth, bbx, rows), plus ascent.
+#[allow(clippy::type_complexity, reason = "a one-off tuple in a test helper")]
 fn bdf(text: &str) -> (i32, HashMap<u32, (i32, [i32; 4], Vec<u32>)>) {
     let mut ascent = 0;
     let mut out = HashMap::new();
@@ -101,7 +99,7 @@ fn bdf(text: &str) -> (i32, HashMap<u32, (i32, [i32; 4], Vec<u32>)>) {
                     f[2].parse().unwrap(),
                     f[3].parse().unwrap(),
                     f[4].parse().unwrap(),
-                ]
+                ];
             }
             "BITMAP" => in_bitmap = true,
             "ENDCHAR" => {
@@ -120,6 +118,11 @@ fn bdf(text: &str) -> (i32, HashMap<u32, (i32, [i32; 4], Vec<u32>)>) {
     (ascent, out)
 }
 
+#[allow(
+    clippy::many_single_char_names,
+    reason = "x, y, r, h and w are the BDF and pixel coordinates"
+)]
+#[allow(clippy::cast_possible_wrap, reason = "glyph rows are at most 16")]
 fn expected_pixels(font: i32, s: &str, x: i64, y: i64) -> (BTreeSet<(i64, i64)>, i64) {
     let file = if font == 1 {
         "spleen-5x8.bdf"
@@ -447,8 +450,8 @@ fn time_timezone_and_the_random_sequence() {
     assert_eq!(
         px,
         [
-            ms as u32,
-            (ms >> 32) as u32,
+            u32::try_from(ms & 0xFFFF_FFFF).unwrap(),
+            u32::try_from(ms >> 32).unwrap(),
             3600,
             540_738,
             134_253_570,
@@ -480,6 +483,7 @@ fn a_bad_pointer_is_a_trap_for_draw_text_draw_image_and_config_read() {
         "(drop (call $text_width (i32.const 1) (i32.const 65536) (i32.const 1)))",
         "(drop (call $draw_image (i32.const 65535) (i32.const 2) (i32.const 0) (i32.const 0) (i32.const 0)))",
         "(drop (call $config_read (i32.const 65535) (i32.const 2)))",
+        "(drop (call $config_read (i32.const 65530) (i32.const 100)))",
     ] {
         let e = run_init(&module(b"", init), 4, 4, Assets::new(), r#"{"a":1}"#)
             .err()

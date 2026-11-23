@@ -452,7 +452,9 @@ pub fn register(linker: &mut Linker<State>) -> Result<Vec<&'static str>, Error> 
      -> Result<i32, Error> {
         let (mem, st) = memory(&mut c)?;
         let n = usize::try_from(cap).unwrap_or(0).min(st.config.len());
-        let r = range(mem, ptr, i32::try_from(n).unwrap_or(0), "config_read")?;
+        // The whole buffer `[ptr, ptr + cap)` must lie in memory, not only the bytes copied.
+        let r = range(mem, ptr, cap.max(0), "config_read")?;
+        let r = r.start..r.start + n;
         mem[r].copy_from_slice(&st.config[..n]);
         Ok(i32::try_from(n).unwrap_or(0))
     });
