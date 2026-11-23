@@ -1067,6 +1067,7 @@ describe("driver: a stage that asks a question keeps its work (spec 011)", () =>
       await writeClaim(t.paths, c);
       const r = await step(t.deps, c);
       expect(head(t.claim.worktree)).toBe(held);
+      expect(logs).toContainEqual({ kind: "held-work-restored", issue: 7, branch: "spec-7", head: held, source: "local", patch: null });
       expect(logs).toContainEqual({ kind: "held-work-kept", issue: 7, branch: "spec-7", head: held });
       expect(logs.find((l) => l.kind === "recovered-commits" || l.kind === "stale-branch-dropped")).toBeUndefined();
       expect(r.claim.state.heldWork[0]).toMatchObject({ branch: "spec-7", head: held, pr: 9 });

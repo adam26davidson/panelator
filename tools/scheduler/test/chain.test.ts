@@ -1336,7 +1336,9 @@ describe("chain: every event in every stage (AC-27)", () => {
   it("held work is carried, set, replaced or removed per entry by every valid pair, and cleared whole only when something is discarded (spec 040 AC-4)", () => {
     const h = (branch: string) => ({ branch, head: "a".repeat(40) });
     const carriedEntry = { ...h("issue-1"), carried: "max budget reached" };
-    const heldVariants: ChainState["heldWork"][] = [[], [h("issue-1")], [h("spec-1")], [h("issue-1"), h("spec-1")], [carriedEntry], [h("spec-1"), carriedEntry]];
+    const heldVariants: ChainState["heldWork"][] = [[], [h("issue-1")], [h("spec-1")], [h("issue-1"), h("spec-1")], [carriedEntry], [h("spec-1"), carriedEntry],
+      // Spec 113 AC-5: closed-PR holds (with `pr`) on the spec, issue and design branches.
+      [{ ...h("spec-1"), pr: 5 }], [{ ...h("issue-1"), pr: 6 }], [{ ...h("design-1"), pr: 7 }], [{ ...h("spec-1"), pr: 5 }, { ...h("design-1"), pr: 7 }, h("issue-1")]];
     const ledger = (s: ChainState) => s.rescues + s.specRescues + s.replans + s.specRevisions;
     let carried = 0;
     let cleared = 0;
@@ -1382,7 +1384,13 @@ describe("chain: every event in every stage (AC-27)", () => {
               if (ledger(r.state) > ledger(state)) {
                 // Spec 085 AC-1: the escalate to a spec-track rescue removes only the spec-1 hold; AC-2: every other one clears.
                 if (r.state.specRescues > state.specRescues) {
-                  expect(after, label).toEqual(heldWork.filter((x) => x.branch !== "spec-1"));
+                  expect(after, label).toEqual([...heldWork.filter((x) => x.branch !== "spec-1"), ...heldWork.filter((x) => x.branch === "spec-1" && x.pr !== undefined)]);
+                  if (heldWork.length) { if (after.length) carried++; else cleared++; }
+                  continue;
+                }
+                // The design-track rescue keeps a closed-PR hold on design-1 (spec 113 AC-5); every other escalation clears.
+                if (r.state.rescues > state.rescues && r.state.track === "design") {
+                  expect(after, label).toEqual(heldWork.filter((x) => x.branch === "design-1" && x.pr !== undefined));
                   if (heldWork.length) { if (after.length) carried++; else cleared++; }
                   continue;
                 }
@@ -1538,6 +1546,13 @@ describe("chain: every event in every stage (AC-27)", () => {
       expect(normalizeChainState({ ...base, heldWork: null }).heldWork).toEqual([]);
       expect(normalizeChainState({ ...base, heldWork: held[0] }).heldWork).toEqual(held);
       expect(normalizeChainState({ ...base, heldWork: held }).heldWork).toEqual(held);
+    });
+    it("a claim's nested conversation state without closedWork normalizes to [] (spec 113 AC-6)", () => {
+      const { closedWork: _c, ...next } = initialChainState(1) as Record<string, unknown>;
+      const conversation = { next, decision: null };
+      const n = normalizeChainState({ ...initialChainState(1), closedWork: undefined, conversation });
+      expect(n.closedWork).toEqual([]);
+      expect(n.conversation!.next.closedWork).toEqual([]);
     });
   });
   it("rebase_conflict is invalid in the spec stage and the question check", () => {

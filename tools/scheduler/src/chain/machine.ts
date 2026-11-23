@@ -112,7 +112,7 @@ export function normalizeChainState(raw: unknown): ChainState {
   if (!Array.isArray(rest.closedWork)) state.closedWork = [];
   const conv = state.conversation;
   if (conv && typeof conv === "object" && conv.next && typeof conv.next === "object") {
-    state.conversation = { ...conv, next: { ...conv.next, heldWork: normalizeHeld((conv.next as { heldWork?: unknown }).heldWork) } };
+    state.conversation = { ...conv, next: { ...conv.next, heldWork: normalizeHeld((conv.next as { heldWork?: unknown }).heldWork), closedWork: Array.isArray((conv.next as { closedWork?: unknown }).closedWork) ? conv.next.closedWork : [] } };
   }
   return state;
 }
