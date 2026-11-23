@@ -164,10 +164,19 @@ async fn connections_are_bounded_numbered_and_independent() {
     drop(b);
 }
 
+/// Fast pings, and an idle timeout no stall a test tolerates can reach: for tests that need the
+/// connection to stay open.
+fn open_timings() -> common::Timings {
+    common::Timings {
+        idle_timeout: Duration::from_secs(600),
+        ..fast_timings()
+    }
+}
+
 fn live_cfg() -> common::Config {
     common::Config {
         down_rate: 0,
-        timings: fast_timings(),
+        timings: open_timings(),
         ..base_config()
     }
 }
@@ -180,8 +189,10 @@ async fn the_stub_pings_and_a_polling_client_stays_connected() {
     let mut pings = 0;
     timeout(Duration::from_secs(20), async {
         while pings < 3 {
-            if let Some(Ok(Message::Ping(_))) = ws.next().await {
-                pings += 1;
+            match ws.next().await.expect("closed").expect("error") {
+                Message::Ping(_) => pings += 1,
+                Message::Close(f) => panic!("closed: {f:?}"),
+                _ => {}
             }
         }
     })
@@ -194,7 +205,10 @@ async fn the_stub_pings_and_a_polling_client_stays_connected() {
 async fn a_silent_client_times_out_and_frees_its_slot() {
     let mut rig = start(common::Config {
         max_connections: 1,
-        ..live_cfg()
+        down_rate: 0,
+        // The timeout is what is tested, so it is short here.
+        timings: fast_timings(),
+        ..base_config()
     })
     .await;
     let _silent = rig.connect().await;
@@ -257,12 +271,7 @@ async fn downlink_frames_have_the_size_and_are_well_formed_cbor() {
 
 #[tokio::test]
 async fn rate_zero_sends_no_data_frames() {
-    let rig = start(common::Config {
-        down_rate: 0,
-        timings: fast_timings(),
-        ..base_config()
-    })
-    .await;
+    let rig = start(live_cfg()).await;
     let mut ws = rig.connect().await;
     // No data frame may arrive up to the moment the first ping does.
     timeout(Duration::from_secs(20), async {
@@ -374,38 +383,64 @@ async fn oversized_and_text_frames_close_the_connection() {
 
 #[tokio::test]
 async fn a_peer_that_stops_reading_costs_the_others_nothing() {
+    // The idle timeout is out of reach, so a stall can end neither connection; the timeout of a
+    // stalled peer is the next test's.
     let mut rig = start(common::Config {
         down_rate: 100,
         down_size: 1 << 20,
-        timings: common::Timings {
-            idle_timeout: Duration::from_secs(4),
-            ..fast_timings()
-        },
+        timings: open_timings(),
         ..base_config()
     })
     .await;
     let _stalled = rig.connect().await;
     let mut reader = rig.connect().await;
     let mut got = 0;
-    // Keep reading (and so answering pings) and sending until the stalled connection ends; the
-    // reader's own idle clock is far shorter than the stall the test tolerates.
-    let ended = rig.event_where(|v| v["event"] == "disconnected" && v["conn"] == 1);
-    tokio::pin!(ended);
-    let d = loop {
-        tokio::select! {
-            d = &mut ended => break d,
-            m = reader.next() => {
-                if let Some(Ok(Message::Binary(b))) = m {
-                    assert!(is_well_formed(&b));
-                    got += 1;
-                    let _ = reader.send(Message::Binary(vec![0x00].into())).await;
+    let mut stalled_skips = false;
+    // The reader keeps receiving (and sending) until the stalled connection's cumulative counters
+    // show skipped ticks. A closed or failed stream ends the test instead of spinning.
+    timeout(Duration::from_secs(60), async {
+        while got < 3 || !stalled_skips {
+            tokio::select! {
+                v = rig.events.recv() => {
+                    let v = v.expect("events ended");
+                    assert_ne!(v["event"], "disconnected", "{v}");
+                    if v["event"] == "stats" && v["conn"] == 1 && v["skipped"].as_u64().unwrap() > 0 {
+                        stalled_skips = true;
+                    }
                 }
+                m = reader.next() => match m.expect("closed").expect("error") {
+                    Message::Binary(b) => {
+                        assert!(is_well_formed(&b));
+                        got += 1;
+                        reader.send(Message::Binary(vec![0x00].into())).await.unwrap();
+                    }
+                    Message::Close(f) => panic!("closed: {f:?}"),
+                    _ => {}
+                },
             }
         }
-    };
-    assert!(got >= 3, "{got}");
+    })
+    .await
+    .expect("frames for the reader and skipped ticks for the stalled peer");
+}
+
+#[tokio::test]
+async fn a_peer_that_stops_reading_and_answering_times_out() {
+    // Alone on its stub, so the short idle timeout can end no connection that should stay open.
+    let mut rig = start(common::Config {
+        down_rate: 100,
+        down_size: 1 << 20,
+        timings: common::Timings {
+            idle_timeout: Duration::from_secs(2),
+            ..fast_timings()
+        },
+        ..base_config()
+    })
+    .await;
+    let _stalled = rig.connect().await;
+    let d = rig.event("disconnected").await;
+    assert_eq!(d["conn"], 1);
     assert_eq!(d["reason"], "timeout");
-    assert!(d["skipped"].as_u64().unwrap() > 0, "{d}");
 }
 
 #[tokio::test]
@@ -413,10 +448,7 @@ async fn stopping_closes_every_connection_with_1001() {
     let mut rig = start(common::Config {
         down_rate: 100,
         down_size: 1 << 20,
-        timings: common::Timings {
-            idle_timeout: Duration::from_secs(60),
-            ..fast_timings()
-        },
+        timings: open_timings(),
         ..base_config()
     })
     .await;
