@@ -235,8 +235,9 @@ async fn downlink_frames_have_the_size_and_are_well_formed_cbor() {
             ..base_config()
         })
         .await;
-        let mut ws = rig.connect().await;
+        // Include connection setup: a delayed test task may find several frames already buffered.
         let started = Instant::now();
+        let mut ws = rig.connect().await;
         let mut n = 0u64;
         while n < 3 {
             let f = next_binary(&mut ws).await;
