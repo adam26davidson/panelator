@@ -15,6 +15,7 @@ runtime spike (product spec, section 12) is the first product milestone.
 - [docs/product-spec.md](docs/product-spec.md): what panelator is and how it is built.
 - [docs/process-spec.md](docs/process-spec.md): how this repo is developed, mostly by AI agents, and where the human is.
 - [docs/design-tree.md](docs/design-tree.md): every requirements question, the alternatives, and why each decision won. Read before re-opening a decision.
+- [docs/widget-abi.md](docs/widget-abi.md): the widget ABI, what a WebAssembly widget exports and imports.
 - `docs/decisions/`: architecture decision records.
 - `specs/`: one spec per feature.
 - `dev-logs/`: dated measured findings.
