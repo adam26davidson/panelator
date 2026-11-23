@@ -164,7 +164,7 @@ of a stamp is now minus the stamp minus the downtime between them.
   `code` or first line (spec 093's `failureCause`). Tests cover: all pass;
   space low (`ENOSPC`, no request made); `EAI_AGAIN` on the first host; a 403
   and a 500 response (pass); a `TimeoutError`.
-- AC-2. **A host failure pauses the scheduler and counts nothing.** The
+- AC-2. Amended by [114-full-state-volume-does-not-stop-scheduler](../114-full-state-volume-does-not-stop-scheduler/spec.md) AC-2: the scheduler also pauses, without a failed step, when the state volume is under the write floor, and the pause holds in memory when `host.json` cannot be saved (its AC-3). **A host failure pauses the scheduler and counts nothing.** The
   monitor's `onTransient(cause, error)` runs the probe at most once per tick
   (later calls in the same tick reuse the result). Given a driver step that
   rejects with a transient error (spec 015 AC-5's path, spec 059 AC-3's
@@ -210,7 +210,7 @@ of a stamp is now minus the stamp minus the downtime between them.
   startable at once (no `retry_at`), a standing agent that failed during it
   is due as its events and schedule say, and the liveness check in that tick
   already sees the interval (AC-6).
-- AC-5. **One notice for a long pause.** Given a paused tick whose pause is
+- AC-5. Amended by [114-full-state-volume-does-not-stop-scheduler](../114-full-state-volume-does-not-stop-scheduler/spec.md) AC-4: the notification is sent first, and each part of the notice is retried by itself after a failure for want of space. **One notice for a long pause.** Given a paused tick whose pause is
   `HOST_NOTICE_MS` (2 h, wall clock: a pause that spans a sleep is still a
   pause) or more old and `notified` false, or whose cause is `ENOSPC` on the
   first paused tick, then the monitor sets `notified`, logs `{ kind:
