@@ -253,6 +253,51 @@ describe('requests, alerts and the credential check (spec 099 section 6)', () =>
       expect(w.mergeRequests).toEqual([9]);
     } finally { await server.close(); }
   }, 120000);
+  // Spec 068 AC-10 (third bullet): the request's send and answer are one maintainer.contact event each.
+  const contacts = (w: ChainWorld) => readdirSync(w.paths.events).filter((f) => f.endsWith('.jsonl')).sort()
+    .flatMap((f) => readFileSync(join(w.paths.events, f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as { kind: string; payload: Record<string, any> }))
+    .filter((e) => e.kind === 'maintainer.contact').map((e) => e.payload);
+  const fundsReq = { type: 'funds', amount_usd: 12, purpose: 'the console hosting', charter_goal: 'a console the maintainer can reach' };
+  it('a credential request answered Done with the check passing: a request event and a verified answer event, and no question event for that send', async () => {
+    const { w, server } = await requestWorld(cred);
+    try {
+      await w.tick();
+      await press(w, server, 1);
+      const ev = contacts(w).filter((p) => p.issue === 7 && p.kind !== 'notification');
+      expect(ev.map((p) => [p.kind, p.label])).toEqual([['credential', 'request'], ['credential', 'answer']]);
+      expect(ev[0]).toMatchObject({ request: { type: 'credential', name: 'telegram-bot' } });
+      expect(ev[1]).toMatchObject({ outcome: 'verified', channel: 'telegram', text: 'done (verified)', request: { type: 'credential' } });
+      expect(ev[0]!.question_comment_id).toBeDefined();
+      expect(ev[1]!.question_comment_id).toBe(ev[0]!.question_comment_id);
+      expect(contacts(w).filter((p) => p.kind === 'question')).toEqual([]);
+    } finally { await server.close(); }
+  }, 120000);
+  it('a first-contact request denied by button records outcome denied with the button\'s channel', async () => {
+    const { w, server } = await requestWorld(firstContact);
+    try {
+      await w.tick();
+      await press(w, server, 2);
+      const ev = contacts(w).filter((p) => p.issue === 7 && p.kind === 'first_contact');
+      expect(ev.map((p) => p.label)).toEqual(['request', 'answer']);
+      expect(ev[1]).toMatchObject({ outcome: 'denied', channel: 'telegram', request: { type: 'first_contact', party: 'example.org' } });
+      expect(ev[1]!.question_comment_id).toBe(ev[0]!.question_comment_id);
+      expect(contacts(w).filter((p) => p.kind === 'question')).toEqual([]);
+    } finally { await server.close(); }
+  }, 120000);
+  it('a funds request answered by text records outcome text', async () => {
+    const { w, server } = await requestWorld(fundsReq);
+    try {
+      await w.tick();
+      w.reply('Raised the cap to 30 USD.');
+      await w.tick();
+      const ev = contacts(w).filter((p) => p.issue === 7 && p.kind === 'funds');
+      expect(ev.map((p) => p.label)).toEqual(['request', 'answer']);
+      expect(ev[0]).toMatchObject({ request: { type: 'funds', amount_usd: 12 } });
+      expect(ev[1]).toMatchObject({ outcome: 'text', channel: 'issue', text: 'Raised the cap to 30 USD.' });
+      expect(ev[1]!.question_comment_id).toBe(ev[0]!.question_comment_id);
+      expect(contacts(w).filter((p) => p.kind === 'question')).toEqual([]);
+    } finally { await server.close(); }
+  }, 120000);
   it('an infra notification reaches the chat (channel telegram), a refused send falls back to the log, and a reply to an alert gets "alerts take no reply"', async () => {
     let w!: ChainWorld; w = await chainWorld({ files: repoFiles(), results: {} });
     const server = await fakeTelegram();

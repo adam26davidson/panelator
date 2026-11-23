@@ -150,6 +150,7 @@ export async function runStandingAgent(d:StandingDeps,def:StandingDefinition,sta
     if(idx?.renewable===true&&passed&&idx.expires_at){
      // a renewable session is one heads-up per distinct expires_at; the skip is the scheduler's, whatever the agent listed
      if(idx.heads_up_for===idx.expires_at)continue;
+     if(Date.parse(idx.expires_at)-d.now().getTime()>d.cfg.credentials.warn_days*86400000)continue;
      await notifyCredential(w.name,idx.expires_at,steps,`the CLI's login registration ends ${idx.expires_at}; no action is needed before then, the CLI renews the access token by itself; log in again on or after that date, or when a check fails`,idx.expires_at);
      continue;
     }
