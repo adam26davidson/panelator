@@ -28,7 +28,12 @@ export const bootLines = (sha: string) => ["ESP-ROM:esp32s3-20210327", banner(sh
 
 export class FakeSerial implements Serial {
   opens: { port: string; options: SerialOptions }[] = [];
-  constructor(private clock: FakeClock, private scripts: string[][]) {}
+  private clock: FakeClock;
+  private scripts: string[][];
+  constructor(clock: FakeClock, scripts: string[][]) {
+    this.clock = clock;
+    this.scripts = scripts;
+  }
   async open(port: string, options: SerialOptions): Promise<SerialSession> {
     this.opens.push({ port, options });
     const lines = [...(this.scripts.shift() ?? [])];
