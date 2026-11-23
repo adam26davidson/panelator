@@ -116,8 +116,13 @@ export interface ChainState {
   /** Spec 053: `carried` is the failure reason of an implement run that stopped before it finished; the entry is that run's work, not a question's hold. */
   /** Spec 065 AC-1, AC-2: the spec and ADR numbers the scheduler reserved for this chain's next runs; null when none. */
   reserved: { spec: number | null; adr: number | null };
-  heldWork: { branch: string; head: string; carried?: string }[];
+  heldWork: { branch: string; head: string; carried?: string; /** Spec 113: the closed PR whose work this hold carries. */ pr?: number }[];
+  /** Spec 113: the PRs an abandonment closed, kept in the ledger for a retried chain. */
+  closedWork: ClosedWork[];
 }
+
+/** Spec 113: a PR closed at abandonment; `patch` is the saved `closed-pr` patch's path and `at` the time the driver closed it. */
+export type ClosedWork = { pr: number; branch: string; head: string; patch: string | null; at: string | null };
 
 export type ChainEvent =
   | { type: "start" }
