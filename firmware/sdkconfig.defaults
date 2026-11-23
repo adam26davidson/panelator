@@ -1,0 +1,10 @@
+# ESP32-S3-N16R8: 16 MB flash, 8 MB octal PSRAM. ESP-IDF's default single-app partition table.
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+# A missing PSRAM is a boot failure.
+# CONFIG_SPIRAM_IGNORE_NOTFOUND is not set
+# Console on UART0, the USB Serial/JTAG port as secondary output.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
