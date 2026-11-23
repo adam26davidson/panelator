@@ -33,12 +33,14 @@ export async function renderApp(build: (history: RouterHistory) => AnyRouter, ad
 }
 
 /** Gives a piece of UI the router and the query client it needs, at any address: for component tests and stories. */
-function WithProviders({ children, address = "/" }: { children: ReactNode; address?: string }) {
+export function WithProviders({ children, address = "/" }: { children: ReactNode; address?: string }) {
   const [state] = useState(() => {
     const root = createRootRoute({ component: () => children });
     const router = createRouter({
       routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/" })]),
       history: createMemoryHistory({ initialEntries: [address] }),
+      // A failure in a story must show: the story test looks for this marker.
+      defaultErrorComponent: ({ error }) => <div data-story-error="">{String(error)}</div>,
     });
     return { router, queryClient: makeQueryClient() };
   });
