@@ -82,6 +82,10 @@ crate), but nothing it sends or accepts is the relay protocol.
 - Any change to `AGENTS.md`, the root `package.json`, `pnpm-workspace.yaml`,
   the sensitive-path list, the security review criteria or how either is
   enforced.
+- Any change to the root `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`,
+  `.cargo/config.toml`, `.github/workflows/hil.yml`, `tools/`, `firmware/` or
+  `schemas/`. (These are kept out of section 4, which lists only the paths
+  the implementation touches.)
 
 ## 3. Acceptance criteria
 
@@ -317,10 +321,6 @@ Changed:
 - `README.md`: one line (AC-20).
 - `backend/.gitkeep`: removed.
 
-Not changed: the root `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` and
-`.cargo/config.toml`; `.github/workflows/hil.yml`; `tools/`; `firmware/`;
-`schemas/`; `AGENTS.md`, `package.json`, `pnpm-workspace.yaml`.
-
 The command line:
 
 ```
@@ -449,7 +449,7 @@ about, as its brief says.
   `ldd` on the release binary showing no OpenSSL (AC-18).
 - The CI run of the PR shows the `test` job running `backend/check.sh` and
   the `relay-stub` artifact uploaded (AC-19).
-- The diff touches no file section 4 lists as not changed, and the security
+- The diff touches no file section 2 lists as not changed, and the security
   review covers `.github/workflows/ci.yml` and `backend/crates/relay/`.
 
 ## 8. Open decisions
