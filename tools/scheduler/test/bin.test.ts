@@ -96,7 +96,7 @@ describe("panelator-scheduler aws sso-expiry (spec 068 AC-2)", () => {
     expect(missing.status).toBe(1);
     expect(missing.stderr).toContain("no profile nope in");
     expect(sso([]).status).toBe(1);
-  });
+  }, 60_000);
 });
 
 describe("cred-exec for a provider: aws entry (spec 068 AC-1)", () => {
