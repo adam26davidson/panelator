@@ -161,16 +161,7 @@ spike's result can move all of it.
     runner does not have them. Message families and their decoders are `firmware-screen-config`.
   after: firmware-panel-driver, backend-workspace-and-relay-stub
   class: class:product
-- planned: web-app-skeleton
-  title: Web app: the React project in web/ with its toolchain and checks
-  brief: Milestone 1 groundwork (product spec 7, 13). Create the app in `web/` as a pnpm workspace
-    package with the stack of product spec 7 (React, Vite, TypeScript strict, Feature-Sliced Design
-    enforced by steiger, Biome, TanStack Router and Query, Zustand, Tailwind, Vitest with Testing Library,
-    Playwright, Storybook, knip), each check wired into CI and `pnpm test`, and an app shell with one
-    route. Reuse what the design stage's catalog (spec 029) and the console already set up where the
-    product spec's stack allows. No simulator, editor or login: those are `simulator-engine`,
-    `layout-editor` and `web-login-and-boards`.
-  class: class:product
+- `specs/112-web-app-skeleton/spec.md` (issue #434)
 - planned: simulator-engine
   title: Simulator engine: the same WASM modules run in the browser against a canvas
   brief: Milestone 1 (product spec 7.1, 12.1, 13). A shared engine package (not a feature slice) that
@@ -179,7 +170,7 @@ spike's result can move all of it.
     the framebuffer to a canvas at any configured geometry. A test runs the three spike modules and
     requires frames equal to the golden frames. One page in the app shows the three widgets running, with
     raw pixels. The emulated LED look and the draft screen are `layout-editor`.
-  after: web-app-skeleton, specs/107-widget-abi-and-rust-sdk/spec.md
+  after: specs/112-web-app-skeleton/spec.md, specs/107-widget-abi-and-rust-sdk/spec.md
   class: class:product
 - planned: runtime-spike-measurement
   title: Runtime spike: measure interpreter and AOT on the board, record the numbers and the execution mode
