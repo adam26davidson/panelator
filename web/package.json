@@ -10,9 +10,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome check .",
-    "fsd": "true",
+    "fsd": "steiger ./src --config steiger.config.ts",
     "knip": "knip --directory .. --config web/knip.json --workspace web",
-    "test": "true",
+    "test": "vitest run",
     "storybook": "true",
     "build-storybook": "true",
     "e2e": "true"
@@ -35,6 +35,9 @@
     "@vitejs/plugin-react": "catalog:",
     "knip": "catalog:",
     "typescript": "catalog:",
+    "@feature-sliced/steiger-plugin": "catalog:",
+    "jsdom": "catalog:",
+    "steiger": "catalog:",
     "vitest": "catalog:"
   }
 }

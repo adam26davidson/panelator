@@ -1,6 +1,7 @@
 {
   "workspaces": {
     "web": {
+      "entry": ["checks.test.ts", "steiger.config.ts"],
       "project": ["src/**/*.{ts,tsx}", "*.ts"],
       "ignoreDependencies": ["tailwindcss"]
     }

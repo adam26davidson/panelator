@@ -23,7 +23,7 @@ function run(script: string): Promise<{ code: number; out: string }> {
 }
 
 describe("the web package (spec 112)", () => {
-  for (const script of ["typecheck", "lint", "knip", "build"]) {
+  for (const script of ["typecheck", "lint", "fsd", "knip", "test", "build"]) {
     it(script, async () => {
       const r = await run(script);
       expect(r.code, r.out.slice(-6000)).toBe(0);
