@@ -258,6 +258,12 @@ importers:
       '@tailwindcss/vite':
         specifier: 'catalog:'
         version: 4.3.3(vite@8.3.5(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
+      '@tanstack/react-query':
+        specifier: 'catalog:'
+        version: 5.108.2(@types/react@19.3.0)(react@19.3.1)
+      '@tanstack/react-router':
+        specifier: 'catalog:'
+        version: 1.170.46(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       react:
         specifier: 'catalog:'
         version: 19.3.1
@@ -277,6 +283,9 @@ importers:
       '@feature-sliced/steiger-plugin':
         specifier: 'catalog:'
         version: 0.8.2(typescript@7.0.2)
+      '@testing-library/react':
+        specifier: 'catalog:'
+        version: 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@types/node':
         specifier: ^26.6.5
         version: 26.6.5

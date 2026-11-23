@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+/*
+ * The product's token set: specs/112-web-app-skeleton/design/tokens.html, the same custom properties with the same
+ * values. A change goes through a design, never here alone. Utilities are the tokens: the theme below is cleared of
+ * Tailwind's own palette, type scale, spacing, radii and breakpoints, and holds only the set.
+ */
+@theme static {
+  --*: initial;
+
+  /* colour */
+  --color-bg: #0e1116;
+  --color-surface: #161b22;
+  --color-text: #e9edf2;
+  --color-muted: #a7b1be;
+  --color-accent: #6cb6ff;
+  --color-danger: #ff9189;
+  --color-ok: #5fd39a;
+  --color-raised: #1f2630;
+  --color-border: #2b3340;
+  --color-border-strong: #7d8896;
+  --color-accent-hover: #92c9ff;
+  --color-accent-soft: #152a41;
+  --color-on-accent: #0b1320;
+  --color-focus: #ffffff;
+
+  /* type */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 20px;
+  --text-xl: 28px;
+  --text-2xl: 36px;
+  --leading-tight: 1.2;
+  --leading-normal: 1.55;
+  --font-weight-normal: 400;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --tracking-wide: 0.06em;
+
+  /* radii */
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+
+  /* breakpoints: the design's --bp-tablet and --bp-desktop; CSS cannot read a custom property in a media query */
+  --breakpoint-tablet: 720px;
+  --breakpoint-desktop: 1200px;
+}
+
+/* The rest of the set: spacing, sizes and lines, with the Tailwind names that make them utilities. */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  --size-tap: 44px;
+  --size-band: 56px;
+  --size-band-wide: 64px;
+  --size-tabbar: 56px;
+  --size-reading: 680px;
+  --size-term: 144px;
+
+  --line: 1px;
+  --line-focus: 2px;
+
+  --bp-tablet: 720px;
+  --bp-desktop: 1200px;
+}
+
+@theme inline {
+  --spacing-1: var(--space-1);
+  --spacing-2: var(--space-2);
+  --spacing-3: var(--space-3);
+  --spacing-4: var(--space-4);
+  --spacing-6: var(--space-6);
+  --spacing-8: var(--space-8);
+  --spacing-12: var(--space-12);
+  --spacing-16: var(--space-16);
+  --spacing-tap: var(--size-tap);
+  --spacing-band: var(--size-band);
+  --spacing-band-wide: var(--size-band-wide);
+  --spacing-tabbar: var(--size-tabbar);
+  --spacing-term: var(--size-term);
+  --container-reading: var(--size-reading);
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    background: var(--color-bg);
+  }
+  :focus-visible {
+    outline: var(--line-focus) solid var(--color-focus);
+    outline-offset: var(--line-focus);
+  }
+  h1:focus {
+    outline: none;
+  }
+}
