@@ -283,6 +283,7 @@ async fn uplink_is_counted_and_never_interpreted() {
     let mut ws = rig.connect().await;
     let good: Vec<Vec<u8>> = vec![
         vec![0x18, 0x64],
+        vec![0x20],
         vec![0x41, 0x00],
         vec![0x62, b'h', b'i'],
         vec![0x82, 0x01, 0x82, 0x02, 0x03],
@@ -313,7 +314,7 @@ async fn uplink_is_counted_and_never_interpreted() {
         .sum();
     // Stats show the counters; the connection stays open and nothing is replied.
     let s = rig
-        .event_where(|v| v["event"] == "stats" && v["received"] == 15)
+        .event_where(|v| v["event"] == "stats" && v["received"] == 16)
         .await;
     assert_eq!(s["malformed"], 5);
     assert_eq!(s["received_bytes"], total);
