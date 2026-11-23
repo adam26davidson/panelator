@@ -462,3 +462,24 @@ describe("console schemas (spec 051)", () => {
     expect(validate("console-state", snap).ok).toBe(true);
   });
 });
+
+describe("spec 113 closedWork (AC-6)", () => {
+  const entry = { pr: 5, branch: "spec-7", head: "a".repeat(40), patch: "/state/patches/7.patch", at: "2026-11-23T00:00:00.000Z" };
+  const claim = (state: unknown) => ({ issue: 7, state, worktree: "/tmp/wt", started_at: "2026-10-12T00:00:00Z", last_activity_at: "2026-10-12T00:00:00Z", run_id: null });
+  it("the ledger accepts closedWork and rejects an entry missing pr, branch or head", () => {
+    const base = ledgerOf(initialChainState(7));
+    expect(validate("escalation-ledger", base).ok).toBe(true);
+    expect(validate("escalation-ledger", { ...base, closedWork: [entry, { ...entry, patch: null, at: null }] }).ok).toBe(true);
+    for (const k of ["pr", "branch", "head"] as const) {
+      const { [k]: _gone, ...rest } = entry;
+      expect(validate("escalation-ledger", { ...base, closedWork: [rest] }).ok, k).toBe(false);
+    }
+  });
+  it("the claim accepts closedWork and pr on a heldWork entry, and still accepts a state without closedWork", () => {
+    const s = initialChainState(7);
+    const { closedWork: _c, ...old } = s;
+    expect(validate("claim", claim(old)).ok).toBe(true);
+    expect(validate("claim", claim({ ...s, closedWork: [entry], heldWork: [{ branch: "spec-7", head: "a".repeat(40), pr: 5 }] })).ok).toBe(true);
+    expect(validate("claim", claim({ ...s, closedWork: [{ branch: "spec-7", head: "a" }] })).ok).toBe(false);
+  });
+});

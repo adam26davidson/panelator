@@ -33,7 +33,7 @@ Earlier attempts at this issue failed for the reasons recorded there; do not rep
 
 The question you asked earlier, if any: {{question}}
 The maintainer's answer, if any: {{answer}}
-Work of an earlier run of this issue (before your question, or an attempt that stopped before it finished), if any: {{held_work}}
+Work of an earlier run of this issue (before your question, an attempt that stopped before it finished, or a chain that was abandoned and retried), if any: {{held_work}}
 When an answer is present it is a decision: implement on it and do not reopen it.
 
 The question check sent this back for you to decide: {{decide_input}}

@@ -403,7 +403,7 @@ async function specTrackScope(deps: DriverDeps, claim: Claim, diff: string[], sp
 
 /** Spec 040: the chain's holds with the entry for a branch set to a head, or removed. */
 function setHeld(state: ChainState, branch: string, head: string): ChainState {
-  return { ...state, heldWork: state.heldWork.map((h) => (h.branch === branch ? { branch, head } : h)) };
+  return { ...state, heldWork: state.heldWork.map((h) => (h.branch === branch ? { branch, head, ...(h.pr !== undefined ? { pr: h.pr } : {}) } : h)) };
 }
 function dropHeld(state: ChainState, branch: string): ChainState {
   return { ...state, heldWork: state.heldWork.filter((h) => h.branch !== branch) };
@@ -412,16 +412,18 @@ function dropHeld(state: ChainState, branch: string): ChainState {
 /** Spec 011 AC-4: what the resumed stage is told about the work it left before its question. */
 async function heldWorkText(deps: DriverDeps, claim: Claim): Promise<string | undefined> {
   const held = heldOn(claim.state, branchOf(claim.state));
-  if (!held) return undefined;
   // Never claim work the worktree does not hold: the preparation kept it, advanced it, or dropped it.
-  if ((await worktreeHead(claim.worktree)) !== held.head) return undefined;
+  if (!held || (await worktreeHead(claim.worktree)) !== held.head) return closedWorkPointer(claim);
   const pushed = await pushedBranch(claim.worktree, held.branch);
   const prs = await openPrsFrom(deps, claim.issue, held.branch);
   // A failed lookup is "unknown", never "not on origin" or "(none)": the stage must not open a second PR on a guess.
   const where = pushed === null ? "whether it is on origin: unknown (lookup failed)" : pushed ? "it is on origin" : "it is not on origin";
   const open = prs === null ? "unknown (lookup failed)" : prs.length ? prs.map((n) => `#${n}`).join(", ") : "(none)";
   // Spec 053 AC-4: a carried entry is the work of an earlier attempt that stopped, not of a stage that asked a question.
-  const closing = held.carried !== undefined
+  const closedAt = held.pr !== undefined ? claim.state.closedWork.find((c) => c.pr === held.pr) : undefined;
+  const closing = held.pr !== undefined
+    ? `This is the work of this issue's earlier chain, PR #${held.pr}, closed (not merged) when the issue was abandoned${closedAt?.at ? ` on ${closedAt.at}` : ""}; it builds on an older \`origin/main\`; the issue's comments hold the abandonment record and the retry's reason; check the work against the issue, its parent design and \`main\` as it is now, and continue from it instead of writing it again.`
+    : held.carried !== undefined
     ? `This is the work of your earlier attempt at this stage, which stopped before it finished (${held.carried}). Check it against the plan and finish the remaining tasks; do not start again.`
     : "This is your own work from before your question was asked; you continue from it, you do not start again.";
   return [
@@ -429,6 +431,20 @@ async function heldWorkText(deps: DriverDeps, claim: Claim): Promise<string | un
     `Open pull requests from it: ${open}.`,
     closing,
   ].join("\n");
+}
+
+/** Spec 113 AC-4: with no PR bound and no hold kept, the earlier chain's closed PR on this branch is still pointed to. */
+function closedWorkPointer(claim: Claim): string | undefined {
+  const s = claim.state;
+  if (s.pr !== null || !["spec", "design", "plan", "implement"].includes(s.stage)) return undefined;
+  const c = s.closedWork.find((w) => w.branch === branchOf(s));
+  if (!c) return undefined;
+  const when = c.at ? `, closed when the issue was abandoned on ${c.at}` : ", closed when the issue was abandoned";
+  const patch = c.patch ? `Its commits are saved as a patch at ${c.patch} on this machine` : "No patch of it was saved";
+  const tail = c.branch === `issue-${s.issue}`
+    ? "This chain's plan is new; read the earlier work as reference where the plan covers the same ground."
+    : "Read the work and continue from it instead of writing it again.";
+  return `The earlier chain's PR #${c.pr} (${c.branch} at ${c.head}${when}) is not restored on this branch. ${patch} and stay on origin at refs/pull/${c.pr}/head. ${tail}`;
 }
 
 /** Spec 101 AC-4: put before the next fix's input when the previous fix for a failed check returned the head unchanged without a verdict. */
@@ -609,6 +625,21 @@ async function keepHeldWork(deps: DriverDeps, claim: Claim, branch: string): Pro
       // A tracking ref left from an earlier fetch is not the branch on origin.
       return gitOut(wt, "update-ref", "-d", tracking).catch(() => "");
     });
+    if (!(await refExists(wt, tracking)) && held.pr !== undefined) {
+      // Spec 113 AC-3: GitHub keeps the head of a closed PR at refs/pull/<pr>/head; only "no such ref" means it is gone.
+      const pull = `refs/panelator/pull/${held.pr}`;
+      const found = await gitOut(wt, "fetch", "-q", "origin", `+refs/pull/${held.pr}/head:${pull}`).then(() => true, (e: unknown) => {
+        const err = e as { message?: string; stderr?: string };
+        if (!/couldn't find remote ref/i.test(`${err.stderr ?? ""}\n${err.message ?? ""}`)) throw e;
+        return false;
+      });
+      if (found && (await gitOut(wt, "rev-parse", pull)).trim() === held.head) {
+        await checkoutBranch(wt, branch, held.head);
+        deps.log({ kind: "held-work-restored", issue: claim.issue, branch, head: held.head, source: "pull" });
+        deps.log({ kind: "held-work-kept", issue: claim.issue, branch, head: held.head });
+        return true;
+      }
+    }
     if (!(await refExists(wt, tracking))) {
       deps.log({ kind: "held-work-lost", issue: claim.issue, branch, head: held.head });
       claim.state = dropHeld(claim.state, branch);
@@ -1482,7 +1513,10 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
           // AC-7: an abandoned issue's ledger is archived, after its finding; a later claim starts with fresh counts,
           // but an answer not yet recorded on main is carried into the fresh ledger (Tm4).
           await archiveLedger(deps.paths, claim.issue, deps.now());
-          if (claim.state.pendingAnswer) await writeLedger(deps.paths, claim.issue, { ...ledgerOf(initialChainState(claim.issue)), pendingAnswer: claim.state.pendingAnswer });
+          // Spec 113 AC-1: the closed PRs' pointers are carried too, so the retried chain starts from their work.
+          if (claim.state.pendingAnswer || claim.state.closedWork.length) {
+            await writeLedger(deps.paths, claim.issue, { ...ledgerOf(initialChainState(claim.issue)), pendingAnswer: claim.state.pendingAnswer, closedWork: claim.state.closedWork });
+          }
         }
         await removeWorktree(deps.repoDir, claim.worktree).catch((e) => deps.log({ kind: "error", issue: claim.issue, error: `worktree remove: ${(e as Error).message}` }));
         await removeClaim(deps.paths, claim.issue);
@@ -1501,6 +1535,11 @@ export async function applyActions(deps: DriverDeps, claim: Claim, actions: Acti
           return "";
         });
         const saved = await savePatch(deps.paths, claim.issue, commits, deps.now(), "closed-pr");
+        // Spec 113 AC-1: the record of the closed PR gets its patch and time, on disk before the PR is closed.
+        if (claim.state.closedWork.some((w) => w.pr === a.pr)) {
+          claim.state = { ...claim.state, closedWork: claim.state.closedWork.map((w) => (w.pr === a.pr ? { ...w, patch: saved, at: deps.now().toISOString() } : w)) };
+          await writeClaim(deps.paths, { ...claim, last_activity_at: deps.now().toISOString() });
+        }
         await deps.gh.comment(a.pr, neutraliseMarkers(a.comment));
         await deps.gh.closePullRequest(a.pr);
         await deps.gh.deleteBranch(a.branch);

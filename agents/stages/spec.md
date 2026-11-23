@@ -40,7 +40,7 @@ The problem to resolve: {{spec_problem}}
 History of earlier attempts: {{history}}
 The question, if any: {{question}}
 The maintainer's answer, if any: {{answer}}
-Work you did before your question, if any: {{held_work}}
+Work of an earlier run of this issue (before your question, or of a chain that was abandoned and retried), if any: {{held_work}}
 The question check sent this back for you to decide: {{decide_input}}
 
 **What to do in each mode.**
