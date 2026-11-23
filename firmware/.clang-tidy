@@ -1,0 +1,17 @@
+# -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling: the analyzer asks for the optional C11
+# Annex K snprintf_s, which glibc and newlib do not have; every write here is bounded by snprintf's size argument.
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  cert-*,
+  misc-*,
+  -misc-include-cleaner,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -cert-dcl37-c,
+  -cert-dcl51-cpp,
+  readability-braces-around-statements,
+  readability-misleading-indentation,
+  readability-redundant-*
+WarningsAsErrors: '*'
+HeaderFilterRegex: '(components/|test/host/test_)'
