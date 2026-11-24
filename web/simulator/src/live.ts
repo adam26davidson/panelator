@@ -70,7 +70,7 @@ export function runLive(scene: Scene, options: LiveOptions): LiveRun {
     pending = false;
     if (stopped || paused) return;
     const now = clock();
-    origin ??= now - (scene.tick < 0 ? 0 : scene.tick) * (1000 / 60);
+    origin ??= now - Math.max(scene.tick, 0) * (1000 / 60);
     const newest = Math.floor(((now - origin) * 60) / 1000 + 1e-9);
     const due = newest - scene.tick;
     try {

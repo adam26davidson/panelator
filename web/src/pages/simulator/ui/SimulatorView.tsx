@@ -94,7 +94,6 @@ function Readouts({ panel, placements }: { panel: PanelSize | undefined; placeme
           <tbody>
             {placements.map((p, i) => (
               // The scene may place one module twice; the row's place is its identity.
-              // biome-ignore lint/suspicious/noArrayIndexKey: rows are static for the life of a scene
               <tr key={i} className="border-b-(length:--line) border-border">
                 <th scope="row" className="py-3 pr-4 font-mono text-sm font-normal">
                   {p.name}
