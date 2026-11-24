@@ -178,7 +178,7 @@ only, as in spec 059. The *stale leftovers* of a volume at an age are:
   then it is logged as spec 059's `host-space-unknown` and skipped. A failure
   of the sweep is pushed to the tick's `errors` and never stops the tick, as
   the children scan's is.
-- AC-2. **The urgent sweep and its alarm.** Given a tick on which a checked
+- AC-2. Amended by [114-full-state-volume-does-not-stop-scheduler](../114-full-state-volume-does-not-stop-scheduler/spec.md) AC-4: the alarm's notification is sent first, each part of the alarm stands alone, and the episode is held in memory when `disk-sweep.json` cannot be written. **The urgent sweep and its alarm.** Given a tick on which a checked
   volume is under a sweep floor, then whatever the time of the last sweep the
   loop requests `sweep_volume { path, age: "urgent" }` for that volume, logs
   `{ kind: "disk-sweep-urgent", path, free_bytes, free_inodes }`, re-reads the
