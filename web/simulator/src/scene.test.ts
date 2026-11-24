@@ -76,7 +76,14 @@ describe("a scene (AC-7)", () => {
       },
     ]);
     expect([s.frame[2], s.frame[5]]).toEqual([3, 2]);
-    expect(s.placements[0]).toMatchObject({ abi: 1, width: 3, height: 2, declaredWidth: 50, declaredHeight: 60, updateHz: 60 });
+    expect(s.placements[0]).toMatchObject({
+      abi: 1,
+      width: 3,
+      height: 2,
+      declaredWidth: 50,
+      declaredHeight: 60,
+      updateHz: 60,
+    });
     expect(s.tick).toBe(-1);
     // pn_init order: the second placement overwrites the pixel the first one drew, in a shared layer? No: layers are separate,
     // so order shows only through the random sequence
