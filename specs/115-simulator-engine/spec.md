@@ -202,8 +202,10 @@ are spec 112's.
   time and offset for a tick, and each placement's random source). It
   instantiates every placement, gives it a layer of the placement's size
   (not the declared size) and calls `pn_init` in the given order.
-  `step()` runs the next tick, from 0: the updates the document's rule
-  makes due, in ascending `z` with ties in the given order, each called
+  `step(tick?)` runs the next tick, from 0; given `tick`, an integer never
+  lower than the next one, it runs that tick instead, the ticks between
+  are not run, and the due rule below applies at that tick as written. It
+  runs the updates the document's rule makes due, in ascending `z` with ties in the given order, each called
   with the tick as an `i64`; then the composition by the document's
   formula into the scene's frame. The scene exposes the tick last run, the
   frame, the panel and each placement's declarations. Given a trap, a
@@ -237,7 +239,8 @@ are spec 112's.
   animation frame it runs every tick that has become due since the last
   one, in order, then presents the frame once. Given more than 30 ticks
   are due at once (a tab that was hidden), then it runs none of the
-  missed ticks, moves the tick counter past them and runs the newest one,
+  missed ticks, calls `step(tick)` with the newest due tick, which moves the tick counter
+  past them,
   so the next update a widget gets carries the true tick, as on a board
   that skipped a frame. The live environment gives `time_unix_ms` as the
   wall clock read once per tick, `time_utc_offset_s` as the browser's
@@ -471,15 +474,17 @@ should honour from its first moving page.
 The implementation's file scope:
 
 - `web/simulator/` whole (new): `web/simulator/package.json`,
-  `web/simulator/tsconfig.json`, `web/simulator/vitest.config.ts` (a sensitive path: it decides what the engine's
-  `test` runs), `README.md`, `src/` with `index.ts`, the host and its
-  tests.
-- `web/`: `package.json` (the dependency; the scripts of AC-2),
-  `checks.test.ts`, `knip.json`, `vite.config.ts`, `.storybook/`,
-  `playwright.config.ts` only if the build of the modules needs it,
-  `README.md`, `src/app/router.tsx`, `src/pages/simulator/` (new),
-  `src/pages/home/`, `src/shared/` (new shared pieces the design maps),
-  `src/app/styles.css` (tokens the design adds), `e2e/`.
+  `web/simulator/tsconfig.json`, `web/simulator/vitest.config.ts` (a
+  sensitive path: it decides what the engine's `test` runs),
+  `web/simulator/README.md`, `web/simulator/src/index.ts`, and the host and
+  its tests under `web/simulator/src/`.
+- The app, each by its full path: `web/package.json` (the dependency; the
+  scripts of AC-2), `web/checks.test.ts`, `web/knip.json`,
+  `web/vite.config.ts`, `web/.storybook/`, `web/playwright.config.ts` only
+  if the build of the modules needs it, `web/README.md`,
+  `web/src/app/router.tsx`, `web/src/pages/simulator/` (new),
+  `web/src/pages/home/`, `web/src/shared/` (new shared pieces the design
+  maps), `web/src/app/styles.css` (tokens the design adds), `web/e2e/`.
 - `pnpm-workspace.yaml` (a sensitive path): the one `packages` entry. The
   security review checks that the build approvals, the install-before-run
   setting and the catalog are as they were.
@@ -494,7 +499,7 @@ The engine's public surface, for `layout-editor` and later hosts' tests:
 loadModule(bytes) -> Promise<Module>          declarations: abi, updateHz, width, height
 parseFont(bdfText) -> Font
 createScene({ panel, fonts, assets, placements, environment }) -> Promise<Scene>
-Scene: step(), tick, frame, panel, placements
+Scene: step(tick?), tick, frame, panel, placements
 readScene(json) -> ConformanceScene
 runConformance(scene, files) -> Promise<{ tick, frame }[]>
 frameSha256(frame) -> Promise<string>
