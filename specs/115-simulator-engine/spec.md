@@ -83,6 +83,10 @@ and the LED look on this engine.
   design).
 - The sensitive-path list, the security review and what routes a diff to
   it are unchanged.
+- **Files this spec leaves unchanged:** docs/widget-abi.md, sdk/, widgets/,
+  Cargo.toml, .cargo/, the root vitest config, the web vitest config, the
+  root package.json, AGENTS.md, and everything this section names. A diff
+  that touches one of them is outside the spec.
 
 ## 3. Acceptance criteria
 
@@ -106,7 +110,8 @@ are spec 112's.
   Its entry is its TypeScript source (`exports` points at
   `src/index.ts`; there is no build step and no `dist`), strict under the
   compiler options of `web/tsconfig.json`. `pnpm-workspace.yaml` gains the
-  one `packages` entry `web/simulator` and nothing else. The app declares
+  one `packages` entry `web/simulator` and nothing else (the catalog is
+  not touched). The app declares
   it as `"@panelator/simulator": "workspace:*"` and imports it only through
   that name. The parts that step and compose (AC-3 to AC-8) use nothing
   but the language, `WebAssembly` and `crypto.subtle`, so they run
@@ -370,13 +375,19 @@ are spec 112's.
 - AC-17. **`pnpm test` runs it.** `web/checks.test.ts` gains two tests,
   `simulator typecheck` and `simulator test`, which run those scripts of
   `@panelator/simulator` in the way the file runs the app's, placed after
-  `knip` and before `test`. The app's `lint` (Biome over `web/`, which
+  `knip` and before `test`. The file also writes the captured output of
+  `simulator test` and of `e2e` to its own standard output when they pass
+  (a failing check still shows it as the failure message), so that a
+  passing `pnpm test` and CI's `test` job log show one line per scene
+  under Node (the `simulator test` script runs vitest with the verbose
+  reporter, one test per scene), one line per browser test, and the three
+  module hashes of AC-11, which the engine's test prints with
+  `console.log` as `module <file> sha256 <hex>`. The app's `lint` (Biome over `web/`, which
   holds `web/simulator/`) and `knip` (with the workspace `web/simulator`
   added to `web/knip.json`) cover the engine, and its browser tests are
   the app's `e2e`. The dependency test of that file accepts
   `workspace:*` for a package of this repository and nothing else new.
-  The root `vitest.config.ts` and `web/vitest.config.ts` are unchanged:
-  the engine's tests run under `web/simulator/vitest.config.ts`, once.
+  The engine's tests run under `web/simulator/vitest.config.ts`, once.
   Two checkouts running `pnpm test` at once do not disturb each other
   (spec 112 AC-15): each builds the modules into its own `target/`.
 - AC-18. **CI.** In the `test` job of `.github/workflows/ci.yml` the step
@@ -459,8 +470,8 @@ should honour from its first moving page.
 
 The implementation's file scope:
 
-- `web/simulator/` whole (new): `package.json`, `tsconfig.json`,
-  `vitest.config.ts` (a sensitive path: it decides what the engine's
+- `web/simulator/` whole (new): `web/simulator/package.json`,
+  `web/simulator/tsconfig.json`, `web/simulator/vitest.config.ts` (a sensitive path: it decides what the engine's
   `test` runs), `README.md`, `src/` with `index.ts`, the host and its
   tests.
 - `web/`: `package.json` (the dependency; the scripts of AC-2),
@@ -471,16 +482,11 @@ The implementation's file scope:
   `src/app/styles.css` (tokens the design adds), `e2e/`.
 - `pnpm-workspace.yaml` (a sensitive path): the one `packages` entry. The
   security review checks that the build approvals, the install-before-run
-  setting and the catalog are as they were, apart from a development
-  dependency AC-1 of spec 112 lets the catalog gain.
+  setting and the catalog are as they were.
 - `.github/workflows/ci.yml` (a sensitive path): the reordering of AC-18.
   The security review checks that every step of the job is still there
   and that `pnpm test` runs what it ran before, plus the checks of AC-17.
 - `pnpm-lock.yaml`.
-
-Unchanged: `docs/widget-abi.md`, `sdk/`, `widgets/`, `Cargo.toml`,
-`.cargo/`, the root `vitest.config.ts`, `web/vitest.config.ts`, the root
-`package.json`, `AGENTS.md`, and everything section 2 names.
 
 The engine's public surface, for `layout-editor` and later hosts' tests:
 
@@ -505,11 +511,13 @@ and what each takes may not.
 - `pnpm test` passes at the repository root with `simulator typecheck`
   and `simulator test` among the tests of `web/checks.test.ts`, and the
   app's `e2e` running the tests of AC-12 and AC-16; its output is in the
-  implementation's final message, with the module hashes of AC-11.
+  implementation's final message, which contains the per-scene lines and
+  the module hashes that AC-17 has a passing run print.
 - CI's `test` job passes on the implementation PR; the PR's description
-  quotes the log lines showing the four scenes passed under Node and in
-  Chromium, and that the module hashes printed by the engine's test equal
-  those of the uploaded `spike-widgets` files.
+  quotes, from that job's log, the lines showing the four scenes passed
+  under Node and in Chromium and the three module hash lines. The spec
+  does not claim the build is reproducible across machines, so the hashes
+  are not compared with those of the uploaded `spike-widgets` files.
 - The golden tests fail when they should: the PR's description records
   one deliberate break made locally and reverted (for example the
   rounding term of the composition formula dropped), with the scene, tick
