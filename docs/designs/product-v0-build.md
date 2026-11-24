@@ -153,16 +153,7 @@ spike's result can move all of it.
   after: firmware-panel-driver, specs/111-backend-workspace-and-relay-stub/spec.md
   class: class:product
 - `specs/112-web-app-skeleton/spec.md` (issue #434)
-- planned: simulator-engine
-  title: Simulator engine: the same WASM modules run in the browser against a canvas
-  brief: Milestone 1 (product spec 7.1, 12.1, 13). A shared engine package (not a feature slice) that
-    loads the identical WASM modules in the browser's engine, implements the host imports of the ABI
-    document of `widget-abi-and-rust-sdk` with the same retained layers and compositor rules, and draws
-    the framebuffer to a canvas at any configured geometry. A test runs the three spike modules and
-    requires frames equal to the golden frames. One page in the app shows the three widgets running, with
-    raw pixels. The emulated LED look and the draft screen are `layout-editor`.
-  after: specs/112-web-app-skeleton/spec.md, specs/107-widget-abi-and-rust-sdk/spec.md
-  class: class:product
+- `specs/115-simulator-engine/spec.md` (issue #435)
 - planned: runtime-spike-measurement
   title: Runtime spike: measure interpreter and AOT on the board, record the numbers and the execution mode
   brief: Milestone 1's result (product spec 3.1, 12.1; design-tree R2.Q8). A HIL job runs the three spike
@@ -173,7 +164,7 @@ spike's result can move all of it.
     AOT does). Confirm the browser engine runs the identical modules. If neither mode passes, change
     nothing downstream and return the question to the maintainer: R2.Q8 says the runtime decision then
     changes. The firmware keeps only the chosen mode as its default after this child.
-  after: firmware-wasm-runtime, firmware-relay-client, simulator-engine
+  after: firmware-wasm-runtime, firmware-relay-client, specs/115-simulator-engine/spec.md
   class: class:product
 - planned: screen-config-and-type-sharing
   title: Screen config and relay message types in Rust, emitted as JSON Schema, TypeScript types and CBOR fixtures
