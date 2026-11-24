@@ -258,7 +258,7 @@ describe("sweepVolumes", () => {
       expect(w.notes).toHaveLength(1);
       const queue = readFileSync(w.paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l));
       expect(queue).toHaveLength(1);
-      expect(queue[0]).toMatchObject({ timestamp: NOW.toISOString(), finding: { what: "host volume low after sweep" } });
+      expect(queue[0]).toMatchObject({ timestamp: new Date(NOW.getTime() + 60_000).toISOString(), finding: { what: "host volume low after sweep" } });
       expect(w.events.filter((e) => e.event === "infra_alarm")).toHaveLength(1);
     } finally { sw.restore(); }
   });
