@@ -38,6 +38,7 @@ import { checkPlainFiles } from "../credentials/plain-files.ts";
 import { expiryEvents } from "../credentials/check.ts";
 import type { CredentialEntry } from "../credentials/catalogue.ts";
 import type { CredentialStore } from "../credentials/store.ts";
+import { statfsFreeSpace, STATE_WRITE_FLOOR_BYTES, STATE_WRITE_FLOOR_INODES, underWriteFloor, type FreeSpace } from "../runner/host-space.ts";
 import { newSweepMemory, sweepVolumes } from "./sweep.ts";
 import { HostMonitor } from "./host.ts";
 import { readToken } from "../state/token.ts";
@@ -649,13 +650,24 @@ export class Scheduler {
     const d = this.#deps;
     const info: TickInfo = { eligible: 0, claimed: [], released: [], held: 0, standing: [], errors: [], restartPending: this.#restartPending };
     try {
+      // Spec 114 AC-2: the host state is read first, then the state volume's room, before anything that writes.
+      const host = d.host!;
+      await host.beginTick();
+      let stateFree: FreeSpace | null = null;
+      try {
+        stateFree = await (d.freeSpace ?? statfsFreeSpace)(d.paths.root);
+      } catch (e) {
+        d.serviceLog.write({ kind: "host-space-unknown", path: d.paths.root, error: e instanceof Error ? e.message : String(e) });
+      }
+      if (stateFree && underWriteFloor(stateFree)) {
+        if (!host.paused) await host.pauseFor("ENOSPC", `state volume under the write floor: ${d.paths.root} has ${Math.floor(stateFree.bytes / 2 ** 20)} MiB free and ${stateFree.inodes ?? "unknown"} free inodes (floor ${STATE_WRITE_FLOOR_BYTES / 2 ** 20} MiB, ${STATE_WRITE_FLOOR_INODES} inodes)`);
+        return await this.#pausedTick(info);
+      }
       const slots = d.parameters ? Number((await d.parameters.read('slots')).value) : d.cfg.slots;
       if(!existsSync(d.paths.eventsBackfilled))await backfillEvents(d.paths,rec=>d.serviceLog.write(rec));
       await this.#sample();
       if(d.registry && d.parameters)await initializeAgents(d.paths,d.registry,d.parameters,d.now());
       // Spec 100 AC-3, AC-4: a paused host waits; the tick that finds the probe passing goes on with its ordinary work.
-      const host = d.host!;
-      await host.beginTick();
       await host.startupGap(d.cfg.poll_interval_s).catch((e) => d.log({ kind: "error", error: `host downtime: ${(e as Error).message}` }));
       if (host.paused && !(await host.probeIfDue())) return await this.#pausedTick(info);
       await this.#flushNotices();
