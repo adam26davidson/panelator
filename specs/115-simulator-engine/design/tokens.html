@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Spec 115 design tokens: the simulator page and Home</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    /* colour: spec 112's set, unchanged */
+    --color-bg: #0e1116; --color-surface: #161b22; --color-text: #e9edf2; --color-muted: #a7b1be;
+    --color-accent: #6cb6ff; --color-danger: #ff9189; --color-ok: #5fd39a; --color-raised: #1f2630;
+    --color-border: #2b3340; --color-border-strong: #7d8896; --color-accent-hover: #92c9ff;
+    --color-accent-soft: #152a41; --color-on-accent: #0b1320; --color-focus: #ffffff;
+    /* colour: added by spec 115 */
+    --color-panel-off: #000000;
+    /* type: spec 112's set, unchanged */
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --text-sm: 14px; --text-base: 16px; --text-lg: 20px; --text-xl: 28px; --text-2xl: 36px;
+    --leading-tight: 1.2; --leading-normal: 1.55;
+    --font-weight-normal: 400; --font-weight-semibold: 600; --font-weight-bold: 700; --tracking-wide: 0.06em;
+    /* spacing: spec 112's set, unchanged */
+    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px; --space-8: 32px;
+    --space-12: 48px; --space-16: 64px;
+    /* sizes: spec 112's set, unchanged */
+    --size-tap: 44px; --size-band: 56px; --size-band-wide: 64px; --size-tabbar: 56px; --size-reading: 680px;
+    --size-term: 144px;
+    /* sizes: added by spec 115 */
+    --size-wide: 1376px; --size-side: 280px; --size-control: 120px;
+    /* radii, lines, breakpoints: spec 112's set, unchanged */
+    --radius-sm: 6px; --radius-md: 12px; --radius-lg: 20px;
+    --line: 1px; --line-focus: 2px;
+    --bp-tablet: 720px; --bp-desktop: 1200px;
+  }
+  body { margin: 0; padding: var(--space-8); background: var(--color-bg); color: var(--color-text);
+    font-family: var(--font-sans); font-size: var(--text-base); line-height: var(--leading-normal); color-scheme: dark; }
+  h1 { font-size: var(--text-xl); line-height: var(--leading-tight); margin: 0 0 var(--space-4); }
+  h2 { font-size: var(--text-lg); line-height: var(--leading-tight); margin: var(--space-12) 0 var(--space-3); }
+  p { margin: 0 0 var(--space-3); max-width: var(--size-reading); }
+  table { border-collapse: collapse; margin: 0 0 var(--space-4); }
+  th, td { text-align: left; padding: var(--space-2) var(--space-6) var(--space-2) 0;
+    border-bottom: var(--line) solid var(--color-border); vertical-align: top; }
+  th { font-size: var(--text-sm); color: var(--color-muted); font-weight: var(--font-weight-semibold); }
+  code { font-family: var(--font-mono); font-size: var(--text-sm); }
+  .new { color: var(--color-ok); font-weight: var(--font-weight-semibold); }
+  .sw { display: inline-block; width: var(--space-8); height: var(--space-6); border-radius: var(--radius-sm);
+    border: var(--line) solid var(--color-border-strong); vertical-align: middle; }
+  .well { display: inline-block; padding: var(--space-4); background: var(--color-surface);
+    border: var(--line) solid var(--color-border); border-radius: var(--radius-md); }
+  .edge { border: var(--line) solid var(--color-border-strong); background: var(--color-panel-off);
+    width: 256px; height: 128px; }
+</style>
+</head>
+<body>
+<h1>Spec 115 design tokens</h1>
+<p>The simulator page and Home use the product's one token set: spec 112's
+(<code>specs/112-web-app-skeleton/design/tokens.html</code>, in the app as <code>web/src/app/styles.css</code>), with
+every name and value unchanged. This design adds four tokens, marked <span class="new">new</span>. The
+implementation adds them to <code>web/src/app/styles.css</code> with these names and values and nothing else; the
+stories load them from <code>design.css</code> in this directory. The theme is dark only, as spec 112 decided.</p>
+
+<h2>Colour</h2>
+<table>
+<tr><th>Token</th><th>Value</th><th></th><th>Used on these two screens for</th></tr>
+<tr><td><code>--color-bg</code></td><td><code>#0e1116</code></td><td><span class="sw" style="background:var(--color-bg)"></span></td><td>the page; the fill of the engine-message box</td></tr>
+<tr><td><code>--color-surface</code></td><td><code>#161b22</code></td><td><span class="sw" style="background:var(--color-surface)"></span></td><td>the band; the panel's well; the failure region; Home's note</td></tr>
+<tr><td><code>--color-text</code></td><td><code>#e9edf2</code></td><td><span class="sw" style="background:var(--color-text)"></span></td><td>headings, body text, readout values, the state text, the secondary button's label</td></tr>
+<tr><td><code>--color-muted</code></td><td><code>#a7b1be</code></td><td><span class="sw" style="background:var(--color-muted)"></span></td><td>eyebrows and group headings, the table's column headings, captions, the <code>Tick</code> label, the rate placeholder</td></tr>
+<tr><td><code>--color-accent</code></td><td><code>#6cb6ff</code></td><td><span class="sw" style="background:var(--color-accent)"></span></td><td>the primary button's fill; the lit dots of the mark</td></tr>
+<tr><td><code>--color-accent-hover</code></td><td><code>#92c9ff</code></td><td><span class="sw" style="background:var(--color-accent-hover)"></span></td><td>the primary button's fill on hover</td></tr>
+<tr><td><code>--color-on-accent</code></td><td><code>#0b1320</code></td><td><span class="sw" style="background:var(--color-on-accent)"></span></td><td>the primary button's label</td></tr>
+<tr><td><code>--color-danger</code></td><td><code>#ff9189</code></td><td><span class="sw" style="background:var(--color-danger)"></span></td><td>the failure region's eyebrow</td></tr>
+<tr><td><code>--color-ok</code></td><td><code>#5fd39a</code></td><td><span class="sw" style="background:var(--color-ok)"></span></td><td>the dot beside <code>Running</code> (decorative; the word carries the state)</td></tr>
+<tr><td><code>--color-raised</code></td><td><code>#1f2630</code></td><td><span class="sw" style="background:var(--color-raised)"></span></td><td>the secondary button's fill on hover</td></tr>
+<tr><td><code>--color-border</code></td><td><code>#2b3340</code></td><td><span class="sw" style="background:var(--color-border)"></span></td><td>the well's and the regions' outlines; table and list dividers; the dot beside the loading text</td></tr>
+<tr><td><code>--color-border-strong</code></td><td><code>#7d8896</code></td><td><span class="sw" style="background:var(--color-border-strong)"></span></td><td>the panel's edge line; the secondary button's outline; the ring beside <code>Paused</code></td></tr>
+<tr><td><code>--color-focus</code></td><td><code>#ffffff</code></td><td><span class="sw" style="background:var(--color-focus)"></span></td><td>the focus ring, 2px, offset 2px</td></tr>
+<tr><td><code>--color-panel-off</code> <span class="new">new</span></td><td><code>#000000</code></td><td><span class="sw" style="background:var(--color-panel-off)"></span></td><td>an unlit panel: the fill inside the panel's edge while loading and behind the canvas. It is the colour of an LED that is off, so it is black whatever the theme.</td></tr>
+</table>
+<p><code>--color-accent-soft</code> is in the set and not used on these screens.</p>
+
+<h2>The panel's surround</h2>
+<p>The panel sits in a well (<code>--color-surface</code>, a 1px <code>--color-border</code> outline,
+<code>--radius-md</code> corners, 16px padding; on mobile it runs edge to edge with 12px above and below and no
+corners). Directly around the LEDs is a 1px <code>--color-border-strong</code> line: everything inside the line is
+panel. Its contrast is 5.8:1 against a black LED and 4.8:1 against the well, so a black LED at the edge is told
+from the page.</p>
+<div class="well"><div class="edge"></div></div>
+
+<h2>Contrast</h2>
+<table>
+<tr><th>Pair</th><th>Ratio</th><th>Where</th></tr>
+<tr><td><code>--color-text</code> on <code>--color-bg</code></td><td>16.1:1</td><td>headings, body, readouts, the engine's message</td></tr>
+<tr><td><code>--color-text</code> on <code>--color-surface</code></td><td>14.7:1</td><td>the failure region, Home's note</td></tr>
+<tr><td><code>--color-muted</code> on <code>--color-bg</code></td><td>8.7:1</td><td>eyebrows, captions, column headings</td></tr>
+<tr><td><code>--color-muted</code> on <code>--color-surface</code></td><td>8.0:1</td><td>the label over the engine's message, Home's note</td></tr>
+<tr><td><code>--color-danger</code> on <code>--color-surface</code></td><td>8.0:1</td><td>the failure region's eyebrow</td></tr>
+<tr><td><code>--color-on-accent</code> on <code>--color-accent</code></td><td>8.7:1</td><td>the primary button</td></tr>
+<tr><td><code>--color-border-strong</code> on <code>--color-panel-off</code>, <code>--color-surface</code>, <code>--color-bg</code></td><td>5.8:1, 4.8:1, 5.3:1</td><td>the panel's edge, the secondary button's outline (non-text, 3:1 needed)</td></tr>
+</table>
+
+<h2>Type</h2>
+<table>
+<tr><th>Token</th><th>Value</th><th>Used for</th></tr>
+<tr><td><code>--font-sans</code></td><td>the system stack</td><td>everything but the values below</td></tr>
+<tr><td><code>--font-mono</code></td><td>the system monospace stack</td><td>the tick, the panel's size, module names, the engine's message</td></tr>
+<tr><td><code>--text-sm</code></td><td>14px</td><td>eyebrows, group headings, column headings, captions, module names, the engine's message. The smallest text.</td></tr>
+<tr><td><code>--text-base</code></td><td>16px</td><td>body, the state text, the tick, table cells, buttons, the lead on mobile</td></tr>
+<tr><td><code>--text-lg</code></td><td>20px</td><td>the lead from 720px, the panel's size, the failure region's title, the name in the band</td></tr>
+<tr><td><code>--text-xl</code>, <code>--text-2xl</code></td><td>28px, 36px</td><td>the <code>h1</code> on mobile, and from 720px</td></tr>
+<tr><td><code>--leading-tight</code>, <code>--leading-normal</code></td><td>1.2, 1.55</td><td>headings and single-line values; running text</td></tr>
+<tr><td><code>--font-weight-normal</code>, <code>-semibold</code>, <code>-bold</code></td><td>400, 600, 700</td><td>text; labels, the state text, buttons; headings</td></tr>
+<tr><td><code>--tracking-wide</code></td><td>0.06em</td><td>eyebrows and group headings (uppercase)</td></tr>
+</table>
+<p>Numbers that change or are compared (the tick, rates, layer sizes) use tabular figures.</p>
+
+<h2>Spacing, sizes, radii, lines</h2>
+<table>
+<tr><th>Token</th><th>Value</th><th>Used for</th></tr>
+<tr><td><code>--space-1</code> to <code>--space-16</code></td><td>4, 8, 12, 16, 24, 32, 48, 64px</td><td>every gap and padding; no other distance is used</td></tr>
+<tr><td><code>--size-tap</code></td><td>44px</td><td>the least height of every button and link, and of the run bar</td></tr>
+<tr><td><code>--size-band</code>, <code>--size-band-wide</code></td><td>56px, 64px</td><td>the band (spec 112)</td></tr>
+<tr><td><code>--size-reading</code></td><td>680px</td><td>Home's column; the widest the failure region gets</td></tr>
+<tr><td><code>--size-term</code></td><td>144px</td><td>Home's list (spec 112)</td></tr>
+<tr><td><code>--size-wide</code> <span class="new">new</span></td><td>1376px</td><td>the simulator's main column at its widest (a full-width screen's cap; with the side column it lets a 128-LED panel reach 8 CSS pixels per LED)</td></tr>
+<tr><td><code>--size-side</code> <span class="new">new</span></td><td>280px</td><td>the readouts' column beside the panel from 1200px; the Panel group's column from 720px</td></tr>
+<tr><td><code>--size-control</code> <span class="new">new</span></td><td>120px</td><td>the pause control's width, fixed so the bar does not move when its label changes between Pause and Resume</td></tr>
+<tr><td><code>--radius-sm</code>, <code>--radius-md</code></td><td>6px, 12px</td><td>buttons and the engine-message box; the well, the failure region, Home's note</td></tr>
+<tr><td><code>--line</code>, <code>--line-focus</code></td><td>1px, 2px</td><td>outlines and dividers; the focus ring and the state dot's ring</td></tr>
+</table>
+<p><code>--size-tabbar</code> and <code>--radius-lg</code> are in the set and not used on these screens. The state
+dot is 12px (<code>--space-3</code>).</p>
+
+<h2>Breakpoints</h2>
+<table>
+<tr><th>Token</th><th>Value</th><th>Rendered at</th><th>The simulator page</th></tr>
+<tr><td>mobile</td><td>under 720px</td><td>390 × 844</td><td>one column; the well edge to edge; side padding 16px</td></tr>
+<tr><td><code>--bp-tablet</code></td><td>720px</td><td>820 × 1180</td><td>one column; the well inside the column with 16px padding; under it the Panel group (280px) beside the Placements table; side padding 24px</td></tr>
+<tr><td><code>--bp-desktop</code></td><td>1200px</td><td>1440 × 900</td><td>the panel and its run bar beside a 280px column holding both readout groups, 32px apart; side padding 32px</td></tr>
+</table>
+</body>
+</html>

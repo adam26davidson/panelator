@@ -1,0 +1,42 @@
+/*
+ * The stylesheet of spec 115's design stories. It is the app's own token set (web/src/app/styles.css, which is
+ * spec 112's tokens.html) plus the tokens this design adds; tokens.html lists every one. The implementation moves
+ * the additions into web/src/app/styles.css with the same names and values.
+ */
+@import "../../../web/src/app/styles.css";
+@source "../../../web/src/shared/ui";
+@source "./";
+
+/* Added by this design: colour. */
+@theme static {
+  --color-panel-off: #000000;
+}
+
+/* Added by this design: sizes. */
+:root {
+  --size-wide: 1376px;
+  --size-side: 280px;
+  --size-control: 120px;
+}
+
+@theme inline {
+  --container-wide: var(--size-wide);
+  --spacing-side: var(--size-side);
+  --spacing-control: var(--size-control);
+}
+
+/*
+ * Renderer only, not a token and not for the app: the design renderer's preview loads its base tokens
+ * (tools/design-stage/src/tokens.css) outside any cascade layer, where they win over the app's theme layer. The
+ * stories' root restates the app's values for the seven colours the base set also names.
+ */
+.design-root {
+  --color-bg: #0e1116;
+  --color-surface: #161b22;
+  --color-text: #e9edf2;
+  --color-muted: #a7b1be;
+  --color-accent: #6cb6ff;
+  --color-danger: #ff9189;
+  --color-ok: #5fd39a;
+  color-scheme: dark;
+}
