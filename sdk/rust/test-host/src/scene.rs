@@ -29,9 +29,22 @@ struct AssetDef {
     frames: usize,
 }
 
-/// One placement of a scene.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct PlacementDef {
+    module: String,
+    x: i32,
+    y: i32,
+    width: usize,
+    height: usize,
+    z: i32,
+    opacity: u32,
+    config: Box<serde_json::value::RawValue>,
+    seed: u32,
+}
+
+/// One placement of a scene.
+#[derive(Debug)]
 pub struct Placement {
     /// The module's name (`<name>.wasm` in the modules directory).
     pub module: String,
@@ -47,8 +60,8 @@ pub struct Placement {
     pub z: i32,
     /// Layer opacity, 0 to 255.
     pub opacity: u32,
-    /// The config document.
-    pub config: serde_json::Map<String, serde_json::Value>,
+    /// The config's bytes: its canonical form (RFC 8785), what `config_read` copies.
+    pub config: Vec<u8>,
     /// The xorshift32 seed.
     pub seed: u32,
 }
@@ -62,7 +75,7 @@ struct SceneFile {
     utc_offset_s: i32,
     ticks: Vec<u64>,
     assets: Vec<AssetDef>,
-    placements: Vec<Placement>,
+    placements: Vec<PlacementDef>,
 }
 
 /// A parsed scene with its assets read.
@@ -136,6 +149,25 @@ impl Scene {
                 return Err(format!("placements[{i}]: width and height are 1 to 4096"));
             }
         }
+        let mut placements = Vec::with_capacity(s.placements.len());
+        for (i, p) in s.placements.into_iter().enumerate() {
+            let config =
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(p.config.get())
+                    .map_err(|e| e.to_string())
+                    .and_then(|m| crate::config::canonical(&m))
+                    .map_err(|e| format!("placements[{i}].config: {e}"))?;
+            placements.push(Placement {
+                module: p.module,
+                x: p.x,
+                y: p.y,
+                width: p.width,
+                height: p.height,
+                z: p.z,
+                opacity: p.opacity,
+                config,
+                seed: p.seed,
+            });
+        }
         let mut assets = Assets::new();
         for a in &s.assets {
             let data = std::fs::read(assets_dir.join(&a.file))
@@ -169,7 +201,7 @@ impl Scene {
             utc_offset_s: s.utc_offset_s,
             ticks: s.ticks,
             assets: Rc::new(assets),
-            placements: s.placements,
+            placements,
         })
     }
 }
@@ -274,7 +306,7 @@ pub fn run(scene: &Scene, load: &mut dyn FnMut(&str) -> Result<Vec<u8>, String>,
         let setup = Setup {
             width: p.width,
             height: p.height,
-            config: serde_json::to_vec(&p.config).unwrap_or_default(),
+            config: p.config.clone(),
             seed: p.seed,
             assets: Rc::clone(&scene.assets),
             fuel,

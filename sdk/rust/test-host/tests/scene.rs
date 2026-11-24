@@ -500,3 +500,28 @@ fn the_binary_exits_0_on_a_match_1_on_a_difference_and_inspect_prints_the_declar
             .contains("load error")
     );
 }
+
+#[test]
+fn the_panel_and_a_placement_are_bounded_and_the_bounds_are_inclusive() {
+    let p = |w: u32, h: u32| placement("red", 0, 0, w, h, 0, 255);
+    for panel in [(0, 1), (16385, 1), (1, 16385), (1, 0)] {
+        let e = parse(&scene_json(panel, "[0]", &[p(4, 4)])).unwrap_err();
+        assert!(e.contains("panel"), "{panel:?}: {e}");
+    }
+    for panel in [(16384, 1), (1, 16384)] {
+        assert!(
+            parse(&scene_json(panel, "[0]", &[p(4, 4)])).is_ok(),
+            "{panel:?}"
+        );
+    }
+    for (w, h) in [(0, 1), (4097, 1), (1, 4097), (1, 0)] {
+        let e = parse(&scene_json((8, 8), "[0]", &[p(4, 4), p(w, h)])).unwrap_err();
+        assert!(e.contains("placements[1]"), "{w}x{h}: {e}");
+    }
+    for (w, h) in [(4096, 1), (1, 4096)] {
+        assert!(
+            parse(&scene_json((8, 8), "[0]", &[p(w, h)])).is_ok(),
+            "{w}x{h}"
+        );
+    }
+}

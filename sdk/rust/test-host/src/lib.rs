@@ -2,6 +2,7 @@
 //! against the retained-layer model, composes frames and compares them with golden frames.
 
 pub mod abi;
+pub mod config;
 pub mod conformance;
 pub mod font;
 pub mod frame;
