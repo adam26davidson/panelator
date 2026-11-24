@@ -653,6 +653,8 @@ export class Scheduler {
       // Spec 114 AC-2: the host state is read first, then the state volume's room, before anything that writes.
       const host = d.host!;
       await host.beginTick();
+      // Spec 100 AC-6: the stopped interval is recorded on the first tick, including one that takes the write-floor return (its saves survive a space failure).
+      await host.startupGap(d.cfg.poll_interval_s).catch((e) => d.log({ kind: "error", error: `host downtime: ${(e as Error).message}` }));
       let stateFree: FreeSpace | null = null;
       try {
         stateFree = await (d.freeSpace ?? statfsFreeSpace)(d.paths.root);
@@ -668,7 +670,6 @@ export class Scheduler {
       await this.#sample();
       if(d.registry && d.parameters)await initializeAgents(d.paths,d.registry,d.parameters,d.now());
       // Spec 100 AC-3, AC-4: a paused host waits; the tick that finds the probe passing goes on with its ordinary work.
-      await host.startupGap(d.cfg.poll_interval_s).catch((e) => d.log({ kind: "error", error: `host downtime: ${(e as Error).message}` }));
       if (host.paused && !(await host.probeIfDue())) return await this.#pausedTick(info);
       await this.#flushNotices();
       const token = await readToken(d.paths).catch(() => null);

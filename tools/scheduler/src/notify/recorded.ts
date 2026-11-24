@@ -22,6 +22,13 @@ export function recordedNotifier(inner: Notifier, paths: StatePaths, clock: () =
     log?.({ kind: "error", error: `notify record: ${(e as Error).message}` });
   };
   const write = (k: Kept) => record(paths, "maintainer.contact", k.at, k.payload, k.issue ? { issue: k.issue } : {});
+  // One drain or record at a time: an entry is removed only by the call that wrote it.
+  let chain: Promise<unknown> = Promise.resolve();
+  const serial = <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = chain.then(fn, fn);
+    chain = run.catch(() => undefined);
+    return run;
+  };
   const drain = async (): Promise<boolean> => {
     while (kept.length > 0) {
       try {
@@ -38,22 +45,24 @@ export function recordedNotifier(inner: Notifier, paths: StatePaths, clock: () =
     async notify(n, extra) {
       const res = await inner.notify(n, extra);
       const item: Kept = { at: clock(), issue: n.issue || undefined, payload: { channel: res?.channel ?? "log", kind: n.contact?.kind ?? "notification", ...(n.issue ? { issue: n.issue } : {}), label: n.label || n.gate, text: n.text, ...(n.contact?.request ? { request: n.contact.request } : {}) } };
-      if (await drain()) {
-        try {
-          await write(item);
-          reported = false;
-        } catch (e) {
-          report(e);
-          if (isSpaceFailure(e)) { kept.push(item); if (kept.length > CONTACTS_KEPT) kept.shift(); }
+      await serial(async () => {
+        if (await drain()) {
+          try {
+            await write(item);
+            reported = false;
+          } catch (e) {
+            report(e);
+            if (isSpaceFailure(e)) { kept.push(item); if (kept.length > CONTACTS_KEPT) kept.shift(); }
+          }
+        } else {
+          kept.push(item);
+          if (kept.length > CONTACTS_KEPT) kept.shift();
         }
-      } else {
-        kept.push(item);
-        if (kept.length > CONTACTS_KEPT) kept.shift();
-      }
+      });
       return res;
     },
     flush: async () => {
-      if (await drain()) reported = false;
+      if (await serial(drain)) reported = false;
       return (await inner.flush?.()) ?? 0;
     },
     clear: async (sel) => { await inner.clear?.(sel); },

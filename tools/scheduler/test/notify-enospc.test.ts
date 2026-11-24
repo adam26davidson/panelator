@@ -87,6 +87,20 @@ describe("pieces", () => {
     expect(logged.at(-1)!.error).toMatch(/^notify record:/);
   });
 
+  it("concurrent flushes and notifies write each kept contact exactly once", async () => {
+    const paths = statePaths(mkdtempSync(join(tmpdir(), "panelator-test-conc-")));
+    await ensureStateDirs(paths);
+    const inner: Notifier = { notify: async () => ({ channel: "telegram" }) };
+    const rec = recordedNotifier(inner, paths, () => new Date("2026-11-22T00:00:00Z"));
+    sw = installEnospc(paths.root);
+    await rec.notify({ ...n, label: "host" });
+    await rec.notify({ ...n, label: "disk_full" });
+    sw.on = false;
+    await Promise.all([rec.flush!(), rec.flush!(), rec.notify({ ...n, label: "third" }), rec.flush!()]);
+    const labels = contacts(paths.events).map((e) => (e.payload as { label?: string }).label).sort();
+    expect(labels).toEqual(["disk_full", "host", "third"]);
+  });
+
   it("the rate limiter puts back the entry of an identity whose notify rejected", async () => {
     const dir = mkdtempSync(join(tmpdir(), "panelator-test-rl-"));
     let fail = true;

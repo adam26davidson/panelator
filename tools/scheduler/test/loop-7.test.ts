@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { notifierChain } from "../src/notify/chain.ts";
 import { probeHost, readHostState } from "../src/service/host.ts";
@@ -44,6 +44,20 @@ describe("a state volume under the write floor (spec 114 AC-2)", () => {
     await t.s.tick();
     expect(records(t.paths, "host-paused")).toHaveLength(1);
     expect(t.probe).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("a first tick under the write floor still records the stopped interval (spec 100 AC-6)", async () => {
+    const space = { v: { bytes: 10 * MIB, inodes: 50 } };
+    const t = await world(space);
+    const now = t.deps.now().getTime();
+    writeFileSync(t.paths.host, JSON.stringify({ paused: null, last_seen_at: new Date(now - 5 * 3600_000).toISOString(), downtime: [] }));
+    await t.s.tick();
+    expect(records(t.paths, "downtime")).toEqual([expect.objectContaining({ reason: "stopped", ms: 5 * 3600_000 })]);
+    space.v = { bytes: 30 * GIB, inodes: 1_000_000 };
+    t.advance(120);
+    await t.s.tick();
+    const st = await readHostState(t.paths);
+    expect(st.downtime.filter((d) => d.reason === "stopped")).toHaveLength(1);
   }, 60_000);
 
   it("logs host-space-unknown and goes on when the read fails", async () => {
