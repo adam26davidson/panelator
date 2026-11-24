@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import type { TelegramChannel } from "../telegram/channel.ts";
 import { writeJsonAtomic } from "../credentials/check.ts";
 import { identity, matches } from "./rate-limit.ts";
+import { isSpaceFailure } from "../runner/host-space.ts";
 import type { ClearSelector, Notification, Notifier, NotifyResult } from "./types.ts";
 
 export const ALERT_IDS_KEPT = 200;
@@ -55,6 +56,15 @@ function queuedText(e: OutboxEntry): string {
  */
 export function TelegramNotifier(inner: Notifier, deps: { telegram: () => TelegramChannel | null; alertsPath: string; outboxPath: string; now: () => Date; log: (rec: Record<string, unknown>) => void }): Notifier {
   let failing = false;
+  const undelivered = new Set<string>();
+  /** The inner line; its failure is written through `deps.log` (the service log never throws), not raised. */
+  const line = async (n: Notification, channel: "telegram" | "log" | "queued"): Promise<void> => {
+    try {
+      await inner.notify(n, { channel });
+    } catch {
+      deps.log({ kind: "notify", at: deps.now().toISOString(), ...n, channel });
+    }
+  };
   let chain: Promise<unknown> = Promise.resolve();
   const locked = <T>(fn: () => Promise<T>): Promise<T> => {
     const r = chain.then(fn, fn);
@@ -110,25 +120,36 @@ export function TelegramNotifier(inner: Notifier, deps: { telegram: () => Telegr
     notify: (n: Notification): Promise<NotifyResult> =>
       locked(async () => {
         if (QUESTION_GATES.includes(n.gate)) {
-          await inner.notify(n, { channel: "log" });
+          await line(n, "log");
           return { channel: "log" };
         }
         const channel = deps.telegram();
         if (channel) {
           if ((await readOutbox(deps.outboxPath)).length > 0) await flushLocked(channel).catch((e) => deps.log({ kind: "error", error: `notify flush: ${(e as Error).message}` }));
           if ((await readOutbox(deps.outboxPath)).length === 0 && (await sendText(channel, alertText(n))) !== null) {
-            await inner.notify(n, { channel: "telegram" });
+            undelivered.delete(identity(n));
+            await line(n, "telegram");
             return { channel: "telegram" };
           }
         }
         try {
           await queue(n);
         } catch (e) {
+          if (isSpaceFailure(e)) {
+            // Spec 114 AC-5: neither sent nor queued, so nothing holds the notice: the caller must try again.
+            const id = identity(n);
+            if (!undelivered.has(id)) {
+              undelivered.add(id);
+              deps.log({ kind: "error", error: `notify undelivered: ${id}: ${(e as Error).message}` });
+            }
+            throw e;
+          }
           deps.log({ kind: "error", error: `notify outbox: ${(e as Error).message}` });
-          await inner.notify(n, { channel: "log" });
+          await line(n, "log");
           return { channel: "log" };
         }
-        await inner.notify(n, { channel: "queued" });
+        undelivered.delete(identity(n));
+        await line(n, "queued");
         return { channel: "queued" };
       }),
     flush: () =>

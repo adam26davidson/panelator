@@ -1,6 +1,7 @@
 import { statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { StatePaths } from "../state/paths.ts";
+import { DISK_FULL, transientCause } from "../chain/transient.ts";
 
 /**
  * Spec 059 AC-3: before a run is launched, the volumes it writes to must have room. The floors change when the host
@@ -9,6 +10,13 @@ import type { StatePaths } from "../state/paths.ts";
 export const MIN_FREE_BYTES = 512 * 2 ** 20;
 export const MIN_FREE_INODES = 1000;
 
+/** Spec 114 AC-2: under these the scheduler cannot write its own state; the volume of the state root pauses it. */
+export const STATE_WRITE_FLOOR_BYTES = 64 * 2 ** 20;
+export const STATE_WRITE_FLOOR_INODES = 100;
+
+/** Spec 114: a space failure is an error for which `transientCause` returns `ENOSPC`. */
+export const isSpaceFailure = (e: unknown): boolean => transientCause(e) === DISK_FULL;
+
 /** `inodes` is null when the volume reports none (btrfs), which is then not judged on inodes. */
 export type FreeSpace = { bytes: number; inodes: number | null };
 
@@ -16,6 +24,8 @@ export async function statfsFreeSpace(path: string): Promise<FreeSpace> {
   const s = await statfs(path);
   return { bytes: Number(s.bavail) * Number(s.bsize), inodes: Number(s.files) > 0 ? Number(s.ffree) : null };
 }
+
+export const underWriteFloor = (f: FreeSpace): boolean => f.bytes < STATE_WRITE_FLOOR_BYTES || (f.inodes !== null && f.inodes < STATE_WRITE_FLOOR_INODES);
 
 /** The harness's temporary directory, the state root and the run's worktree (null for a run without one). */
 export function checkedPaths(paths: StatePaths, worktree: string | null): string[] {

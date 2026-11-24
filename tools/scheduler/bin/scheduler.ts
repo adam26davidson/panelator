@@ -8,9 +8,7 @@ import { adapterFor } from "../src/adapters/index.ts";
 import { agentsDir, defaultConfigPath, expandHome, loadConfig, repoRoot } from "../src/config.ts";
 import { createAppClient } from "../src/github/auth.ts";
 import { GitHubClient } from "../src/github/client.ts";
-import { LogNotifier } from "../src/notify/log.ts";
-import { recordedNotifier } from "../src/notify/recorded.ts";
-import { rateLimited } from "../src/notify/rate-limit.ts";
+import { notifierChain } from "../src/notify/chain.ts";
 import { fastForwardMain, fetchOrigin } from "../src/service/git.ts";
 import { SleepInhibitor } from "../src/service/inhibit.ts";
 import { ServiceLog } from "../src/service/log.ts";
@@ -25,7 +23,6 @@ import {loadRegistry} from '../src/standing/registry.ts';
 import {EVENT_NAMES} from '../src/standing/events.ts';
 import {initializeAgents,listAgentStates} from '../src/standing/state.ts';
 import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
-import {TelegramNotifier} from '../src/notify/telegram.ts';
 import type {TelegramChannel} from '../src/telegram/channel.ts';
 import {contactsCommand} from '../src/contacts/commands.ts';
 import {checkInstallationScope,SCOPE_FIX} from '../src/contacts/scope.ts';
@@ -84,7 +81,7 @@ await initializeAgents(paths,registry,parameters,new Date());
 const actionLog=new ActionLog(paths.actionsLog,paths);
 // Spec 099 AC-6: one chain for every notification; the poller attaches the Telegram channel once it is up.
 let attachedTelegram:TelegramChannel|null=null;
-const notifier=rateLimited(recordedNotifier(TelegramNotifier(new LogNotifier(paths.serviceLog),{telegram:()=>attachedTelegram,alertsPath:paths.telegramAlerts,outboxPath:paths.telegramOutbox,now:()=>new Date(),log:rec=>serviceLog.write(rec)}),paths),{hours:cfg.notify_rate_limit_hours,repeatHours:cfg.notify_repeat_hours,path:paths.notifySent});
+const notifier=notifierChain({paths,telegram:()=>attachedTelegram,log:rec=>serviceLog.write(rec),hours:cfg.notify_rate_limit_hours,repeatHours:cfg.notify_repeat_hours});
 const awsForCheck={config:cfg.aws,cli:(profile:string)=>awsCli({profile,region:cfg.aws?.region??''}),env:process.env};
 const awsContext:AwsContext={config:cfg.aws,paths,cli:cfg.aws?awsCli(cfg.aws):undefined,parameters,
  notifier,notifyHours:cfg.notify_rate_limit_hours,
