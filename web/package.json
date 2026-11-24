@@ -27,7 +27,8 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "tailwindcss": "catalog:",
-    "vite": "catalog:"
+    "vite": "catalog:",
+    "@panelator/simulator": "workspace:*"
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",
