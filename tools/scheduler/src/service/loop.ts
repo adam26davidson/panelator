@@ -38,7 +38,7 @@ import { checkPlainFiles } from "../credentials/plain-files.ts";
 import { expiryEvents } from "../credentials/check.ts";
 import type { CredentialEntry } from "../credentials/catalogue.ts";
 import type { CredentialStore } from "../credentials/store.ts";
-import { sweepVolumes } from "./sweep.ts";
+import { newSweepMemory, sweepVolumes } from "./sweep.ts";
 import { HostMonitor } from "./host.ts";
 import { readToken } from "../state/token.ts";
 import type { SleepInhibitor } from "./inhibit.ts";
@@ -139,6 +139,7 @@ export class Scheduler {
   #deps: SchedulerDeps;
   #drive: DriveFn;
   #active = new Map<number, Promise<void>>();
+  #sweepMemory = newSweepMemory();
   #plainFilesCheckedAt: number | null = null;
   #expiryCheckedAt: number | null = null;
   #activeStanding = new Map<string,Promise<void>>();
@@ -620,7 +621,7 @@ export class Scheduler {
   /** Spec 064 AC-1, AC-2: the scheduler's own sweep of the temp and state volumes; a failure never stops the tick. */
   async #sweep(info: TickInfo): Promise<void> {
     const d = this.#deps;
-    await sweepVolumes({ paths: d.paths, repoDir: d.repoDir, agentsDir: d.agentsDir, now: d.now, gh: d.gh, parameters: d.parameters, freeSpace: d.freeSpace, log: (rec) => d.serviceLog.write(rec), notifier: d.notifier, emitEvent: d.emitEvent, activeIssues: () => [...this.#active.keys()] }).catch((e) => info.errors.push(`sweep: ${(e as Error).message}`));
+    await sweepVolumes({ paths: d.paths, repoDir: d.repoDir, agentsDir: d.agentsDir, now: d.now, gh: d.gh, parameters: d.parameters, freeSpace: d.freeSpace, log: (rec) => d.serviceLog.write(rec), notifier: d.notifier, emitEvent: d.emitEvent, memory: this.#sweepMemory, activeIssues: () => [...this.#active.keys()] }).catch((e) => info.errors.push(`sweep: ${(e as Error).message}`));
   }
 
   /** Spec 102 AC-3: once per tick, send the notices the chat could not take; a failure is logged, never the tick's. */

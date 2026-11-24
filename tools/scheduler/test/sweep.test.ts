@@ -10,7 +10,7 @@ import { writeClaim } from "../src/state/claims.ts";
 import { writeAgentState } from "../src/standing/state.ts";
 import { ActionLog } from "../src/actions/log.ts";
 import { applyAction, KINDS, loadActionLevels, registryActionsCheck, type ActionContext } from "../src/actions/index.ts";
-import { HOLDER_WALK_MAX, holders, readDiskSweep, staleLeftovers, sweepVolumes, TEST_ROOT_PREFIX, type SweepDeps } from "../src/service/sweep.ts";
+import { HOLDER_WALK_MAX, holders, newSweepMemory, readDiskSweep, staleLeftovers, sweepVolumes, TEST_ROOT_PREFIX, type SweepDeps } from "../src/service/sweep.ts";
 import { readJsonLines } from "../src/filer/input.ts";
 import type { FreeSpace } from "../src/runner/host-space.ts";
 
@@ -166,12 +166,15 @@ describe("sweepVolumes", () => {
     const w = await world();
     const logs: Record<string, unknown>[] = [], notes: { gate: string; label: string; text: string }[] = [], events: { event: string; payload: Record<string, unknown> }[] = [];
     let now = NOW;
+    const memory = newSweepMemory();
+    const hook: { notify?: (n: unknown) => Promise<void>; emit?: () => Promise<void> } = {};
     const deps = (): SweepDeps => ({
+      memory,
       paths: w.paths, repoDir: w.pair.repo, agentsDir: "agents", now: () => now, gh: { rerunWorkflowRun: async () => {}, cancelWorkflowRun: async () => {} },
       freeSpace: async (p) => { const s = space()[p]; if (!s) throw new Error("no such volume"); return s; },
-      log: (r) => logs.push(r), notifier: { notify: async (n) => { notes.push(n); } }, emitEvent: async (event, payload) => { events.push({ event, payload: payload as Record<string, unknown> }); },
+      log: (r) => logs.push(r), notifier: { notify: async (n) => { await hook.notify?.(n); notes.push(n); } }, emitEvent: async (event, payload) => { await hook.emit?.(); events.push({ event, payload: payload as Record<string, unknown> }); },
     });
-    return { ...w, logs, notes, events, step: () => sweepVolumes(deps()), advance: (ms: number) => { now = new Date(now.getTime() + ms); } };
+    return { ...w, logs, notes, events, hook, step: () => sweepVolumes(deps()), advance: (ms: number) => { now = new Date(now.getTime() + ms); } };
   }
   const ample = (w: { tmp: string; paths: StatePaths }): Space => ({ [w.tmp]: { bytes: 20 * 2 ** 30, inodes: 1_000_000 }, [w.paths.root]: { bytes: 20 * 2 ** 30, inodes: 1_000_000 } });
 
@@ -220,6 +223,58 @@ describe("sweepVolumes", () => {
     await w.step();
     expect(w.logs.at(-1)).toMatchObject({ kind: "disk-sweep-recovered", path: w.tmp });
     expect((await readDiskSweep(w.paths))?.volumes[0].episode).toBeUndefined();
+  });
+
+  it("does the alarm's four parts in order, notification first (spec 114 AC-4)", async () => {
+    let space: Space = {};
+    const w = await tickWorld(() => space);
+    const order: string[] = [];
+    w.hook.notify = async () => { order.push("notify"); };
+    const log = w.logs.push.bind(w.logs);
+    w.logs.push = (...r) => { if (r[0]!.kind === "disk-sweep-alarm") order.push("log"); return log(...r); };
+    space = { ...ample(w), [w.tmp]: { bytes: 20 * 2 ** 30, inodes: 500 } };
+    await w.step();
+    expect(order).toEqual(["notify", "log"]);
+    expect(w.events).toHaveLength(1);
+  });
+
+  it("with every state write failing: one notification, nothing appended; the first sweep that can write appends one finding and one event (spec 114 AC-4)", async () => {
+    const { installEnospc } = await import("./helpers/enospc-fs.mjs");
+    let space: Space = {};
+    const w = await tickWorld(() => space);
+    space = { ...ample(w), [w.paths.root]: { bytes: 1000, inodes: 1_000_000 } };
+    const sw = installEnospc(w.paths.root);
+    w.hook.emit = async () => { if (sw.on) throw Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" }); };
+    try {
+      for (let i = 0; i < 3; i++) { w.advance(60_000); await w.step().catch(() => {}); }
+      expect(w.notes).toHaveLength(1);
+      expect(w.events).toHaveLength(0);
+      expect(existsSync(w.paths.findingsQueue)).toBe(false);
+      sw.on = false;
+      w.advance(60_000);
+      await w.step().catch(() => {});
+      w.advance(60_000);
+      await w.step().catch(() => {});
+      expect(w.notes).toHaveLength(1);
+      const queue = readFileSync(w.paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+      expect(queue).toHaveLength(1);
+      expect(queue[0]).toMatchObject({ timestamp: NOW.toISOString(), finding: { what: "host volume low after sweep" } });
+      expect(w.events.filter((e) => e.event === "infra_alarm")).toHaveLength(1);
+    } finally { sw.restore(); }
+  });
+
+  it("a notification that rejects with a space failure is sent again by the next sweep and not by the third (spec 114 AC-4)", async () => {
+    let space: Space = {};
+    const w = await tickWorld(() => space);
+    let calls = 0;
+    w.hook.notify = async () => { calls++; if (calls === 1) throw Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" }); };
+    space = { ...ample(w), [w.tmp]: { bytes: 20 * 2 ** 30, inodes: 500 } };
+    await w.step();
+    expect(w.notes).toHaveLength(0);
+    w.advance(60_000); await w.step();
+    expect(w.notes).toHaveLength(1);
+    w.advance(60_000); await w.step();
+    expect(calls).toBe(2);
   });
 
   it("sweeps but does not alarm between the sweep floors and the launch floors", async () => {
