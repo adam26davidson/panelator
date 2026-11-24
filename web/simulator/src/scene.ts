@@ -121,12 +121,16 @@ export class Scene {
     const next = this.#tick + 1;
     const t = tick ?? next;
     if (!Number.isSafeInteger(t) || t < next)
-      throw new SimulatorError(`step: tick ${String(t)} is not an integer of at least ${next}`, { rule: "step", tick: next });
+      throw new SimulatorError(`step: tick ${String(t)} is not an integer of at least ${next}`, {
+        rule: "step",
+        tick: next,
+      });
     this.#time = this.#env.time(t);
     this.#tick = t;
     for (const r of this.#order) {
       const hz = r.spec.module.updateHz;
-      if (t === 0 || (hz > 0 && bucket(t, hz) !== bucket(t - 1, hz))) this.#call(r, "pn_update", t, () => r.update(BigInt(t)));
+      if (t === 0 || (hz > 0 && bucket(t, hz) !== bucket(t - 1, hz)))
+        this.#call(r, "pn_update", t, () => r.update(BigInt(t)));
     }
     this.#compose();
   }
@@ -142,14 +146,17 @@ export class Scene {
       }
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : String(cause);
-      this.#failed = new SimulatorError(`placement ${r.index} (${r.name}) failed in ${name} at tick ${tick}: ${detail}`, {
-        rule: cause instanceof SimulatorError ? cause.rule : "trap",
-        placement: r.index,
-        module: r.name,
-        export: name,
-        tick,
-        cause,
-      });
+      this.#failed = new SimulatorError(
+        `placement ${r.index} (${r.name}) failed in ${name} at tick ${tick}: ${detail}`,
+        {
+          rule: cause instanceof SimulatorError ? cause.rule : "trap",
+          placement: r.index,
+          module: r.name,
+          export: name,
+          tick,
+          cause,
+        },
+      );
       throw this.#failed;
     }
   }
@@ -184,7 +191,9 @@ const bucket = (t: number, hz: number): bigint => (BigInt(t) * BigInt(hz)) / 60n
 export async function createScene(init: SceneInit): Promise<Scene> {
   const { panel, assets, placements, environment } = init;
   if (!isPositiveInt(panel.width) || !isPositiveInt(panel.height))
-    throw new SimulatorError(`scene: the panel ${panel.width} by ${panel.height} is not two positive integers`, { rule: "scene" });
+    throw new SimulatorError(`scene: the panel ${panel.width} by ${panel.height} is not two positive integers`, {
+      rule: "scene",
+    });
   for (const a of assets) {
     if (a.bytes.length !== a.width * a.height * 3 * a.frames)
       throw new SimulatorError(
@@ -197,7 +206,10 @@ export async function createScene(init: SceneInit): Promise<Scene> {
   let scene: Scene | undefined;
   for (const [index, spec] of placements.entries()) {
     if (!isPositiveInt(spec.width) || !isPositiveInt(spec.height))
-      throw new SimulatorError(`scene: placement ${index} has the size ${spec.width} by ${spec.height}`, { rule: "scene", placement: index });
+      throw new SimulatorError(`scene: placement ${index} has the size ${spec.width} by ${spec.height}`, {
+        rule: "scene",
+        placement: index,
+      });
     const name = spec.name ?? `module ${index}`;
     const layer = new Layer(spec.width, spec.height);
     const config = encodeUtf8(JSON.stringify(spec.config ?? {}));
@@ -209,7 +221,9 @@ export async function createScene(init: SceneInit): Promise<Scene> {
       const l = len >>> 0;
       const buf = holder.memory.buffer;
       if (p + l > buf.byteLength)
-        throw new SimulatorError(`memory: the range ${p}..${p + l} is outside the ${buf.byteLength} bytes of memory`, { rule: "memory" });
+        throw new SimulatorError(`memory: the range ${p}..${p + l} is outside the ${buf.byteLength} bytes of memory`, {
+          rule: "memory",
+        });
       return new Uint8Array(buf, p, l);
     };
     const fontOf = (id: number): Font | undefined => (id === 1 ? init.fonts[1] : id === 2 ? init.fonts[2] : undefined);
@@ -219,7 +233,8 @@ export async function createScene(init: SceneInit): Promise<Scene> {
       draw_fill: (c: number) => layer.fill(c),
       draw_pixel: (x: number, y: number, c: number) => layer.pixel(x, y, c),
       draw_line: (x0: number, y0: number, x1: number, y1: number, c: number) => layer.line(x0, y0, x1, y1, c),
-      draw_rect: (x: number, y: number, w: number, h: number, c: number, f: number) => layer.rect(x, y, w, h, c, f !== 0),
+      draw_rect: (x: number, y: number, w: number, h: number, c: number, f: number) =>
+        layer.rect(x, y, w, h, c, f !== 0),
       draw_circle: (cx: number, cy: number, r: number, c: number, f: number) => layer.circle(cx, cy, r, c, f !== 0),
       draw_text: (font: number, x: number, y: number, ptr: number, len: number, c: number) => {
         const text = bytes(ptr, len);
@@ -234,7 +249,9 @@ export async function createScene(init: SceneInit): Promise<Scene> {
       font_height: (font: number) => fontOf(font)?.cellHeight ?? -1,
       draw_image: (nptr: number, nlen: number, frame: number, x: number, y: number) => {
         const wanted = bytes(nptr, nlen);
-        const found = assetNames.find((a) => a.name.length === wanted.length && a.name.every((b, i) => b === wanted[i]));
+        const found = assetNames.find(
+          (a) => a.name.length === wanted.length && a.name.every((b, i) => b === wanted[i]),
+        );
         if (!found) return -1;
         const a = found.asset;
         if (frame < 0 || frame >= a.frames) return -2;

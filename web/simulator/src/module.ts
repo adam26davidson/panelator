@@ -57,12 +57,16 @@ export async function loadModule(bytes: Uint8Array): Promise<LoadedModule> {
     if (!want || !Object.hasOwn(IMPORT_TABLE, imp.name)) fail("imports", `${label} is not in the import table`);
     const have = sec.types[imp.type ?? -1];
     if (!have || !same(have, want as Signature))
-      fail("imports", `${label} has signature ${have ? typeText(have) : "unknown"}, expected ${text(want as Signature)}`);
+      fail(
+        "imports",
+        `${label} has signature ${have ? typeText(have) : "unknown"}, expected ${text(want as Signature)}`,
+      );
     importedFuncTypes.push(imp.type as number);
   }
 
   const funcType = (index: number): FuncType | undefined => {
-    const typeIndex = index < importedFuncTypes.length ? importedFuncTypes[index] : sec.functions[index - importedFuncTypes.length];
+    const typeIndex =
+      index < importedFuncTypes.length ? importedFuncTypes[index] : sec.functions[index - importedFuncTypes.length];
     return typeIndex === undefined ? undefined : sec.types[typeIndex];
   };
 
@@ -75,11 +79,15 @@ export async function loadModule(bytes: Uint8Array): Promise<LoadedModule> {
       continue;
     }
     const want = EXPORT_TABLE[exp.name];
-    if (!want || !Object.hasOwn(EXPORT_TABLE, exp.name)) fail("exports", `export ${exp.name} is not in the export table`);
+    if (!want || !Object.hasOwn(EXPORT_TABLE, exp.name))
+      fail("exports", `export ${exp.name} is not in the export table`);
     if (exp.kind !== 0) fail("exports", `export ${exp.name} is not a function`);
     const have = funcType(exp.index);
     if (!have || !same(have, want as Signature))
-      fail("exports", `export ${exp.name} has signature ${have ? typeText(have) : "unknown"}, expected ${text(want as Signature)}`);
+      fail(
+        "exports",
+        `export ${exp.name} has signature ${have ? typeText(have) : "unknown"}, expected ${text(want as Signature)}`,
+      );
     seen.add(exp.name);
   }
   for (const name of Object.keys(EXPORT_TABLE)) if (!seen.has(name)) fail("exports", `export ${name} is missing`);
@@ -89,7 +97,8 @@ export async function loadModule(bytes: Uint8Array): Promise<LoadedModule> {
   const memory = sec.memories[0];
   if (!memory) fail("memory", "the memory is not defined by the module");
   const limits = memory as { min: number; max: number | undefined };
-  if (limits.min > MAX_PAGES) fail("memory", `initial size ${limits.min} pages is over the limit of ${MAX_PAGES} pages`);
+  if (limits.min > MAX_PAGES)
+    fail("memory", `initial size ${limits.min} pages is over the limit of ${MAX_PAGES} pages`);
   if (sec.start !== undefined) fail("start function", `the module has a start function (function ${sec.start})`);
 
   // The declarations are called once, after instantiation and before pn_init; none of them calls an import.
@@ -104,7 +113,11 @@ export async function loadModule(bytes: Uint8Array): Promise<LoadedModule> {
     try {
       return f();
     } catch (cause) {
-      throw new SimulatorError(`declarations: ${name} failed: ${String(cause)}`, { rule: "declarations", export: name, cause });
+      throw new SimulatorError(`declarations: ${name} failed: ${String(cause)}`, {
+        rule: "declarations",
+        export: name,
+        cause,
+      });
     }
   };
   const abi = call(DECLARATIONS[0]);

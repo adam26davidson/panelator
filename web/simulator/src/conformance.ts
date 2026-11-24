@@ -1,6 +1,6 @@
 import { SimulatorError } from "./errors.ts";
 import { parseFont } from "./font.ts";
-import { loadModule, type LoadedModule } from "./module.ts";
+import { type LoadedModule, loadModule } from "./module.ts";
 import { createScene, type Environment } from "./scene.ts";
 
 export interface ConformanceScene {
@@ -39,9 +39,11 @@ function object(v: unknown, path: string, fields: readonly string[]): Obj {
     throw new SimulatorError(`scene: ${path} is not an object`, { rule: "scene field" });
   const o = v as Obj;
   for (const k of Object.keys(o))
-    if (!fields.includes(k)) throw new SimulatorError(`scene: unknown field ${path === "" ? k : `${path}.${k}`}`, { rule: "scene field" });
+    if (!fields.includes(k))
+      throw new SimulatorError(`scene: unknown field ${path === "" ? k : `${path}.${k}`}`, { rule: "scene field" });
   for (const k of fields)
-    if (!(k in o)) throw new SimulatorError(`scene: missing field ${path === "" ? k : `${path}.${k}`}`, { rule: "scene field" });
+    if (!(k in o))
+      throw new SimulatorError(`scene: missing field ${path === "" ? k : `${path}.${k}`}`, { rule: "scene field" });
   return o;
 }
 
@@ -65,11 +67,13 @@ function list(v: unknown, path: string): unknown[] {
 export function readScene(json: unknown): ConformanceScene {
   const value = typeof json === "string" ? (JSON.parse(json) as unknown) : json;
   const o = object(value, "", ["abi", "panel", "start_unix_ms", "utc_offset_s", "ticks", "assets", "placements"]);
-  if (o.abi !== "0.1") throw new SimulatorError(`scene: abi is ${JSON.stringify(o.abi)}, expected "0.1"`, { rule: "scene field" });
+  if (o.abi !== "0.1")
+    throw new SimulatorError(`scene: abi is ${JSON.stringify(o.abi)}, expected "0.1"`, { rule: "scene field" });
   const panel = object(o.panel, "panel", ["width", "height"]);
   const ticks = list(o.ticks, "ticks").map((t, i) => int(t, `ticks[${i}]`, 0));
   ticks.forEach((t, i) => {
-    if (i > 0 && t <= (ticks[i - 1] as number)) throw new SimulatorError("scene: ticks is not ascending", { rule: "scene field" });
+    if (i > 0 && t <= (ticks[i - 1] as number))
+      throw new SimulatorError("scene: ticks is not ascending", { rule: "scene field" });
   });
   return {
     abi: "0.1",
@@ -139,12 +143,19 @@ export function profileEnvironment(scene: ConformanceScene): Environment {
 }
 
 /** Runs a scene by the profile and returns a copy of the frame at each captured tick. */
-export async function runConformance(scene: ConformanceScene, files: ConformanceFiles): Promise<{ tick: number; frame: Uint8Array }[]> {
+export async function runConformance(
+  scene: ConformanceScene,
+  files: ConformanceFiles,
+): Promise<{ tick: number; frame: Uint8Array }[]> {
   const loaded = new Map<string, LoadedModule>();
   for (const p of scene.placements) {
     if (loaded.has(p.module)) continue;
     const bytes = files.modules[p.module];
-    if (!bytes) throw new SimulatorError(`conformance: no module named ${p.module}`, { rule: "conformance files", module: p.module });
+    if (!bytes)
+      throw new SimulatorError(`conformance: no module named ${p.module}`, {
+        rule: "conformance files",
+        module: p.module,
+      });
     loaded.set(p.module, await loadModule(bytes));
   }
   const assets = scene.assets.map((a) => {

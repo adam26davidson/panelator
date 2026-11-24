@@ -11,7 +11,11 @@ const hex = (c: number[]) => `#${c.map((v) => v.toString(16).padStart(2, "0")).j
 describe("golden frames (AC-11)", () => {
   it("states the SHA-256 of each module it runs", () => {
     for (const f of ["spike-clock.wasm", "spike-scroll.wasm", "spike-image.wasm"]) {
-      console.log(`module ${f} sha256 ${createHash("sha256").update(readBytes(join(widgets, f))).digest("hex")}`);
+      console.log(
+        `module ${f} sha256 ${createHash("sha256")
+          .update(readBytes(join(widgets, f)))
+          .digest("hex")}`,
+      );
     }
   });
 
@@ -49,7 +53,10 @@ describe("the profile (AC-8)", () => {
     const first = (seed: number) => {
       const out: number[] = [];
       let x = seed;
-      for (let i = 0; i < 3; i++) out.push((x = xorshift32(x)));
+      for (let i = 0; i < 3; i++) {
+        x = xorshift32(x);
+        out.push(x);
+      }
       return out;
     };
     expect(first(1)).toEqual([270369, 67634689, 2647435461]);

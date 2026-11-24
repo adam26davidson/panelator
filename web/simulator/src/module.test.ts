@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { SimulatorError } from "./errors.ts";
 import { loadModule } from "./module.ts";
-import { assemble, call, grow, type ModuleSpec } from "./testwasm.ts";
 import { sceneOf } from "./scenehelp.ts";
+import { assemble, call, grow, type ModuleSpec } from "./testwasm.ts";
 
 const rejects = async (spec: ModuleSpec | Uint8Array, ...parts: string[]) => {
   const err = await loadModule(spec instanceof Uint8Array ? spec : assemble(spec)).then(
@@ -25,8 +25,17 @@ describe("loadModule (AC-3)", () => {
 
   it("refuses an import outside the table, from another module, of another kind or with another signature", async () => {
     await rejects({ imports: [{ name: "draw_nothing", params: [], results: [] }] }, "imports", "draw_nothing");
-    await rejects({ imports: [{ module: "env", name: "layer_width", params: [], results: ["i32"] }] }, "imports", "env.layer_width");
-    await rejects({ imports: [{ name: "layer_width", params: [], results: ["i64"] }] }, "imports", "layer_width", "signature");
+    await rejects(
+      { imports: [{ module: "env", name: "layer_width", params: [], results: ["i32"] }] },
+      "imports",
+      "env.layer_width",
+    );
+    await rejects(
+      { imports: [{ name: "layer_width", params: [], results: ["i64"] }] },
+      "imports",
+      "layer_width",
+      "signature",
+    );
     await rejects({ imports: [{ name: "draw_pixel", params: ["i32", "i32"], results: [] }] }, "imports", "draw_pixel");
   });
 
@@ -73,7 +82,9 @@ describe("memory growth (AC-3)", () => {
     const m = await loadModule(assemble({ memories: [{ min: 1, max: 4 }] }));
     expect(m.growthBounded).toBe(true);
     // memory.grow past the declared maximum returns -1 (the browser's), and the run goes on
-    const scene = await sceneOf({ width: 2, height: 1 }, [{ width: 2, height: 1, spec: { memories: [{ min: 1, max: 4 }], init: grow(10) } }]);
+    const scene = await sceneOf({ width: 2, height: 1 }, [
+      { width: 2, height: 1, spec: { memories: [{ min: 1, max: 4 }], init: grow(10) } },
+    ]);
     expect(scene.tick).toBe(-1);
   });
 

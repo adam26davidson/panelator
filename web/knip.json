@@ -4,6 +4,10 @@
       "entry": ["checks.test.ts", "steiger.config.ts"],
       "project": ["src/**/*.{ts,tsx}", "*.ts"],
       "ignoreDependencies": ["tailwindcss", "@playwright/browser-chromium"]
+    },
+    "web/simulator": {
+      "entry": ["src/**/*.test.ts"],
+      "project": ["src/**/*.ts", "*.ts"]
     }
   }
 }

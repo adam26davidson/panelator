@@ -5,7 +5,7 @@ import { IMPORT_TABLE, type Signature } from "./abi.ts";
 const CODE = { i32: 0x7f, i64: 0x7e, f32: 0x7d } as const;
 type Ty = keyof typeof CODE;
 
-export const uleb = (n: number): number[] => {
+const uleb = (n: number): number[] => {
   const out: number[] = [];
   let v = n;
   do {
@@ -16,7 +16,7 @@ export const uleb = (n: number): number[] => {
   } while (v > 0);
   return out;
 };
-export const sleb = (n: number): number[] => {
+const sleb = (n: number): number[] => {
   const out: number[] = [];
   let v = BigInt(n);
   for (;;) {
@@ -35,9 +35,13 @@ const section = (id: number, body: number[]): number[] => [id, ...uleb(body.leng
 
 export const NAMES = Object.keys(IMPORT_TABLE);
 export const i32c = (n: number): number[] => [0x41, ...sleb(n | 0)];
-export const i64c = (n: number): number[] => [0x42, ...sleb(n)];
+const i64c = (n: number): number[] => [0x42, ...sleb(n)];
 /** A call of an import by name with i32 constants; the result, if any, stays on the stack. */
-export const callv = (name: string, ...args: number[]): number[] => [...args.flatMap(i32c), 0x10, ...uleb(NAMES.indexOf(name))];
+export const callv = (name: string, ...args: number[]): number[] => [
+  ...args.flatMap(i32c),
+  0x10,
+  ...uleb(NAMES.indexOf(name)),
+];
 /** A call whose result, if any, is dropped. */
 export const call = (name: string, ...args: number[]): number[] => [
   ...callv(name, ...args),
@@ -106,10 +110,17 @@ export function assemble(spec: ModuleSpec = {}): Uint8Array {
   const memories = spec.memories ?? [{ min: 1 }];
   const out: number[] = [0, 0x61, 0x73, 0x6d, 1, 0, 0, 0];
   out.push(...section(1, vec(types)));
-  out.push(...section(2, vec(imports.map((im, i) => [...str(im.module ?? "panelator"), ...str(im.name), 0, ...uleb(i)]))));
+  out.push(
+    ...section(2, vec(imports.map((im, i) => [...str(im.module ?? "panelator"), ...str(im.name), 0, ...uleb(i)]))),
+  );
   out.push(...section(3, vec(fns.map((_, i) => uleb(imports.length + i)))));
   if (memories.length > 0)
-    out.push(...section(5, vec(memories.map((m) => (m.max === undefined ? [0, ...uleb(m.min)] : [1, ...uleb(m.min), ...uleb(m.max)])))));
+    out.push(
+      ...section(
+        5,
+        vec(memories.map((m) => (m.max === undefined ? [0, ...uleb(m.min)] : [1, ...uleb(m.min), ...uleb(m.max)]))),
+      ),
+    );
   const exports: number[][] = [];
   if (spec.exportMemory !== false && memories.length > 0) exports.push([...str("memory"), 2, 0]);
   fns.forEach((f, i) => {
@@ -118,7 +129,20 @@ export function assemble(spec: ModuleSpec = {}): Uint8Array {
   if (spec.extraExport) exports.push([...str(spec.extraExport), 0, ...uleb(imports.length)]);
   out.push(...section(7, vec(exports)));
   if (spec.start !== undefined) out.push(...section(8, uleb(spec.start)));
-  out.push(...section(10, vec(fns.map((f) => { const b = [0, ...f.body, 0x0b]; return [...uleb(b.length), ...b]; }))));
-  if (spec.data) out.push(...section(11, vec(spec.data.map((d) => [0, ...i32c(d.offset), 0x0b, ...uleb(d.bytes.length), ...d.bytes]))));
+  out.push(
+    ...section(
+      10,
+      vec(
+        fns.map((f) => {
+          const b = [0, ...f.body, 0x0b];
+          return [...uleb(b.length), ...b];
+        }),
+      ),
+    ),
+  );
+  if (spec.data)
+    out.push(
+      ...section(11, vec(spec.data.map((d) => [0, ...i32c(d.offset), 0x0b, ...uleb(d.bytes.length), ...d.bytes]))),
+    );
   return Uint8Array.from(out);
 }

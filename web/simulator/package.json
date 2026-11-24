@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "description": "The simulator engine (spec 115): a host of widget ABI 0.1 that runs the identical WASM modules in the browser.",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node build-modules.ts && vitest run --reporter=verbose"

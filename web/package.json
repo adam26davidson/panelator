@@ -5,17 +5,17 @@
   "type": "module",
   "description": "The product's web app (spec 112): the shell every later web child builds inside.",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "node simulator/build-modules.ts && vite",
+    "build": "node simulator/build-modules.ts && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome check .",
     "fsd": "steiger ./src --config steiger.config.ts",
-    "knip": "knip --directory .. --config web/knip.json --workspace web",
+    "knip": "knip --directory .. --config web/knip.json --workspace web --workspace web/simulator",
     "test": "vitest run",
     "storybook": "storybook dev --port 6006 --no-open",
-    "build-storybook": "storybook build --output-dir storybook-static",
-    "e2e": "playwright test"
+    "build-storybook": "node simulator/build-modules.ts && storybook build --output-dir storybook-static",
+    "e2e": "node simulator/build-modules.ts && playwright test"
   },
   "engines": {
     "node": ">=26"

@@ -1,6 +1,6 @@
 import { SimulatorError } from "./errors.ts";
 
-export interface Glyph {
+interface Glyph {
   /** DWIDTH x. */
   advance: number;
   bbxW: number;
@@ -34,7 +34,14 @@ export function parseFont(bdf: string): Font {
     if (rows) {
       if (line === "ENDCHAR") {
         if (encoding >= 0) {
-          glyphs.set(encoding, { advance, bbxW: bbx[0] as number, bbxH: bbx[1] as number, bbxX: bbx[2] as number, bbxY: bbx[3] as number, rows });
+          glyphs.set(encoding, {
+            advance,
+            bbxW: bbx[0] as number,
+            bbxH: bbx[1] as number,
+            bbxX: bbx[2] as number,
+            bbxY: bbx[3] as number,
+            rows,
+          });
         }
         rows = undefined;
       } else if (line !== "") {

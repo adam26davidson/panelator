@@ -1,10 +1,10 @@
-import { loadModule } from "./module.ts";
-import { parseFont } from "./font.ts";
-import { createScene, type Asset, type Environment, type PlacementSpec, type Scene } from "./scene.ts";
-import { assemble, type ModuleSpec } from "./testwasm.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { suite } from "./files.ts";
+import { parseFont } from "./font.ts";
+import { loadModule } from "./module.ts";
+import { type Asset, createScene, type Environment, type PlacementSpec, type Scene } from "./scene.ts";
+import { assemble, type ModuleSpec } from "./testwasm.ts";
 
 // Test helpers: build a scene of hand-assembled modules.
 export const fonts = {
@@ -35,7 +35,13 @@ export async function sceneOf(
     const { spec, ...rest } = p;
     placements.push({ x: 0, y: 0, z: 0, opacity: 255, ...rest, module: await loadModule(assemble(spec)) });
   }
-  return createScene({ panel, fonts, assets: extra.assets ?? [], placements, environment: extra.environment ?? fixedEnv() });
+  return createScene({
+    panel,
+    fonts,
+    assets: extra.assets ?? [],
+    placements,
+    environment: extra.environment ?? fixedEnv(),
+  });
 }
 
 /** The set pixels of a white-on-black frame as rows of 0 and 1. */

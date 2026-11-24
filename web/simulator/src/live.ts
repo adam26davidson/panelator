@@ -50,7 +50,7 @@ export interface LiveRun {
 }
 
 /** More due ticks than this and the missed ones are skipped. */
-export const MAX_CATCH_UP_TICKS = 30;
+const MAX_CATCH_UP_TICKS = 30;
 
 /** Drives a scene at 60 ticks a second of `clock`, whatever the display's refresh rate. */
 export function runLive(scene: Scene, options: LiveOptions): LiveRun {

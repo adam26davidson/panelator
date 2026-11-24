@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SimulatorError } from "./errors.ts";
-import { eastOffsetSeconds, liveEnvironment, presentFrame, runLive, type FrameContext } from "./live.ts";
+import { eastOffsetSeconds, type FrameContext, liveEnvironment, presentFrame, runLive } from "./live.ts";
 import type { Environment, Scene } from "./scene.ts";
 import { fixedEnv, sceneOf } from "./scenehelp.ts";
 
@@ -22,7 +22,9 @@ class Fixture {
   scene!: Scene;
 
   async start(update: number[] = []) {
-    this.scene = await sceneOf({ width: 2, height: 1 }, [{ width: 2, height: 1, spec: { update } }], { environment: this.env });
+    this.scene = await sceneOf({ width: 2, height: 1 }, [{ width: 2, height: 1, spec: { update } }], {
+      environment: this.env,
+    });
     this.timeReads = 0;
     return runLive(this.scene, {
       context: this.context,

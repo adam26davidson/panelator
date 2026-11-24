@@ -16,7 +16,11 @@ describe("the import table", () => {
       if (cells[1] !== "`panelator`") continue;
       table[(cells[2] as string).replaceAll("`", "")] = {
         params: types(cells[3] as string),
-        results: (cells[4] as string).includes("`i64`") ? ["i64"] : (cells[4] as string).includes("`i32`") ? ["i32"] : [],
+        results: (cells[4] as string).includes("`i64`")
+          ? ["i64"]
+          : (cells[4] as string).includes("`i32`")
+            ? ["i32"]
+            : [],
       };
     }
     expect(Object.keys(table)).toHaveLength(16);
@@ -24,7 +28,14 @@ describe("the import table", () => {
   });
 
   it("the exports are the document's six", () => {
-    expect(Object.keys(EXPORT_TABLE)).toEqual(["pn_abi_version", "pn_update_hz", "pn_width", "pn_height", "pn_init", "pn_update"]);
+    expect(Object.keys(EXPORT_TABLE)).toEqual([
+      "pn_abi_version",
+      "pn_update_hz",
+      "pn_width",
+      "pn_height",
+      "pn_init",
+      "pn_update",
+    ]);
     for (const name of Object.keys(EXPORT_TABLE)) expect(doc).toContain(`\`${name}\``);
   });
 });

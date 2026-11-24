@@ -7,17 +7,17 @@ export interface FuncType {
   params: number[];
   results: number[];
 }
-export interface Limits {
+interface Limits {
   min: number;
   max: number | undefined;
 }
-export interface ImportEntry {
+interface ImportEntry {
   module: string;
   name: string;
   kind: number;
   type?: number;
 }
-export interface ExportEntry {
+interface ExportEntry {
   name: string;
   kind: number;
   index: number;
@@ -32,9 +32,11 @@ export interface Sections {
   start: number | undefined;
 }
 
-const VAL_TYPES: Record<number, ValType> = { 0x7f: "i32", 0x7e: "i64" };
+const VAL_TYPES: Record<number, ValType> = { 127: "i32", 126: "i64" };
 export const valTypeName = (code: number): string =>
-  VAL_TYPES[code] ?? ({ 0x7d: "f32", 0x7c: "f64", 0x7b: "v128", 0x70: "funcref", 0x6f: "externref" }[code] ?? `0x${code.toString(16)}`);
+  VAL_TYPES[code] ??
+  { 125: "f32", 124: "f64", 123: "v128", 112: "funcref", 111: "externref" }[code] ??
+  `0x${code.toString(16)}`;
 
 class Reader {
   pos = 0;

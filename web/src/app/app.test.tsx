@@ -40,9 +40,14 @@ describe("Home", () => {
         .map((t) => t.textContent),
     ).toEqual(["The panel", "The web app", "Open source"]);
     expect(within(main).getByText("Under construction.")).toBeTruthy();
-    expect(within(main).queryAllByRole("link")).toHaveLength(0);
+    expect(within(main).getByText(/The simulator page runs the runtime spike's three widgets/)).toBeTruthy();
+    expect(
+      within(main)
+        .getAllByRole("link")
+        .map((a) => [a.textContent, a.getAttribute("href")]),
+    ).toEqual([["Open the simulator", "/simulator"]]);
     expect(within(main).queryAllByRole("button")).toHaveLength(0);
-    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(screen.getAllByRole("link")).toHaveLength(2);
     await waitFor(() => expect(document.title).toBe("panelator"));
   });
 
