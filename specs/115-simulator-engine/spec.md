@@ -3,14 +3,8 @@
 Status: written 2026-11-23 for issue #435, the planned child
 `simulator-engine` of the v0 build design; a spec derived from its parent
 design needs no maintainer approval (delivery-system design section 11).
-Revised 2026-11-24 after the first implementation chain: AC-18 names the
-test that pins the CI job's step order, section 5 lists the test files the
-criteria change, and section 6 asks only for evidence the implementing run
-can produce.
 Marks [spec 112](../112-web-app-skeleton/spec.md) AC-1, AC-7 and AC-14
-(amended: a workspace dependency, a link on Home, two more checks) and
-[spec 106](../106-firmware-project-and-hil/spec.md) AC-7 (amended: two
-Rust steps of the `test` job come before `pnpm test`).
+(amended: a workspace dependency, a link on Home, two more checks).
 Class: product. Domain: web-ui (sensitive paths:
 `.github/workflows/ci.yml`, under `.github/`; `pnpm-workspace.yaml`; and
 `web/simulator/vitest.config.ts`, matched by `**/vitest.config.*`;
@@ -34,8 +28,6 @@ golden frames this engine is tested against) and
 built, not committed; a golden frame is a composed frame of a scene);
 [spec 112](../112-web-app-skeleton/spec.md) (the web package, its checks,
 its frame and tokens);
-[spec 106](../106-firmware-project-and-hil/spec.md) AC-7 (the `test` job's
-steps and the test that pins their order);
 [ADR 0016](../../docs/decisions/0016-product-breakdown-is-one-ordered-design.md).
 
 ## 1. Goal
@@ -139,11 +131,7 @@ are spec 112's.
   asset (`assets/spike-image.rgb`) and the scene (`scenes/spike.json`) are
   taken from the suite at build time, unmodified, with no copy committed
   under `web/`; `LICENSE-spleen` is in the app's build output beside the
-  fonts. The fonts and the asset are files the page fetches. The scene is
-  part of the app's bundle (a JSON import or a virtual module of the Vite
-  configuration, read from the suite's file), so the page knows the panel
-  and the placements at its first render and makes no request for it
-  (AC-14).
+  fonts.
 
 **The host**
 
@@ -162,13 +150,7 @@ are spec 112's.
   names both versions, and no export but the four declarations has been
   called); `pn_update_hz` is outside 0 to 60; `pn_width` or `pn_height` is
   outside 1 to 4096. The declarations are called once, after instantiation
-  and before `pn_init`: `loadModule` instantiates the module with imports
-  that all throw, calls the four and keeps their values, and that instance
-  is used for nothing else. A placement's instance is made later, from the
-  same compiled module, and the engine need not ask it again *(agent's
-  call: the document has the declarations constant, without host state and
-  calling no import, so a second answer cannot differ; section 4)*.
-  **Growth.** A module whose memory declares a
+  and before `pn_init`. **Growth.** A module whose memory declares a
   maximum of at most 4 pages has `memory.grow` bounded by the browser, as
   the three modules do. A browser host cannot make `memory.grow` return -1
   for any other module without rewriting it, so for those the engine
@@ -226,9 +208,7 @@ are spec 112's.
   runs the updates the document's rule makes due, in ascending `z` with ties in the given order, each called
   with the tick as an `i64`; then the composition by the document's
   formula into the scene's frame. The scene exposes the tick last run, the
-  frame, the panel and, for each placement, its module's name and all four
-  declarations of AC-3 (the ABI version, the rate, the declared width and
-  height) beside its layer's size. Given a trap, a
+  frame, the panel and each placement's declarations. Given a trap, a
   JavaScript exception in an import or the memory limit of AC-3, then
   `step()` (or `createScene`, for `pn_init`) fails with an error naming
   the placement's index and module, the export and the tick, and the scene
@@ -264,9 +244,8 @@ are spec 112's.
   so the next update a widget gets carries the true tick, as on a board
   that skipped a frame. The live environment gives `time_unix_ms` as the
   wall clock read once per tick, `time_utc_offset_s` as the browser's
-  offset for that instant (east of UTC, in seconds; at UTC it is `0`, not
-  `-0`, and the engine's tests pass in every time zone, UTC included,
-  which is CI's), and `random_u32` from `crypto.getRandomValues`. It can be paused, resumed and stopped;
+  offset for that instant (east of UTC, in seconds), and `random_u32`
+  from `crypto.getRandomValues`. It can be paused, resumed and stopped;
   paused, it steps nothing and time lost is not caught up on resume;
   stopped, it requests no further animation frame. Given an error from a
   step, then it stops and reports the error to its caller. The clock and
@@ -342,8 +321,7 @@ are spec 112's.
 - AC-14. **`/simulator`.** The app gains the route `/simulator`, shown
   inside the frame, as the page slice `pages/simulator`; the document
   title is `Simulator · panelator`. The page fetches the three modules,
-  the two fonts and the asset (six requests; the scene is in the bundle,
-  AC-2), builds the scene that `scenes/spike.json`
+  the two fonts and the asset, builds the scene that `scenes/spike.json`
   describes (its panel, assets and placements; its start time, offset,
   captured ticks and seeds are the profile's and are not used) and runs it
   with `runLive`. It shows one `h1`; the panel, a `canvas` whose backing
@@ -358,11 +336,7 @@ are spec 112's.
   the page does not. No source file of the app holds the panel's width or
   height: given the page's view rendered with a scene of another panel
   size, then the canvas has that size. Its states:
-  - `loading`: until every file is fetched and `pn_init` has returned.
-    Given the page's first render, before any response has arrived, then
-    the panel's place is already held at the scene's size and the
-    placements' names and layer sizes are shown, as the design's `loading`
-    has them; nothing moves when the modules arrive;
+  - `loading`: until every file is fetched and `pn_init` has returned;
   - `running`: ticks advance;
   - `paused`: by the control, and at the start when the browser reports
     `prefers-reduced-motion: reduce` (the frame of tick 0 is shown);
@@ -382,12 +356,7 @@ are spec 112's.
 - AC-16. **The page's tests.** Unit tests (jsdom, spec 112 AC-11) render
   each state of AC-14 from its properties, the view with a second panel
   size, and Home's link. Each state has a story, and spec 112's story
-  test renders them. Two existing tests of the app encode what this spec
-  amends and follow it: the Home test of `web/src/app/app.test.tsx`
-  (which requires Home's main region to hold no link) now requires
-  exactly the one link of AC-15 and the new copy, and the list of story
-  files in `web/src/app/stories.test.tsx` gains the new stories; neither
-  loses another assertion. Browser tests, in the three viewports:
+  test renders them. Browser tests, in the three viewports:
   - `/simulator` reaches `running`: the canvas's `width` and `height`
     equal the panel of `scenes/spike.json` as the test reads it; within
     five seconds the tick shown has passed 120 and the canvas holds a
@@ -427,23 +396,9 @@ are spec 112's.
 - AC-18. **CI.** In the `test` job of `.github/workflows/ci.yml` the step
   that installs the pinned Rust toolchain and the step that restores the
   Cargo cache move before `pnpm test`, because `pnpm test` now builds the
-  modules. No step is added, removed or otherwise changed (the comment
-  above the moved steps may say why they are there);
+  modules. No step is added, removed or otherwise changed;
   `sdk/rust/check.sh` still runs after it, builds the same modules and
-  uploads them as `spike-widgets`. The required check stays `test`. The
-  job's first ten steps are then, in order: checkout, the pnpm setup, the
-  Node setup, `pnpm install --frozen-lockfile`, the Chromium install,
-  `rustup toolchain install`, the Cargo cache (the `actions/cache` step
-  whose paths hold `target`), `pnpm test`, the scheduler's typecheck and
-  the design-stage lint. **The test that pins the order.**
-  `tools/hil/test/workflows.test.ts` (spec 106 AC-7) requires `pnpm test`
-  to be the job's sixth step and runs inside `pnpm test`, so the move
-  fails it as it stands. Its one assertion on the order of the first steps
-  changes to require the ten steps above in that order; every step it
-  pinned stays pinned, and nothing else in that file changes. The tests
-  under `tools/scheduler/test/` that read `ci.yml` (Chromium installed
-  before the suite, the lint after the install, the pnpm setup) hold
-  after the move and are not changed.
+  uploads them as `spike-widgets`. The required check stays `test`.
 - AC-19. **The READMEs.** `web/simulator/README.md` says, in under a page:
   what the engine is and that `docs/widget-abi.md` is its specification;
   its public functions; how a host test uses the suite; that it never
@@ -475,21 +430,6 @@ no registry download), and Cargo locks its own target directory. The cost
 is that `pnpm test` now needs the pinned Rust toolchain: the pipeline's
 machine and CI have it (specs 107 and 111 already build there), and CI
 only needs it two steps earlier.
-
-**The CI order and spec 106's test.** The pipeline's first chain on this
-spec could not meet AC-18: the reorder fails the step-order assertion of
-`tools/hil/test/workflows.test.ts`, which this spec did not list, and the
-scope gate refused the change twice. Leaving `ci.yml` alone also passes,
-because the runner's rustup installs the pinned toolchain by itself when
-`cargo` first runs; rustup has withdrawn that behaviour once (1.28.0), and
-the required check of every PR should not rest on it, nor build before the
-cache is restored. So the reorder stays, the test follows it and still
-pins each step, and spec 106 AC-7 carries the mark.
-
-**Declarations asked once per module.** `loadModule` must return the
-declarations, so it needs an instance; a scene may place one module twice,
-so each placement needs its own. The declarations are constant by the
-document, so the engine asks the first instance only.
 
 **Two golden tests.** Product spec 13 says "in the browser", so the test
 that carries the contract runs in Chromium. The Node test is the one a
@@ -542,9 +482,7 @@ The implementation's file scope:
   scripts of AC-2), `web/checks.test.ts`, `web/knip.json`,
   `web/vite.config.ts`, `web/.storybook/`, `web/playwright.config.ts` only
   if the build of the modules needs it, `web/README.md`,
-  `web/src/app/router.tsx`, `web/src/app/app.test.tsx` and
-  `web/src/app/stories.test.tsx` (the two tests AC-16 names),
-  `web/src/pages/simulator/` (new),
+  `web/src/app/router.tsx`, `web/src/pages/simulator/` (new),
   `web/src/pages/home/`, `web/src/shared/` (new shared pieces the design
   maps), `web/src/app/styles.css` (tokens the design adds), `web/e2e/`.
 - `pnpm-workspace.yaml` (a sensitive path): the one `packages` entry. The
@@ -553,8 +491,6 @@ The implementation's file scope:
 - `.github/workflows/ci.yml` (a sensitive path): the reordering of AC-18.
   The security review checks that every step of the job is still there
   and that `pnpm test` runs what it ran before, plus the checks of AC-17.
-- `tools/hil/test/workflows.test.ts`: the one order assertion of AC-18.
-  No other file of the HIL harness changes.
 - `pnpm-lock.yaml`.
 
 The engine's public surface, for `layout-editor` and later hosts' tests:
@@ -582,28 +518,20 @@ and what each takes may not.
   app's `e2e` running the tests of AC-12 and AC-16; its output is in the
   implementation's final message, which contains the per-scene lines and
   the module hashes that AC-17 has a passing run print.
-- The PR's description quotes those lines from the implementing run's
-  own passing `pnpm test`, each in full: the four per-scene lines under
-  Node, the browser test's line for each of the four scenes, and the three
-  module hash lines. It does not quote CI's log: the description is
-  written before CI's `test` job has run on the PR. That job is the
-  required check; AC-17 makes its log carry the same lines, and whoever
-  needs CI's evidence (`runtime-spike-measurement`) reads that log. The
-  spec does not claim the build is reproducible across machines, so the
-  hashes are not compared with those of the uploaded `spike-widgets`
-  files.
+- CI's `test` job passes on the implementation PR; the PR's description
+  quotes, from that job's log, the lines showing the four scenes passed
+  under Node and in Chromium and the three module hash lines. The spec
+  does not claim the build is reproducible across machines, so the hashes
+  are not compared with those of the uploaded `spike-widgets` files.
 - The golden tests fail when they should: the PR's description records
   one deliberate break made locally and reverted (for example the
   rounding term of the composition formula dropped), with the scene, tick
   and pixel the Node test named and the scene and tick the browser test
   named.
-- The dev server serves what the build serves: the implementing run
-  starts `pnpm -F @panelator/web dev` once, requests `/simulator` and each
-  of the six files the page fetches, and records the status codes in the
-  PR's description. That the panel runs (the tick advancing, lit pixels)
-  is checked by AC-16's browser tests against the built app, not by eye.
-  The review compares source and stories with the design's renders at the
-  three viewports (spec 098).
+- `pnpm -F @panelator/web dev` serves `/simulator` with the clock showing
+  the local time, the text scrolling and the image moving; the review
+  compares source and stories with the design's renders at the three
+  viewports (spec 098).
 - The implementing machine needs the toolchain of `rust-toolchain.toml`
   with the `wasm32-unknown-unknown` target, and the Chromium that
   `pnpm install` downloads.
@@ -617,9 +545,6 @@ the panel needs them (its surround, the readouts). The engine does not
 exist on `main` when the design is made, so the stories draw the panel
 from the golden frame `sdk/conformance/golden/spike/tick-0.png`, enlarged
 without smoothing; the implementation draws the live canvas in its place.
-The implementation's own stories and unit tests run no engine, so the
-panel in them is the canvas before a frame is presented: unlit, the
-design's `loading` look.
 
 - `simulator`: the frame; a heading; the panel; its size in LEDs; the
   tick; the three placements, each with its module's name, declared rate

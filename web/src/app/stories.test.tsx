@@ -23,6 +23,8 @@ describe("the stories", () => {
         "PageHeading.stories.tsx",
         "Button.stories.tsx",
         "ButtonLink.stories.tsx",
+        "PanelView.stories.tsx",
+        "SimulatorView.stories.tsx",
       ]),
     );
   });

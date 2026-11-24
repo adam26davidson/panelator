@@ -1,4 +1,4 @@
-import { PageHeading, ReadingColumn } from "@/shared/ui";
+import { ButtonLink, PageHeading, ReadingColumn } from "@/shared/ui";
 
 const PARTS = [
   {
@@ -35,10 +35,17 @@ export function HomePage() {
           </div>
         ))}
       </dl>
-      <p className="rounded-md border-(length:--line) border-border bg-surface p-4 text-muted">
-        <strong className="font-semibold text-text">Under construction.</strong> The editor, the simulator and board
-        control are not in this app yet.
-      </p>
+      <div className="flex flex-col gap-4 rounded-md border-(length:--line) border-border bg-surface p-4">
+        <p className="text-muted">
+          <strong className="font-semibold text-text">Under construction.</strong> The editor and board control are not
+          in this app yet. The simulator page runs the runtime spike's three widgets.
+        </p>
+        <div className="flex flex-col tablet:flex-row">
+          <ButtonLink variant="primary" to="/simulator">
+            Open the simulator
+          </ButtonLink>
+        </div>
+      </div>
     </ReadingColumn>
   );
 }

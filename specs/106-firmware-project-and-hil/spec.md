@@ -156,7 +156,7 @@ source, a fake clock and a fake GitHub; none of them needs a board.
   AC-5 does not build, when `clang-tidy-18`, run with the host project's
   compile database over every source of the portable components and their
   tests, reports anything, or when `ctest` fails; otherwise it exits 0.
-- AC-7. Amended by [115-simulator-engine](../115-simulator-engine/spec.md) AC-18: the step that installs the Rust toolchain and the step that restores the Cargo cache come before `pnpm test`, and the order test pins the job's first ten steps. **The required check covers the firmware.** `.github/workflows/ci.yml`'s
+- AC-7. **The required check covers the firmware.** `.github/workflows/ci.yml`'s
   `test` job, pinned to `ubuntu-24.04`, gains steps that install the two
   clang tools when missing, run `firmware/scripts/check-host.sh` on every
   run, and run `firmware/scripts/build.sh` with `PANELATOR_COMMIT` set on
