@@ -41,10 +41,12 @@ describe("ci.yml (AC-7)", () => {
     const runs = steps.map((s) => s.run ?? s.uses);
     expect(runs.slice(0, 7)).toEqual([
       "actions/checkout@v4", "pnpm/action-setup@v4", "actions/setup-node@v4", "pnpm install --frozen-lockfile",
-      "pnpm -F @panelator/design-stage exec playwright-core install --with-deps chromium", "pnpm test",
-      "pnpm -F @panelator/scheduler typecheck",
+      "pnpm -F @panelator/design-stage exec playwright-core install --with-deps chromium",
+      "rustup toolchain install", "actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809",
     ]);
-    expect(runs[7]).toBe("pnpm -F @panelator/design-stage lint");
+    expect(runs.slice(7, 10)).toEqual([
+      "pnpm test", "pnpm -F @panelator/scheduler typecheck", "pnpm -F @panelator/design-stage lint",
+    ]);
     expect(read("agents/scheduler.yaml")).toMatch(/required_checks:\s*\n?\s*-?\s*\[?\s*"?test"?\s*\]?/);
   });
   it("installs the clang tools, runs the host checks always, and builds only when firmware or workflows changed", () => {

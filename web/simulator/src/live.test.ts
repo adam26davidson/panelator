@@ -144,7 +144,7 @@ describe("runLive (AC-10)", () => {
   it("the live environment reads the offset east of UTC and 32 random bits", () => {
     const e = liveEnvironment();
     const t = e.time(0);
-    expect(t.offsetS).toBe(-new Date().getTimezoneOffset() * 60 + 0);
+    expect(t.offsetS + 0).toBe(-new Date().getTimezoneOffset() * 60 + 0);
     expect(typeof e.random(0)()).toBe("number");
   });
 });
