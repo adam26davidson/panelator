@@ -9,6 +9,7 @@ Same module, same scene, same frames, in every host (product spec 13).
 | `scenes/*.json` | A scene: a panel size, a start time and timezone, assets, placements (module, position, size, z, opacity, config, seed) and the ticks to capture. Format: the document's "The conformance profile". |
 | `fonts/` | `spleen-5x8.bdf` (font 1) and `spleen-8x16.bdf` (font 2), unmodified from Spleen release **2.3.0** (<https://github.com/fcambus/spleen>), with its licence, `LICENSE-spleen` (BSD 2-Clause). |
 | `assets/spike-image.rgb` | 24,576 bytes: 128 by 64 raw RGB, one frame. Pixel `(x, y)`: `R = x * 255 / 127`, `G = y * 255 / 63`, `B = 255` when `x / 8 + y / 8` is even, else 0. |
+| `config/vectors.json` | Configs as the text a scene file can hold, with the canonical bytes a host serves for each (`cases`), and configs a host refuses (`rejected`). Format: the document's "Config". |
 | `golden/<scene>/tick-<n>.png` | The composed frame of scene `<scene>` at tick `n`: an 8-bit RGB PNG. |
 | `golden/<scene>/frames.json` | The scene's name, the panel size and, per captured tick, the SHA-256 in hex of the frame's raw bytes (RGB, rows top to bottom). |
 
@@ -21,7 +22,8 @@ same sources that conforms must produce the same frames.
 ## Using it from another host
 
 1. Read a scene. Load each placement's module by name (`spike-clock` is `spike-clock.wasm`),
-   give it a layer of the placement's size and the config as its JSON document, and call
+   give it a layer of the placement's size and the config in the document's canonical form
+   ("Config"; check your form against `config/vectors.json`), and call
    `pn_init` and then `pn_update` as the document's stepping rules say, with the clock and the
    random sequence of the conformance profile.
 2. Compose the frame at each captured tick with the document's integer formula.
@@ -50,6 +52,13 @@ sdk/rust/build-widgets.sh
 PANELATOR_BLESS=1 cargo nextest run -p panelator-test-host golden_
 ```
 
-writes `golden/<scene>/` for the four scenes (and `assets/spike-image.rgb` if it is missing).
+writes `golden/<scene>/` for the four scenes and nothing else. `assets/spike-image.rgb` is
+committed; were it ever missing, it is written first by
+
+```
+PANELATOR_BLESS=1 cargo nextest run -p panelator-test-host the_spike_image_asset_is_its_formula
+```
+
+(the `golden_` filter does not select that test, and the scenes cannot load without the asset).
 Then open the PNGs and say in the pull request which frames changed and why. CI never sets
 `PANELATOR_BLESS`.

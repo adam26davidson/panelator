@@ -160,9 +160,13 @@ fn the_conformance_directory_names_its_fonts_and_readme() {
         "fonts/spleen-5x8.bdf",
         "fonts/spleen-8x16.bdf",
         "fonts/LICENSE-spleen",
+        "config/vectors.json",
     ] {
         assert!(c.join(f).exists(), "{f}");
     }
+    let readme = std::fs::read_to_string(c.join("README.md")).unwrap();
+    assert!(readme.contains("config/vectors.json"));
+    assert!(readme.contains("the_spike_image_asset_is_its_formula"));
     assert!(
         std::fs::read_to_string(c.join("fonts/spleen-5x8.bdf"))
             .unwrap()

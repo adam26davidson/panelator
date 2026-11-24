@@ -235,8 +235,8 @@ Within a tick, due placements are updated in ascending z, ties by their order in
 updates of a tick come before its composition.
 
 **Composition.** The panel's width and height are each 1 to 16384. The frame is the panel's width
-by height, RGB, 8 bits a channel, black. Layers are applied in ascending z, ties in scene order, each at its `(x, y)`, clipped to the panel. For a
-layer pixel with channels `s` and alpha `pa`, and the placement's `opacity` (0 to 255),
+by height, RGB, 8 bits a channel, black. Layers are applied in ascending z, ties in scene order, each at its `(x, y)`,
+clipped to the panel. For a layer pixel with channels `s` and alpha `pa`, and the placement's `opacity` (0 to 255),
 `a = (pa * opacity + 127) / 255`, and each channel becomes
 `(s * a + d * (255 - a) + 127) / 255`, where `d` is the frame's value under it.
 
