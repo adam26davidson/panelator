@@ -98,7 +98,7 @@ what it must say.
   or a string that is not well-formed Unicode (an unpaired surrogate), is
   not a config, and a host refuses its scene, naming the placement. Given
   the document, then it gives these examples, which are four of AC-9's
-  vectors:
+  vectors (the third is the short number row of AC-9's table):
 
   ```
   { "text": "panelator 60 Hz" }       {"text":"panelator 60 Hz"}      26 bytes
@@ -168,6 +168,14 @@ what it must say.
     `deny.toml`'s allow-list) as its one new dependency, or lay the digits
     out itself from Rust's shortest round-trip form (`{:e}` of an `f64`).
     Either way `deny.toml` is not changed and `sdk/rust/check.sh` passes.
+  - The reading side is correctly rounded too: AC-1 fixes a number as the
+    double nearest to its text, and serde_json's default number parse is
+    not (it rounds the significand to a double and then multiplies by a
+    power of ten, two roundings; `9.999999999999997e+22` reads one unit in
+    the last place low). The host's `Cargo.toml` therefore enables
+    serde_json's `float_roundtrip` feature (no new crate, nothing for
+    `deny.toml`), and AC-7's vector test, which holds the RFC 8785
+    appendix B samples as the RFC's own decimal text, fails without it.
 - AC-7. **The host's tests.** Host tests, with modules written in WAT as
   the existing ones are, cover every row below on a module of one page
   (65536 bytes) with the config `{"a":1}` and no assets; `c` is any colour.
@@ -261,12 +269,16 @@ what it must say.
   | `{"b":{"z":[3,{"y":1,"x":2}],"a":null},"a":true}` | `{"a":true,"b":{"a":null,"z":[3,{"x":2,"y":1}]}}` |
   | `{"10":1,"9":2,"b":3,"B":4,"":5}` | `{"":5,"10":1,"9":2,"B":4,"b":3}` |
   | `{"a":1,"a":2}` | `{"a":2}` |
+  | `{"n":[1.0,1e2,-0,0.5,1e21]}` | `{"n":[1,100,0,0.5,1e+21]}` |
   | `{"n":[1.0,1e2,-0,0.5,1e21,1e-7,0.000001,9007199254740993,123456789012345680000,4.5e-3,-12]}` | `{"n":[1,100,0,0.5,1e+21,1e-7,0.000001,9007199254740992,123456789012345680000,0.0045,-12]}` |
   | `{"s":"aA\"\\\/\b\f\n\r\t\u0001\u001f\u007fé€😀"}` | `{"s":"aA\"\\/\b\f\n\r\t\u0001\u001f` then U+007F, U+00E9, U+20AC and U+1F600 as themselves in UTF-8, then `"}` (47 bytes) |
   | the sorting example of RFC 8785 section 3.2.3: an object whose names are, in this order, `€`, `\r`, `דּ`, `1`, `😀`, `\u0080`, `ö`, with the values 1 to 7 | the members in the order `\r`, `1`, U+0080, U+00F6, U+20AC, U+1F600, U+FB33 (values 2, 4, 6, 7, 1, 5, 3): U+1F600 comes before U+FB33 because its first UTF-16 unit is D83D; only `\r` is written as an escape (53 bytes) |
 
   and the number samples of RFC 8785 appendix B that are finite, each as a
-  one-member config. `rejected` holds at least `{"a":"\ud800"}` (an
+  one-member config, written with the RFC's own decimal text as the input
+  (for example `{"n":9.999999999999997e+22}`, not a respelling that a
+  two-rounding parser also reads right), so that a host whose parse is not
+  correctly rounded fails them. `rejected` holds at least `{"a":"\ud800"}` (an
   unpaired surrogate) and `{"a":1e400}` (outside a double's range). The
   canonical forms above were computed with Node's `JSON.stringify` over
   sorted names; where a value written in the file differs from what the
@@ -349,7 +361,8 @@ Changed:
 - `sdk/rust/test-host/src/scene.rs` (the config's bytes, the config's
   refusal), `sdk/rust/test-host/src/host.rs` (`config_read`),
   `sdk/rust/test-host/src/lib.rs`, `sdk/rust/test-host/tests/imports.rs`,
-  `sdk/rust/test-host/tests/scene.rs`; `sdk/rust/test-host/Cargo.toml` and
+  `sdk/rust/test-host/tests/scene.rs`; `sdk/rust/test-host/Cargo.toml`
+  (serde_json's `float_roundtrip` feature, and `ryu-js` if it is added) and
   `Cargo.lock` only if `ryu-js` is added (AC-6).
 - `sdk/conformance/README.md` (AC-10).
 - In the engine (AC-8's first case): `web/simulator/src/scene.ts`,
