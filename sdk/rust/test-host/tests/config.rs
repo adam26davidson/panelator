@@ -98,3 +98,30 @@ fn a_config_that_is_not_a_config_fails_the_scene_naming_the_placement() {
     }
     assert!(parse(r#"{"a":1,"a":2}"#).is_ok());
 }
+
+#[test]
+fn the_document_gives_the_four_examples_of_the_vectors() {
+    let doc = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../docs/widget-abi.md"),
+    )
+    .expect("docs/widget-abi.md");
+    let v = vectors();
+    let cases = v["cases"].as_array().unwrap();
+    for (name, bytes) in [
+        ("scene text with spaces", 26),
+        ("two keys out of order", 13),
+        ("short number forms", 25),
+        ("repeated name keeps the last", 7),
+    ] {
+        let c = cases.iter().find(|c| c["name"] == name).expect(name);
+        let (config, canon) = (text(c, "config"), text(c, "canonical"));
+        assert_eq!(canon.len(), bytes, "{name}");
+        let line = format!("{config:<35} {canon:<31} {bytes:>2} bytes");
+        let line = line.replace("  bytes", " bytes");
+        assert!(
+            doc.lines()
+                .any(|l| l.split_whitespace().eq(line.split_whitespace())),
+            "the document lacks the example line for {name}: {line}"
+        );
+    }
+}

@@ -85,12 +85,21 @@ module's memory.
 | `panelator` | `time_utc_offset_s` | | `i32` | the timezone's offset east of UTC in seconds |
 | `panelator` | `random_u32` | | `i32` | 32 random bits |
 
-A string or buffer argument of any import that does not lie inside the module's memory is a
-trap: the call does not return and the placement's run ends in an error.
+A string or buffer argument is a pointer `ptr` and a count `n` of bytes. `ptr` is read as an
+unsigned 32-bit number. The range lies inside the module's memory when `n >= 0` and
+`ptr + n <= size`, the sum taken without wrapping and `size` being the memory's length in bytes at
+the time of the call (so after any `memory.grow` before it). Any other range is a trap: the call
+does not return and the placement's run ends in an error. So a negative `len` or `name_len`
+(`draw_text`, `text_width`, `draw_image`) is a trap; an empty range (`n == 0`) lies inside the
+memory when `ptr <= size` and is a trap when `ptr > size`, which is WebAssembly's own rule for
+`memory.copy` and `memory.fill`; and the check comes before everything else the import does, so a
+call whose range is outside the memory traps whatever its other arguments are (an unknown font, a
+missing asset, a frame that does not exist) and draws nothing.
 
 ## The layer and the drawing rules
 
-Each placement owns a layer of its own width and height: one RGBA pixel of 8 bits a channel per
+Each placement owns a layer of its own width and height, each 1 to 4096 (the range of `pn_width`
+and `pn_height`): one RGBA pixel of 8 bits a channel per
 LED, every pixel `0x00000000` when the placement starts. Nothing but the placement's own calls
 changes it, and it keeps its content between calls (retained layers, product spec 3.2).
 
@@ -181,10 +190,32 @@ never holds the image bytes: the board only blits (product spec 5.3).
 ## Config
 
 A placement's config is one JSON document in UTF-8 whose top level is an object; a placement with
-no config has `{}`. `config_len` returns its length in bytes; `config_read(ptr, cap)` copies its
-first `min(cap, length)` bytes to `ptr` and returns that count (a negative `cap` copies nothing and
-returns 0). The buffer is `[ptr, ptr + cap)` for a non-negative `cap`, and all of it must lie
-inside the module's memory, not only the bytes copied, else the call traps. The document does not change during a placement's life in 0.1.
+no config has `{}`. The bytes `config_len` counts and `config_read` copies are the config in the
+canonical form of RFC 8785: no whitespace; the members of every object in ascending order of their
+names compared as sequences of UTF-16 code units; a string written with only `"`, `\` and U+0000
+to U+001F escaped (`\"`, `\\`, the short forms `\b`, `\t`, `\n`, `\f`, `\r`, and `\u00xx` in
+lowercase hex for the rest) and every other character as itself in UTF-8; a number written as
+ECMAScript writes the IEEE 754 double nearest to it (the shortest digits that give the same double
+back: `1.0` and `1e2` are `1` and `100`, `-0` is `0`, `1e21` is `1e+21`). The bytes therefore do
+not depend on how the config was written in a scene file or stored, nor on the order in which a
+host's map holds the members. Where a config's text repeats a member name within one object, the
+last member is the one that counts. A config that holds a number outside the range of a double,
+or a string that is not well-formed Unicode (an unpaired surrogate), is not a config, and a host
+refuses its scene, naming the placement. For example:
+
+```
+{ "text": "panelator 60 Hz" }       {"text":"panelator 60 Hz"}      26 bytes
+{"b":1,"a":2}                       {"a":2,"b":1}                   13 bytes
+{"n":[1.0,1e2,-0,0.5,1e21]}         {"n":[1,100,0,0.5,1e+21]}       25 bytes
+{"a":1,"a":2}                       {"a":2}                          7 bytes
+```
+
+`config_read(ptr, cap)` copies the first `min(cap, length)` bytes of those bytes to `ptr` and
+returns that count. For `cap >= 0` the buffer is the range `ptr`, `cap` of "Imports" and all of it
+must lie inside the module's memory, not only the bytes copied, so `cap == 0` with `ptr > size` is
+a trap. A negative `cap` names no buffer: the call copies nothing, returns 0 and does not trap,
+whatever `ptr` is. The document does not change during a placement's life in 0.1. The choice of
+this form is in [ADR 0018](decisions/0018-widget-abi-config-bytes-and-memory-ranges.md).
 
 ## Time, timezone and random
 
@@ -203,8 +234,8 @@ still sees the true tick. With `hz == 0` the only update of version 0.1 is the o
 Within a tick, due placements are updated in ascending z, ties by their order in the scene; all
 updates of a tick come before its composition.
 
-**Composition.** The frame is the panel's width by height, RGB, 8 bits a channel, black. Layers are
-applied in ascending z, ties in scene order, each at its `(x, y)`, clipped to the panel. For a
+**Composition.** The panel's width and height are each 1 to 16384. The frame is the panel's width
+by height, RGB, 8 bits a channel, black. Layers are applied in ascending z, ties in scene order, each at its `(x, y)`, clipped to the panel. For a
 layer pixel with channels `s` and alpha `pa`, and the placement's `opacity` (0 to 255),
 `a = (pa * opacity + 127) / 255`, and each channel becomes
 `(s * a + d * (255 - a) + 127) / 255`, where `d` is the frame's value under it.
@@ -221,7 +252,11 @@ host uses them. A scene is a JSON file with: `abi` (`"0.1"`); `panel` (`width`, 
 `name`, `file` relative to `sdk/conformance/assets/`, `width`, `height`, `frames`; the file's length
 is their product times 3); and `placements`, each with `module` (a spike module's name), `x`, `y`,
 `width`, `height`, `z`, `opacity`, `config` (a JSON object) and `seed` (a non-zero 32-bit number).
-A host rejects a scene with an unknown or missing field, naming it.
+A host rejects a scene with an unknown or missing field, naming it, and a scene whose `panel`, or
+whose placement's `width` or `height`, is outside the ranges above (the panel's 1 to 16384, a
+layer's 1 to 4096), naming the field. A placement's `config` is served in the canonical form of
+"Config"; `sdk/conformance/config/vectors.json` holds configs with their canonical bytes and
+configs a host refuses.
 
 Running a scene: every placement is loaded, given a layer of its `width` by `height`, and `pn_init`
 is called in scene order; then for each tick from 0 to the last captured one, the due updates run
