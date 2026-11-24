@@ -2,6 +2,7 @@
 
 mod common;
 
+use std::fmt::Write;
 use std::path::Path;
 
 use common::Wat;
@@ -66,7 +67,8 @@ fn a_module_reads_the_canonical_bytes_of_the_scene_files_config() {
          (drop (call $read (i32.const 100) (i32.const 13)))",
     );
     for i in 0..13 {
-        init += &format!(
+        let _ = write!(
+            init,
             "(call $px (i32.const {}) (i32.const 0) (i32.or (i32.shl (i32.load8_u (i32.const {})) (i32.const 24)) (i32.const 255)))",
             i + 1,
             100 + i
