@@ -14,6 +14,7 @@ import { useEffect, useRef } from "react";
 import { ErrorPage } from "@/pages/error";
 import { HomePage } from "@/pages/home";
 import { NotFoundPage } from "@/pages/not-found";
+import { SimulatorPage } from "@/pages/simulator";
 import { Frame } from "@/shared/ui";
 
 // Routers that have shown a screen after their first load: only then does focus move to the new screen's heading.
@@ -60,18 +61,26 @@ function makeHome(root: ReturnType<typeof makeRoot>) {
   return createRoute({ getParentRoute: () => root, path: "/", component: HomePage });
 }
 
+function makeSimulator(root: ReturnType<typeof makeRoot>) {
+  return createRoute({ getParentRoute: () => root, path: "/simulator", component: SimulatorPage });
+}
+
 const DEFAULTS = { defaultErrorComponent: RouteError, defaultNotFoundComponent: NotFoundPage };
 
 /** The app's router on `history`. A test passes a memory history; the browser passes its own. */
 export function createAppRouter(history: RouterHistory) {
   const root = makeRoot();
-  return createRouter({ routeTree: root.addChildren([makeHome(root)]), history, ...DEFAULTS });
+  return createRouter({ routeTree: root.addChildren([makeHome(root), makeSimulator(root)]), history, ...DEFAULTS });
 }
 
 /** The same router with more routes under the root, for tests that need a route that fails. */
 export function createAppRouterWith(history: RouterHistory, more: (root: ReturnType<typeof makeRoot>) => AnyRoute[]) {
   const root = makeRoot();
-  return createRouter({ routeTree: root.addChildren([makeHome(root), ...more(root)]), history, ...DEFAULTS });
+  return createRouter({
+    routeTree: root.addChildren([makeHome(root), makeSimulator(root), ...more(root)]),
+    history,
+    ...DEFAULTS,
+  });
 }
 
 declare module "@tanstack/react-router" {

@@ -40,9 +40,14 @@ describe("Home", () => {
         .map((t) => t.textContent),
     ).toEqual(["The panel", "The web app", "Open source"]);
     expect(within(main).getByText("Under construction.")).toBeTruthy();
-    expect(within(main).queryAllByRole("link")).toHaveLength(0);
+    expect(
+      within(main)
+        .getAllByRole("link")
+        .map((l) => l.getAttribute("href")),
+    ).toEqual(["/simulator"]);
+    expect(within(main).getByRole("link", { name: "Open the simulator" })).toBeTruthy();
     expect(within(main).queryAllByRole("button")).toHaveLength(0);
-    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(screen.getAllByRole("link")).toHaveLength(2);
     await waitFor(() => expect(document.title).toBe("panelator"));
   });
 
@@ -50,6 +55,19 @@ describe("Home", () => {
     await renderApp(createAppRouter, "/");
     await screen.findByRole("banner");
     expect(document.activeElement).toBe(document.body);
+  });
+});
+
+describe("Simulator", () => {
+  it("is reached from Home by the router, with the title and focus on the heading", async () => {
+    vi.stubGlobal("fetch", () => new Promise(() => undefined));
+    const { router } = await renderApp(createAppRouter, "/");
+    await userEvent.click(await screen.findByRole("link", { name: "Open the simulator" }));
+    const h1 = await screen.findByRole("heading", { level: 1, name: "Simulator" });
+    await waitFor(() => expect(document.activeElement).toBe(h1));
+    expect(router.state.location.pathname).toBe("/simulator");
+    await waitFor(() => expect(document.title).toBe("Simulator · panelator"));
+    vi.unstubAllGlobals();
   });
 });
 
