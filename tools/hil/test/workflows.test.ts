@@ -39,12 +39,22 @@ describe("ci.yml (AC-7)", () => {
     expect(ci.jobs.test.permissions).toBeUndefined();
     expect(ci.permissions).toBeUndefined();
     const runs = steps.map((s) => s.run ?? s.uses);
-    expect(runs.slice(0, 7)).toEqual([
-      "actions/checkout@v4", "pnpm/action-setup@v4", "actions/setup-node@v4", "pnpm install --frozen-lockfile",
-      "pnpm -F @panelator/design-stage exec playwright-core install --with-deps chromium", "pnpm test",
-      "pnpm -F @panelator/scheduler typecheck",
+    expect(runs.slice(0, 6)).toEqual([
+      "actions/checkout@v4",
+      "pnpm/action-setup@v4",
+      "actions/setup-node@v4",
+      "pnpm install --frozen-lockfile",
+      "pnpm -F @panelator/design-stage exec playwright-core install --with-deps chromium",
+      "rustup toolchain install",
     ]);
-    expect(runs[7]).toBe("pnpm -F @panelator/design-stage lint");
+    // spec 115 AC-18: the Cargo cache that restores target/ comes before pnpm test, which builds the modules
+    expect(String(runs[6])).toMatch(/^actions\/cache@/);
+    expect(JSON.stringify(steps[6].with.path)).toContain("target");
+    expect(runs.slice(7, 10)).toEqual([
+      "pnpm test",
+      "pnpm -F @panelator/scheduler typecheck",
+      "pnpm -F @panelator/design-stage lint",
+    ]);
     expect(read("agents/scheduler.yaml")).toMatch(/required_checks:\s*\n?\s*-?\s*\[?\s*"?test"?\s*\]?/);
   });
   it("installs the clang tools, runs the host checks always, and builds only when firmware or workflows changed", () => {
