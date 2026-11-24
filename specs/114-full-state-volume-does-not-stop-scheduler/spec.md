@@ -101,6 +101,9 @@ health agent's (spec 064 AC-5), not this spec's.
 3. **The notice goes out first and each part stands alone** (AC-4, AC-5). The
    Telegram message is sent before anything is written; the finding, the
    `infra_alarm` and the saved state are each tried again until they land.
+   A message that could be neither sent nor queued is reported as not
+   delivered and sent again on the next paused tick; the record of one that
+   was sent (its `maintainer.contact` event) waits in memory for room.
 4. **A start on a full state volume waits** (AC-6, AC-7), with one Telegram
    message, and leaves a log record and a finding once it can write.
 5. **`withStateLock` cleans up a lock it could not write** (AC-8).
@@ -219,6 +222,11 @@ is an error for which `transientCause` returns `ENOSPC` (spec 059 AC-1).
   each paused tick and on the tick that resumes until it succeeds; a part
   that succeeded is not repeated (the monitor keeps which parts are done in
   memory; `notified` in `host.json` means the notification part is done).
+  The notification part is done when `notify` resolves (`telegram`, `queued`
+  or `suppressed`); a notification that was neither sent nor queued rejects
+  with a space failure (AC-5, "Not delivered"), so the part is not done,
+  `notified` stays false and the send is tried again on the next paused
+  tick.
   Given a part that rejects with any other error, then it is logged as an
   `error` and not retried, and the later parts are attempted. The finding's
   `timestamp` is the time the notice became due, not the time it was
@@ -226,7 +234,9 @@ is an error for which `transientCause` returns `ENOSPC` (spec 059 AC-1).
   notification first, then the `disk-sweep-alarm` line, the finding and the
   `infra_alarm`; `episode: { since, alarmed: true }` is held in the process's
   memory when `disk-sweep.json` cannot be written, so each part happens once
-  per episode. When the full volume is the state volume, a paused tick's volume sweep
+  per episode, and a part that rejected with a space failure (the
+  notification not delivered, AC-5, included) is attempted again by each
+  later sweep of that episode until it succeeds. When the full volume is the state volume, a paused tick's volume sweep
   (spec 100 AC-3) reaches that alarm too, and the maintainer gets both
   messages, one per label: the host notice (label `host`) and the sweep's
   alarm (label `disk_full`); the rate limiter suppresses neither, as their
@@ -235,18 +245,67 @@ is an error for which `transientCause` returns `ENOSPC` (spec 059 AC-1).
   failing, one paused tick sends exactly one notification of label `host` (gate `infra`) and appends nothing;
   ten more such ticks send nothing more of that label; the first tick whose writes work
   appends exactly one finding (`stops_pipeline: true`, `timestamp` the due
-  time) and emits exactly one `infra_alarm` of kind `disk_full`.
-- AC-5. **A sent message is a delivered notification.** Given
-  `TelegramNotifier.notify` whose send to the chat succeeded, when the write
-  that records it (the inner notifier's `notify` line, the alert ids, the
-  rate limiter's sent map) rejects, then `notify` resolves `{ channel:
-  "telegram" }` and the failure is logged as `{ kind: "error", error: "notify
-  record: <message>" }`. Given no channel or a failed send, when the outbox
-  cannot be written, then `notify` resolves `{ channel: "log" }` as spec 102
-  says today, and does not reject when the inner notifier's write fails
-  either. The rate limiter's in-memory map still suppresses a repeat within
-  its window. Test: a notifier whose every file write throws `ENOSPC` sends
-  once, resolves, and suppresses the second call.
+  time) and emits exactly one `infra_alarm` of kind `disk_full`; and, with every
+  state write failing and a Telegram channel whose `sendReply` throws on the
+  first paused tick only (the chain of AC-5), that tick delivers nothing and
+  the next paused tick delivers exactly one message of label `host` and one
+  of label `disk_full`, with no more on the ticks after it.
+- AC-5. **A sent message is a delivered notification; one neither sent nor
+  queued is not, and is tried again.** The chain is the one the bin builds,
+  `rateLimited(recordedNotifier(TelegramNotifier(new LogNotifier(...))))`,
+  which moves unchanged into `notifierChain(deps)` of
+  `tools/scheduler/src/notify/chain.ts` so that the bin and the tests build
+  the same one. A notification ends in one of three ways.
+  - **Sent.** Given `TelegramNotifier.notify` whose send to the chat
+    succeeded, then the chain's `notify` resolves `{ channel: "telegram" }`
+    whatever happens to the four writes that record the send, none of which
+    rejects it: the alert ids (a failed write of them is ignored, as today); the inner
+    `LogNotifier`'s `notify` line (`TelegramNotifier` catches its rejection
+    and writes the line's record through `deps.log`, the service log, which
+    AC-1 keeps); the rate limiter's sent map (kept in memory, as today); and
+    `recordedNotifier`'s `maintainer.contact` event (spec 026 AC-2). Given
+    that event's `record` rejects with a space failure, then
+    `recordedNotifier` keeps the event in memory with the time and channel of
+    the send (at most `CONTACTS_KEPT`, 100; one more drops the oldest), and
+    writes the kept events, oldest first and each with its own time, before
+    the next event it records and on every `flush()` (the loop calls it once
+    per tick, paused ticks included, spec 102 AC-3); a write that fails
+    leaves them kept and rejects nothing. Given `record` rejects with any
+    other error, the event is dropped. Either failure is logged once as `{
+    kind: "error", error: "notify record: <message>" }` through the optional
+    `log` that `recordedNotifier` now takes. The rate limiter's in-memory
+    map suppresses a repeat within its window.
+  - **Queued.** Given no channel or a failed send, and the outbox write
+    succeeds, then `{ channel: "queued" }` as spec 102 AC-2 says; the same
+    rules hold for the inner line and the contact event.
+  - **Not delivered.** Given no channel or a failed send, when the outbox
+    write rejects with a space failure, then nothing holds the notice, and
+    `TelegramNotifier.notify` rejects with that write's error (today it
+    resolves `{ channel: "log" }`; it still does for an outbox failure that
+    is not a space failure). It logs `{ kind: "error", error: "notify
+    undelivered: <identity>: <message>" }` once per identity until a `notify`
+    for that identity resolves. `recordedNotifier` passes the rejection on
+    and records no contact. `rateLimited`, given the inner `notify` rejects
+    with any error, puts the identity's entry in its map back to what it was
+    before the call (removed when there was none), saves the map as it does
+    today and rejects with the same error: an identity that was not
+    delivered is not held, so the next call for it is sent. The caller sees
+    a space failure. The host monitor and the sweep's alarm (AC-4) treat it
+    as their notification part not done and try again on the next paused
+    tick, so the notice reaches the maintainer on the first tick whose send
+    works, without any write. Any other caller's tick step fails with a
+    space failure, which pauses the scheduler as spec 100 AC-2 says.
+
+  Tests, each on `notifierChain` with every write under the state root
+  throwing `ENOSPC`: a channel that accepts sends once, the call resolves `{
+  channel: "telegram" }`, a second call resolves `{ channel: "suppressed" }`,
+  and once writes work the next `flush()` appends exactly one
+  `maintainer.contact` event with channel `telegram` and the time of the
+  send; a channel whose `sendReply` throws once makes the first call reject
+  with a space failure and the second call, inside the window, send and
+  resolve `{ channel: "telegram" }` (one message delivered, one contact
+  event after the volume has room); the same with `telegram()` returning
+  null on the first call.
 - AC-6. **A start on a full state volume waits before its first write.** In
   the service path of `bin/scheduler.ts` (no subcommand; `--check-auth`
   excluded), after the configuration and the registry are loaded and the
@@ -355,12 +414,22 @@ is an error for which `transientCause` returns `ENOSPC` (spec 059 AC-1).
   `initializeAgents`, with the paused return (AC-2); `SchedulerDeps.freeSpace` is the reader, as for the sweep.
 - `tools/scheduler/src/service/sweep.ts`: the alarm's order and its
   in-memory episode (AC-4).
-- `tools/scheduler/src/notify/telegram.ts`,
-  `tools/scheduler/src/notify/rate-limit.ts`,
-  `tools/scheduler/src/notify/log.ts`: a recorded-after-send failure does not reject (AC-5).
+- `tools/scheduler/src/notify/telegram.ts`: a failed write after a send does
+  not reject; a notice neither sent nor queued on a space failure rejects
+  (AC-5).
+- `tools/scheduler/src/notify/recorded.ts`: `recordedNotifier(inner, paths,
+  clock, log?)` keeps a `maintainer.contact` event it could not write and
+  writes it later; `CONTACTS_KEPT` (AC-5).
+- `tools/scheduler/src/notify/rate-limit.ts`: an identity whose inner
+  `notify` rejected is not held (AC-5).
+- `tools/scheduler/src/notify/log.ts`: as AC-5 needs; its rejection is
+  caught by `TelegramNotifier`.
+- `tools/scheduler/src/notify/chain.ts` (new): `notifierChain(deps)`, the
+  chain `bin/scheduler.ts` builds today, moved unchanged (AC-5).
 - `tools/scheduler/src/service/start-gate.ts` (new): `waitForStateSpace`
   (AC-6).
-- `tools/scheduler/bin/scheduler.ts`: the gate, the `start-waited` record and
+- `tools/scheduler/bin/scheduler.ts`: the notifier built with
+  `notifierChain` (AC-5); the gate, the `start-waited` record and
   finding, exit 75 on a space failure during start, the `unhandledRejection`
   handler (AC-6, AC-7).
 - `tools/scheduler/src/parameters/store.ts`: `withStateLock` (AC-8).
@@ -374,8 +443,14 @@ is an error for which `transientCause` returns `ENOSPC` (spec 059 AC-1).
   `tools/scheduler/test/start-gate.test.ts` (new, AC-6),
   `tools/scheduler/test/bin.test.ts` (AC-7),
   `tools/scheduler/test/parameters.test.ts` (AC-8),
-  `tools/scheduler/test/loop-1.test.ts` to `tools/scheduler/test/loop-6.test.ts`
-  (AC-1, AC-2, AC-9), and `tools/scheduler/test/helpers/e2e-routes.ts` and
+  `tools/scheduler/test/loop-1.test.ts`,
+  `tools/scheduler/test/loop-2.test.ts`,
+  `tools/scheduler/test/loop-3.test.ts`,
+  `tools/scheduler/test/loop-4.test.ts`,
+  `tools/scheduler/test/loop-5.test.ts` and
+  `tools/scheduler/test/loop-6.test.ts` (AC-1, AC-2, AC-4, AC-9; spec 100's
+  pause and notice tests are in `loop-4`, and any of the six may take a
+  test), and `tools/scheduler/test/helpers/e2e-routes.ts` and
   `tools/scheduler/test/helpers/loop-harness.ts` (the AC-9 world whose every
   write under the state root throws `ENOSPC`).
 - New outbound call: the start gate (AC-6) sends one `sendMessage` to the
