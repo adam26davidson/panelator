@@ -154,6 +154,7 @@ spike's result can move all of it.
   class: class:product
 - `specs/112-web-app-skeleton/spec.md` (issue #434)
 - `specs/115-simulator-engine/spec.md` (issue #435)
+- `specs/116-widget-abi-host-rules/spec.md` (issue #522; a correction to the ABI document of spec 107 and to its two hosts, no new part of this design)
 - planned: runtime-spike-measurement
   title: Runtime spike: measure interpreter and AOT on the board, record the numbers and the execution mode
   brief: Milestone 1's result (product spec 3.1, 12.1; design-tree R2.Q8). A HIL job runs the three spike

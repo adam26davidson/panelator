@@ -199,7 +199,7 @@ are spec 112's.
   glyph and a malformed byte draw nothing and advance by the font's
   bounding-box width; an unknown font id draws nothing and returns -1,
   from `font_height` too.
-- AC-6. **Images, config, time, random, traps.** `draw_image` follows the
+- AC-6. Amended by [116-widget-abi-host-rules](../116-widget-abi-host-rules/spec.md) AC-1: the config is served in its canonical form by RFC 8785, not as `JSON.stringify`'s bytes, and a config that is not JSON data is refused. **Images, config, time, random, traps.** `draw_image` follows the
   document's "Assets": the name is compared as bytes with the names of the
   assets the scene was given; it returns -1 for no such asset and -2 for a
   frame that does not exist, drawing nothing; drawn pixels have alpha 255.
@@ -212,7 +212,7 @@ are spec 112's.
   replaces the buffer. A string or buffer argument outside the memory is a
   trap: the import throws, the export call does not return, and the run
   ends (AC-7).
-- AC-7. **A scene: stepping and composition.** `createScene` takes a panel
+- AC-7. Amended by [116-widget-abi-host-rules](../116-widget-abi-host-rules/spec.md) AC-4: a panel is 1 to 16384 a side and a placement 1 to 4096, and `createScene` and `readScene` refuse a scene outside them. **A scene: stepping and composition.** `createScene` takes a panel
   (`width`, `height`, each any positive integer), the two fonts, the
   assets (name, width, height, frame count, bytes; the length must be
   their product times 3), the placements (a loaded module, `x`, `y`,
@@ -301,7 +301,7 @@ are spec 112's.
   nothing listens on a fixed port (spec 112 AC-15). How the built source
   reaches the page (Vite's build API into Playwright's output directory
   and `page.route`, or an equivalent) is the implementation's.
-- AC-13. **Unit tests of the host.** Beside the code, in the Node
+- AC-13. Amended by [116-widget-abi-host-rules](../116-widget-abi-host-rules/spec.md) AC-8: the tests of the memory ranges, the bounds and the config vectors listed there are added. **Unit tests of the host.** Beside the code, in the Node
   environment, with small modules assembled as bytes by a test helper (no
   WAT toolchain is added). They cover:
   - each load failure of AC-3, by name, and the two growth cases;

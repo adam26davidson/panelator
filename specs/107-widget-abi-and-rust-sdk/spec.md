@@ -223,13 +223,13 @@ text for the other hosts and this section is what the document must say.
   5.3: the board only blits). Host tests cover a blit inside, across each
   edge and wholly outside the layer, the second frame of a two-frame asset,
   and both errors.
-- AC-9. **Read config.** A placement's config is one JSON document in UTF-8
+- AC-9. Amended by [116-widget-abi-host-rules](../116-widget-abi-host-rules/spec.md) AC-1: the config's bytes are its canonical form by RFC 8785. **Read config.** A placement's config is one JSON document in UTF-8
   whose top level is an object; a placement with no config has `{}`.
   `config_len() -> i32` returns its length in bytes; `config_read(ptr, cap)
   -> i32` copies its first `min(cap, length)` bytes to `ptr` and returns
   that count. The document does not change during a placement's life in
   version 0.1.
-- AC-10. **Time, timezone and random.** `time_unix_ms() -> i64` returns the
+- AC-10. Amended by [116-widget-abi-host-rules](../116-widget-abi-host-rules/spec.md) AC-2: a range lies inside the memory when its length is not negative and `ptr + len` is at most the memory's size, so a negative length is a trap and an empty range past the end is one. **Time, timezone and random.** `time_unix_ms() -> i64` returns the
   current time as milliseconds since the Unix epoch, UTC.
   `time_utc_offset_s() -> i32` returns the offset of the board's timezone in
   effect at that time, in seconds east of UTC. `random_u32() -> i32` returns
@@ -241,7 +241,7 @@ text for the other hosts and this section is what the document must say.
 
 **The test host and the conformance material**
 
-- AC-11. **Scenes, stepping and composition.** A scene is a JSON file under
+- AC-11. Amended by [116-widget-abi-host-rules](../116-widget-abi-host-rules/spec.md) AC-4: a panel is 1 to 16384 a side and a placement 1 to 4096, and a host refuses a scene outside them. **Scenes, stepping and composition.** A scene is a JSON file under
   `sdk/conformance/scenes/` with: `abi` (`"0.1"`); `panel` (`width`,
   `height`: any size, product spec 2); `start_unix_ms`; `utc_offset_s`;
   `ticks`, the ascending list of ticks to capture; `assets` (each `name`,
