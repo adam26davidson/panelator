@@ -1,0 +1,184 @@
+{
+ "cases": [
+  {
+   "name": "empty object",
+   "config": "{}",
+   "canonical": "{}"
+  },
+  {
+   "name": "scene text with spaces",
+   "config": "{ \"text\": \"panelator 60 Hz\" }",
+   "canonical": "{\"text\":\"panelator 60 Hz\"}"
+  },
+  {
+   "name": "two keys out of order",
+   "config": "{\"b\":1,\"a\":2}",
+   "canonical": "{\"a\":2,\"b\":1}"
+  },
+  {
+   "name": "nested objects and arrays",
+   "config": "{\"b\":{\"z\":[3,{\"y\":1,\"x\":2}],\"a\":null},\"a\":true}",
+   "canonical": "{\"a\":true,\"b\":{\"a\":null,\"z\":[3,{\"x\":2,\"y\":1}]}}"
+  },
+  {
+   "name": "key order by code unit",
+   "config": "{\"10\":1,\"9\":2,\"b\":3,\"B\":4,\"\":5}",
+   "canonical": "{\"\":5,\"10\":1,\"9\":2,\"B\":4,\"b\":3}"
+  },
+  {
+   "name": "repeated name keeps the last",
+   "config": "{\"a\":1,\"a\":2}",
+   "canonical": "{\"a\":2}"
+  },
+  {
+   "name": "short number forms",
+   "config": "{\"n\":[1.0,1e2,-0,0.5,1e21]}",
+   "canonical": "{\"n\":[1,100,0,0.5,1e+21]}"
+  },
+  {
+   "name": "number forms",
+   "config": "{\"n\":[1.0,1e2,-0,0.5,1e21,1e-7,0.000001,9007199254740993,123456789012345680000,4.5e-3,-12]}",
+   "canonical": "{\"n\":[1,100,0,0.5,1e+21,1e-7,0.000001,9007199254740992,123456789012345680000,0.0045,-12]}"
+  },
+  {
+   "name": "string escapes",
+   "config": "{\"s\":\"aA\\\"\\\\\\/\\b\\f\\n\\r\\t\\u0001\\u001f\\u007fé€😀\"}",
+   "canonical": "{\"s\":\"aA\\\"\\\\/\\b\\f\\n\\r\\t\\u0001\\u001fé€😀\"}"
+  },
+  {
+   "name": "RFC 8785 sorting example",
+   "config": "{\"€\":1,\"\\r\":2,\"דּ\":3,\"1\":4,\"😀\":5,\"\":6,\"ö\":7}",
+   "canonical": "{\"\\r\":2,\"1\":4,\"\":6,\"ö\":7,\"€\":1,\"😀\":5,\"דּ\":3}"
+  },
+  {
+   "name": "RFC 8785 appendix B 0",
+   "config": "{\"n\":0}",
+   "canonical": "{\"n\":0}"
+  },
+  {
+   "name": "RFC 8785 appendix B -0",
+   "config": "{\"n\":-0}",
+   "canonical": "{\"n\":0}"
+  },
+  {
+   "name": "RFC 8785 appendix B 5e-324",
+   "config": "{\"n\":5e-324}",
+   "canonical": "{\"n\":5e-324}"
+  },
+  {
+   "name": "RFC 8785 appendix B -5e-324",
+   "config": "{\"n\":-5e-324}",
+   "canonical": "{\"n\":-5e-324}"
+  },
+  {
+   "name": "RFC 8785 appendix B 1.7976931348623157e+308",
+   "config": "{\"n\":1.7976931348623157e+308}",
+   "canonical": "{\"n\":1.7976931348623157e+308}"
+  },
+  {
+   "name": "RFC 8785 appendix B -1.7976931348623157e+308",
+   "config": "{\"n\":-1.7976931348623157e+308}",
+   "canonical": "{\"n\":-1.7976931348623157e+308}"
+  },
+  {
+   "name": "RFC 8785 appendix B 9007199254740992",
+   "config": "{\"n\":9007199254740992}",
+   "canonical": "{\"n\":9007199254740992}"
+  },
+  {
+   "name": "RFC 8785 appendix B -9007199254740992",
+   "config": "{\"n\":-9007199254740992}",
+   "canonical": "{\"n\":-9007199254740992}"
+  },
+  {
+   "name": "RFC 8785 appendix B 295147905179352830000",
+   "config": "{\"n\":295147905179352830000}",
+   "canonical": "{\"n\":295147905179352830000}"
+  },
+  {
+   "name": "RFC 8785 appendix B 9.999999999999997e+22",
+   "config": "{\"n\":9.999999999999997e+22}",
+   "canonical": "{\"n\":9.999999999999997e+22}"
+  },
+  {
+   "name": "RFC 8785 appendix B 1e+23",
+   "config": "{\"n\":1e+23}",
+   "canonical": "{\"n\":1e+23}"
+  },
+  {
+   "name": "RFC 8785 appendix B 1.0000000000000001e+23",
+   "config": "{\"n\":1.0000000000000001e+23}",
+   "canonical": "{\"n\":1.0000000000000001e+23}"
+  },
+  {
+   "name": "RFC 8785 appendix B 999999999999999700000",
+   "config": "{\"n\":999999999999999700000}",
+   "canonical": "{\"n\":999999999999999700000}"
+  },
+  {
+   "name": "RFC 8785 appendix B 999999999999999900000",
+   "config": "{\"n\":999999999999999900000}",
+   "canonical": "{\"n\":999999999999999900000}"
+  },
+  {
+   "name": "RFC 8785 appendix B 1e+21",
+   "config": "{\"n\":1e+21}",
+   "canonical": "{\"n\":1e+21}"
+  },
+  {
+   "name": "RFC 8785 appendix B 9.999999999999997e-7",
+   "config": "{\"n\":9.999999999999997e-7}",
+   "canonical": "{\"n\":9.999999999999997e-7}"
+  },
+  {
+   "name": "RFC 8785 appendix B 0.000001",
+   "config": "{\"n\":0.000001}",
+   "canonical": "{\"n\":0.000001}"
+  },
+  {
+   "name": "RFC 8785 appendix B 333333333.3333332",
+   "config": "{\"n\":333333333.3333332}",
+   "canonical": "{\"n\":333333333.3333332}"
+  },
+  {
+   "name": "RFC 8785 appendix B 333333333.33333325",
+   "config": "{\"n\":333333333.33333325}",
+   "canonical": "{\"n\":333333333.33333325}"
+  },
+  {
+   "name": "RFC 8785 appendix B 333333333.3333333",
+   "config": "{\"n\":333333333.3333333}",
+   "canonical": "{\"n\":333333333.3333333}"
+  },
+  {
+   "name": "RFC 8785 appendix B 333333333.3333334",
+   "config": "{\"n\":333333333.3333334}",
+   "canonical": "{\"n\":333333333.3333334}"
+  },
+  {
+   "name": "RFC 8785 appendix B 333333333.33333343",
+   "config": "{\"n\":333333333.33333343}",
+   "canonical": "{\"n\":333333333.33333343}"
+  },
+  {
+   "name": "RFC 8785 appendix B -0.0000033333333333333333",
+   "config": "{\"n\":-0.0000033333333333333333}",
+   "canonical": "{\"n\":-0.0000033333333333333333}"
+  },
+  {
+   "name": "RFC 8785 appendix B 1424953923781206.2",
+   "config": "{\"n\":1424953923781206.2}",
+   "canonical": "{\"n\":1424953923781206.2}"
+  }
+ ],
+ "rejected": [
+  {
+   "name": "unpaired surrogate",
+   "config": "{\"a\":\"\\ud800\"}"
+  },
+  {
+   "name": "number outside a double",
+   "config": "{\"a\":1e400}"
+  }
+ ]
+}
