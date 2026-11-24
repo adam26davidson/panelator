@@ -191,3 +191,125 @@ describe("HostMonitor", () => {
     expect(m.paused).toBeNull();
   });
 });
+
+describe("a state volume that takes no writes (spec 114 AC-2 to AC-4)", () => {
+  const HOUR = 3600_000;
+  const spaceErr = () => Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" });
+  async function world(opts: { notify?: (n: unknown) => Promise<unknown> } = {}) {
+    const { installEnospc } = await import("./helpers/enospc-fs.mjs");
+    const clock = { t: Date.parse("2026-11-22T23:00:00Z") };
+    const log: Record<string, unknown>[] = [];
+    const notes: unknown[] = [];
+    const events: [string, Record<string, unknown>][] = [];
+    const paths = statePaths(root);
+    const m = new HostMonitor({
+      paths, now: () => new Date(clock.t), write: (r) => log.push(r),
+      notifier: { notify: async (n) => { if (opts.notify) await opts.notify(n); notes.push(n); return { channel: "telegram" as const }; } },
+      emitEvent: async (e, p) => { await writeHostStateProbe(); events.push([e, p as Record<string, unknown>]); }, probe: async () => null,
+    });
+    const sw = installEnospc(paths.root);
+    // The event emitter of the real loop writes under the state root; here it fails the same way.
+    async function writeHostStateProbe(): Promise<void> { if (sw.on) throw spaceErr(); }
+    return { m, clock, log, notes, events, paths, sw } as { m: HostMonitor; clock: { t: number }; log: Record<string, unknown>[]; notes: unknown[]; events: [string, Record<string, unknown>][]; paths: ReturnType<typeof statePaths>; sw: { on: boolean; restore(): void } };
+  }
+
+  it("pauseFor records the pause and the line with the given error and calls no probe", async () => {
+    const w = await world();
+    w.sw.on = false;
+    await w.m.beginTick();
+    await w.m.pauseFor("ENOSPC", "state volume under the write floor: /x has 3 MiB free and 9 free inodes (floor 64 MiB, 100 inodes)");
+    expect(w.m.paused).toMatchObject({ cause: "ENOSPC", probes: 1, notified: false });
+    expect(w.log).toEqual([{ kind: "host-paused", cause: "ENOSPC", error: expect.stringContaining("under the write floor") }]);
+    await w.m.pauseFor("ENOSPC", "again");
+    expect(w.log).toHaveLength(1);
+    w.sw.restore();
+  });
+
+  it("holds the pause when host.json cannot be saved, logs once, and writes the whole pause after the resume", async () => {
+    const w = await world();
+    await w.m.beginTick();
+    expect(await w.m.onTransient("ENOSPC", "x")).toBe(false); // the probe passes: no pause
+    await w.m.pauseFor("ENOSPC", "full");
+    expect(w.m.paused?.cause).toBe("ENOSPC");
+    for (let i = 0; i < 5; i++) await w.m.markSeen();
+    expect(w.log.filter((r) => String(r.error).startsWith("host state:"))).toHaveLength(1);
+    w.sw.on = false;
+    w.clock.t += 2 * HOUR;
+    // The probe passes (null): the pause ends and the file gets the whole state.
+    expect(await w.m.probeIfDue()).toBe(true);
+    const s = await readHostState(w.paths);
+    expect(s.paused).toBeNull();
+    expect(s.downtime).toHaveLength(1);
+    expect(s.downtime[0]).toMatchObject({ from: "2026-11-22T23:00:00.000Z", reason: "host" });
+    w.sw.restore();
+  });
+
+  it("a save failing with another error rejects", async () => {
+    const w = await world();
+    w.sw.on = false;
+    await w.m.beginTick();
+    w.sw.restore();
+    rmSync(join(root, "host.json"), { force: true });
+    writeFileSync(join(root, "host.json.tmp"), "");
+    const bad = new HostMonitor({ paths: { ...w.paths, host: join(root, "no-such-dir-file", "x", "host.json") }, now: () => new Date(), write: () => {}, notifier: { notify: async () => {} }, probe: async () => null });
+    writeFileSync(join(root, "no-such-dir-file"), "a file, not a directory");
+    await bad.beginTick();
+    await expect(bad.markSeen()).rejects.toThrow();
+  });
+
+  it("the notice sends first and each part stands alone: one message, nothing appended, then one finding and one alarm", async () => {
+    const w = await world();
+    await w.m.beginTick();
+    await w.m.pauseFor("ENOSPC", "full");
+    w.clock.t += 1000;
+    await w.m.noticeIfDue();
+    for (let i = 0; i < 10; i++) { w.clock.t += 1000; await w.m.noticeIfDue(); }
+    expect(w.notes).toHaveLength(1);
+    expect(w.notes[0]).toMatchObject({ label: "host", gate: "infra" });
+    expect(w.m.paused?.notified).toBe(true);
+    const due = "2026-11-22T23:00:01.000Z";
+    w.sw.on = false;
+    w.clock.t += 1000;
+    await w.m.noticeIfDue();
+    await w.m.noticeIfDue();
+    const { readFileSync } = await import("node:fs");
+    const findings = readFileSync(w.paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ finding: { stops_pipeline: true }, timestamp: due });
+    expect(w.events.filter(([e, p]) => e === "infra_alarm" && p.kind === "disk_full")).toHaveLength(1);
+    expect(w.log.filter((r) => r.kind === "host-paused-notice")).toHaveLength(1);
+    w.sw.restore();
+  });
+
+  it("a notification that rejects with a space failure is sent again on the next call and notified stays false between", async () => {
+    let fail = true;
+    const w = await world({ notify: async () => { if (fail) { fail = false; throw spaceErr(); } } });
+    w.sw.on = false;
+    await w.m.beginTick();
+    await w.m.pauseFor("ENOSPC", "full");
+    await w.m.noticeIfDue();
+    expect(w.notes).toHaveLength(0);
+    expect(w.m.paused?.notified).toBe(false);
+    await w.m.noticeIfDue();
+    expect(w.notes).toHaveLength(1);
+    expect(w.m.paused?.notified).toBe(true);
+    w.sw.restore();
+  });
+
+  it("a part failing with another error is logged and not retried while the later parts happen", async () => {
+    const w = await world();
+    w.sw.on = false;
+    writeFileSync(join(root, "blocker"), "x");
+    const broken = { ...w.paths, findingsQueue: join(root, "blocker", "findings.jsonl") };
+    let calls = 0;
+    const m2 = new HostMonitor({ paths: broken, now: () => new Date(w.clock.t), write: (r) => w.log.push(r), notifier: { notify: async () => { calls++; return { channel: "telegram" as const }; } }, emitEvent: async (e) => { w.events.push([e, {}]); }, probe: async () => null });
+    await m2.beginTick();
+    await m2.pauseFor("ENOSPC", "full");
+    await m2.noticeIfDue();
+    await m2.noticeIfDue();
+    expect(calls).toBe(1);
+    expect(w.log.filter((r) => String(r.error).startsWith("host notice finding:"))).toHaveLength(1);
+    expect(w.events.filter(([e]) => e === "infra_alarm")).toHaveLength(1);
+    w.sw.restore();
+  });
+});

@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { checkHostSpace, type FreeSpace } from "../runner/host-space.ts";
+import { checkHostSpace, isSpaceFailure, type FreeSpace } from "../runner/host-space.ts";
 import { DISK_FULL, failureCause, outageBackoffS, transientCause } from "../chain/transient.ts";
 import { validate } from "../schema/validate.ts";
 import { appendFindings } from "../state/findings.ts";
@@ -122,6 +122,10 @@ export interface HostMonitorDeps {
   probe: () => Promise<string | null>;
 }
 
+type NoticePart = "notify" | "log" | "finding" | "alarm" | "save";
+/** Spec 114 AC-4: what the notice of one pause has done, in memory, and the values its texts are built from. */
+interface NoticeState { since: string; due: Date; done: Set<NoticePart>; cause: string; probes: number; lastError: string }
+
 export class HostMonitor {
   #d: HostMonitorDeps;
   #s: HostState | null = null;
@@ -130,6 +134,8 @@ export class HostMonitor {
   #lastError = "unknown";
   #first = true;
   #queue: Promise<unknown> = Promise.resolve();
+  #saveFailed = false;
+  #notice: NoticeState | null = null;
 
   constructor(deps: HostMonitorDeps) {
     this.#d = deps;
@@ -142,11 +148,22 @@ export class HostMonitor {
     }));
   }
 
+  /**
+   * The in-memory state is what the process acts on (spec 114 AC-3): a save that fails for lack of space completes, is
+   * logged once per run of failures, and the next save writes the whole current state.
+   */
   async #save(next: HostState): Promise<void> {
     this.#s = next;
     const p = this.#queue.then(() => writeHostState(this.#d.paths, next));
     this.#queue = p.catch(() => {});
-    await p;
+    try {
+      await p;
+      this.#saveFailed = false;
+    } catch (e) {
+      if (!isSpaceFailure(e)) throw e;
+      if (!this.#saveFailed) this.#d.write({ kind: "error", error: `host state: ${(e as Error).message}` });
+      this.#saveFailed = true;
+    }
   }
 
   /** Loads the state; called by the loop at the start of each tick, so the synchronous readers below see the log. */
@@ -173,13 +190,24 @@ export class HostMonitor {
     // A pause begun by a concurrent caller while the probe ran keeps its own record.
     const cur = await this.#state();
     if (cur.paused) return true;
+    // The cause recorded is the probe's: what the host cannot do, not the label of the one failure that asked.
+    await this.#begin(cur, result, error);
+    return true;
+  }
+
+  /** Spec 114 AC-2: pauses without a probe, for a cause the caller has measured (a state volume under the write floor). */
+  async pauseFor(cause: string, error: string): Promise<void> {
+    const s = await this.#state();
+    if (s.paused) return;
+    await this.#begin(s, cause, error);
+  }
+
+  async #begin(cur: HostState, cause: string, error: string): Promise<void> {
     const now = this.#d.now();
     this.#lastError = error;
-    // The cause recorded is the probe's: what the host cannot do, not the label of the one failure that asked.
-    cause = result;
+    this.#notice = null;
     await this.#save({ ...cur, paused: { since: now.toISOString(), cause, probes: 1, next_probe_at: new Date(now.getTime() + outageBackoffS(1) * 1000).toISOString(), notified: false } });
     this.#d.write({ kind: "host-paused", cause, error });
-    return true;
   }
 
   /** AC-4: re-probes a paused host when due. True when it resumed on this call. */
@@ -199,6 +227,8 @@ export class HostMonitor {
     await this.#save({ ...withDowntime(s, interval, now.getTime()), paused: null });
     this.#memo = { tick: this.#tick, cause: null };
     this.#d.write({ kind: "host-resumed", since: p.since, cause: p.cause, probes: p.probes, paused_ms: now.getTime() - Date.parse(p.since) });
+    // Spec 114 AC-4: the last attempt at the parts of the notice that are still outstanding.
+    await this.#finishNotice(p.since);
     // Spec 102 AC-6: the condition cleared, so the next pause notifies at once; a queued notice stays and is sent marked cleared.
     try {
       await this.#d.notifier.clear?.({ issue: 0, gate: "infra", label: "host" });
@@ -208,25 +238,69 @@ export class HostMonitor {
     return true;
   }
 
-  /** AC-5: the one notice of a long pause. */
+  /**
+   * AC-5 as amended by spec 114 AC-4: the one notice of a long pause. In order: the notification, the log line, the
+   * finding, the `infra_alarm`, the save of `notified`. Each part is tried again on each paused tick after a space
+   * failure until it succeeds; a part that fails otherwise is logged and not retried.
+   */
   async noticeIfDue(): Promise<void> {
     const s = await this.#state();
     const p = s.paused;
-    if (!p || p.notified) return;
+    if (!p) return;
     const now = this.#d.now();
-    const ms = now.getTime() - Date.parse(p.since);
-    if (!(ms >= HOST_NOTICE_MS || p.cause === DISK_FULL)) return;
-    await this.#save({ ...s, paused: { ...p, notified: true } });
-    this.#d.write({ kind: "host-paused-notice", since: p.since, cause: p.cause, probes: p.probes });
-    await appendFindings(this.#d.paths, { issue: 0, stage: "scheduler", run_id: "host-probe", timestamp: now.toISOString() }, [{
-      what: `host outage pauses the scheduler: ${p.cause}`, where: "scheduler host",
-      evidence: `paused since ${p.since}; ${p.probes} probe${p.probes === 1 ? "" : "s"}; last error: ${this.#lastError}`,
-      noticed_how: "scheduler host probe", stops_pipeline: true,
-    }]);
+    let st = this.#notice?.since === p.since ? this.#notice : null;
+    if (!st) {
+      if (p.notified) return;
+      const ms = now.getTime() - Date.parse(p.since);
+      if (!(ms >= HOST_NOTICE_MS || p.cause === DISK_FULL)) return;
+      st = this.#notice = { since: p.since, due: now, done: new Set(), cause: p.cause, probes: p.probes, lastError: this.#lastError };
+    }
+    await this.#runNotice(st, now, false);
+  }
+
+  async #runNotice(st: NoticeState, now: Date, resuming: boolean): Promise<void> {
+    const ms = now.getTime() - Date.parse(st.since);
     const minutes = Math.floor(ms / 60_000);
     const age = minutes >= 120 ? `${Math.floor(minutes / 60)} h` : `${minutes} min`;
-    await this.#d.notifier.notify({ issue: 0, gate: "infra", label: "host", text: `The scheduler is paused: the host cannot work (${p.cause}). It has been paused for ${age} (since ${p.since}) and resumes by itself when the host probe passes. Nothing is counted against any issue meanwhile.` });
-    await this.#d.emitEvent?.("infra_alarm", { kind: p.cause === DISK_FULL ? "disk_full" : "host_outage", since: p.since, probes: p.probes, cause: p.cause });
+    const parts: [NoticePart, () => Promise<void>][] = [
+      ["notify", async () => { await this.#d.notifier.notify({ issue: 0, gate: "infra", label: "host", text: `The scheduler is paused: the host cannot work (${st.cause}). It has been paused for ${age} (since ${st.since}) and resumes by itself when the host probe passes. Nothing is counted against any issue meanwhile.` }); }],
+      ["log", async () => { this.#d.write({ kind: "host-paused-notice", since: st.since, cause: st.cause, probes: st.probes }); }],
+      ["finding", async () => {
+        await appendFindings(this.#d.paths, { issue: 0, stage: "scheduler", run_id: "host-probe", timestamp: st.due.toISOString() }, [{
+          what: `host outage pauses the scheduler: ${st.cause}`, where: "scheduler host",
+          evidence: `paused since ${st.since}; ${st.probes} probe${st.probes === 1 ? "" : "s"}; last error: ${st.lastError}`,
+          noticed_how: "scheduler host probe", stops_pipeline: true,
+        }]);
+      }],
+      ["alarm", async () => { await this.#d.emitEvent?.("infra_alarm", { kind: st.cause === DISK_FULL ? "disk_full" : "host_outage", since: st.since, probes: st.probes, cause: st.cause }); }],
+      ["save", async () => {
+        const cur = await this.#state();
+        if (!resuming && cur.paused?.since === st.since && !cur.paused.notified) await this.#save({ ...cur, paused: { ...cur.paused, notified: true } });
+      }],
+    ];
+    for (const [name, run] of parts) {
+      if (st.done.has(name)) continue;
+      if (name === "save" && !st.done.has("notify")) continue;
+      try {
+        await run();
+        st.done.add(name);
+      } catch (e) {
+        if (isSpaceFailure(e)) {
+          if (resuming) this.#d.write({ kind: "error", error: `host notice ${name}: ${(e as Error).message}` });
+          continue;
+        }
+        this.#d.write({ kind: "error", error: `host notice ${name}: ${(e as Error).message}` });
+        st.done.add(name);
+      }
+    }
+  }
+
+  /** The tick that resumes makes the last attempt at what is outstanding; what still fails is logged and dropped. */
+  async #finishNotice(since: string): Promise<void> {
+    const st = this.#notice;
+    this.#notice = null;
+    if (!st || st.since !== since || st.done.size >= 5) return;
+    await this.#runNotice(st, this.#d.now(), true);
   }
 
   /** AC-6: a sleep the loop detected. */
