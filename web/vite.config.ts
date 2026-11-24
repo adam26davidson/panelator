@@ -6,7 +6,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
 // The simulator's inputs (spec 115 AC-2), served at /sim/ in dev and emitted into the build exactly as they are on disk:
-// the modules `sdk/rust/build-widgets.sh` wrote, and the suite's fonts, asset and scene. Nothing is copied under web/.
+// the modules `sdk/rust/build-widgets.sh` wrote, and the suite's fonts and asset (the scene is in the bundle). Nothing is copied under web/.
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const SIMULATOR_FILES: Record<string, string> = {
   "sim/modules/spike-clock.wasm": "target/widgets/spike-clock.wasm",
@@ -16,7 +16,6 @@ const SIMULATOR_FILES: Record<string, string> = {
   "sim/fonts/spleen-8x16.bdf": "sdk/conformance/fonts/spleen-8x16.bdf",
   "sim/fonts/LICENSE-spleen": "sdk/conformance/fonts/LICENSE-spleen",
   "sim/assets/spike-image.rgb": "sdk/conformance/assets/spike-image.rgb",
-  "sim/scenes/spike.json": "sdk/conformance/scenes/spike.json",
 };
 
 function simulatorInputs(): Plugin {

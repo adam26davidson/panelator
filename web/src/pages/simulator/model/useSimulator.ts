@@ -11,6 +11,7 @@ import {
 } from "@panelator/simulator";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PanelSize } from "@/shared/ui";
+import sceneText from "../../../../../sdk/conformance/scenes/spike.json?raw";
 import type { PlacementRow, ViewState } from "../ui/SimulatorView";
 
 const BASE = "/sim";
@@ -28,15 +29,22 @@ async function fetchFile(path: string): Promise<Response> {
   return response;
 }
 const fetchBytes = async (path: string) => new Uint8Array(await (await fetchFile(path)).arrayBuffer());
+// The scene is part of the bundle (spec 115 AC-2): the first render knows the panel and the placements.
+const SCENE = readScene(sceneText);
+const PLACEHOLDERS: PlacementRow[] = SCENE.placements.map((p) => ({
+  name: p.module,
+  width: p.width,
+  height: p.height,
+}));
 const fetchText = async (path: string) => (await fetchFile(path)).text();
 
 const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-/** Loads the scene `scenes/spike.json` describes and runs it live; leaving the page stops the run. */
+/** Loads the scene `scenes/spike.json` describes (bundled) and runs it live; leaving the page stops the run. */
 export function useSimulator() {
   const [view, setView] = useState<ViewState>({ state: "loading" });
-  const [panel, setPanel] = useState<PanelSize>();
-  const [placements, setPlacements] = useState<PlacementRow[]>([]);
+  const [panel, setPanel] = useState<PanelSize>(SCENE.panel);
+  const [placements, setPlacements] = useState<PlacementRow[]>(PLACEHOLDERS);
   const [attempt, setAttempt] = useState(0);
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const run = useRef<LiveRun>(undefined);
@@ -52,10 +60,8 @@ export function useSimulator() {
     };
     setView({ state: "loading" });
     (async () => {
-      const spec = readScene(await fetchText("scenes/spike.json"));
-      if (cancelled) return;
-      setPanel(spec.panel);
-      setPlacements(spec.placements.map((p) => ({ name: p.module, width: p.width, height: p.height })));
+      const spec = SCENE;
+      setPlacements(PLACEHOLDERS);
       const names = [...new Set(spec.placements.map((p) => p.module))];
       const [font1, font2, ...rest] = await Promise.all([
         fetchText("fonts/spleen-5x8.bdf"),

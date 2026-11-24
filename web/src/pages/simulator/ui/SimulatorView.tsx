@@ -54,7 +54,7 @@ function RunBar({ view, onToggle }: { view: Exclude<ViewState, { state: "failed"
       )}
       {view.state !== "loading" && (
         <div className="ml-auto grid w-control flex-none">
-          <Button variant="secondary" onClick={onToggle}>
+          <Button variant="secondary" onClick={onToggle} data-pause="">
             {view.state === "running" ? "Pause" : "Resume"}
           </Button>
         </div>
@@ -63,16 +63,14 @@ function RunBar({ view, onToggle }: { view: Exclude<ViewState, { state: "failed"
   );
 }
 
-function Readouts({ panel, placements }: { panel: PanelSize | undefined; placements: PlacementRow[] }) {
+function Readouts({ panel, placements }: { panel: PanelSize; placements: PlacementRow[] }) {
   return (
     <div className="grid content-start gap-8 tablet:grid-cols-[var(--size-side)_minmax(0,1fr)] desktop:grid-cols-1">
       <section className="flex flex-col gap-2">
         <GroupHeading>Panel</GroupHeading>
-        {panel && (
-          <p className="font-mono text-lg leading-tight">
-            {panel.width} × {panel.height} LEDs
-          </p>
-        )}
+        <p className="font-mono text-lg leading-tight">
+          {panel.width} × {panel.height} LEDs
+        </p>
         <p className="text-sm text-muted">Raw pixels: one square per LED, no gaps and no glow.</p>
       </section>
       <section className="flex flex-col gap-2">
@@ -165,8 +163,8 @@ function Failure({
 
 export interface SimulatorViewProps {
   view: ViewState;
-  /** The scene's panel; unknown only until the scene file is read. */
-  panel: PanelSize | undefined;
+  /** The scene's panel, known at the first render. */
+  panel: PanelSize;
   placements: PlacementRow[];
   onToggle: () => void;
   onRetry: () => void;
@@ -177,16 +175,19 @@ export interface SimulatorViewProps {
 /** The page's view: everything it shows comes from its properties, so every state renders with no WebAssembly. */
 export function SimulatorView({ view, panel, placements, onToggle, onRetry, canvasRef }: SimulatorViewProps) {
   const retry = useRef<HTMLButtonElement>(null);
-  const before = useRef(view.state);
+  // When `failed` renders, the pause control is still in the document: note whether it holds focus.
+  const pauseHeld = useRef(false);
+  if (view.state === "failed" && !pauseHeld.current && typeof document !== "undefined")
+    pauseHeld.current = document.activeElement?.hasAttribute("data-pause") ?? false;
+  if (view.state !== "failed") pauseHeld.current = false;
+  const wasHeld = useRef(false);
   useEffect(() => {
-    // The pause control is removed when the run fails: focus goes to the control that loads again.
-    if (view.state === "failed" && (before.current === "running" || before.current === "paused"))
-      retry.current?.focus();
-    before.current = view.state;
+    if (view.state === "failed") {
+      if (pauseHeld.current && !wasHeld.current) retry.current?.focus();
+      wasHeld.current = true;
+    } else wasHeld.current = false;
   }, [view.state]);
-  const label = panel
-    ? `LED panel, ${panel.width} by ${panel.height}, running the runtime spike's three widgets: a moving image, a clock and scrolling text`
-    : "";
+  const label = `LED panel, ${panel.width} by ${panel.height}, running the runtime spike's three widgets: a moving image, a clock and scrolling text`;
   return (
     <WideColumn>
       <title>Simulator · panelator</title>
@@ -200,7 +201,7 @@ export function SimulatorView({ view, panel, placements, onToggle, onRetry, canv
       ) : (
         <div className="grid gap-8 desktop:grid-cols-[minmax(0,1fr)_var(--size-side)]">
           <div className="flex min-w-0 flex-col gap-3">
-            {panel && <PanelView panel={panel} label={label} canvasRef={canvasRef} />}
+            <PanelView panel={panel} label={label} canvasRef={canvasRef} />
             <RunBar view={view} onToggle={onToggle} />
             {view.state === "paused" && view.reducedMotion && (
               <p className="text-sm text-muted">

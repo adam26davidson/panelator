@@ -25,8 +25,8 @@ A new kind of check is a new script with its own test in `checks.test.ts`.
 
 `dev`, `build`, `build-storybook` and `e2e` first build the three spike modules (`sdk/rust/build-widgets.sh`, through
 `simulator/build-modules.ts`), so `pnpm test` needs the toolchain of `rust-toolchain.toml` with its
-`wasm32-unknown-unknown` target. Vite serves the modules, the suite's fonts, asset and scene at `/sim/` exactly as they are
-on disk.
+`wasm32-unknown-unknown` target. Vite serves the modules, the suite's fonts and asset at `/sim/` exactly as they are
+on disk; the scene is imported into the bundle from `sdk/conformance/scenes/spike.json`.
 
 ## Layers
 

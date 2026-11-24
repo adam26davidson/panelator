@@ -1,5 +1,7 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { WithProviders } from "@/shared/lib";
 import { SimulatorView, type SimulatorViewProps } from "./SimulatorView";
@@ -17,12 +19,8 @@ const props = (over: Partial<SimulatorViewProps> = {}): SimulatorViewProps => ({
   onRetry: () => undefined,
   ...over,
 });
-const show = async (p: SimulatorViewProps) => {
-  const view = render(
-    <WithProviders>
-      <SimulatorView {...p} />
-    </WithProviders>,
-  );
+const show = async (p: SimulatorViewProps, node?: ReactNode) => {
+  const view = render(<WithProviders>{node ?? <SimulatorView {...p} />}</WithProviders>);
   await screen.findByRole("heading", { level: 1 });
   return view;
 };
@@ -98,5 +96,27 @@ describe("SimulatorView (spec 115 AC-14)", () => {
     expect([canvas.width, canvas.height]).toEqual([96, 16]);
     expect(screen.getByText("96 × 16 LEDs")).toBeTruthy();
     expect(screen.getByRole("img").getAttribute("aria-label")).toContain("96 by 16");
+  });
+
+  it("failed moves focus to the retry control only when the pause control held it", async () => {
+    const running = props({ view: { state: "running", tick: 5 } });
+    const failed = props({ view: { state: "failed", message: "boom" } });
+    let fail = () => {};
+    function Harness() {
+      const [bad, setBad] = useState(false);
+      fail = () => setBad(true);
+      return <SimulatorView {...(bad ? failed : running)} />;
+    }
+    const a = await show(running, <Harness />);
+    (screen.getByRole("button", { name: "Pause" }) as HTMLElement).focus();
+    act(() => fail());
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Load the simulator again" }));
+    a.unmount();
+    await show(running, <Harness />);
+    const h1 = screen.getByRole("heading", { level: 1 });
+    h1.tabIndex = -1;
+    h1.focus();
+    act(() => fail());
+    expect(document.activeElement).toBe(h1);
   });
 });

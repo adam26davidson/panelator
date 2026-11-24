@@ -123,3 +123,23 @@ test("every link and button of /simulator is at least 44 CSS pixels in both dime
     expect(box?.height, `target ${i} height`).toBeGreaterThanOrEqual(44);
   }
 });
+
+test("the page requests exactly the six files and no scene", async ({ page }) => {
+  const seen: string[] = [];
+  page.on("request", (r) => {
+    const path = new URL(r.url()).pathname;
+    if (path.startsWith("/sim/")) seen.push(path);
+  });
+  await page.goto("/simulator");
+  await expect(page.getByRole("status")).toHaveText(/Running|Paused/);
+  expect(seen.sort()).toEqual(
+    [
+      "/sim/assets/spike-image.rgb",
+      "/sim/fonts/spleen-5x8.bdf",
+      "/sim/fonts/spleen-8x16.bdf",
+      "/sim/modules/spike-clock.wasm",
+      "/sim/modules/spike-image.wasm",
+      "/sim/modules/spike-scroll.wasm",
+    ].sort(),
+  );
+});
