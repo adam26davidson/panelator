@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import {startTelegram,telegramCheck} from '../src/service/telegram-start.ts';
+import {startFailureExit,unhandledRejectionHandler,waitForStateSpace} from '../src/service/start-gate.ts';
+import {telegramCredentials} from '../src/telegram/credentials.ts';
+import {TelegramClient} from '../src/telegram/client.ts';
+import {appendFindings} from '../src/state/findings.ts';
 import {TelegramPoller} from '../src/telegram/poller.ts';
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -77,6 +81,36 @@ const {registry,parameters,levels,catalogue,metrics}=(()=>{try {
   checkCredentialNames(catalogue,{profiles:Object.fromEntries(profileNames(agentsRoot).map(n=>[n,resolveProfile(agentsRoot,n).credentials??[]])),agents:Object.fromEntries(Object.values(registry).map(d=>[d.name,d.credentials??[]]))});
   return {registry,parameters,levels:loadActionLevels(join(agentsRoot,'actions.yaml')),catalogue,metrics:loadMetricDefinitions(join(agentsRoot,'metrics'))};
 }catch(e){fail((e as Error).message);}})();
+// Spec 114 AC-6: on a full state volume the service waits here, before the first state write (`initializeAgents` takes
+// `parameters.json.lock`). Only the read of the Telegram credentials and the building of the sender come before it.
+let starting=false;
+const servicePath=(args[0]===undefined||args[0].startsWith('--'))&&!has('--check-auth');
+if(servicePath) {
+  let send:((text:string)=>Promise<void>)|undefined;
+  try {
+    const creds=cfg.telegram?await telegramCredentials(cfg.telegram.credentials_path,credStore):null;
+    if(creds&&!('off' in creds)) {const client=new TelegramClient(creds.bot_token,creds.chat_id);send=async text=>{try{await client.sendMessage({text});}catch{throw new Error('Telegram sendMessage failed');}};}
+  }catch{/* Telegram is off or unreadable: the gate only writes to stderr */}
+  const stopOnTerm=()=>process.exit(0);
+  process.on('SIGTERM',stopOnTerm);
+  const waited=await waitForStateSpace({root:paths.root,send});
+  process.off('SIGTERM',stopOnTerm);
+  starting=true;
+  // A space failure from here to the first tick exits 75, so systemd starts the process again and it waits at the gate.
+  process.on('uncaughtException',(e)=>{
+    const exit=starting?startFailureExit(e):null;
+    if(exit){console.error(exit.line);process.exit(exit.code);}
+    console.error(e instanceof Error?(e.stack??e.message):e);
+    process.exit(1);
+  });
+  if(waited) {
+    serviceLog.write({kind:'start-waited',cause:'ENOSPC',...waited});
+    await appendFindings(paths,{issue:0,stage:'scheduler',run_id:'start-gate',timestamp:new Date().toISOString()},[{
+      what:'state volume full: the scheduler waited to start',where:paths.root,
+      evidence:`waited since ${waited.since} for ${Math.round(waited.waited_ms/1000)} s; the state volume had ${Math.floor(waited.free_bytes/2**20)} MiB and ${waited.free_inodes??'unknown'} free inodes when the wait began`,
+      noticed_how:'scheduler start gate',stops_pipeline:true}]);
+  }
+}
 await initializeAgents(paths,registry,parameters,new Date());
 const actionLog=new ActionLog(paths.actionsLog,paths);
 // Spec 099 AC-6: one chain for every notification; the poller attaches the Telegram channel once it is up.
@@ -303,6 +337,8 @@ if(cfg.console&&consoleDep){
 }
 for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => {scheduler.stop(sig);void telegramPoller?.stop();void consolePoller?.stop();consoleWatch?.close();});
 
+starting=false;process.removeAllListeners('uncaughtException');
+process.on('unhandledRejection',unhandledRejectionHandler(rec=>serviceLog.write(rec)));
 if (has("--once")) {
   const info = await scheduler.tick();
   console.log(JSON.stringify(info));
