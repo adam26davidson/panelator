@@ -106,6 +106,7 @@ describe("the outage of 2026-11-22 (spec 114 AC-4, AC-9)", () => {
   it("AC-9: run() never rejects, one message of each label, the findings and the interval land after the resume", async () => {
     const w = await outage(false);
     const claim = readFileSync(`${w.paths.claims}/7.json`, "utf8");
+    let wallBefore = "";
     try {
       w.space.v = { bytes: 0, inodes: 0 };
       w.sw.on = true;
@@ -113,6 +114,7 @@ describe("the outage of 2026-11-22 (spec 114 AC-4, AC-9)", () => {
       expect(w.ch.sent).toHaveLength(2);
       expect(label(w.ch, "host")).toHaveLength(1);
       expect(label(w.ch, "disk_full")).toHaveLength(1);
+      wallBefore = new Date().toISOString();
       w.sw.on = false;
       w.space.v = { bytes: 30 * GIB, inodes: 1_000_000 };
       w.advance(15);
@@ -125,9 +127,8 @@ describe("the outage of 2026-11-22 (spec 114 AC-4, AC-9)", () => {
     const at = (k: string) => recs.findIndex((r) => r.kind === k);
     expect([at("host-paused"), at("host-paused-notice"), at("host-resumed")]).toEqual([...[at("host-paused"), at("host-paused-notice"), at("host-resumed")]].sort((a, b) => a - b));
     // The records the service log kept in memory carry the time they were made, not the time they were written.
-    const real = recs.filter((r) => String(r.at).startsWith("2026-11-"));
-    const ats = real.map((r) => String(r.at));
-    expect([...ats].sort()).toEqual(ats);
+    for (const r of recs.filter((r) => r.kind === "host-paused" || r.kind === "host-paused-notice" || (r.kind === "tick" && r.host))) expect(String(r.at) <= wallBefore).toBe(true);
+    expect(String(recs.find((r) => r.kind === "host-resumed")!.at) >= wallBefore).toBe(true);
     const findings = readFileSync(w.paths.findingsQueue, "utf8").trim().split("\n").map((l) => JSON.parse(l).finding);
     expect(findings.filter((f) => f.what === "host outage pauses the scheduler: ENOSPC")).toHaveLength(1);
     expect(findings.find((f) => f.what === "host outage pauses the scheduler: ENOSPC")).toMatchObject({ stops_pipeline: true });

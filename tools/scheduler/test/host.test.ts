@@ -202,15 +202,16 @@ describe("a state volume that takes no writes (spec 114 AC-2 to AC-4)", () => {
     const notes: unknown[] = [];
     const events: [string, Record<string, unknown>][] = [];
     const paths = statePaths(root);
+    const probeCause = { v: null as string | null };
     const m = new HostMonitor({
       paths, now: () => new Date(clock.t), write: (r) => log.push(r),
       notifier: { notify: async (n) => { if (opts.notify) await opts.notify(n); notes.push(n); return { channel: "telegram" as const }; } },
-      emitEvent: async (e, p) => { await writeHostStateProbe(); events.push([e, p as Record<string, unknown>]); }, probe: async () => null,
+      emitEvent: async (e, p) => { await writeHostStateProbe(); events.push([e, p as Record<string, unknown>]); }, probe: async () => probeCause.v,
     });
     const sw = installEnospc(paths.root);
     // The event emitter of the real loop writes under the state root; here it fails the same way.
     async function writeHostStateProbe(): Promise<void> { if (sw.on) throw spaceErr(); }
-    return { m, clock, log, notes, events, paths, sw } as { m: HostMonitor; clock: { t: number }; log: Record<string, unknown>[]; notes: unknown[]; events: [string, Record<string, unknown>][]; paths: ReturnType<typeof statePaths>; sw: { on: boolean; restore(): void } };
+    return { m, clock, log, notes, events, paths, sw, probeCause } as { probeCause: { v: string | null }; m: HostMonitor; clock: { t: number }; log: Record<string, unknown>[]; notes: unknown[]; events: [string, Record<string, unknown>][]; paths: ReturnType<typeof statePaths>; sw: { on: boolean; restore(): void } };
   }
 
   it("pauseFor records the pause and the line with the given error and calls no probe", async () => {
@@ -229,7 +230,11 @@ describe("a state volume that takes no writes (spec 114 AC-2 to AC-4)", () => {
     const w = await world();
     await w.m.beginTick();
     expect(await w.m.onTransient("ENOSPC", "x")).toBe(false); // the probe passes: no pause
-    await w.m.pauseFor("ENOSPC", "full");
+    await w.m.beginTick(); // the probe result is memoised within a tick
+    w.probeCause.v = "ENOSPC";
+    expect(await w.m.onTransient("ENOSPC", "full")).toBe(true); // host.json cannot be saved; the pause holds
+    expect(w.log.filter((r) => r.kind === "host-paused")).toHaveLength(1);
+    w.probeCause.v = null;
     expect(w.m.paused?.cause).toBe("ENOSPC");
     for (let i = 0; i < 5; i++) await w.m.markSeen();
     expect(w.log.filter((r) => String(r.error).startsWith("host state:"))).toHaveLength(1);
