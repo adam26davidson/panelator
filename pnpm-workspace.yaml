@@ -1,6 +1,7 @@
 packages:
   - "tools/*"
   - "web"
+  - "web/simulator"
   - "console"
   - "sdk/assemblyscript"
 # A script installs a missing or stale node_modules first, under any pnpm (spec 035).
