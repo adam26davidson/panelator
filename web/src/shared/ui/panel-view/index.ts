@@ -1,1 +1,1 @@
-export { PanelView, panelScale } from "./PanelView";
+export { PanelView } from "./PanelView";

@@ -6,7 +6,6 @@
       "ignoreDependencies": ["tailwindcss", "@playwright/browser-chromium"]
     },
     "web/simulator": {
-      "entry": ["src/index.ts", "build-modules.ts", "vitest.config.ts"],
       "project": ["src/**/*.ts", "*.ts"]
     }
   }

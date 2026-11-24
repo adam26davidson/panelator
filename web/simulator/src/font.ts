@@ -1,6 +1,6 @@
 import type { Layer } from "./layer.ts";
 
-export interface Glyph {
+interface Glyph {
   /** DWIDTH x */
   advance: number;
   bbx: { w: number; h: number; x: number; y: number };

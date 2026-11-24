@@ -73,7 +73,7 @@ export async function loadModule(bytes: Uint8Array, name = "module"): Promise<Lo
   }
   if (shape.memories.length > 1) fail("more than one memory", `${shape.memories.length} memories`, name);
   const mem = shape.exports.find((x) => x.name === "memory");
-  if (!mem || mem.kind !== "memory" || shape.memories.length !== 1 || shape.imports.some((i) => i.kind === "memory")) {
+  if (mem?.kind !== "memory" || shape.memories.length !== 1 || shape.imports.some((i) => i.kind === "memory")) {
     fail("memory not exported", "the module's one memory must be exported as `memory`", name);
   }
   const limits = shape.memories[0] as { min: number; max: number | undefined };

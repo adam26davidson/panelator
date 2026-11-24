@@ -27,9 +27,9 @@ const str = (s: string): number[] => [...leb(s.length), ...new TextEncoder().enc
 const vec = (items: number[][]): number[] => [...leb(items.length), ...items.flat()];
 const section = (id: number, body: number[]): number[] => [id, ...leb(body.length), ...body];
 
-export const T = { i32: 0x7f, i64: 0x7e, f32: 0x7d } as const;
+const T = { i32: 0x7f, i64: 0x7e, f32: 0x7d } as const;
 type V = keyof typeof T;
-export interface FnSig {
+interface FnSig {
   params: V[];
   results: V[];
 }

@@ -7,13 +7,13 @@ import { describe, expect, it } from "vitest";
 // repository root and fails with the end of its output. A new kind of check is a new script with its own entry here.
 const root = join(import.meta.dirname, "..");
 
-function run(script: string): Promise<{ code: number; out: string }> {
+function run(script: string, pkg = "@panelator/web"): Promise<{ code: number; out: string }> {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([k]) => !k.startsWith("VITEST") && k !== "NODE_ENV"),
   );
   return new Promise((resolve) => {
     exec(
-      `pnpm -F @panelator/web ${script}`,
+      `pnpm -F ${pkg} ${script}`,
       { cwd: root, env, maxBuffer: 32 * 2 ** 20, timeout: 580_000 },
       (err, stdout, stderr) => {
         resolve({ code: err ? ((err as { code?: number }).code ?? 1) : 0, out: `${stdout}\n${stderr}` });
@@ -23,10 +23,26 @@ function run(script: string): Promise<{ code: number; out: string }> {
 }
 
 describe("the web package (spec 112)", () => {
-  for (const script of ["typecheck", "lint", "fsd", "knip", "test", "build", "build-storybook", "e2e"]) {
-    it(script, async () => {
-      const r = await run(script);
+  // The two checks of the engine (spec 115 AC-17) sit after knip and before the app's own `test`. A passing `simulator test`
+  // and `e2e` print what they ran (one line per scene, one per browser test, the three module hashes), so a passing
+  // `pnpm test` and CI's log show it; a failing check shows its output as the failure message.
+  const checks: { name: string; script: string; pkg?: string; print?: boolean }[] = [
+    { name: "typecheck", script: "typecheck" },
+    { name: "lint", script: "lint" },
+    { name: "fsd", script: "fsd" },
+    { name: "knip", script: "knip" },
+    { name: "simulator typecheck", script: "typecheck", pkg: "@panelator/simulator" },
+    { name: "simulator test", script: "test", pkg: "@panelator/simulator", print: true },
+    { name: "test", script: "test" },
+    { name: "build", script: "build" },
+    { name: "build-storybook", script: "build-storybook" },
+    { name: "e2e", script: "e2e", print: true },
+  ];
+  for (const check of checks) {
+    it(check.name, async () => {
+      const r = await run(check.script, check.pkg);
       expect(r.code, r.out.slice(-6000)).toBe(0);
+      if (check.print) process.stdout.write(`\n${r.out}\n`);
     }, 600_000);
   }
 
@@ -46,6 +62,11 @@ describe("the web package (spec 112)", () => {
     expect(entries.length).toBeGreaterThan(0);
     for (const [name, range] of entries) {
       if (name === "@types/node") continue;
+      // A package of this repository (spec 115 AC-17): the workspace protocol, and only for the engine.
+      if (name === "@panelator/simulator") {
+        expect(range, name).toBe("workspace:*");
+        continue;
+      }
       expect(range, name).toBe("catalog:");
       expect(catalog.has(name), `${name} is in the catalog`).toBe(true);
     }
