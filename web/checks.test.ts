@@ -7,13 +7,13 @@ import { describe, expect, it } from "vitest";
 // repository root and fails with the end of its output. A new kind of check is a new script with its own entry here.
 const root = join(import.meta.dirname, "..");
 
-function run(script: string): Promise<{ code: number; out: string }> {
+function run(script: string, pkg = "@panelator/web"): Promise<{ code: number; out: string }> {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([k]) => !k.startsWith("VITEST") && k !== "NODE_ENV"),
   );
   return new Promise((resolve) => {
     exec(
-      `pnpm -F @panelator/web ${script}`,
+      `pnpm -F ${pkg} ${script}`,
       { cwd: root, env, maxBuffer: 32 * 2 ** 20, timeout: 580_000 },
       (err, stdout, stderr) => {
         resolve({ code: err ? ((err as { code?: number }).code ?? 1) : 0, out: `${stdout}\n${stderr}` });
@@ -23,10 +23,25 @@ function run(script: string): Promise<{ code: number; out: string }> {
 }
 
 describe("the web package (spec 112)", () => {
-  for (const script of ["typecheck", "lint", "fsd", "knip", "test", "build", "build-storybook", "e2e"]) {
-    it(script, async () => {
-      const r = await run(script);
+  // `show`: a passing check writes its output, so a passing `pnpm test` and CI's log show one line per scene under Node,
+  // one line per browser test and the hash of each module the engine ran (spec 115 AC-17).
+  const checks = [
+    { name: "typecheck", script: "typecheck" },
+    { name: "lint", script: "lint" },
+    { name: "fsd", script: "fsd" },
+    { name: "knip", script: "knip" },
+    { name: "simulator typecheck", script: "typecheck", pkg: "@panelator/simulator" },
+    { name: "simulator test", script: "test", pkg: "@panelator/simulator", show: true },
+    { name: "test", script: "test" },
+    { name: "build", script: "build" },
+    { name: "build-storybook", script: "build-storybook" },
+    { name: "e2e", script: "e2e", show: true },
+  ];
+  for (const { name, script, pkg, show } of checks) {
+    it(name, async () => {
+      const r = await run(script, pkg);
       expect(r.code, r.out.slice(-6000)).toBe(0);
+      if (show) console.log(r.out);
     }, 600_000);
   }
 
@@ -46,6 +61,11 @@ describe("the web package (spec 112)", () => {
     expect(entries.length).toBeGreaterThan(0);
     for (const [name, range] of entries) {
       if (name === "@types/node") continue;
+      // A package of this repository is the one dependency that is not a catalog entry (spec 115 AC-17).
+      if (name === "@panelator/simulator") {
+        expect(range, name).toBe("workspace:*");
+        continue;
+      }
       expect(range, name).toBe("catalog:");
       expect(catalog.has(name), `${name} is in the catalog`).toBe(true);
     }
