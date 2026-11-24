@@ -157,3 +157,35 @@ describe("cred-exec for a provider: aws entry (spec 068 AC-1)", () => {
     expect(w.calls()).toEqual([]);
   });
 });
+
+describe("bin/scheduler.ts on a full state volume (spec 114 AC-6, AC-7)", () => {
+  it("AC-7: a space failure on the first state write exits 75 with one line and no stack", async () => {
+    const { ensureStateDirs, statePaths } = await import("../src/state/paths.ts");
+    const root = mkdtempSync(join(tmpdir(), "bin-test-"));
+    const agents = join(root, "agents");
+    cpSync(agentsDir, agents, { recursive: true });
+    const stateDir = join(root, "state");
+    await ensureStateDirs(statePaths(stateDir));
+    const config = join(root, "config.json");
+    writeFileSync(config, JSON.stringify({
+      repo: "o/r", maintainer: "m", state_dir: stateDir,
+      app: { id: 1, installation_id: 1, private_key_path: join(root, "key.pem"), bot_login: "bot[bot]" },
+      credentials: { dir: join(root, "credentials") }, telegram: { credentials_path: join(root, "telegram.json") },
+    }));
+    const preload = join(dirname(fileURLToPath(import.meta.url)), "helpers", "enospc-fs.mjs");
+    const r = spawnSync(process.execPath, ["--import", preload, bin, "--config", config, "--agents-dir", agents], { encoding: "utf8", timeout: 25_000, env: { ...process.env, HOME: root, PANELATOR_ENOSPC_ROOT: stateDir } });
+    expect(r.status).toBe(75);
+    const lines = r.stderr.trim().split("\n").filter((l) => !l.startsWith("service-log unwritten"));
+    expect(lines.at(-1)).toMatch(/^panelator-scheduler: state volume full during start: ENOSPC/);
+    expect(r.stderr).not.toMatch(/\n\s+at /);
+  }, 30_000);
+
+  it("AC-6: the gate comes after the registry and the Telegram credentials and before the first state write", () => {
+    const src = readFileSync(bin, "utf8");
+    const at = (needle: string) => { const i = src.indexOf(needle); expect(i, needle).toBeGreaterThan(-1); return i; };
+    const gate = at("await waitForStateSpace(");
+    expect(gate).toBeGreaterThan(at("registryActionsCheck(join(agentsRoot"));
+    expect(gate).toBeGreaterThan(at("await telegramCredentials("));
+    for (const later of ["await initializeAgents(", "await actionLog.markStalePending(", "app.refreshTokenFile(", "await startTelegram("]) expect(gate, later).toBeLessThan(at(later));
+  });
+});

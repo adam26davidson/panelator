@@ -11,7 +11,7 @@ export function withStateLock<T>(path:string,work:()=>Promise<T>):Promise<T> {
   const lock=path+'.lock',deadline=Date.now()+30000;
   let handle:Awaited<ReturnType<typeof open>>;
   for(;;) {
-   try {handle=await open(lock,'wx');await handle.writeFile(String(process.pid));break;}
+   try {handle=await open(lock,'wx');}
    catch(e) {
     if((e as NodeJS.ErrnoException).code!=='EEXIST')throw e;
     try {
@@ -21,7 +21,11 @@ export function withStateLock<T>(path:string,work:()=>Promise<T>):Promise<T> {
     }catch(err){if((err as NodeJS.ErrnoException).code==='ENOENT')continue;throw err;}
     if(Date.now()>deadline)throw new Error(`state is busy: ${path}`);
     await new Promise(r=>setTimeout(r,10));
+    continue;
    }
+   // Spec 114 AC-8: a lock that cannot be written is closed and removed, never left to the garbage collector.
+   try {await handle.writeFile(String(process.pid));break;}
+   catch(e) {await handle.close().catch(()=>{});await unlink(lock).catch(()=>{});throw e;}
   }
   try{return await work();}finally{await handle.close();await unlink(lock);}
  });

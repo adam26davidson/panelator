@@ -49,7 +49,17 @@ export function rateLimited(inner: Notifier, opts: { hours: number; repeatHours:
       m.set(key, now);
       for (const [k, t] of m) if (now - t >= longest) m.delete(k);
       const save_ = save(m).catch(() => {});
-      const res = await inner.notify(n);
+      let res: Awaited<ReturnType<Notifier["notify"]>>;
+      try {
+        res = await inner.notify(n);
+      } catch (e) {
+        // Spec 114 AC-5: an identity that was not delivered is not held.
+        await save_;
+        if (last === undefined) m.delete(key);
+        else m.set(key, last);
+        await save(m).catch(() => {});
+        throw e;
+      }
       await save_;
       return res;
     },

@@ -6,7 +6,7 @@ import { applyAction, loadActionLevels, type ActionContext } from "../actions/in
 import type { GitHubClient } from "../github/client.ts";
 import type { Notifier } from "../notify/types.ts";
 import type { ParameterStore } from "../parameters/store.ts";
-import { checkedPaths, MIN_FREE_BYTES, MIN_FREE_INODES, statfsFreeSpace, type FreeSpace } from "../runner/host-space.ts";
+import { checkedPaths, isSpaceFailure, MIN_FREE_BYTES, MIN_FREE_INODES, statfsFreeSpace, type FreeSpace } from "../runner/host-space.ts";
 import { listWorktrees } from "../runner/worktree.ts";
 import { readAgentState } from "../standing/state.ts";
 import { readClaim } from "../state/claims.ts";
@@ -196,6 +196,50 @@ export interface SweepDeps extends ListDeps {
   log: (rec: Record<string, unknown>) => void;
   notifier: Pick<Notifier, "notify">;
   emitEvent?: (event: string, payload: unknown) => Promise<void>;
+  /** Spec 114 AC-4: kept by the caller for the life of the process, so an episode is held when `disk-sweep.json` cannot be written. */
+  memory?: SweepMemory;
+}
+
+type AlarmPart = "notify" | "log" | "finding" | "alarm";
+/** What one episode's alarm has done, and the values it was built from. */
+interface AlarmEpisode { since: string; done: Set<AlarmPart>; path: string; free_bytes: number; free_inodes: number | null; removed: number; freed: number; numbers: string; held: string; holders: Holder[] }
+export type SweepMemory = Map<string, AlarmEpisode>;
+export const newSweepMemory = (): SweepMemory => new Map();
+
+/**
+ * The alarm of spec 064 AC-2 as amended by spec 114 AC-4: the notification first, then the log line, the finding and
+ * the `infra_alarm`. A part that fails for lack of space is tried again by each later sweep of the episode; one that
+ * fails otherwise is logged and not retried; a part that succeeded is not repeated.
+ */
+async function runAlarm(ep: AlarmEpisode, d: SweepDeps): Promise<void> {
+  const parts: [AlarmPart, () => Promise<void>][] = [
+    ["notify", async () => {
+      await d.notifier.notify({
+        issue: 0, gate: "infra", label: "disk_full",
+        text: `Host volume ${ep.path} is low after the sweep: ${ep.numbers}. The sweep removed ${ep.removed} entries and freed ${ep.freed} inodes. Largest holders: ${ep.held}.`,
+      });
+    }],
+    ["log", async () => { d.log({ kind: "disk-sweep-alarm", path: ep.path, free_bytes: ep.free_bytes, free_inodes: ep.free_inodes, removed: ep.removed, holders: ep.holders }); }],
+    ["finding", async () => {
+      await appendFindings(d.paths, { issue: 0, stage: "scheduler", run_id: "disk-sweep", timestamp: ep.since }, [{
+        what: "host volume low after sweep", where: ep.path,
+        evidence: `${ep.path} has ${ep.numbers} after the sweep removed ${ep.removed} entries (${ep.freed} inodes). Largest holders: ${ep.held}.`,
+        noticed_how: "scheduler disk sweep", stops_pipeline: true,
+      }]);
+    }],
+    ["alarm", async () => { await d.emitEvent?.("infra_alarm", { kind: "disk_full", path: ep.path, since: ep.since, free_bytes: ep.free_bytes, free_inodes: ep.free_inodes, removed: ep.removed, holders: ep.holders }); }],
+  ];
+  for (const [name, run] of parts) {
+    if (ep.done.has(name)) continue;
+    try {
+      await run();
+      ep.done.add(name);
+    } catch (e) {
+      if (isSpaceFailure(e)) continue;
+      d.log({ kind: "error", error: `disk sweep alarm ${name}: ${e instanceof Error ? e.message : String(e)}` });
+      ep.done.add(name);
+    }
+  }
 }
 
 const mib = (b: number): number => Math.floor(b / 2 ** 20);
@@ -219,6 +263,7 @@ export async function sweepVolumes(d: SweepDeps): Promise<void> {
     const row = await applyAction({ ...ctxBase, onSweep: (r) => { result = r; } }, { kind: "sweep_volume", args: { path, age }, agent: "scheduler", run_id: "tick", why }, ["sweep_volume"]);
     return { result, error: row.status === "applied" ? null : `sweep_volume ${path} ${age} ${row.status}: ${row.reason ?? ""}` };
   };
+  const memory = d.memory ?? newSweepMemory();
   const reports: VolumeReport[] = [];
   const errors: string[] = [];
   let changed = false;
@@ -268,6 +313,8 @@ export async function sweepVolumes(d: SweepDeps): Promise<void> {
     };
     if (prev?.episode) report.episode = prev.episode;
     const over = underLaunchFloor(free);
+    const known = memory.get(path);
+    if (!report.episode && known) report.episode = { since: known.since, alarmed: true };
     if (over && !report.episode?.alarmed) {
       report.holders = await holders(path, d).catch(() => report.holders);
       const since = now.toISOString();
@@ -275,21 +322,18 @@ export async function sweepVolumes(d: SweepDeps): Promise<void> {
       changed = true;
       const numbers = `${mib(free.bytes)} MiB and ${free.inodes ?? "unknown"} free inodes`;
       const held = report.holders.map(holderText).join("; ") || "none found";
-      d.log({ kind: "disk-sweep-alarm", path, free_bytes: free.bytes, free_inodes: free.inodes, removed: report.removed, holders: report.holders });
-      await d.notifier.notify({
-        issue: 0, gate: "infra", label: "disk_full",
-        text: `Host volume ${path} is low after the sweep: ${numbers}. The sweep removed ${report.removed} entries and freed ${report.freed_inodes} inodes. Largest holders: ${held}.`,
-      });
-      await appendFindings(d.paths, { issue: 0, stage: "scheduler", run_id: "disk-sweep", timestamp: since }, [{
-        what: "host volume low after sweep", where: path,
-        evidence: `${path} has ${numbers} after the sweep removed ${report.removed} entries (${report.freed_inodes} inodes). Largest holders: ${held}.`,
-        noticed_how: "scheduler disk sweep", stops_pipeline: true,
-      }]);
-      await d.emitEvent?.("infra_alarm", { kind: "disk_full", path, since, free_bytes: free.bytes, free_inodes: free.inodes, removed: report.removed, holders: report.holders });
+      const ep: AlarmEpisode = { since, done: new Set(), path, free_bytes: free.bytes, free_inodes: free.inodes, removed: report.removed, freed: report.freed_inodes, numbers, held, holders: report.holders };
+      memory.set(path, ep);
+      await runAlarm(ep, d);
     } else if (!over && report.episode) {
+      const ep = memory.get(path);
+      if (ep) await runAlarm(ep, d);
+      memory.delete(path);
       d.log({ kind: "disk-sweep-recovered", path, since: report.episode.since });
       delete report.episode;
       changed = true;
+    } else if (over && known) {
+      await runAlarm(known, d);
     } else if (swept && !measured && due) {
       report.holders = await holders(path, d).catch(() => report.holders);
     }

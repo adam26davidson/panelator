@@ -38,7 +38,8 @@ import { checkPlainFiles } from "../credentials/plain-files.ts";
 import { expiryEvents } from "../credentials/check.ts";
 import type { CredentialEntry } from "../credentials/catalogue.ts";
 import type { CredentialStore } from "../credentials/store.ts";
-import { sweepVolumes } from "./sweep.ts";
+import { statfsFreeSpace, STATE_WRITE_FLOOR_BYTES, STATE_WRITE_FLOOR_INODES, underWriteFloor, type FreeSpace } from "../runner/host-space.ts";
+import { newSweepMemory, sweepVolumes } from "./sweep.ts";
 import { HostMonitor } from "./host.ts";
 import { readToken } from "../state/token.ts";
 import type { SleepInhibitor } from "./inhibit.ts";
@@ -139,6 +140,7 @@ export class Scheduler {
   #deps: SchedulerDeps;
   #drive: DriveFn;
   #active = new Map<number, Promise<void>>();
+  #sweepMemory = newSweepMemory();
   #plainFilesCheckedAt: number | null = null;
   #expiryCheckedAt: number | null = null;
   #activeStanding = new Map<string,Promise<void>>();
@@ -620,7 +622,7 @@ export class Scheduler {
   /** Spec 064 AC-1, AC-2: the scheduler's own sweep of the temp and state volumes; a failure never stops the tick. */
   async #sweep(info: TickInfo): Promise<void> {
     const d = this.#deps;
-    await sweepVolumes({ paths: d.paths, repoDir: d.repoDir, agentsDir: d.agentsDir, now: d.now, gh: d.gh, parameters: d.parameters, freeSpace: d.freeSpace, log: (rec) => d.serviceLog.write(rec), notifier: d.notifier, emitEvent: d.emitEvent, activeIssues: () => [...this.#active.keys()] }).catch((e) => info.errors.push(`sweep: ${(e as Error).message}`));
+    await sweepVolumes({ paths: d.paths, repoDir: d.repoDir, agentsDir: d.agentsDir, now: d.now, gh: d.gh, parameters: d.parameters, freeSpace: d.freeSpace, log: (rec) => d.serviceLog.write(rec), notifier: d.notifier, emitEvent: d.emitEvent, memory: this.#sweepMemory, activeIssues: () => [...this.#active.keys()] }).catch((e) => info.errors.push(`sweep: ${(e as Error).message}`));
   }
 
   /** Spec 102 AC-3: once per tick, send the notices the chat could not take; a failure is logged, never the tick's. */
@@ -648,14 +650,26 @@ export class Scheduler {
     const d = this.#deps;
     const info: TickInfo = { eligible: 0, claimed: [], released: [], held: 0, standing: [], errors: [], restartPending: this.#restartPending };
     try {
+      // Spec 114 AC-2: the host state is read first, then the state volume's room, before anything that writes.
+      const host = d.host!;
+      await host.beginTick();
+      // Spec 100 AC-6: the stopped interval is recorded on the first tick, including one that takes the write-floor return (its saves survive a space failure).
+      await host.startupGap(d.cfg.poll_interval_s).catch((e) => d.log({ kind: "error", error: `host downtime: ${(e as Error).message}` }));
+      let stateFree: FreeSpace | null = null;
+      try {
+        stateFree = await (d.freeSpace ?? statfsFreeSpace)(d.paths.root);
+      } catch (e) {
+        d.serviceLog.write({ kind: "host-space-unknown", path: d.paths.root, error: e instanceof Error ? e.message : String(e) });
+      }
+      if (stateFree && underWriteFloor(stateFree)) {
+        if (!host.paused) await host.pauseFor("ENOSPC", `state volume under the write floor: ${d.paths.root} has ${Math.floor(stateFree.bytes / 2 ** 20)} MiB free and ${stateFree.inodes ?? "unknown"} free inodes (floor ${STATE_WRITE_FLOOR_BYTES / 2 ** 20} MiB, ${STATE_WRITE_FLOOR_INODES} inodes)`);
+        return await this.#pausedTick(info);
+      }
       const slots = d.parameters ? Number((await d.parameters.read('slots')).value) : d.cfg.slots;
       if(!existsSync(d.paths.eventsBackfilled))await backfillEvents(d.paths,rec=>d.serviceLog.write(rec));
       await this.#sample();
       if(d.registry && d.parameters)await initializeAgents(d.paths,d.registry,d.parameters,d.now());
       // Spec 100 AC-3, AC-4: a paused host waits; the tick that finds the probe passing goes on with its ordinary work.
-      const host = d.host!;
-      await host.beginTick();
-      await host.startupGap(d.cfg.poll_interval_s).catch((e) => d.log({ kind: "error", error: `host downtime: ${(e as Error).message}` }));
       if (host.paused && !(await host.probeIfDue())) return await this.#pausedTick(info);
       await this.#flushNotices();
       const token = await readToken(d.paths).catch(() => null);

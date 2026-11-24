@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import {startTelegram,telegramCheck} from '../src/service/telegram-start.ts';
+import {startFailureExit,unhandledRejectionHandler,waitForStateSpace} from '../src/service/start-gate.ts';
+import {telegramCredentials} from '../src/telegram/credentials.ts';
+import {TelegramClient} from '../src/telegram/client.ts';
+import {appendFindings} from '../src/state/findings.ts';
 import {TelegramPoller} from '../src/telegram/poller.ts';
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -8,9 +12,7 @@ import { adapterFor } from "../src/adapters/index.ts";
 import { agentsDir, defaultConfigPath, expandHome, loadConfig, repoRoot } from "../src/config.ts";
 import { createAppClient } from "../src/github/auth.ts";
 import { GitHubClient } from "../src/github/client.ts";
-import { LogNotifier } from "../src/notify/log.ts";
-import { recordedNotifier } from "../src/notify/recorded.ts";
-import { rateLimited } from "../src/notify/rate-limit.ts";
+import { notifierChain } from "../src/notify/chain.ts";
 import { fastForwardMain, fetchOrigin } from "../src/service/git.ts";
 import { SleepInhibitor } from "../src/service/inhibit.ts";
 import { ServiceLog } from "../src/service/log.ts";
@@ -25,7 +27,6 @@ import {loadRegistry} from '../src/standing/registry.ts';
 import {EVENT_NAMES} from '../src/standing/events.ts';
 import {initializeAgents,listAgentStates} from '../src/standing/state.ts';
 import {loadParameterDefinitions} from '../src/parameters/definitions.ts';
-import {TelegramNotifier} from '../src/notify/telegram.ts';
 import type {TelegramChannel} from '../src/telegram/channel.ts';
 import {contactsCommand} from '../src/contacts/commands.ts';
 import {checkInstallationScope,SCOPE_FIX} from '../src/contacts/scope.ts';
@@ -80,11 +81,41 @@ const {registry,parameters,levels,catalogue,metrics}=(()=>{try {
   checkCredentialNames(catalogue,{profiles:Object.fromEntries(profileNames(agentsRoot).map(n=>[n,resolveProfile(agentsRoot,n).credentials??[]])),agents:Object.fromEntries(Object.values(registry).map(d=>[d.name,d.credentials??[]]))});
   return {registry,parameters,levels:loadActionLevels(join(agentsRoot,'actions.yaml')),catalogue,metrics:loadMetricDefinitions(join(agentsRoot,'metrics'))};
 }catch(e){fail((e as Error).message);}})();
+// Spec 114 AC-6: on a full state volume the service waits here, before the first state write (`initializeAgents` takes
+// `parameters.json.lock`). Only the read of the Telegram credentials and the building of the sender come before it.
+let starting=false;
+const servicePath=(args[0]===undefined||args[0].startsWith('--'))&&!has('--check-auth');
+if(servicePath) {
+  let send:((text:string)=>Promise<void>)|undefined;
+  try {
+    const creds=cfg.telegram?await telegramCredentials(cfg.telegram.credentials_path,credStore):null;
+    if(creds&&!('off' in creds)) {const client=new TelegramClient(creds.bot_token,creds.chat_id);send=async text=>{try{await client.sendMessage({text});}catch{throw new Error('Telegram sendMessage failed');}};}
+  }catch{/* Telegram is off or unreadable: the gate only writes to stderr */}
+  const stopOnTerm=()=>process.exit(0);
+  process.on('SIGTERM',stopOnTerm);
+  const waited=await waitForStateSpace({root:paths.root,send});
+  process.off('SIGTERM',stopOnTerm);
+  starting=true;
+  // A space failure from here to the first tick exits 75, so systemd starts the process again and it waits at the gate.
+  process.on('uncaughtException',(e)=>{
+    const exit=starting?startFailureExit(e):null;
+    if(exit){console.error(exit.line);process.exit(exit.code);}
+    console.error(e instanceof Error?(e.stack??e.message):e);
+    process.exit(1);
+  });
+  if(waited) {
+    serviceLog.write({kind:'start-waited',cause:'ENOSPC',...waited});
+    await appendFindings(paths,{issue:0,stage:'scheduler',run_id:'start-gate',timestamp:new Date().toISOString()},[{
+      what:'state volume full: the scheduler waited to start',where:paths.root,
+      evidence:`waited since ${waited.since} for ${Math.round(waited.waited_ms/1000)} s; the state volume had ${Math.floor(waited.free_bytes/2**20)} MiB and ${waited.free_inodes??'unknown'} free inodes when the wait began`,
+      noticed_how:'scheduler start gate',stops_pipeline:true}]);
+  }
+}
 await initializeAgents(paths,registry,parameters,new Date());
 const actionLog=new ActionLog(paths.actionsLog,paths);
 // Spec 099 AC-6: one chain for every notification; the poller attaches the Telegram channel once it is up.
 let attachedTelegram:TelegramChannel|null=null;
-const notifier=rateLimited(recordedNotifier(TelegramNotifier(new LogNotifier(paths.serviceLog),{telegram:()=>attachedTelegram,alertsPath:paths.telegramAlerts,outboxPath:paths.telegramOutbox,now:()=>new Date(),log:rec=>serviceLog.write(rec)}),paths),{hours:cfg.notify_rate_limit_hours,repeatHours:cfg.notify_repeat_hours,path:paths.notifySent});
+const notifier=notifierChain({paths,telegram:()=>attachedTelegram,log:rec=>serviceLog.write(rec),hours:cfg.notify_rate_limit_hours,repeatHours:cfg.notify_repeat_hours});
 const awsForCheck={config:cfg.aws,cli:(profile:string)=>awsCli({profile,region:cfg.aws?.region??''}),env:process.env};
 const awsContext:AwsContext={config:cfg.aws,paths,cli:cfg.aws?awsCli(cfg.aws):undefined,parameters,
  notifier,notifyHours:cfg.notify_rate_limit_hours,
@@ -306,6 +337,8 @@ if(cfg.console&&consoleDep){
 }
 for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => {scheduler.stop(sig);void telegramPoller?.stop();void consolePoller?.stop();consoleWatch?.close();});
 
+starting=false;process.removeAllListeners('uncaughtException');
+process.on('unhandledRejection',unhandledRejectionHandler(rec=>serviceLog.write(rec)));
 if (has("--once")) {
   const info = await scheduler.tick();
   console.log(JSON.stringify(info));

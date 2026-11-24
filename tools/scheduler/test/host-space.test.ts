@@ -55,3 +55,15 @@ describe("checkedPaths", () => {
     expect(checkedPaths(paths, null)).toEqual([tmpdir(), "/state"]);
   });
 });
+
+import { STATE_WRITE_FLOOR_BYTES, STATE_WRITE_FLOOR_INODES, underWriteFloor } from "../src/runner/host-space.ts";
+describe("the write floor (spec 114 AC-2)", () => {
+  it("is 64 MiB and 100 inodes, judged on bytes only when the volume reports no inodes", () => {
+    expect(STATE_WRITE_FLOOR_BYTES).toBe(64 * 2 ** 20);
+    expect(STATE_WRITE_FLOOR_INODES).toBe(100);
+    expect(underWriteFloor({ bytes: 63 * 2 ** 20, inodes: null })).toBe(true);
+    expect(underWriteFloor({ bytes: 100 * 2 ** 20, inodes: 99 })).toBe(true);
+    expect(underWriteFloor({ bytes: 100 * 2 ** 20, inodes: null })).toBe(false);
+    expect(underWriteFloor({ bytes: 100 * 2 ** 20, inodes: 100 })).toBe(false);
+  });
+});

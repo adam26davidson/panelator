@@ -87,3 +87,25 @@ it('the store refuses to write an invalid parameters.json and leaves no trace',a
  await expect(store.setParameter('system_work_share',0.6,'')).rejects.toThrow('invalid parameters: /system_work_share/set_by must NOT have fewer than 1 characters {"limit":1}');
  expect(await readFile(paths.parameters,'utf8')).toBe(before);expect(await readFile(paths.parametersHistory,'utf8')).toBe(hist);
 });
+it('withStateLock leaves no lock when it cannot write its pid (spec 114 AC-8)',async()=>{
+ const {installEnospc}=await import('./helpers/enospc-fs.mjs');
+ const {withStateLock}=await import('../src/parameters/store.ts');
+ const root=await mkdtemp(join(tmpdir(),'panelator-test-lock-')); const target=join(root,'p.json');
+ const sw=installEnospc(root);
+ try {
+  await expect(withStateLock(target,async()=>1)).rejects.toMatchObject({code:'ENOSPC'});
+  expect(existsSync(target+'.lock')).toBe(false);
+  sw.on=false;
+  expect(await withStateLock(target,async()=>2)).toBe(2);
+ } finally {sw.restore();}
+});
+it('an empty lock younger than 30 seconds is not taken (spec 114 AC-8)',async()=>{
+ const {withStateLock}=await import('../src/parameters/store.ts');
+ const {unlink}=await import('node:fs/promises');
+ const root=await mkdtemp(join(tmpdir(),'panelator-test-lock-')); const target=join(root,'p.json');
+ await writeFile(target+'.lock','');
+ let got=false; const p=withStateLock(target,async()=>{got=true;});
+ await new Promise(r=>setTimeout(r,150));
+ expect(got).toBe(false);
+ await unlink(target+'.lock'); await p; expect(got).toBe(true);
+});
