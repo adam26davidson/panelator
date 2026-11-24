@@ -505,3 +505,92 @@ fn a_bad_pointer_is_a_trap_for_draw_text_draw_image_and_config_read() {
         .is_ok()
     );
 }
+
+// ---- Spec 116 AC-2, AC-3, AC-7: ranges at the end of memory, negative lengths, config_read's cap.
+
+const C: i32 = -1; // an opaque white colour
+
+/// Runs `call` (an expression pushing an i32) in a one page module with the config `{"a":1}`;
+/// `Ok(v)` is the value the call returned (drawn as pixel 0), `Err` the trap's message.
+fn probe(call: &str) -> Result<u32, String> {
+    let init = format!("(call $draw_pixel (i32.const 0) (i32.const 0) {call})");
+    let i = run_init(
+        &module(b"abcdefgh", &init),
+        2,
+        1,
+        Assets::new(),
+        r#"{"a":1}"#,
+    )?;
+    Ok(i.layer().get(0, 0).unwrap())
+}
+
+fn text(font: i32, ptr: i32, len: i32) -> String {
+    format!(
+        "(call $draw_text (i32.const {font}) (i32.const 0) (i32.const 0) (i32.const {ptr}) (i32.const {len}) (i32.const {C}))"
+    )
+}
+
+#[test]
+fn the_range_rule_of_the_document_for_each_import_and_row() {
+    // (call, Some(result) when it returns, None when it traps)
+    let rows: Vec<(String, Option<u32>)> = vec![
+        (text(1, 65536, 0), Some(0)),
+        (text(1, 65537, 0), None),
+        (text(1, 70000, 0), None),
+        (text(1, -1, 0), None),
+        (text(1, 16, -1), None),
+        (text(9, 70000, 0), None),
+        ("(call $text_width (i32.const 1) (i32.const 65536) (i32.const 0))".into(), Some(0)),
+        ("(call $text_width (i32.const 1) (i32.const 65537) (i32.const 0))".into(), None),
+        ("(call $text_width (i32.const 1) (i32.const 16) (i32.const -1))".into(), None),
+        ("(call $draw_image (i32.const 65536) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))".into(), Some(u32::MAX)),
+        ("(call $draw_image (i32.const 65537) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))".into(), None),
+        ("(call $draw_image (i32.const 16) (i32.const -1) (i32.const 0) (i32.const 0) (i32.const 0))".into(), None),
+        ("(call $config_read (i32.const 65536) (i32.const 0))".into(), Some(0)),
+        ("(call $config_read (i32.const 65537) (i32.const 0))".into(), None),
+        ("(call $config_read (i32.const 65530) (i32.const 6))".into(), Some(6)),
+        ("(call $config_read (i32.const 65530) (i32.const 7))".into(), None),
+        ("(call $config_read (i32.const 65537) (i32.const -1))".into(), Some(0)),
+        ("(call $config_read (i32.const -1) (i32.const -1))".into(), Some(0)),
+        ("(call $config_read (i32.const 16) (i32.const -2147483648))".into(), Some(0)),
+    ];
+    for (call, want) in rows {
+        match (probe(&call), want) {
+            (Ok(got), Some(w)) => assert_eq!(got, w, "{call}"),
+            (Err(e), None) => assert!(e.contains("outside the module's memory"), "{call}: {e}"),
+            (got, w) => panic!("{call}: got {got:?}, wanted {w:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_negative_cap_copies_nothing_and_leaves_the_bytes_at_the_pointer() {
+    let init = "(call $draw_pixel (i32.const 0) (i32.const 0) (call $config_read (i32.const 16) (i32.const -4)))
+                (call $draw_pixel (i32.const 1) (i32.const 0) (i32.load8_u (i32.const 16)))";
+    let i = run_init(
+        &module(b"abcdefgh", init),
+        2,
+        1,
+        Assets::new(),
+        r#"{"a":1}"#,
+    )
+    .unwrap();
+    assert_eq!(i.layer().get(0, 0), Some(0));
+    assert_eq!(i.layer().get(1, 0), Some(u32::from(b'a')));
+}
+
+#[test]
+fn the_size_is_the_memory_at_the_time_of_the_call() {
+    let w = Wat {
+        imports: imports(),
+        memory: "(memory (export \"memory\") 1 2)".into(),
+        init: format!(
+            "(drop (memory.grow (i32.const 1)))
+             (call $draw_pixel (i32.const 0) (i32.const 0) {})",
+            text(1, 70000, 0)
+        ),
+        ..Wat::default()
+    };
+    let i = run_init(&w.bytes(), 2, 1, Assets::new(), r#"{"a":1}"#).unwrap();
+    assert_eq!(i.layer().get(0, 0), Some(0), "70000 lies inside two pages");
+}

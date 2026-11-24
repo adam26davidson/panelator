@@ -306,7 +306,9 @@ fn trap(msg: impl Into<String>) -> Error {
     Error::new(msg.into())
 }
 
-/// The bytes `[ptr, ptr + len)` of the module's memory, or a trap.
+/// The bytes `[ptr, ptr + len)` of the module's memory, or a trap (the document's "Imports"):
+/// `ptr` is read as unsigned, a negative `len` is a trap, and the range lies inside when
+/// `ptr + len` (without wrapping) is at most the memory's size now, an empty range included.
 fn range(mem: &[u8], ptr: i32, len: i32, what: &str) -> Result<std::ops::Range<usize>, Error> {
     let (p, n) = (ptr.cast_unsigned() as usize, usize::try_from(len).ok());
     match n.and_then(|n| p.checked_add(n).map(|end| (p, end))) {
@@ -451,9 +453,18 @@ pub fn register(linker: &mut Linker<State>) -> Result<Vec<&'static str>, Error> 
                          cap: i32|
      -> Result<i32, Error> {
         let (mem, st) = memory(&mut c)?;
-        let n = usize::try_from(cap).unwrap_or(0).min(st.config.len());
+        // A negative cap names no buffer: nothing is copied, and `ptr` is not looked at.
+        let Ok(cap) = usize::try_from(cap) else {
+            return Ok(0);
+        };
+        let n = cap.min(st.config.len());
         // The whole buffer `[ptr, ptr + cap)` must lie in memory, not only the bytes copied.
-        let r = range(mem, ptr, cap.max(0), "config_read")?;
+        let r = range(
+            mem,
+            ptr,
+            i32::try_from(cap).unwrap_or(i32::MAX),
+            "config_read",
+        )?;
         let r = r.start..r.start + n;
         mem[r].copy_from_slice(&st.config[..n]);
         Ok(i32::try_from(n).unwrap_or(0))
